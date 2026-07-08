@@ -10,6 +10,7 @@ from app.agents.base import (
     PipelineState,
     RawProject,
 )
+from app.agents.collector import CollectorAgent
 
 __all__ = [
     "BaseAgent",
@@ -17,4 +18,5 @@ __all__ = [
     "AgentError",
     "PipelineState",
     "RawProject",
+    "CollectorAgent",
 ]
