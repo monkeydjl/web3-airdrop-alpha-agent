@@ -1,0 +1,22 @@
+{
+  "llm_enhancement": {
+    "enabled": false,
+    "description": "LLM 增强（仅 OPENAI_API_KEY 非空时生效，见 config.py enable_llm_enhancement）"
+  },
+  "feedback_system": {
+    "enabled": false,
+    "description": "用户反馈系统（V2）"
+  },
+  "events_tracking": {
+    "enabled": false,
+    "description": "隐式行为埋点（V2）"
+  },
+  "user_system": {
+    "enabled": false,
+    "description": "多用户系统（V3）"
+  },
+  "competition_cache": {
+    "enabled": true,
+    "description": "竞争度缓存（ADR-010，与 .env.example ENABLE_COMPETITION_CACHE=true 对齐）"
+  }
+}

@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────
+# EditorConfig — 跨编辑器统一格式
+# ──────────────────────────────────────────────
+# 官网：https://editorconfig.org/
+# 安装：大多数编辑器内置或需插件
+# ──────────────────────────────────────────────
+
+root = true
+
+# ── 全局默认 ──────────────────────────────────
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 120
+
+# ── Python ────────────────────────────────────
+[*.py]
+indent_size = 4
+# ruff 配置与 pyproject.toml 保持一致
+
+# ── YAML ──────────────────────────────────────
+[*.{yml,yaml}]
+indent_size = 2
+
+# ── JSON ──────────────────────────────────────
+[*.json]
+indent_size = 2
+
+# ── Markdown ──────────────────────────────────
+[*.md]
+trim_trailing_whitespace = false  # MD 中段落末尾两个空格 = 换行
+max_line_length = off
+
+# ── Makefile ──────────────────────────────────
+[Makefile]
+indent_style = tab
+
+# ── Shell ─────────────────────────────────────
+[*.{sh,bash}]
+indent_size = 2
+
+# ── JavaScript / TypeScript ───────────────────
+[*.{js,jsx,ts,tsx}]
+indent_size = 2
+
+# ── Docker ────────────────────────────────────
+[Dockerfile*]
+indent_size = 4
+
+# ── Nginx ────────────────────────────────────
+[*.conf]
+indent_size = 2
+
+# ── TOML ─────────────────────────────────────
+[*.toml]
+indent_size = 2

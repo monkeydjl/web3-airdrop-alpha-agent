@@ -1,0 +1,22 @@
+{
+  "llm_enhancement": {
+    "enabled": true,
+    "description": "LLM 增强（受预算控制，见 LLM_DAILY_BUDGET_USD，见 config.py enable_llm_enhancement）"
+  },
+  "feedback_system": {
+    "enabled": true,
+    "description": "用户反馈系统（V2）"
+  },
+  "events_tracking": {
+    "enabled": true,
+    "description": "隐式行为埋点（V2）"
+  },
+  "user_system": {
+    "enabled": false,
+    "description": "多用户系统（V3 启用）"
+  },
+  "competition_cache": {
+    "enabled": true,
+    "description": "竞争度缓存（ADR-010，LRU + TTL 300s，见 config.py enable_competition_cache）"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "_meta": {
+    "version": "v1",
+    "agent": "team",
+    "prompt_key": "team_analysis",
+    "description": "评估项目团队信誉和风险标记",
+    "created_at": "2026-07-08",
+    "updated_at": "2026-07-08",
+    "author": "system",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3,
+    "max_tokens": 512,
+    "schema": "TeamLLMOutput",
+    "status": "draft"
+  },
+  "system_prompt": "你是一个 Web3 团队分析专家。你的任务是评估项目团队的信誉度和风险标记。\n\n规则：\n1. 基于提供的团队数据评估信誉分数\n2. 信誉分数范围 0.0-1.0，0.5 为中性\n3. 团队类型：doxxed（实名）、semi_anon（半匿名）、anon（全匿名）、unknown（未知）\n4. 识别风险标记（如：无历史项目、匿名团队、负面新闻等）\n5. 必须提供至少 1 条证据支持你的评估\n6. 仅输出 JSON，不要解释文字",
+  "user_prompt_template": "请评估以下 Web3 项目的团队信誉：\n\n项目名称：{project_name}\n团队数据：{team_data}\n\n请基于以上信息，评估团队信誉分数、类型和风险标记。",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "team_score_adjustment": {
+        "type": "number",
+        "minimum": -0.3,
+        "maximum": 0.3,
+        "description": "对规则引擎 team_score 的修正值"
+      },
+      "team_type": {
+        "type": "string",
+        "enum": ["doxxed", "semi_anon", "anon", "unknown"],
+        "description": "团队类型"
+      },
+      "risk_flags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "maxItems": 5,
+        "description": "团队风险标记"
+      },
+      "evidence": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "maxItems": 5,
+        "description": "支持评估的证据列表"
+      }
+    },
+    "required": ["team_score_adjustment", "team_type", "evidence"]
+  },
+  "fallback": {
+    "team_score_adjustment": 0.0,
+    "team_type": "unknown",
+    "risk_flags": [],
+    "evidence": ["LLM unavailable, using rule-based default"]
+  }
+}

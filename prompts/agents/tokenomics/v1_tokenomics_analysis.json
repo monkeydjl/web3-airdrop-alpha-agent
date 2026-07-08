@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "version": "v1",
+    "agent": "tokenomics",
+    "prompt_key": "tokenomics_analysis",
+    "description": "评估代币经济模型健康度",
+    "created_at": "2026-07-08",
+    "updated_at": "2026-07-08",
+    "author": "system",
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "max_tokens": 512,
+    "schema": "TokenomicsLLMOutput",
+    "status": "draft"
+  },
+  "system_prompt": "你是一个代币经济模型分析专家。基于 VC 占比、团队占比、解锁计划评估代币经济健康度，输出惩罚分。\n\n规则：\n1. vc_share / team_share 范围 0.0-1.0\n2. unlock_penalty 范围 0.0-1.0，越高惩罚越大\n3. 仅输出 JSON",
+  "user_prompt_template": "请评估以下项目的代币经济：\n\n赛道：{sector}\n代币数据：{tokenomics_data}\n原始信号：{raw_signals}",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "vc_share": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0
+      },
+      "team_share": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0
+      },
+      "unlock_penalty": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": "解锁惩罚分"
+      }
+    },
+    "required": ["vc_share", "team_share", "unlock_penalty"]
+  },
+  "fallback": {
+    "vc_share": 0.3,
+    "team_share": 0.2,
+    "unlock_penalty": 0.3
+  }
+}

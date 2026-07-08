@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "version": "v1",
+    "agent": "orchestrator",
+    "prompt_key": "planner",
+    "description": "Orchestrator 计划生成 Prompt",
+    "created_at": "2026-07-08",
+    "updated_at": "2026-07-08",
+    "author": "system",
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "schema": "OrchestratorPlan",
+    "status": "draft"
+  },
+  "system_prompt": "你是一个 Web3 空投分析系统的 Orchestrator。你的任务是协调多个 Agent 完成项目分析流水线。\n\n当前 MVP 阶段使用规则引擎，LLM 仅作为可选增强。\n\n你的职责：\n1. 接收项目列表\n2. 调度各 Agent 执行分析\n3. 汇总评分结果\n4. 处理 Agent 失败（降级到规则引擎）",
+  "user_prompt_template": "请为以下项目列表生成分析计划：\n\n项目数量：{project_count}\n数据源：{source}\n并发限制：{max_concurrent}\n\n返回执行计划，包含每个项目的 Agent 调度顺序。",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "description": "本次运行的唯一 ID"
+      },
+      "total_projects": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "batches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "batch_id": { "type": "integer" },
+            "project_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "required": ["run_id", "total_projects", "batches"]
+  }
+}

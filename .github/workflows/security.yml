@@ -1,0 +1,119 @@
+# ──────────────────────────────────────────────
+# Security Pipeline — Web3 Airdrop Alpha Agent System
+# ──────────────────────────────────────────────
+# 触发器: push（main）、每周定时、依赖文件变更
+# 阶段: pip-audit → detect-secrets → Trivy scan → dependency review
+# ──────────────────────────────────────────────
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/requirements*.txt"
+      - "Dockerfile"
+      - "docker/Dockerfile"
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # 每周一 06:00 UTC
+
+jobs:
+  # ── Dependency Audit ──────────────────────
+  dependency-audit:
+    name: pip-audit (CVE Scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies
+        run: |
+          if [ -f backend/requirements.lock.txt ]; then
+            pip-audit -r backend/requirements.lock.txt --strict
+          elif [ -f backend/requirements.txt ]; then
+            pip-audit -r backend/requirements.txt --strict
+          else
+            echo "⚠️ No requirements file found, skipping audit"
+          fi
+        continue-on-error: false
+
+  # ── Secret Detection ──────────────────────
+  secret-detection:
+    name: Detect Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install detect-secrets
+        run: |
+          pip install detect-secrets
+          # 生成 baseline（首次运行启用）
+          # detect-secrets scan > .secrets.baseline
+
+      - name: Scan for secrets
+        run: |
+          if [ -f .secrets.baseline ]; then
+            detect-secrets scan --baseline .secrets.baseline
+          else
+            detect-secrets scan
+          fi
+        continue-on-error: true # baseline 未生成时不阻断
+
+  # ── Container Image Scan ──────────────────
+  container-scan:
+    name: Docker Image Trivy Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          tags: airdrop-alpha:scan-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: airdrop-alpha:scan-${{ github.sha }}
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  # ── Dependency Review (PR only) ──────────
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

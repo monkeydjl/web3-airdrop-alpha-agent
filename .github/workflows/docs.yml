@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────
+# Docs Link Check — Web3 Airdrop Alpha Agent System
+# ──────────────────────────────────────────────
+# 校验 docs/ 内 Markdown 相对链接有效性（Project Bootstrap §2 文档体系）
+# ──────────────────────────────────────────────
+
+name: Docs Link Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["docs/**", "*.md", "agents/**", "skills/**", "knowledge/**", "prompts/**"]
+  push:
+    branches: [main]
+    paths: ["docs/**", "*.md"]
+
+jobs:
+  markdown-link-check:
+    name: Check Markdown Links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run markdown-link-check
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          config-file: ".github/markdown-link-check.json"
+          folder-path: "docs, agents, skills, knowledge, prompts"

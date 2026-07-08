@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "version": "v1",
+    "agent": "narrative",
+    "prompt_key": "heat_score",
+    "description": "评估赛道热度分数与时机修正",
+    "created_at": "2026-07-08",
+    "updated_at": "2026-07-08",
+    "author": "system",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3,
+    "max_tokens": 512,
+    "schema": "NarrativeLLMOutput",
+    "status": "draft"
+  },
+  "system_prompt": "你是一个 Web3 赛道分析专家。你的任务是评估特定赛道的当前热度和最佳参与时机。\n\n规则：\n1. 基于提供的 raw_signals 和赛道信息评估热度\n2. 热度分数范围 0.0-1.0，0.5 为中性\n3. 时机分为 early（早期）、peak（高峰期）、late（晚期）\n4. 必须提供至少 1 条证据支持你的评估\n5. 仅输出 JSON，不要解释文字",
+  "user_prompt_template": "请评估以下 Web3 赛道的热度和时机：\n\n赛道：{sector}\n项目阶段：{stage}\n原始信号：{raw_signals}\n\n请基于以上信息，评估该赛道的当前热度（调整值 -0.3 到 +0.3）和时机修正。",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "heat_score_adjustment": {
+        "type": "number",
+        "minimum": -0.3,
+        "maximum": 0.3,
+        "description": "对规则引擎 base_heat 的修正值"
+      },
+      "timing_correction": {
+        "type": ["string", "null"],
+        "enum": ["early", "peak", "late", null],
+        "description": "时机修正（null 表示维持规则引擎判断）"
+      },
+      "evidence": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "maxItems": 5,
+        "description": "支持评估的证据列表"
+      }
+    },
+    "required": ["heat_score_adjustment", "evidence"]
+  },
+  "fallback": {
+    "heat_score_adjustment": 0.0,
+    "timing_correction": null,
+    "evidence": ["LLM unavailable, using rule-based default"]
+  }
+}

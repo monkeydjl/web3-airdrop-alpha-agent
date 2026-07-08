@@ -1,0 +1,31 @@
+{# prompt_json.jinja #}
+{# 变量: agent, prompt_key, version, description, model, temperature, max_tokens, fields[] #}
+{
+  "_meta": {
+    "version": "{{ version }}",
+    "agent": "{{ agent }}",
+    "prompt_key": "{{ prompt_key }}",
+    "description": "{{ description }}",
+    "created_at": "{{ timestamp }}",
+    "updated_at": "{{ timestamp }}",
+    "author": "system",
+    "model": "{{ model }}",
+    "temperature": {{ temperature }},
+    "max_tokens": {{ max_tokens }},
+    "schema": "{{ agent | capitalize }}LLMOutput"
+  },
+  "system_prompt": "You are an expert assistant for {{ agent }} analysis. Return valid JSON only.",
+  "user_prompt_template": "Analyze the following input:\n\n{% for f in fields %}{{ f.name }}: { {{ f.name }} }\n{% endfor %}",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      {% for f in fields %}
+      "{{ f.name }}": {
+        "type": "{{ f.json_type }}",
+        "description": "{{ f.description }}"
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    },
+    "required": []
+  }
+}

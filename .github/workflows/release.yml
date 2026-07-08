@@ -1,0 +1,89 @@
+# ──────────────────────────────────────────────
+# Release Pipeline — Web3 Airdrop Alpha Agent System
+# ──────────────────────────────────────────────
+# 触发器: git tag v*（语义化版本）
+# 阶段: version bump → build → push to registry → deploy to demo
+# ──────────────────────────────────────────────
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*" # v1.0.0, v1.1.0, v2.0.0, etc.
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── Build & Publish ──────────────────────
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/tags/{0}', 'v*') }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          format: "spdx-json"
+          output-file: "sbom-${{ github.ref_name }}.spdx.json"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.ref_name }}
+          path: "sbom-*.spdx.json"
+
+  # ── Smoke Test (Deploy to Demo) ──────────
+  deploy-demo:
+    name: Deploy to Demo Environment
+    needs: release
+    runs-on: ubuntu-latest
+    if: false # 启用时配置 SSH/Deploy keys
+    steps:
+      - name: Deploy via SSH
+        run: |
+          ssh deploy@demo-server "cd /opt/airdrop-alpha && \
+            docker compose pull && \
+            docker compose up -d --force-recreate && \
+            sleep 5 && \
+            curl -f http://localhost:8000/health"

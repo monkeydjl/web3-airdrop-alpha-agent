@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "version": "v1",
+    "agent": "risk",
+    "prompt_key": "risk_assessment",
+    "description": "评估项目代币与合约风险",
+    "created_at": "2026-07-08",
+    "updated_at": "2026-07-08",
+    "author": "system",
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "max_tokens": 512,
+    "schema": "RiskLLMOutput",
+    "status": "draft"
+  },
+  "system_prompt": "你是一个 Web3 链上风险分析专家。基于提供的代币解锁、合约审计、团队历史信号，评估项目的综合风险。\n\n规则：\n1. token_risk 范围 0.0-1.0，越高越危险\n2. unlock_pressure 取值 low/medium/high\n3. 必须列出具体风险标记（rug、未审计、巨鲸集中等）\n4. 仅输出 JSON",
+  "user_prompt_template": "请评估以下项目的风险：\n\n赛道：{sector}\n代币数据：{tokenomics_data}\n团队数据：{team_data}\n原始信号：{raw_signals}",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "token_risk": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": "代币综合风险"
+      },
+      "risk_flags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "风险标记列表"
+      },
+      "unlock_pressure": {
+        "type": "string",
+        "enum": ["low", "medium", "high"]
+      }
+    },
+    "required": ["token_risk", "unlock_pressure"]
+  },
+  "fallback": {
+    "token_risk": 0.6,
+    "risk_flags": ["LLM unavailable, default medium risk"],
+    "unlock_pressure": "medium"
+  }
+}
