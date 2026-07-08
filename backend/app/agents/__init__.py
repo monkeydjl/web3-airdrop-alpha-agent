@@ -11,6 +11,7 @@ from app.agents.base import (
     RawProject,
 )
 from app.agents.collector import CollectorAgent
+from app.agents.narrative import NarrativeAgent
 
 __all__ = [
     "BaseAgent",
@@ -19,4 +20,5 @@ __all__ = [
     "PipelineState",
     "RawProject",
     "CollectorAgent",
+    "NarrativeAgent",
 ]
