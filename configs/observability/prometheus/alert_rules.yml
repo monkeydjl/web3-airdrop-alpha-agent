@@ -1,0 +1,158 @@
+# Prometheus 告警规则
+# 配置文件：configs/observability/prometheus/alert_rules.yml
+
+groups:
+  - name: api_alerts
+    interval: 30s
+    rules:
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API p95 延迟过高"
+          description: "{{ $labels.endpoint }} 的 p95 延迟为 {{ $value }}s，超过 1s 阈值持续 5 分钟"
+
+      - alert: HighAPIErrorRate
+        expr: rate(api_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API 错误率过高"
+          description: "{{ $labels.endpoint }} 错误率为 {{ $value }}/s"
+
+      - alert: APIDown
+        expr: up{job="airdrop-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API 服务不可用"
+          description: "Backend 服务已下线超过 1 分钟"
+
+  - name: pipeline_alerts
+    interval: 30s
+    rules:
+      - alert: PipelineFailureRate
+        expr: sum(rate(pipeline_runs_total{status="failed"}[5m])) / sum(rate(pipeline_runs_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "Pipeline 失败率过高"
+          description: "Pipeline 失败率为 {{ $value | humanizePercentage }}，超过 10% 持续 10 分钟"
+
+      - alert: PipelineConsecutiveFailures
+        expr: increase(pipeline_runs_total{status="failed"}[15m]) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          component: pipeline
+        annotations:
+          summary: "Pipeline 连续失败"
+          description: "最近 15 分钟内 Pipeline 失败 {{ $value }} 次"
+
+      - alert: PipelineDurationTooLong
+        expr: histogram_quantile(0.95, rate(pipeline_duration_seconds_bucket[5m])) > 600
+        for: 10m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "Pipeline 执行时间过长"
+          description: "Pipeline p95 执行时间为 {{ $value }}s，超过 10 分钟"
+
+      - alert: NoProjectsDiscovered
+        expr: increase(projects_discovered_total[24h]) == 0
+        for: 1h
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "24 小时内未发现新项目"
+          description: "数据采集可能存在问题"
+
+  - name: database_alerts
+    interval: 60s
+    rules:
+      - alert: DatabaseDiskSpaceHigh
+        expr: database_size_bytes / database_max_size_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "数据库磁盘空间不足"
+          description: "数据库使用率为 {{ $value | humanizePercentage }}，超过 80%"
+
+      - alert: DatabaseSlowQueries
+        expr: histogram_quantile(0.95, rate(database_query_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "数据库查询慢"
+          description: "数据库 p95 查询时间为 {{ $value }}s，超过 1s"
+
+  - name: system_alerts
+    interval: 60s
+    rules:
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "内存使用率过高"
+          description: "内存使用率为 {{ $value | humanizePercentage }}，超过 85%"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "CPU 使用率为 {{ $value | humanizePercentage }}，超过 80% 持续 10 分钟"
+
+      - alert: TooManyOpenFiles
+        expr: process_open_fds / process_max_fds > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "打开文件数过多"
+          description: "打开文件数占比为 {{ $value | humanizePercentage }}，超过 80%"
+
+  - name: agent_alerts
+    interval: 30s
+    rules:
+      - alert: AgentHighFailureRate
+        expr: sum(rate(agent_runs_total{status="failed"}[5m])) by (agent_name) / sum(rate(agent_runs_total[5m])) by (agent_name) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: agent
+        annotations:
+          summary: "Agent {{ $labels.agent_name }} 失败率过高"
+          description: "Agent {{ $labels.agent_name }} 失败率为 {{ $value | humanizePercentage }}，超过 10%"
+
+      - alert: AgentTimeout
+        expr: increase(agent_timeout_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: agent
+        annotations:
+          summary: "Agent {{ $labels.agent_name }} 超时"
+          description: "Agent {{ $labels.agent_name }} 在最近 5 分钟内超时 {{ $value }} 次"

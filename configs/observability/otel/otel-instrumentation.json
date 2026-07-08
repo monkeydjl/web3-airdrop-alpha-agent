@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opentelemetry.io/schemas/1.25.0",
+  "resource": {
+    "service.name": "airdrop-alpha",
+    "service.namespace": "web3",
+    "service.version": "0.1.0",
+    "deployment.environment": "production",
+    "host.name": "${HOSTNAME}"
+  },
+  "instrumentation": {
+    "python": {
+      "enabled": true,
+      "packages": ["opentelemetry-distro", "opentelemetry-instrumentation-fastapi", "opentelemetry-instrumentation-sqlite3"],
+      "excluded_urls": ["/health", "/metrics"]
+    }
+  },
+  "sampling": {
+    "trace_id_ratio": 0.1
+  },
+  "propagation": ["tracecontext", "baggage"]
+}
