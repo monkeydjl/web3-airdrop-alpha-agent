@@ -20,7 +20,7 @@ if errorlevel 1 (
 )
 
 python --version
-echo [✓] Python 环境正常
+echo [OK] Python 环境正常
 echo.
 
 REM 检查依赖
@@ -35,7 +35,7 @@ if not exist "venv\" (
         pause
         exit /b 1
     )
-    echo [✓] 虚拟环境创建成功
+    echo [OK] 虚拟环境创建成功
 )
 
 echo [提示] 激活虚拟环境...
@@ -46,7 +46,7 @@ pip install -e . >nul 2>&1
 if errorlevel 1 (
     echo [警告] 依赖安装可能有问题，尝试继续...
 ) else (
-    echo [✓] 依赖安装完成
+    echo [OK] 依赖安装完成
 )
 echo.
 
@@ -54,18 +54,18 @@ REM 初始化数据库
 echo [3/6] 初始化数据库...
 if not exist "data\" (
     mkdir data
-    echo [✓] 创建数据目录
+    echo [OK] 创建数据目录
 )
-echo [✓] 数据库就绪
+echo [OK] 数据库就绪
 echo.
 
 REM 启动后端
 echo [4/6] 启动后端服务...
-start "后端 API" cmd /k "cd /d %~dp0backend && call venv\Scripts\activate.bat && echo [✓] 后端服务启动中... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "后端 API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] 后端服务启动中... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 echo [提示] 等待后端服务启动...
 timeout /t 3 /nobreak >nul
-echo [✓] 后端服务已启动
+echo [OK] 后端服务已启动
 echo.
 
 REM 检查前端
@@ -76,15 +76,15 @@ if not exist "index.html" (
     pause
     exit /b 1
 )
-echo [✓] 前端文件就绪
+echo [OK] 前端文件就绪
 echo.
 
 REM 启动前端（使用 Python HTTP 服务器）
 echo [6/6] 启动前端服务...
-start "前端界面" cmd /k "cd /d %~dp0frontend && echo [✓] 前端服务启动中... && python -m http.server 3000"
+start "前端界面" cmd /k "cd /d "%~dp0frontend" && echo [OK] 前端服务启动中... && python -m http.server 3000"
 
 timeout /t 2 /nobreak >nul
-echo [✓] 前端服务已启动
+echo [OK] 前端服务已启动
 echo.
 
 REM 打开浏览器
