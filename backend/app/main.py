@@ -110,11 +110,9 @@ def create_app(db_override=None) -> FastAPI:
             },
         }
 
-    # ── TODO: 注册路由 ──────────────────────────
-    # from app.routers.v1 import run, projects, project
-    # app.include_router(run.router, prefix="/api/v1")
-    # app.include_router(projects.router, prefix="/api/v1")
-    # app.include_router(project.router, prefix="/api/v1")
+    # ── 注册路由 ────────────────────────────────
+    from app.routers.v1 import run
+    app.include_router(run.router, prefix="/api/v1", tags=["v1"])
 
     # ── 启动事件 ────────────────────────────────
     @app.on_event("startup")

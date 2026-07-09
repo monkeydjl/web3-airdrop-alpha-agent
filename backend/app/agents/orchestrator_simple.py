@@ -127,6 +127,7 @@ class SimpleOrchestrator:
             top_score=top_score,
             elapsed_ms=elapsed_ms,
             errors=errors,
+            states=states,  # Include states for API access
         )
 
     async def _run_single_project(

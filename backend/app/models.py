@@ -110,3 +110,5 @@ class RunResponse(BaseModel):
     top_score: int | None = None
     elapsed_ms: float
     errors: list[dict[str, str]] = Field(default_factory=list)
+    # Store states for API access
+    states: list[Any] = Field(default_factory=list, exclude=True)
