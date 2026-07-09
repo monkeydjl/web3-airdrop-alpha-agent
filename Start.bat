@@ -1,111 +1,111 @@
 @echo off
 chcp 65001 >nul
-title Web3 Airdrop Alpha - 一键启动
+title Web3 Airdrop Alpha - Startup
 
 echo.
 echo ========================================
 echo  Web3 Airdrop Alpha Agent System
-echo  一键启动脚本
+echo  One-Click Startup Script
 echo ========================================
 echo.
 
-REM 检查 Python
-echo [1/6] 检查 Python 环境...
+REM Check Python
+echo [1/6] Checking Python environment...
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [错误] 未找到 Python，请先安装 Python 3.10+
-    echo 下载地址: https://www.python.org/downloads/
+    echo [ERROR] Python not found. Please install Python 3.10+
+    echo Download: https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
 python --version
-echo [OK] Python 环境正常
+echo [OK] Python environment ready
 echo.
 
-REM 检查依赖
-echo [2/6] 检查后端依赖...
+REM Check dependencies
+echo [2/6] Checking backend dependencies...
 cd /d "%~dp0backend"
 
 if not exist "venv\" (
-    echo [提示] 首次运行，创建虚拟环境...
+    echo [INFO] First run, creating virtual environment...
     python -m venv venv
     if errorlevel 1 (
-        echo [错误] 创建虚拟环境失败
+        echo [ERROR] Failed to create virtual environment
         pause
         exit /b 1
     )
-    echo [OK] 虚拟环境创建成功
+    echo [OK] Virtual environment created
 )
 
-echo [提示] 激活虚拟环境...
+echo [INFO] Activating virtual environment...
 call venv\Scripts\activate.bat
 
-echo [提示] 安装/更新依赖...
+echo [INFO] Installing/updating dependencies...
 pip install -e . >nul 2>&1
 if errorlevel 1 (
-    echo [警告] 依赖安装可能有问题，尝试继续...
+    echo [WARNING] Dependencies installation may have issues, continuing...
 ) else (
-    echo [OK] 依赖安装完成
+    echo [OK] Dependencies installed
 )
 echo.
 
-REM 初始化数据库
-echo [3/6] 初始化数据库...
+REM Initialize database
+echo [3/6] Initializing database...
 if not exist "data\" (
     mkdir data
-    echo [OK] 创建数据目录
+    echo [OK] Created data directory
 )
-echo [OK] 数据库就绪
+echo [OK] Database ready
 echo.
 
-REM 启动后端
-echo [4/6] 启动后端服务...
-start "后端 API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] 后端服务启动中... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+REM Start backend
+echo [4/6] Starting backend service...
+start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
-echo [提示] 等待后端服务启动...
+echo [INFO] Waiting for backend to start...
 timeout /t 3 /nobreak >nul
-echo [OK] 后端服务已启动
+echo [OK] Backend service started
 echo.
 
-REM 检查前端
-echo [5/6] 准备前端界面...
+REM Check frontend
+echo [5/6] Preparing frontend interface...
 cd /d "%~dp0frontend"
 if not exist "index.html" (
-    echo [错误] 前端文件不存在
+    echo [ERROR] Frontend files not found
     pause
     exit /b 1
 )
-echo [OK] 前端文件就绪
+echo [OK] Frontend files ready
 echo.
 
-REM 启动前端（使用 Python HTTP 服务器）
-echo [6/6] 启动前端服务...
-start "前端界面" cmd /k "cd /d "%~dp0frontend" && echo [OK] 前端服务启动中... && python -m http.server 3000"
+REM Start frontend (using Python HTTP server)
+echo [6/6] Starting frontend service...
+start "Frontend UI" cmd /k "cd /d "%~dp0frontend" && echo [OK] Frontend starting... && python -m http.server 3000"
 
 timeout /t 2 /nobreak >nul
-echo [OK] 前端服务已启动
+echo [OK] Frontend service started
 echo.
 
-REM 打开浏览器
+REM Open browser
 echo ========================================
-echo  启动完成！
+echo  Startup Complete!
 echo ========================================
 echo.
-echo  后端 API:  http://localhost:8000
-echo  API 文档:  http://localhost:8000/docs
-echo  前端界面:  http://localhost:3000
+echo  Backend API:  http://localhost:8000
+echo  API Docs:     http://localhost:8000/docs
+echo  Frontend UI:  http://localhost:3000
 echo.
-echo  按任意键打开前端界面...
-echo  (关闭此窗口不会停止服务)
+echo  Press any key to open frontend in browser...
+echo  (Closing this window will NOT stop services)
 echo ========================================
 pause >nul
 
 start http://localhost:3000
 
 echo.
-echo [提示] 前端界面已在浏览器中打开
-echo [提示] 后端和前端服务在独立窗口运行
-echo [提示] 关闭独立窗口可停止对应服务
+echo [INFO] Frontend opened in browser
+echo [INFO] Backend and frontend running in separate windows
+echo [INFO] Close those windows to stop services
 echo.
 pause
