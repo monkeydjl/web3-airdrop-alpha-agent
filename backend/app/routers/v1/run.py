@@ -13,12 +13,13 @@ Reference:
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel, Field, ConfigDict
 import structlog
 
 from app.agents.base import RawProject, AgentContext
 from app.agents.orchestrator_simple import run_orchestrator
+from app.openapi import RUN_REQUEST_EXAMPLES, RUN_RESPONSE_EXAMPLE, ERROR_RESPONSE_EXAMPLES
 
 logger = structlog.get_logger(__name__)
 
@@ -189,13 +190,57 @@ class ErrorResponse(BaseModel):
     "/run",
     response_model=RunResponse,
     responses={
-        400: {"model": ErrorResponse},
-        500: {"model": ErrorResponse},
+        400: {
+            "model": ErrorResponse,
+            "description": "输入验证失败",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "validation_error": ERROR_RESPONSE_EXAMPLES["validation_error"]
+                    }
+                }
+            }
+        },
+        500: {
+            "model": ErrorResponse,
+            "description": "Pipeline 执行错误",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "pipeline_error": ERROR_RESPONSE_EXAMPLES["pipeline_error"]
+                    }
+                }
+            }
+        },
     },
     summary="运行评分 Pipeline",
-    description="提交项目列表，运行完整评分 Pipeline，返回评分结果。",
+    description=(
+        "提交项目列表，运行完整评分 Pipeline，返回评分结果。\n\n"
+        "## 评分流程\n\n"
+        "1. **数据收集**: 接收项目基本信息和空投信号\n"
+        "2. **并行分析**: 4 个 Agent 同时分析\n"
+        "   - Narrative Agent: 叙事时机和赛道热度\n"
+        "   - Team Agent: 团队信誉和背书\n"
+        "   - Risk Agent: 代币风险和解锁压力\n"
+        "   - Tokenomics Agent: 代币经济学模型\n"
+        "3. **综合评分**: Scorer Agent 加权计算最终分数\n"
+        "4. **三档分类**: FARM (≥75) / WATCH (60-74) / IGNORE (<60)\n\n"
+        "## 限制\n\n"
+        "- 每次最多 100 个项目\n"
+        "- 每个项目名称必填，最长 200 字符\n"
+        "- URL/sector/stage 可选\n\n"
+        "## 返回内容\n\n"
+        "- 前 10 个评分项目（按分数排序）\n"
+        "- 每个项目包含完整分析结果和评分理由\n"
+        "- 运行统计信息（总数/成功/失败）\n"
+    ),
 )
-async def run_pipeline(request: RunRequest) -> RunResponse:
+async def run_pipeline(
+    request: RunRequest = Body(
+        ...,
+        openapi_examples=RUN_REQUEST_EXAMPLES,
+    )
+) -> RunResponse:
     """运行评分 Pipeline。
 
     Args:

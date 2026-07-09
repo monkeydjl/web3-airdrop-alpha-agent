@@ -37,10 +37,51 @@ def create_app(db_override=None) -> FastAPI:
     """
     app = FastAPI(
         title="Web3 Airdrop Alpha Agent System",
-        description="多智能体驱动的 Web3 早期项目识别与空投参与决策系统",
+        description=(
+            "多智能体驱动的 Web3 早期项目识别与空投参与决策系统\n\n"
+            "## 核心功能\n\n"
+            "- **智能评分**: 4 个 AI Agent 并行分析项目（叙事时机、团队信誉、代币风险、代币经济学）\n"
+            "- **三档建议**: FARM（高度推荐）、WATCH（观察）、IGNORE（忽略）\n"
+            "- **批量处理**: 一次最多处理 100 个项目\n"
+            "- **实时分析**: 基于启发式规则的快速评分（LLM 增强可选）\n\n"
+            "## API 版本\n\n"
+            "- **v1**: MVP 版本，支持批量评分和项目查询\n"
+            "- **v2** (规划中): 数据持久化、历史记录、高级筛选\n\n"
+            "## 使用示例\n\n"
+            "```bash\n"
+            "# 批量评分\n"
+            "curl -X POST http://localhost:8000/api/v1/run \\\n"
+            "  -H 'Content-Type: application/json' \\\n"
+            "  -d '{\"projects\": [{\"name\": \"LayerX\", \"sector\": \"L2\", \"has_testnet\": true}]}'\n\n"
+            "# 查询项目\n"
+            "curl http://localhost:8000/api/v1/projects?label=FARM&sort_by=score\n"
+            "```\n"
+        ),
         version=settings.app_version,
         docs_url="/docs",
         redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        openapi_tags=[
+            {
+                "name": "system",
+                "description": "系统健康检查和版本信息",
+            },
+            {
+                "name": "pipeline",
+                "description": "评分 Pipeline - 批量运行项目分析和评分",
+            },
+            {
+                "name": "projects",
+                "description": "项目查询 - 查询已评分项目列表和详情（V2 实现）",
+            },
+        ],
+        contact={
+            "name": "Web3 Airdrop Alpha System",
+            "url": "https://github.com/your-org/web3-airdrop-alpha",
+        },
+        license_info={
+            "name": "MIT",
+        },
     )
 
     # ── 中间件 ──────────────────────────────────
@@ -109,6 +150,14 @@ def create_app(db_override=None) -> FastAPI:
                 "llm_enabled": settings.is_llm_enabled,
             },
         }
+
+    # ── 自定义 OpenAPI ──────────────────────────
+    from app.openapi import customize_openapi_schema
+
+    def custom_openapi():
+        return customize_openapi_schema(app)
+
+    app.openapi = custom_openapi
 
     # ── 注册路由 ────────────────────────────────
     from app.routers.v1 import run, projects

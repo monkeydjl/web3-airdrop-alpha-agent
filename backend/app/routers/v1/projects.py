@@ -17,6 +17,8 @@ from fastapi import APIRouter, Query, Path, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 import structlog
 
+from app.openapi import PROJECTS_LIST_RESPONSE_EXAMPLE, ERROR_RESPONSE_EXAMPLES
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["projects"])
@@ -101,8 +103,30 @@ class ProjectsResponse(BaseModel):
 @router.get(
     "/projects",
     response_model=ProjectsResponse,
+    responses={
+        200: {
+            "description": "项目列表查询成功",
+            "content": {
+                "application/json": {
+                    "example": PROJECTS_LIST_RESPONSE_EXAMPLE
+                }
+            }
+        }
+    },
     summary="查询项目列表",
-    description="分页查询项目列表，支持按 score/label/sector 筛选和排序。",
+    description=(
+        "分页查询项目列表，支持按 score/label/sector 筛选和排序。\n\n"
+        "## 查询参数\n\n"
+        "- **分页**: page (页码), page_size (每页数量, 最大 100)\n"
+        "- **筛选**: label (FARM/WATCH/IGNORE), sector, stage, min_score\n"
+        "- **排序**: sort_by (score/name/created_at), sort_order (asc/desc)\n\n"
+        "## MVP 限制\n\n"
+        "当前版本返回空列表，V2 将连接数据库返回实际数据。\n\n"
+        "## 示例\n\n"
+        "```\n"
+        "GET /api/v1/projects?label=FARM&min_score=70&sort_by=score&sort_order=desc\n"
+        "```\n"
+    ),
 )
 async def list_projects(
     page: int = Query(1, ge=1, description="页码（从1开始）"),
@@ -175,8 +199,28 @@ async def list_projects(
 @router.get(
     "/projects/{project_id}",
     response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "not_found": ERROR_RESPONSE_EXAMPLES["not_found"]
+                    }
+                }
+            }
+        }
+    },
     summary="获取项目详情",
-    description="根据项目 ID 获取完整项目信息。",
+    description=(
+        "根据项目 ID 获取完整项目信息。\n\n"
+        "## MVP 限制\n\n"
+        "当前版本返回 404，V2 将连接数据库返回实际项目详情。\n\n"
+        "## 示例\n\n"
+        "```\n"
+        "GET /api/v1/projects/layerx-l2-001\n"
+        "```\n"
+    ),
 )
 async def get_project(
     project_id: str = Path(..., description="项目 ID"),
