@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # ══════════════════════════════════════════════════════════════
+  # Backend API Service
+  # ══════════════════════════════════════════════════════════════
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: airdrop-alpha-backend
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # 持久化数据库
+      - ./data:/app/data
+      # 持久化日志
+      - ./logs:/app/logs
+    environment:
+      # 应用配置
+      - APP_ENV=${APP_ENV:-production}
+      - APP_VERSION=${APP_VERSION:-0.1.0}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+
+      # 数据库配置
+      - DB_PATH=/app/data/app.db
+
+      # LLM 配置（可选）
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_ENABLED=${LLM_ENABLED:-false}
+
+      # API 配置
+      - MAX_CONCURRENT_PROJECTS=${MAX_CONCURRENT_PROJECTS:-10}
+      - LLM_SEMAPHORE_SIZE=${LLM_SEMAPHORE_SIZE:-5}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - airdrop-network
+    labels:
+      - "com.example.service=airdrop-alpha-backend"
+      - "com.example.environment=${APP_ENV:-production}"
+
+  # ══════════════════════════════════════════════════════════════
+  # Nginx Reverse Proxy (可选，用于生产环境)
+  # ══════════════════════════════════════════════════════════════
+  nginx:
+    image: nginx:alpine
+    container_name: airdrop-alpha-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - airdrop-network
+    profiles:
+      - production
+    labels:
+      - "com.example.service=airdrop-alpha-nginx"
+
+networks:
+  airdrop-network:
+    driver: bridge
+
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
