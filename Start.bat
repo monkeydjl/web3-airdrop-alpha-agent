@@ -41,13 +41,19 @@ if not exist "venv\" (
 echo [INFO] Activating virtual environment...
 call venv\Scripts\activate.bat
 
-echo [INFO] Installing/updating dependencies...
-pip install -e . >nul 2>&1
+echo [INFO] Installing/updating dependencies (this may take a minute)...
+pip install -r requirements.txt --quiet
 if errorlevel 1 (
-    echo [WARNING] Dependencies installation may have issues, continuing...
-) else (
-    echo [OK] Dependencies installed
+    echo [ERROR] Failed to install dependencies
+    echo [INFO] Trying alternative installation method...
+    pip install fastapi uvicorn structlog pydantic pydantic-settings python-multipart openpyxl pandas pytest pytest-asyncio pytest-cov httpx
+    if errorlevel 1 (
+        echo [ERROR] Dependency installation failed
+        pause
+        exit /b 1
+    )
 )
+echo [OK] Dependencies installed
 echo.
 
 REM Initialize database

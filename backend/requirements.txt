@@ -1,0 +1,12 @@
+fastapi==0.115.12
+uvicorn[standard]==0.35.6
+pydantic==2.10.8
+pydantic-settings==2.7.3
+structlog==25.1.0
+python-multipart==0.0.20
+openpyxl==3.1.5
+pandas==2.2.3
+pytest==8.3.5
+pytest-asyncio==1.0.0
+pytest-cov==6.0.1
+httpx==0.29.2
