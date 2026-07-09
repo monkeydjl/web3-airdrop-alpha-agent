@@ -111,6 +111,10 @@ def create_app(db_override=None) -> FastAPI:
         )
         return response
 
+    # ── 初始化数据库 ────────────────────────────
+    from app.db import init_db
+    init_db()  # 幂等建表
+
     # ── 全局异常处理 ────────────────────────────
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

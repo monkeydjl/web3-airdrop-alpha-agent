@@ -30,6 +30,7 @@ from app.agents.risk import RiskAgent
 from app.agents.tokenomics import TokenomicsAgent
 from app.agents.scorer import ScorerAgent
 from app.models import RunResponse
+from app.repository import ProjectRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -58,12 +59,14 @@ class SimpleOrchestrator:
         self,
         projects: List[RawProject],
         context: AgentContext,
+        save_to_db: bool = True,
     ) -> RunResponse:
         """Run complete pipeline for all projects.
 
         Args:
             projects: List of raw projects from collector
             context: Shared agent context
+            save_to_db: Whether to save results to database (default True)
 
         Returns:
             RunResponse with aggregated results
@@ -119,6 +122,25 @@ class SimpleOrchestrator:
             error_count=len(errors),
             elapsed_ms=elapsed_ms,
         )
+
+        # Save to database if enabled
+        if save_to_db and states:
+            try:
+                repo = ProjectRepository()
+                saved_count = repo.save_batch(states)
+                logger.info(
+                    "orchestrator.db_save_complete",
+                    run_id=context.run_id,
+                    saved_count=saved_count,
+                    total_count=len(states),
+                )
+            except Exception as e:
+                logger.error(
+                    "orchestrator.db_save_failed",
+                    run_id=context.run_id,
+                    error=str(e),
+                    exc_info=True,
+                )
 
         return RunResponse(
             run_id=context.run_id,
@@ -264,6 +286,7 @@ async def run_orchestrator(
     projects: List[RawProject],
     run_id: str | None = None,
     enable_llm: bool = False,
+    save_to_db: bool = True,
 ) -> RunResponse:
     """Convenience function to run orchestrator.
 
@@ -271,6 +294,7 @@ async def run_orchestrator(
         projects: List of raw projects to process
         run_id: Optional run ID (generated if not provided)
         enable_llm: Whether to enable LLM enhancements (MVP: False)
+        save_to_db: Whether to save results to database (default True)
 
     Returns:
         RunResponse with results
@@ -284,4 +308,4 @@ async def run_orchestrator(
     )
 
     orchestrator = SimpleOrchestrator()
-    return await orchestrator.run_pipeline(projects, context)
+    return await orchestrator.run_pipeline(projects, context, save_to_db=save_to_db)

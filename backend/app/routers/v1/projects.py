@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, ConfigDict
 import structlog
 
 from app.openapi import PROJECTS_LIST_RESPONSE_EXAMPLE, ERROR_RESPONSE_EXAMPLES
+from app.repository import ProjectRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -165,21 +166,49 @@ async def list_projects(
         sort_order=sort_order,
     )
 
-    # MVP: 返回空列表
-    # V2: 从数据库查询
-    # projects = await db.query_projects(
-    #     page=page,
-    #     page_size=page_size,
-    #     filters={...},
-    #     sort_by=sort_by,
-    #     sort_order=sort_order,
-    # )
+    # Query from database
+    try:
+        repo = ProjectRepository()
+        db_projects, total = repo.list_projects(
+            page=page,
+            page_size=page_size,
+            label=label,
+            sector=sector,
+            stage=stage,
+            min_score=min_score,
+            sort_by=sort_by.value,
+            sort_order=sort_order.value,
+        )
+
+        # Convert to response format
+        projects = [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "sector": p["sector"],
+                "stage": p["stage"],
+                "score": p["score"],
+                "label": p["label"],
+                "confidence": p["confidence"],
+            }
+            for p in db_projects
+        ]
+
+    except Exception as e:
+        logger.error(
+            "api.projects.list_failed",
+            error=str(e),
+            exc_info=True,
+        )
+        # Return empty on error (graceful degradation)
+        projects = []
+        total = 0
 
     return ProjectsResponse(
         ok=True,
         data={
-            "projects": [],  # V2: 实际项目列表
-            "total": 0,
+            "projects": projects,
+            "total": total,
             "page": page,
             "page_size": page_size,
             "filters": {
@@ -189,8 +218,8 @@ async def list_projects(
                 "min_score": min_score,
             },
             "sort": {
-                "by": sort_by,
-                "order": sort_order,
+                "by": sort_by.value,
+                "order": sort_order.value,
             }
         }
     )
@@ -225,7 +254,7 @@ async def list_projects(
 async def get_project(
     project_id: str = Path(..., description="项目 ID"),
 ) -> ProjectsResponse:
-    """获取单个项目详情（MVP: 返回 404，V2 将连接数据库）.
+    """获取单个项目详情.
 
     Args:
         project_id: 项目 ID
@@ -241,16 +270,65 @@ async def get_project(
         project_id=project_id,
     )
 
-    # MVP: 返回 404
-    # V2: 从数据库查询
-    # project = await db.get_project(project_id)
-    # if not project:
-    #     raise HTTPException(status_code=404, detail="Project not found")
+    # Query from database
+    try:
+        repo = ProjectRepository()
+        project = repo.get_by_id(project_id)
 
-    raise HTTPException(
-        status_code=404,
-        detail={
-            "code": "NOT_FOUND",
-            "message": f"Project {project_id} not found (database not implemented in MVP)"
-        }
-    )
+        if not project:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"Project {project_id} not found"
+                }
+            )
+
+        # Parse JSON fields
+        import json
+        narrative = json.loads(project["narrative_json"]) if project.get("narrative_json") else None
+        team = json.loads(project["team_json"]) if project.get("team_json") else None
+        risk = json.loads(project["risk_json"]) if project.get("risk_json") else None
+        tokenomics = json.loads(project["tokenomics_json"]) if project.get("tokenomics_json") else None
+        reason = json.loads(project["reason"]) if project.get("reason") else None
+
+        return ProjectsResponse(
+            ok=True,
+            data={
+                "project": {
+                    "id": project["id"],
+                    "name": project["name"],
+                    "url": project["url"],
+                    "sector": project["sector"],
+                    "stage": project["stage"],
+                    "score": project["score"],
+                    "label": project["label"],
+                    "confidence": project["confidence"],
+                    "reason": reason,
+                    "narrative": narrative,
+                    "team": team,
+                    "risk": risk,
+                    "tokenomics": tokenomics,
+                    "source": project["source"],
+                    "created_at": project["created_at"],
+                    "updated_at": project["updated_at"],
+                }
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "api.projects.get_failed",
+            project_id=project_id,
+            error=str(e),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": f"Failed to retrieve project: {str(e)}"
+            }
+        )

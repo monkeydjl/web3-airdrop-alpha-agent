@@ -168,23 +168,24 @@ class TestListProjectsEndpoint:
         assert response.status_code == 422
 
     def test_list_projects_returns_empty_in_mvp(self, client):
-        """Test that MVP returns empty list (no database yet)."""
+        """Test that projects list returns data from database."""
         response = client.get("/api/v1/projects")
         assert response.status_code == 200
 
         data = response.json()
         result = data["data"]
-        # MVP should return empty projects list
+        # Now returns actual data from database
         assert isinstance(result["projects"], list)
-        assert result["total"] == 0
+        assert isinstance(result["total"], int)
+        assert result["total"] >= 0
 
 
 class TestGetProjectEndpoint:
     """Test GET /api/v1/projects/{project_id} endpoint."""
 
-    def test_get_project_returns_404_in_mvp(self, client):
-        """Test that getting a project returns 404 in MVP (no database)."""
-        response = client.get("/api/v1/projects/test-project-001")
+    def test_get_project_returns_404_for_nonexistent(self, client):
+        """Test that getting a non-existent project returns 404."""
+        response = client.get("/api/v1/projects/nonexistent-project-id")
         assert response.status_code == 404
 
         data = response.json()
@@ -196,12 +197,12 @@ class TestGetProjectEndpoint:
             "simple-id",
             "uuid-12345678-1234-1234-1234-123456789abc",
             "project_with_underscore",
-            "project-001",
+            "project-999",  # Changed to avoid collision with saved projects
         ]
 
         for project_id in test_ids:
             response = client.get(f"/api/v1/projects/{project_id}")
-            # Should return 404 in MVP (no database)
+            # Should return 404 for non-existent projects
             assert response.status_code == 404
 
 
