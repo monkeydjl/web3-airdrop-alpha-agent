@@ -61,7 +61,7 @@ echo.
 
 REM Start backend
 echo [4/6] Starting backend service...
-start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8002"
 
 echo [INFO] Waiting for backend to start...
 timeout /t 3 /nobreak >nul
@@ -81,7 +81,7 @@ echo.
 
 REM Start frontend (using Python HTTP server)
 echo [6/6] Starting frontend service...
-start "Frontend UI" cmd /k "cd /d "%~dp0frontend" && echo [OK] Frontend starting... && python -m http.server 3000"
+start "Frontend UI" cmd /k "cd /d "%~dp0frontend" && echo [OK] Frontend starting... && python -m http.server 3002"
 
 timeout /t 2 /nobreak >nul
 echo [OK] Frontend service started
@@ -92,16 +92,16 @@ echo ========================================
 echo  Startup Complete!
 echo ========================================
 echo.
-echo  Backend API:  http://localhost:8000
-echo  API Docs:     http://localhost:8000/docs
-echo  Frontend UI:  http://localhost:3000
+echo  Backend API:  http://localhost:8002
+echo  API Docs:     http://localhost:8002/docs
+echo  Frontend UI:  http://localhost:3002
 echo.
 echo  Press any key to open frontend in browser...
 echo  (Closing this window will NOT stop services)
 echo ========================================
 pause >nul
 
-start http://localhost:3000
+start http://localhost:3002
 
 echo.
 echo [INFO] Frontend opened in browser
