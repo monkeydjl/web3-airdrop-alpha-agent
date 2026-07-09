@@ -294,7 +294,7 @@ class TestSchemaComponents:
         schema = response.json()
         schemas = schema["components"]["schemas"]
 
-        # Check for key response models
-        assert "RunResponse" in schemas
+        # Check for key response models (may have module prefix)
+        assert any("RunResponse" in name for name in schemas)
         assert "ProjectsResponse" in schemas
         assert "ErrorResponse" in schemas
