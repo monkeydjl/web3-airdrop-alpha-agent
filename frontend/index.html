@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web3 Airdrop Alpha - 测试界面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            background: #f0f0f0;
+        }
+
+        .tab.active {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .panel {
+            display: none;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        textarea {
+            min-height: 100px;
+            font-family: monospace;
+        }
+
+        .checkbox-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .result.error {
+            border-left-color: #f44336;
+            background: #ffebee;
+        }
+
+        .result pre {
+            overflow-x: auto;
+            font-size: 12px;
+        }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .project-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+
+        .project-card.FARM {
+            border-left: 4px solid #4CAF50;
+        }
+
+        .project-card.WATCH {
+            border-left: 4px solid #FF9800;
+        }
+
+        .project-card.IGNORE {
+            border-left: 4px solid #f44336;
+        }
+
+        .project-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .project-score {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .project-label {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .project-label.FARM {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .project-label.WATCH {
+            background: #FF9800;
+            color: white;
+        }
+
+        .project-label.IGNORE {
+            background: #f44336;
+            color: white;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .quick-actions button {
+            background: #2196F3;
+        }
+
+        .quick-actions button:hover {
+            background: #0b7dda;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Web3 Airdrop Alpha Agent System</h1>
+            <p class="subtitle">测试界面 - 快速验证系统功能</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('evaluate')">评分测试</button>
+            <button class="tab" onclick="switchTab('list')">项目列表</button>
+            <button class="tab" onclick="switchTab('import')">批量导入</button>
+            <button class="tab" onclick="switchTab('export')">导出数据</button>
+        </div>
+
+        <!-- 评分测试面板 -->
+        <div id="evaluate" class="panel active">
+            <h2>单项目评分测试</h2>
+            <form id="evaluateForm" onsubmit="evaluateProject(event)">
+                <div class="form-group">
+                    <label>项目名称 *</label>
+                    <input type="text" name="name" required placeholder="例如: LayerX">
+                </div>
+
+                <div class="form-group">
+                    <label>项目 URL</label>
+                    <input type="text" name="url" placeholder="https://example.xyz">
+                </div>
+
+                <div class="form-group">
+                    <label>赛道</label>
+                    <select name="sector">
+                        <option value="">-- 选择赛道 --</option>
+                        <option value="L2">L2 扩容</option>
+                        <option value="DeFi">DeFi</option>
+                        <option value="Gaming">Gaming</option>
+                        <option value="NFT">NFT</option>
+                        <option value="Restaking">Restaking</option>
+                        <option value="Modular">Modular</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>项目阶段</label>
+                    <select name="stage">
+                        <option value="">-- 选择阶段 --</option>
+                        <option value="ideation">构思期</option>
+                        <option value="testnet">测试网</option>
+                        <option value="mainnet">主网</option>
+                        <option value="growth">增长期</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>空投信号</label>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="has_testnet" id="has_testnet">
+                            <label for="has_testnet">有测试网</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="has_points_program" id="has_points_program">
+                            <label for="has_points_program">有积分计划</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="no_token_yet" id="no_token_yet">
+                            <label for="no_token_yet">未发币</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="recent_funding" id="recent_funding">
+                            <label for="recent_funding">近期融资</label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" id="evaluateBtn">开始评分</button>
+            </form>
+
+            <div id="evaluateResult"></div>
+        </div>
+
+        <!-- 项目列表面板 -->
+        <div id="list" class="panel">
+            <h2>已评分项目列表</h2>
+
+            <div class="quick-actions">
+                <button onclick="loadProjects()">刷新列表</button>
+                <button onclick="loadProjects('FARM')">仅 FARM</button>
+                <button onclick="loadProjects('WATCH')">仅 WATCH</button>
+                <button onclick="loadProjects('IGNORE')">仅 IGNORE</button>
+            </div>
+
+            <div id="projectsList"></div>
+        </div>
+
+        <!-- 批量导入面板 -->
+        <div id="import" class="panel">
+            <h2>批量导入测试</h2>
+
+            <div class="quick-actions">
+                <button onclick="downloadTemplate()">下载模板</button>
+            </div>
+
+            <form id="importForm" onsubmit="importProjects(event)">
+                <div class="form-group">
+                    <label>选择文件 (Excel 或 CSV)</label>
+                    <input type="file" name="file" accept=".xlsx,.csv" required>
+                </div>
+
+                <button type="submit" id="importBtn">上传并评分</button>
+            </form>
+
+            <div id="importResult"></div>
+        </div>
+
+        <!-- 导出数据面板 -->
+        <div id="export" class="panel">
+            <h2>导出数据</h2>
+
+            <div class="form-group">
+                <label>导出格式</label>
+                <select id="exportFormat">
+                    <option value="excel">Excel (.xlsx)</option>
+                    <option value="csv">CSV (.csv)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>筛选条件</label>
+                <select id="exportLabel">
+                    <option value="">全部项目</option>
+                    <option value="FARM">仅 FARM</option>
+                    <option value="WATCH">仅 WATCH</option>
+                    <option value="IGNORE">仅 IGNORE</option>
+                </select>
+            </div>
+
+            <button onclick="exportProjects()">导出</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+
+        function switchTab(tabName) {
+            // 切换标签
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(panel => panel.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+
+            // 如果切换到列表页，自动加载
+            if (tabName === 'list') {
+                loadProjects();
+            }
+        }
+
+        async function evaluateProject(event) {
+            event.preventDefault();
+
+            const btn = document.getElementById('evaluateBtn');
+            const resultDiv = document.getElementById('evaluateResult');
+
+            btn.disabled = true;
+            btn.textContent = '评分中...';
+            resultDiv.innerHTML = '<div class="loading">正在分析项目...</div>';
+
+            const formData = new FormData(event.target);
+            const project = {
+                name: formData.get('name'),
+                url: formData.get('url') || null,
+                sector: formData.get('sector') || null,
+                stage: formData.get('stage') || null,
+                has_testnet: formData.get('has_testnet') === 'on',
+                has_points_program: formData.get('has_points_program') === 'on',
+                no_token_yet: formData.get('no_token_yet') === 'on',
+                recent_funding: formData.get('recent_funding') === 'on',
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projects: [project],
+                        enable_llm: false
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayEvaluationResult(data);
+                } else {
+                    throw new Error(data.detail || '评分失败');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error"><strong>错误:</strong> ${error.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '开始评分';
+            }
+        }
+
+        function displayEvaluationResult(data) {
+            const resultDiv = document.getElementById('evaluateResult');
+
+            if (data.project_count === 0) {
+                resultDiv.innerHTML = '<div class="result error">没有评分结果</div>';
+                return;
+            }
+
+            // 假设返回的是 states 数组（从 RunResponse）
+            const state = data.states && data.states[0];
+            if (!state) {
+                resultDiv.innerHTML = `<div class="result">
+                    <strong>评分完成</strong>
+                    <p>运行 ID: ${data.run_id}</p>
+                    <p>状态: ${data.status}</p>
+                    <p>用时: ${data.elapsed_ms.toFixed(2)}ms</p>
+                </div>`;
+                return;
+            }
+
+            const html = `
+                <div class="result">
+                    <h3>评分结果</h3>
+                    <div class="project-card ${state.label}">
+                        <div class="project-name">${state.project.name}</div>
+                        <div class="project-score">${state.score} 分</div>
+                        <div class="project-label ${state.label}">${state.label}</div>
+                        <p style="margin-top: 10px;"><strong>置信度:</strong> ${(state.confidence * 100).toFixed(0)}%</p>
+                        <p><strong>原因:</strong></p>
+                        <ul style="margin-left: 20px;">
+                            ${state.reason.map(r => `<li>${r}</li>`).join('')}
+                        </ul>
+                    </div>
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer;">查看详细数据</summary>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                </div>
+            `;
+
+            resultDiv.innerHTML = html;
+        }
+
+        async function loadProjects(label = null) {
+            const listDiv = document.getElementById('projectsList');
+            listDiv.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                let url = `${API_BASE}/projects?page_size=50`;
+                if (label) url += `&label=${label}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '加载失败');
+                }
+
+                displayProjects(data.data.projects, data.data.total);
+            } catch (error) {
+                listDiv.innerHTML = `<div class="result error">${error.message}</div>`;
+            }
+        }
+
+        function displayProjects(projects, total) {
+            const listDiv = document.getElementById('projectsList');
+
+            if (projects.length === 0) {
+                listDiv.innerHTML = '<p>暂无项目数据</p>';
+                return;
+            }
+
+            const html = `
+                <p><strong>共 ${total} 个项目</strong></p>
+                <div class="projects-grid">
+                    ${projects.map(p => `
+                        <div class="project-card ${p.label}">
+                            <div class="project-name">${p.name}</div>
+                            <div class="project-score">${p.score} 分</div>
+                            <div class="project-label ${p.label}">${p.label}</div>
+                            <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                                ${p.sector || '未分类'} | ${p.stage || '未知阶段'}
+                            </p>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            listDiv.innerHTML = html;
+        }
+
+        async function importProjects(event) {
+            event.preventDefault();
+
+            const btn = document.getElementById('importBtn');
+            const resultDiv = document.getElementById('importResult');
+            const formData = new FormData(event.target);
+
+            btn.disabled = true;
+            btn.textContent = '上传中...';
+            resultDiv.innerHTML = '<div class="loading">正在导入并评分...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/import/projects`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result">
+                            <h3>导入成功</h3>
+                            <p><strong>项目数:</strong> ${data.project_count}</p>
+                            <p><strong>状态:</strong> ${data.status}</p>
+                            <p><strong>用时:</strong> ${data.elapsed_ms.toFixed(2)}ms</p>
+                            ${data.validation_errors && data.validation_errors.length > 0 ? `
+                                <p><strong>验证错误:</strong></p>
+                                <ul style="margin-left: 20px;">
+                                    ${data.validation_errors.map(e => `<li>${e}</li>`).join('')}
+                                </ul>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    throw new Error(data.detail || '导入失败');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">${error.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '上传并评分';
+            }
+        }
+
+        function downloadTemplate() {
+            window.location.href = `${API_BASE}/export/template`;
+        }
+
+        function exportProjects() {
+            const format = document.getElementById('exportFormat').value;
+            const label = document.getElementById('exportLabel').value;
+
+            let url = `${API_BASE}/export/projects?format=${format}`;
+            if (label) url += `&label=${label}`;
+
+            window.location.href = url;
+        }
+    </script>
+</body>
+</html>
