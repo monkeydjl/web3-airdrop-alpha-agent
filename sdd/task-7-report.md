@@ -134,3 +134,47 @@ TOTAL coverage: 84.44%
 - Updated `docs/IMPLEMENTATION_STATUS.md` exact verified baseline to `1,523 passed / 1 skipped` and `84.44%` coverage.
 - Updated `docs/superpowers/specs/2026-07-16-shadow-rollout-observability-design.md` because it states current verified facts rather than historical execution notes.
 - Left `docs/superpowers/plans/2026-07-16-shadow-rollout-observability.md` unchanged because it is historical plan text documenting the baseline that was current when that plan was written.
+
+## Docker smoke runtime entrypoint fix
+
+Commands were run from the repository root unless noted.
+
+### RED: deployment test before Dockerfile fix
+
+## `python -m pytest tests/test_deployment.py --no-cov -q` from `backend`
+
+```text
+.........F.........s..........                                           [100%]
+FAILED tests/test_deployment.py::TestDockerConfiguration::test_dockerfile_cmd_uses_valid_fastapi_module_entrypoint
+E       AssertionError: assert '/app' == '/app/backend'
+1 failed, 28 passed, 1 skipped in 0.47s
+```
+
+### GREEN: deployment tests and Ruff after Dockerfile fix
+
+## `python -m ruff format tests/test_deployment.py; python -m ruff check tests/test_deployment.py; python -m ruff format --check tests/test_deployment.py; python -m pytest tests/test_deployment.py --no-cov -q` from `backend`
+
+```text
+1 file reformatted
+All checks passed!
+1 file already formatted
+29 passed, 1 skipped in 0.24s
+```
+
+### Docker build
+
+## `docker build -f docker/Dockerfile -t airdrop-alpha:shadow-rollout .`
+
+```text
+#16 [production 8/8] WORKDIR /app/backend
+#17 naming to docker.io/library/airdrop-alpha:shadow-rollout done
+#17 DONE 1.8s
+```
+
+### Docker runtime smoke
+
+## `docker run -d --name airdrop-alpha-shadow-smoke -p 8002:8002 airdrop-alpha:shadow-rollout` then poll `http://localhost:8002/health`
+
+```text
+SMOKE_OK attempt=4 payload={"ok":true,"status":"healthy","version":"0.1.0","db":"ok","db_backend":"sqlite","quarantined_raw":0,"auth_required":false,"feedback_enabled":true,"opportunity_model_version":"opportunity-v2.0","opportunity_shadow_enabled":false,"opportunity_shadow_sample_rate":0.0}
+```

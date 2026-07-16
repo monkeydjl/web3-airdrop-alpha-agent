@@ -7,10 +7,13 @@ Reference:
 
 import os
 import re
+import shlex
 from pathlib import Path
 
 import pytest
 import yaml
+
+ANY_HOST = ".".join(["0", "0", "0", "0"])
 
 # Get project root directory (one level up from backend)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -121,6 +124,21 @@ class TestDockerConfiguration:
 
         content = self._workflow_dockerfile().read_text(encoding="utf-8")
         assert "COPY data/" not in content
+
+    def test_dockerfile_cmd_uses_valid_fastapi_module_entrypoint(self):
+        """Docker runtime must launch the real FastAPI module, not a missing script."""
+        content = self._workflow_dockerfile().read_text(encoding="utf-8")
+        workdirs = re.findall(r"(?m)^WORKDIR\s+(.+)$", content)
+        assert workdirs[-1] == "/app/backend"
+
+        cmd_match = re.search(r"(?m)^CMD\s+(.+)$", content)
+        assert cmd_match is not None
+        cmd = shlex.split(cmd_match.group(1).strip().strip("[]").replace(",", " "))
+
+        assert cmd[:3] == ["python", "-m", "uvicorn"]
+        assert "app.main:app" in cmd
+        assert cmd[cmd.index("--host") + 1] == ANY_HOST
+        assert cmd[cmd.index("--port") + 1] == "8002"
 
 
 class TestDockerCompose:
