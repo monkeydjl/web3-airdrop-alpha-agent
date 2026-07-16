@@ -5,20 +5,40 @@ Web3 Airdrop Alpha Agent System 主应用入口。
 
 使用方式：
     开发：uvicorn app.main:app --reload
-    生产：uvicorn app.main:app --host 0.0.0.0 --port 8000
+    本地/生产：uvicorn app.main:app --host 0.0.0.0 --port 8002
 
 参考：
 - ENGINEERING_ROADMAP.md §8 API 设计
 - API_SPEC.md 完整 API 契约
 """
 
-import structlog
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 
+import structlog
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+
+from app.analysis_scheduler import AnalysisScheduler
+from app.collectors.base import CollectorResult
+from app.collectors.coingecko import CoinGeckoCollector
+from app.collectors.cryptorank import CryptoRankCollector
+from app.collectors.defillama import DefiLlamaCollector
+from app.collectors.etherscan import EtherscanCollector
+from app.collectors.galxe import GalxeCollector
+from app.collectors.github import GitHubCollector
+from app.collectors.layer3 import Layer3Collector
+from app.collectors.persistence import CollectionRepository
+from app.collectors.registry import CollectorRegistry
+from app.collectors.rootdata import RootDataCollector
+from app.collectors.scheduler import CollectionScheduler
+from app.collectors.twitter import TwitterKeywordCollector, TwitterKolCollector
 from app.config import settings
 from app.db import init_db
+from app.metrics import MetricsExporter
+from app.pipeline_run import execute_analysis_pipeline
 
 logger = structlog.get_logger(__name__)
 
@@ -35,6 +55,86 @@ def create_app(db_override=None) -> FastAPI:
     Returns:
         配置好的 FastAPI 实例
     """
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        """Initialize and release application-owned resources."""
+        logger.info(
+            "app.startup",
+            version=settings.app_version,
+            env=settings.app_env,
+            llm_enabled=settings.is_llm_enabled,
+            collection_scheduler_enabled=settings.collection_scheduler_enabled,
+        )
+        if db_override is None:
+            init_db()
+
+        if settings.app_env != "testing":
+            registry = CollectorRegistry()
+            registry.register(DefiLlamaCollector())
+            registry.register(GitHubCollector())
+            registry.register(CoinGeckoCollector())
+            registry.register(CryptoRankCollector())
+            registry.register(RootDataCollector())
+            registry.register(TwitterKolCollector())
+            registry.register(TwitterKeywordCollector())
+            registry.register(EtherscanCollector())
+            registry.register(GalxeCollector())
+            registry.register(Layer3Collector())
+
+            repo = CollectionRepository()
+
+            async def on_collection(source_id: str, result: CollectorResult) -> None:
+                repo.persist_collection_result(
+                    result,
+                    source_type="api",
+                    source_name=source_id,
+                )
+                if settings.collection_auto_run_enabled and result.status in (
+                    "success",
+                    "partial",
+                ):
+                    try:
+                        await execute_analysis_pipeline(trigger="collection_auto")
+                    except Exception as exc:
+                        logger.error(
+                            "app.collection_auto_run_failed",
+                            source_id=source_id,
+                            error=str(exc),
+                        )
+
+            collection_scheduler = CollectionScheduler(
+                registry,
+                on_collection=on_collection,
+            )
+            collection_scheduler.start()
+            analysis_scheduler = AnalysisScheduler()
+            analysis_scheduler.start()
+
+            application.state.collector_registry = registry
+            application.state.collection_scheduler = collection_scheduler
+            application.state.analysis_scheduler = analysis_scheduler
+        else:
+            application.state.collector_registry = None
+            application.state.collection_scheduler = None
+            application.state.analysis_scheduler = None
+
+        try:
+            yield
+        finally:
+            logger.info("app.shutdown")
+            for attr in ("collection_scheduler", "analysis_scheduler"):
+                scheduler = getattr(application.state, attr, None)
+                if scheduler:
+                    try:
+                        scheduler.shutdown(wait=True)
+                    except Exception as exc:
+                        logger.error(
+                            "app.shutdown.scheduler_error",
+                            component=attr,
+                            error=str(exc),
+                        )
+
     app = FastAPI(
         title="Web3 Airdrop Alpha Agent System",
         description=(
@@ -50,14 +150,15 @@ def create_app(db_override=None) -> FastAPI:
             "## 使用示例\n\n"
             "```bash\n"
             "# 批量评分\n"
-            "curl -X POST http://localhost:8000/api/v1/run \\\n"
+            "curl -X POST http://localhost:8002/api/v1/run \\\n"
             "  -H 'Content-Type: application/json' \\\n"
-            "  -d '{\"projects\": [{\"name\": \"LayerX\", \"sector\": \"L2\", \"has_testnet\": true}]}'\n\n"
+            '  -d \'{"projects": [{"name": "LayerX", "sector": "L2", "has_testnet": true}]}\'\n\n'
             "# 查询项目\n"
-            "curl http://localhost:8000/api/v1/projects?label=FARM&sort_by=score\n"
+            "curl http://localhost:8002/api/v1/projects?label=FARM&sort_by=score\n"
             "```\n"
         ),
         version=settings.app_version,
+        lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -93,11 +194,17 @@ def create_app(db_override=None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # API key auth (no-op when API_KEY empty)
+    from app.auth import APIKeyMiddleware
+
+    app.add_middleware(APIKeyMiddleware)
+
     # ── 请求日志中间件 ──────────────────────────
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         """记录请求日志（结构化）。"""
         import time
+
         start = time.time()
         response = await call_next(request)
         duration = (time.time() - start) * 1000
@@ -112,10 +219,44 @@ def create_app(db_override=None) -> FastAPI:
         return response
 
     # ── 初始化数据库 ────────────────────────────
-    from app.db import init_db
-    init_db()  # 幂等建表
+    if db_override is None:
+        init_db()  # 幂等建表; lifespan 启动时再次确认迁移完整
 
     # ── 全局异常处理 ────────────────────────────
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(_request: Request, exc: HTTPException):
+        """统一 HTTP 异常格式。"""
+        detail = exc.detail
+        error = (
+            detail
+            if isinstance(detail, dict)
+            else {
+                "code": "HTTP_ERROR",
+                "message": str(detail),
+            }
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"ok": False, "error": error},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+        """统一请求校验异常格式。"""
+        return JSONResponse(
+            status_code=422,
+            content=jsonable_encoder(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "Request validation failed",
+                        "details": exc.errors(),
+                    },
+                }
+            ),
+        )
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         """统一异常处理，返回标准错误格式。"""
@@ -140,7 +281,56 @@ def create_app(db_override=None) -> FastAPI:
     @app.get(settings.health_check_path, tags=["system"])
     async def health_check():
         """健康检查端点。"""
-        return {"ok": True, "status": "healthy", "version": settings.app_version}
+        from app.db import backend_name, get_connection
+
+        db_status = "unknown"
+        try:
+            conn = get_connection()
+            try:
+                conn.execute("SELECT 1")
+                db_status = "ok"
+            finally:
+                conn.close()
+        except Exception as e:
+            db_status = f"error:{type(e).__name__}"
+            logger.warning("health.db_check_failed", error=str(e))
+
+        from app.quarantine import quarantine_count
+
+        q_count = 0
+        try:
+            q_count = quarantine_count()
+        except Exception as exc:
+            logger.warning("health.quarantine_count_failed", error=str(exc))
+
+        return {
+            "ok": db_status == "ok",
+            "status": "healthy" if db_status == "ok" else "degraded",
+            "version": settings.app_version,
+            "db": db_status,
+            "db_backend": backend_name(),
+            "quarantined_raw": q_count,
+            "auth_required": bool((settings.api_key or "").strip()),
+            "feedback_enabled": settings.enable_feedback_system,
+            "opportunity_model_version": "opportunity-v2.0",
+            "opportunity_shadow_enabled": getattr(settings, "opportunity_shadow_enabled", False),
+        }
+
+    # ── Prometheus metrics ─────────────────────
+    @app.get(settings.metrics_path, tags=["system"])
+    async def metrics():
+        """Prometheus metrics endpoint."""
+        if not MetricsExporter.is_enabled():
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=404,
+                content={"ok": False, "error": {"code": "METRICS_DISABLED", "message": "Metrics are disabled"}},
+            )
+        return Response(
+            content=MetricsExporter.render(),
+            media_type=MetricsExporter.content_type(),
+        )
 
     # ── 版本信息 ────────────────────────────────
     @app.get("/version", tags=["system"])
@@ -164,28 +354,33 @@ def create_app(db_override=None) -> FastAPI:
     app.openapi = custom_openapi
 
     # ── 注册路由 ────────────────────────────────
-    from app.routers.v1 import run, projects, export_import
+    from app.routers.v1 import (
+        ai_brief,
+        collections,
+        export_import,
+        feedback,
+        funding,
+        insights,
+        interactions,
+        opportunity,
+        participation,
+        projects,
+        quarantine,
+        run,
+    )
+
     app.include_router(run.router, prefix="/api/v1", tags=["v1"])
     app.include_router(projects.router, prefix="/api/v1", tags=["v1"])
     app.include_router(export_import.router, prefix="/api/v1", tags=["v1"])
-
-    # ── 启动事件 ────────────────────────────────
-    @app.on_event("startup")
-    async def startup_event():
-        """应用启动时执行初始化。"""
-        logger.info(
-            "app.startup",
-            version=settings.app_version,
-            env=settings.app_env,
-            llm_enabled=settings.is_llm_enabled,
-        )
-        if db_override is None:
-            init_db()
-
-    @app.on_event("shutdown")
-    async def shutdown_event():
-        """应用关闭时执行清理。"""
-        logger.info("app.shutdown")
+    app.include_router(collections.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(feedback.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(insights.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(quarantine.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(ai_brief.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(funding.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(opportunity.router, prefix="/api/v1", tags=["v1"])
 
     return app
 

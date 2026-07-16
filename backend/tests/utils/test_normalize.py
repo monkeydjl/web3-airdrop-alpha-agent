@@ -5,16 +5,19 @@ Reference:
 - ENGINEERING_ROADMAP.md §6.2.1
 """
 
+from datetime import UTC
+
 import pytest
 
 from app.utils.normalize import (
-    normalize_name,
-    normalize_sector,
+    DedupKey,
     create_dedup_key,
     generate_deterministic_id,
     get_source_priority,
+    merge_raw_records,
     merge_sources,
-    DedupKey,
+    normalize_name,
+    normalize_sector,
 )
 
 
@@ -180,6 +183,7 @@ class TestGenerateDeterministicId:
         assert len(project_id) > 0
         # Try parsing as UUID (will raise if invalid)
         import uuid
+
         uuid.UUID(project_id)
 
     def test_normalization_produces_same_id(self):
@@ -348,3 +352,65 @@ class TestIntegration:
         # LayerX should have merged sources
         layerx_key = create_dedup_key("LayerX", "L2").to_string()
         assert len(dedup_map[layerx_key]) == 2
+
+
+class TestMergeRawRecords:
+    """Test merge_raw_records helper used by CollectorAgent."""
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError):
+            merge_raw_records([])
+
+    def test_single_record_returns_itself(self):
+        rec = {"name": "LayerX", "source": "seed", "has_testnet": True}
+        merged = merge_raw_records([rec])
+        assert merged["name"] == "LayerX"
+        assert merged["source"] == "seed"
+        assert merged["has_testnet"] is True
+
+    def test_manual_priority_over_auto(self):
+        records = [
+            {"name": "LayerX", "source": "defillama", "url": "https://defillama.com"},
+            {"name": "LayerX", "source": "manual", "url": "https://layerx.xyz"},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["source"] == "manual,defillama"
+        # Primary record is manual, so URL comes from manual
+        assert merged["url"] == "https://layerx.xyz"
+
+    def test_boolean_signals_or(self):
+        records = [
+            {"name": "LayerX", "source": "defillama", "has_testnet": True},
+            {"name": "LayerX", "source": "github", "has_points_program": True},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["has_testnet"] is True
+        assert merged["has_points_program"] is True
+
+    def test_discovery_score_max(self):
+        records = [
+            {"name": "LayerX", "source": "defillama", "discovery_score": 0.4},
+            {"name": "LayerX", "source": "twitter", "discovery_score": 0.8},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["discovery_score"] == 0.8
+
+    def test_auto_discovered_any_true(self):
+        records = [
+            {"name": "LayerX", "source": "manual", "auto_discovered": False},
+            {"name": "LayerX", "source": "defillama", "auto_discovered": True},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["auto_discovered"] is True
+
+    def test_discovers_at_earliest(self):
+        from datetime import datetime
+
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
+        t2 = datetime(2026, 1, 2, tzinfo=UTC)
+        records = [
+            {"name": "LayerX", "source": "defillama", "discovered_at": t2},
+            {"name": "LayerX", "source": "manual", "discovered_at": t1},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["discovered_at"] == t1

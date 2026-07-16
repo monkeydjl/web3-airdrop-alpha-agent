@@ -10,13 +10,15 @@ Reference:
 
 import json
 import sqlite3
-from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from copy import deepcopy
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
-from app.db import get_connection, dict_from_row
 from app.agents.base import PipelineState
+from app.db import dict_from_row, get_connection, is_postgres
+from app.services.project_signals import merge_meta, parse_meta
 
 logger = structlog.get_logger(__name__)
 
@@ -27,7 +29,7 @@ class ProjectRepository:
     负责项目的持久化和查询操作。
     """
 
-    def __init__(self, conn: Optional[sqlite3.Connection] = None):
+    def __init__(self, conn: Any = None):
         """初始化仓库。
 
         Args:
@@ -35,7 +37,7 @@ class ProjectRepository:
         """
         self._conn = conn
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _get_conn(self) -> Any:
         """获取数据库连接。"""
         return self._conn if self._conn else get_connection()
 
@@ -43,11 +45,14 @@ class ProjectRepository:
         """判断是否应该关闭连接。"""
         return self._conn is None
 
-    def save(self, state: PipelineState) -> None:
+    def save(self, state: PipelineState) -> dict[str, Any]:
         """保存项目评分结果。
 
         Args:
             state: Pipeline 状态对象，包含完整的评分结果
+
+        Returns:
+            Detached snapshot of the canonical row persisted by this save.
         """
         conn = self._get_conn()
         try:
@@ -60,32 +65,95 @@ class ProjectRepository:
             tokenomics_json = json.dumps(state.tokenomics.model_dump()) if state.tokenomics else None
             reason_json = json.dumps(state.reason) if state.reason else None
 
-            # Insert or replace
-            conn.execute("""
+            # Preserve + merge extended signals into meta
+            existing = conn.execute("SELECT meta FROM projects WHERE id = ?", (project.id,)).fetchone()
+            existing_meta = None
+            if existing is not None:
+                existing_meta = dict_from_row(existing).get("meta")
+            meta_json = merge_meta(existing_meta, project)
+            source_count = int(getattr(project, "source_count", 1) or 1)
+
+            # SQLite added DML RETURNING in 3.35; older runtimes must snapshot
+            # on the same transaction before commit so the write lock closes the race.
+            postgres_upsert = is_postgres() and getattr(conn, "kind", None) != "sqlite"
+            sqlite_supports_returning = sqlite3.sqlite_version_info >= (3, 35, 0)
+            if postgres_upsert:
+                sql = """
+                INSERT INTO projects (
+                    id, name, url, sector, stage,
+                    score, label, confidence, reason,
+                    narrative_json, team_json, risk_json, tokenomics_json,
+                    source, meta, fetched_at, updated_at,
+                    discovery_source, discovered_at, auto_discovered, signal_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    url = EXCLUDED.url,
+                    sector = EXCLUDED.sector,
+                    stage = EXCLUDED.stage,
+                    score = EXCLUDED.score,
+                    label = EXCLUDED.label,
+                    confidence = EXCLUDED.confidence,
+                    reason = EXCLUDED.reason,
+                    narrative_json = EXCLUDED.narrative_json,
+                    team_json = EXCLUDED.team_json,
+                    risk_json = EXCLUDED.risk_json,
+                    tokenomics_json = EXCLUDED.tokenomics_json,
+                    source = EXCLUDED.source,
+                    meta = EXCLUDED.meta,
+                    fetched_at = EXCLUDED.fetched_at,
+                    updated_at = EXCLUDED.updated_at,
+                    discovery_source = EXCLUDED.discovery_source,
+                    discovered_at = EXCLUDED.discovered_at,
+                    auto_discovered = EXCLUDED.auto_discovered,
+                    signal_count = EXCLUDED.signal_count
+                RETURNING *
+                """
+            else:
+                sql = """
                 INSERT OR REPLACE INTO projects (
                     id, name, url, sector, stage,
                     score, label, confidence, reason,
                     narrative_json, team_json, risk_json, tokenomics_json,
-                    source, fetched_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                project.id,
-                project.name,
-                project.url,
-                project.sector,
-                project.stage,
-                state.score,
-                state.label,
-                state.confidence,
-                reason_json,
-                narrative_json,
-                team_json,
-                risk_json,
-                tokenomics_json,
-                project.source,
-                project.created_at,
-                datetime.now(timezone.utc),
-            ))
+                    source, meta, fetched_at, updated_at,
+                    discovery_source, discovered_at, auto_discovered, signal_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                if sqlite_supports_returning:
+                    sql += " RETURNING *"
+            cursor = conn.execute(
+                sql,
+                (
+                    project.id,
+                    project.name,
+                    project.url,
+                    project.sector,
+                    project.stage,
+                    state.score,
+                    state.label,
+                    state.confidence,
+                    reason_json,
+                    narrative_json,
+                    team_json,
+                    risk_json,
+                    tokenomics_json,
+                    project.source,
+                    meta_json,
+                    project.created_at,
+                    datetime.now(UTC),
+                    project.discovery_source or project.source,
+                    project.discovered_at or project.created_at,
+                    1 if project.auto_discovered else 0,
+                    source_count,
+                ),
+            )
+            if postgres_upsert or sqlite_supports_returning:
+                saved_row = cursor.fetchone()
+            else:
+                saved_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project.id,)).fetchone()
+            if saved_row is None:
+                raise RuntimeError(f"Saved project row not found: {project.id}")
+            snapshot = deepcopy(dict_from_row(saved_row))
             conn.commit()
 
             logger.info(
@@ -94,34 +162,65 @@ class ProjectRepository:
                 name=project.name,
                 score=state.score,
             )
+            return snapshot
 
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             if self._should_close():
                 conn.close()
 
-    def save_batch(self, states: List[PipelineState]) -> int:
+    def update_meta_signals(self, project_id: str, signals: dict[str, Any]) -> dict[str, Any] | None:
+        """Merge keys into projects.meta.signals and return updated row."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not row:
+                return None
+            d = dict_from_row(row)
+            meta = parse_meta(d.get("meta"))
+            prev = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+            merged = {**prev, **signals}
+            # drop Nones that would wipe intentionally? keep explicit null clear
+            meta["signals"] = merged
+            meta_json = json.dumps(meta, ensure_ascii=False)
+            conn.execute(
+                "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
+                (meta_json, datetime.now(UTC), project_id),
+            )
+            conn.commit()
+            d["meta"] = meta_json
+            return d
+        finally:
+            if self._should_close():
+                conn.close()
+
+    def save_batch(self, states: list[PipelineState]) -> int:
         """批量保存项目。
 
         Args:
             states: Pipeline 状态列表
-
         Returns:
             保存成功的项目数量
         """
-        saved = 0
+        return len(self.save_batch_with_rows(states))
+
+    def save_batch_with_rows(self, states: list[PipelineState]) -> list[dict[str, Any]]:
+        """Save states and return one detached row snapshot per successful save."""
+        persisted_project_rows: list[dict[str, Any]] = []
         for state in states:
             try:
-                self.save(state)
-                saved += 1
+                persisted_project_rows.append(self.save(state))
             except Exception as e:
                 logger.error(
                     "repository.project.save_failed",
                     project_id=state.project.id,
                     error=str(e),
                 )
-        return saved
+        return persisted_project_rows
 
-    def get_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
+    def get_by_id(self, project_id: str) -> dict[str, Any] | None:
         """根据 ID 查询项目。
 
         Args:
@@ -132,10 +231,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            cursor = conn.execute(
-                "SELECT * FROM projects WHERE id = ?",
-                (project_id,)
-            )
+            cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
             row = cursor.fetchone()
             return dict_from_row(row) if row else None
         finally:
@@ -146,13 +242,13 @@ class ProjectRepository:
         self,
         page: int = 1,
         page_size: int = 20,
-        label: Optional[str] = None,
-        sector: Optional[str] = None,
-        stage: Optional[str] = None,
-        min_score: Optional[int] = None,
+        label: str | None = None,
+        sector: str | None = None,
+        stage: str | None = None,
+        min_score: int | None = None,
         sort_by: str = "score",
         sort_order: str = "desc",
-    ) -> tuple[List[Dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
         Args:
@@ -215,7 +311,7 @@ class ProjectRepository:
                 {order_clause}
                 LIMIT ? OFFSET ?
             """
-            cursor = conn.execute(list_query, params + [page_size, offset])
+            cursor = conn.execute(list_query, [*params, page_size, offset])
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]
@@ -245,10 +341,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            cursor = conn.execute(
-                "DELETE FROM projects WHERE id = ?",
-                (project_id,)
-            )
+            cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             conn.commit()
             deleted = cursor.rowcount > 0
 
@@ -271,15 +364,15 @@ class LogRepository:
     记录每次运行的详细日志。
     """
 
-    def __init__(self, conn: Optional[sqlite3.Connection] = None):
+    def __init__(self, conn: Any = None):
         """初始化仓库。
 
         Args:
-            conn: 可选的数据库连接
+            conn: 可选的数据库连接。不提供时每次操作创建新连接。
         """
         self._conn = conn
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _get_conn(self) -> Any:
         """获取数据库连接。"""
         return self._conn if self._conn else get_connection()
 
@@ -290,12 +383,12 @@ class LogRepository:
     def log_run(
         self,
         run_id: str,
-        project_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
-        input_data: Optional[Dict] = None,
-        output_data: Optional[Dict] = None,
-        error: Optional[str] = None,
-        duration_ms: Optional[int] = None,
+        project_id: str | None = None,
+        agent_name: str | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        error: str | None = None,
+        duration_ms: int | None = None,
     ) -> None:
         """记录运行日志。
 
@@ -313,27 +406,30 @@ class LogRepository:
             input_json = json.dumps(input_data) if input_data else None
             output_json = json.dumps(output_data) if output_data else None
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO logs (
                     run_id, project_id, agent_name,
                     input, output, error, duration_ms
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                run_id,
-                project_id,
-                agent_name,
-                input_json,
-                output_json,
-                error,
-                duration_ms,
-            ))
+            """,
+                (
+                    run_id,
+                    project_id,
+                    agent_name,
+                    input_json,
+                    output_json,
+                    error,
+                    duration_ms,
+                ),
+            )
             conn.commit()
 
         finally:
             if self._should_close():
                 conn.close()
 
-    def get_run_logs(self, run_id: str) -> List[Dict[str, Any]]:
+    def get_run_logs(self, run_id: str) -> list[dict[str, Any]]:
         """获取某次运行的所有日志。
 
         Args:
@@ -344,10 +440,7 @@ class LogRepository:
         """
         conn = self._get_conn()
         try:
-            cursor = conn.execute(
-                "SELECT * FROM logs WHERE run_id = ? ORDER BY timestamp",
-                (run_id,)
-            )
+            cursor = conn.execute("SELECT * FROM logs WHERE run_id = ? ORDER BY timestamp", (run_id,))
             rows = cursor.fetchall()
             return [dict_from_row(row) for row in rows]
 

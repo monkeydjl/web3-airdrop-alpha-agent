@@ -5,9 +5,9 @@ Reference:
 - docker-compose.yml
 """
 
-import pytest
 import os
 
+import pytest
 
 # Get project root directory (one level up from backend)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,7 +24,7 @@ class TestDockerConfiguration:
     def test_dockerfile_has_healthcheck(self):
         """Test that Dockerfile includes HEALTHCHECK."""
         dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, "r", encoding="utf-8") as f:
+        with open(dockerfile, encoding="utf-8") as f:
             content = f.read()
             assert "HEALTHCHECK" in content
             assert "/health" in content
@@ -32,17 +32,17 @@ class TestDockerConfiguration:
     def test_dockerfile_uses_non_root_user(self):
         """Test that Dockerfile uses non-root user."""
         dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, "r", encoding="utf-8") as f:
+        with open(dockerfile, encoding="utf-8") as f:
             content = f.read()
             assert "useradd" in content
             assert "USER appuser" in content
 
     def test_dockerfile_exposes_port(self):
-        """Test that Dockerfile exposes port 8000."""
+        """Test that Dockerfile exposes port 8002."""
         dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, "r", encoding="utf-8") as f:
+        with open(dockerfile, encoding="utf-8") as f:
             content = f.read()
-            assert "EXPOSE 8000" in content
+            assert "EXPOSE 8002" in content
 
 
 class TestDockerCompose:
@@ -56,8 +56,9 @@ class TestDockerCompose:
     def test_docker_compose_valid_yaml(self):
         """Test that docker-compose.yml is valid YAML."""
         import yaml
+
         compose_file = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_file, "r", encoding="utf-8") as f:
+        with open(compose_file, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             assert config is not None
             assert "services" in config
@@ -65,16 +66,18 @@ class TestDockerCompose:
     def test_docker_compose_has_backend_service(self):
         """Test that docker-compose defines backend service."""
         import yaml
+
         compose_file = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_file, "r", encoding="utf-8") as f:
+        with open(compose_file, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             assert "backend" in config["services"]
 
     def test_docker_compose_has_healthcheck(self):
         """Test that backend service has healthcheck."""
         import yaml
+
         compose_file = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_file, "r", encoding="utf-8") as f:
+        with open(compose_file, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             backend = config["services"]["backend"]
             assert "healthcheck" in backend
@@ -82,8 +85,9 @@ class TestDockerCompose:
     def test_docker_compose_has_volumes(self):
         """Test that backend service has volume mappings."""
         import yaml
+
         compose_file = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_file, "r", encoding="utf-8") as f:
+        with open(compose_file, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             backend = config["services"]["backend"]
             assert "volumes" in backend
@@ -95,8 +99,9 @@ class TestDockerCompose:
     def test_docker_compose_has_restart_policy(self):
         """Test that backend service has restart policy."""
         import yaml
+
         compose_file = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_file, "r", encoding="utf-8") as f:
+        with open(compose_file, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             backend = config["services"]["backend"]
             assert "restart" in backend
@@ -114,7 +119,7 @@ class TestEnvironmentConfiguration:
     def test_env_example_has_required_vars(self):
         """Test that .env.example has required variables."""
         env_file = os.path.join(PROJECT_ROOT, ".env.example")
-        with open(env_file, "r", encoding="utf-8") as f:
+        with open(env_file, encoding="utf-8") as f:
             content = f.read()
             required_vars = [
                 "APP_ENV",
@@ -135,10 +140,11 @@ class TestDeploymentScripts:
         script = os.path.join(PROJECT_ROOT, "scripts", "deploy.sh")
         assert os.path.exists(script)
 
-    @pytest.mark.skipif(os.name == 'nt', reason="Executable test not reliable on Windows")
+    @pytest.mark.skipif(os.name == "nt", reason="Executable test not reliable on Windows")
     def test_deploy_script_is_executable(self):
         """Test that deploy.sh is executable."""
         import stat
+
         script = os.path.join(PROJECT_ROOT, "scripts", "deploy.sh")
         st = os.stat(script)
         assert st.st_mode & stat.S_IXUSR
@@ -165,14 +171,14 @@ class TestDeploymentDocumentation:
     def test_deployment_doc_has_quick_start(self):
         """Test that DEPLOYMENT.md has quick start section."""
         doc = os.path.join(PROJECT_ROOT, "DEPLOYMENT.md")
-        with open(doc, "r", encoding="utf-8") as f:
+        with open(doc, encoding="utf-8") as f:
             content = f.read()
             assert "快速开始" in content or "Quick Start" in content
 
     def test_deployment_doc_has_troubleshooting(self):
         """Test that DEPLOYMENT.md has troubleshooting section."""
         doc = os.path.join(PROJECT_ROOT, "DEPLOYMENT.md")
-        with open(doc, "r", encoding="utf-8") as f:
+        with open(doc, encoding="utf-8") as f:
             content = f.read()
             assert "故障排查" in content or "Troubleshooting" in content
 
@@ -188,15 +194,15 @@ class TestNginxConfiguration:
     def test_nginx_conf_has_upstream(self):
         """Test that nginx.conf defines upstream backend."""
         nginx_conf = os.path.join(PROJECT_ROOT, "nginx.conf")
-        with open(nginx_conf, "r", encoding="utf-8") as f:
+        with open(nginx_conf, encoding="utf-8") as f:
             content = f.read()
             assert "upstream backend" in content
-            assert "server backend:8000" in content
+            assert "server backend:8002" in content
 
     def test_nginx_conf_has_gzip(self):
         """Test that nginx.conf enables gzip."""
         nginx_conf = os.path.join(PROJECT_ROOT, "nginx.conf")
-        with open(nginx_conf, "r", encoding="utf-8") as f:
+        with open(nginx_conf, encoding="utf-8") as f:
             content = f.read()
             assert "gzip on" in content
 
@@ -212,7 +218,7 @@ class TestDockerIgnore:
     def test_dockerignore_excludes_sensitive_files(self):
         """Test that .dockerignore excludes sensitive files."""
         dockerignore = os.path.join(PROJECT_ROOT, ".dockerignore")
-        with open(dockerignore, "r", encoding="utf-8") as f:
+        with open(dockerignore, encoding="utf-8") as f:
             content = f.read()
             sensitive = [".env", "*.db", "__pycache__"]
             for pattern in sensitive:

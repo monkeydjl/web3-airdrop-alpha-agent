@@ -21,6 +21,8 @@
 | [ADR-009](ADR-009-api-versioning.md) | API 版本管理策略（URL Prefix + 生命周期管理） | Accepted | 2026-07-08 | `/api/v1/` 路径版本；同一大版本向后兼容，Deprecated 带 90 天窗口 | API 契约、兼容性、演进 |
 | [ADR-010](ADR-010-competition-cache.md) | 竞争度子分缓存与增量计数策略 | Accepted | 2026-07-08 | 按 `sector` 缓存竞争度，增量刷新，避免每次全量扫描 | 性能、缓存、竞争度评分 |
 | [ADR-011](ADR-011-mvp-chart-library.md) | MVP Dashboard 图表库选型 | Accepted | 2026-07-08 | MVP 用 Chart.js 4.x CDN，三种图表类型；国内访问问题走降级方案 | 前端、图表、CDN |
+| [ADR-012](ADR-012-system-direction-auto-scan.md) | 系统方向反转为自动扫描全网发现平台 | Accepted | 2026-07-09 | 手动输入→自动扫描；双调度器；4 张采集表；LLM 分级使用 | 数据源、调度、数据库、API、安全、成本 |
+| [ADR-013](ADR-013-nextjs-primary-frontend.md) | 主前端演进为 Next.js（App Router） | Accepted | 2026-07-13 | `frontend-next` 为主路径；ADR-003 HTML 保留为原型 | 前端、部署、CORS/代理 |
 
 ## 按主题快速导航
 
@@ -30,12 +32,13 @@
 | 数据层 | [ADR-004](ADR-004-sqlite-to-postgres.md) SQLite→PG |
 | 调度与执行 | [ADR-005](ADR-005-apscheduler-inprocess.md) APScheduler、多项目并发 |
 | Agent 编排 | [ADR-002](ADR-002-self-built-orchestrator.md) 自研 Orchestrator |
-| 前端 | [ADR-003](ADR-003-single-page-html-mvp.md) 单页 HTML MVP |
+| 前端 | [ADR-003](ADR-003-single-page-html-mvp.md) 单页 HTML 原型 → [ADR-013](ADR-013-nextjs-primary-frontend.md) Next 主路径 |
 | 成本与可用性 | [ADR-001](ADR-001-llm-default-off.md) LLM 默认关闭、可离线运行 |
 | 用户与鉴权 | [ADR-008](ADR-008-user-system.md) 用户系统与多租户隔离 |
 | API 与兼容性 | [ADR-009](ADR-009-api-versioning.md) API 版本管理 |
 | 性能与缓存 | [ADR-010](ADR-010-competition-cache.md) 竞争度缓存 |
 | 并发与一致性 | [ADR-007](ADR-007-multi-project-concurrency.md) 多项目并发 |
+| **数据源与采集** | **[ADR-012](ADR-012-system-direction-auto-scan.md) 系统方向反转与自动扫描** |
 
 ## 何时新增 ADR
 

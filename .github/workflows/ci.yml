@@ -2,7 +2,7 @@
 # CI/CD Pipeline — Web3 Airdrop Alpha Agent System
 # ──────────────────────────────────────────────
 # 触发器: push（任意分支）、pull_request（main）
-# 阶段: lint → test (unit + contract + golden) → build docker → smoke test
+# 阶段: lint → test (unit + contract + golden + api) → build docker → smoke test
 # ──────────────────────────────────────────────
 
 name: CI
@@ -14,7 +14,7 @@ on:
     branches: [main]
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.13"
   PYTHON_VERSION_FILE: "backend/requirements.txt"
 
 concurrency:
@@ -26,6 +26,9 @@ jobs:
   lint:
     name: Lint & Format Check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -34,21 +37,24 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install ruff
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           fi
 
       - name: Run ruff check
-        run: ruff check . --output-format=github
+        run: python -m ruff check .
         continue-on-error: false
 
       - name: Run ruff format check
-        run: ruff format --check .
+        run: python -m ruff format --check .
         continue-on-error: false
 
   # ── Phase 2: Tests ───────────────────────
@@ -56,6 +62,9 @@ jobs:
     name: Tests (Unit + Contract + Golden)
     needs: lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -64,17 +73,20 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           fi
           pip install pytest pytest-cov
 
       - name: Run unit tests
-        run: pytest tests/unit -v --cov=backend/app --cov-report=term --cov-report=xml
+        run: pytest tests/unit -v --cov=app --cov-report=term --cov-report=xml
         continue-on-error: false
 
       - name: Run contract tests
@@ -100,13 +112,16 @@ jobs:
         if: always()
         with:
           name: coverage-report
-          path: coverage.xml
+          path: backend/coverage.xml
 
   # ── Phase 3: API Integration Tests ───────
   api-test:
     name: API Integration Tests
     needs: test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -115,12 +130,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           fi
           pip install pytest httpx
 
@@ -152,9 +170,9 @@ jobs:
 
       - name: Smoke test — health check
         run: |
-          docker run --rm -d --name airdrop-smoke -p 8000:8000 airdrop-alpha:ci-${{ github.sha }}
+          docker run --rm -d --name airdrop-smoke -p 8002:8002 airdrop-alpha:ci-${{ github.sha }}
           sleep 5
-          curl -f http://localhost:8000/health || exit 1
+          curl -f http://localhost:8002/health || exit 1
           docker stop airdrop-smoke
 
   # ── Phase 5: Type Check (optional, V2+) ─
@@ -162,6 +180,9 @@ jobs:
     name: Type Check (mypy)
     needs: lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     if: false  # 启用条件：backend/ 目录存在且有 mypy 配置
     steps:
       - uses: actions/checkout@v4
@@ -171,14 +192,17 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           fi
           pip install mypy
 
       - name: Run mypy
-        run: mypy backend/app --strict
+        run: mypy app --strict

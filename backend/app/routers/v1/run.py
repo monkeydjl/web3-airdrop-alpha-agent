@@ -10,16 +10,13 @@ Reference:
 - API_SPEC.md /run 端点定义
 """
 
-from typing import List, Optional
-from datetime import datetime
-
-from fastapi import APIRouter, HTTPException, Body
-from pydantic import BaseModel, Field, ConfigDict
 import structlog
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.agents.base import RawProject, AgentContext
-from app.agents.orchestrator_simple import run_orchestrator
-from app.openapi import RUN_REQUEST_EXAMPLES, RUN_RESPONSE_EXAMPLE, ERROR_RESPONSE_EXAMPLES
+from app.agents.collector import CollectorAgent
+from app.openapi import ERROR_RESPONSE_EXAMPLES, RUN_REQUEST_EXAMPLES
+from app.pipeline_run import execute_analysis_pipeline
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +26,7 @@ router = APIRouter(tags=["pipeline"])
 # ══════════════════════════════════════════════════════════════
 # Request/Response Models
 # ══════════════════════════════════════════════════════════════
+
 
 class ProjectInput(BaseModel):
     """单个项目输入。"""
@@ -49,9 +47,9 @@ class ProjectInput(BaseModel):
     )
 
     name: str = Field(..., min_length=1, max_length=200, description="项目名称")
-    url: Optional[str] = Field(None, max_length=500, description="项目官网")
-    sector: Optional[str] = Field(None, max_length=50, description="项目类型/赛道")
-    stage: Optional[str] = Field(None, max_length=50, description="项目阶段")
+    url: str | None = Field(None, max_length=500, description="项目官网")
+    sector: str | None = Field(None, max_length=50, description="项目类型/赛道")
+    stage: str | None = Field(None, max_length=50, description="项目阶段")
 
     # Airdrop signals
     has_testnet: bool = Field(False, description="是否有测试网")
@@ -83,22 +81,15 @@ class RunRequest(BaseModel):
         }
     )
 
-    projects: List[ProjectInput] = Field(
-        ...,
-        min_length=1,
+    projects: list[ProjectInput] | None = Field(
+        None,
         max_length=100,
-        description="待评分项目列表"
+        description="待评分项目列表；为空/None 时自动从 raw_projects 表读取未处理项目（v2.0 自动采集）",
     )
 
-    enable_llm: bool = Field(
-        False,
-        description="是否启用 LLM（默认 False，使用启发式规则）"
-    )
+    enable_llm: bool = Field(False, description="是否启用 LLM（默认 False，使用启发式规则）")
 
-    llm_model: str = Field(
-        "gpt-4o-mini",
-        description="LLM 模型名称（仅当 enable_llm=True 时生效）"
-    )
+    llm_model: str = Field("gpt-4o-mini", description="LLM 模型名称（仅当 enable_llm=True 时生效）")
 
 
 class ProjectResult(BaseModel):
@@ -107,23 +98,23 @@ class ProjectResult(BaseModel):
     # 项目基本信息
     id: str
     name: str
-    sector: Optional[str]
-    stage: Optional[str]
+    sector: str | None
+    stage: str | None
 
     # 评分结果
     score: int
     label: str
     confidence: float
-    reason: List[str]
+    reason: list[str]
 
     # Agent 分析结果
-    narrative: Optional[dict] = None
-    team: Optional[dict] = None
-    risk: Optional[dict] = None
-    tokenomics: Optional[dict] = None
+    narrative: dict | None = None
+    team: dict | None = None
+    risk: dict | None = None
+    tokenomics: dict | None = None
 
     # 元数据
-    errors: List[dict] = []
+    errors: list[dict] = []
 
 
 class RunResponse(BaseModel):
@@ -147,14 +138,10 @@ class RunResponse(BaseModel):
                             "score": 85,
                             "label": "FARM",
                             "confidence": 1.0,
-                            "reason": [
-                                "strong airdrop signal",
-                                "early narrative",
-                                "credible team"
-                            ]
+                            "reason": ["strong airdrop signal", "early narrative", "credible team"],
                         }
-                    ]
-                }
+                    ],
+                },
             }
         }
     )
@@ -168,13 +155,7 @@ class ErrorResponse(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "ok": False,
-                "error": {
-                    "code": "VALIDATION_ERROR",
-                    "message": "Invalid project data"
-                }
-            }
+            "example": {"ok": False, "error": {"code": "VALIDATION_ERROR", "message": "Invalid project data"}}
         }
     )
 
@@ -186,6 +167,7 @@ class ErrorResponse(BaseModel):
 # Endpoints
 # ══════════════════════════════════════════════════════════════
 
+
 @router.post(
     "/run",
     response_model=RunResponse,
@@ -194,23 +176,15 @@ class ErrorResponse(BaseModel):
             "model": ErrorResponse,
             "description": "输入验证失败",
             "content": {
-                "application/json": {
-                    "examples": {
-                        "validation_error": ERROR_RESPONSE_EXAMPLES["validation_error"]
-                    }
-                }
-            }
+                "application/json": {"examples": {"validation_error": ERROR_RESPONSE_EXAMPLES["validation_error"]}}
+            },
         },
         500: {
             "model": ErrorResponse,
             "description": "Pipeline 执行错误",
             "content": {
-                "application/json": {
-                    "examples": {
-                        "pipeline_error": ERROR_RESPONSE_EXAMPLES["pipeline_error"]
-                    }
-                }
-            }
+                "application/json": {"examples": {"pipeline_error": ERROR_RESPONSE_EXAMPLES["pipeline_error"]}}
+            },
         },
     },
     summary="运行评分 Pipeline",
@@ -224,7 +198,7 @@ class ErrorResponse(BaseModel):
         "   - Risk Agent: 代币风险和解锁压力\n"
         "   - Tokenomics Agent: 代币经济学模型\n"
         "3. **综合评分**: Scorer Agent 加权计算最终分数\n"
-        "4. **三档分类**: FARM (≥75) / WATCH (60-74) / IGNORE (<60)\n\n"
+        "4. **三档分类**: FARM (≥70) / WATCH (≥50) / IGNORE (<50)\n\n"
         "## 限制\n\n"
         "- 每次最多 100 个项目\n"
         "- 每个项目名称必填，最长 200 字符\n"
@@ -239,7 +213,7 @@ async def run_pipeline(
     request: RunRequest = Body(
         ...,
         openapi_examples=RUN_REQUEST_EXAMPLES,
-    )
+    ),
 ) -> RunResponse:
     """运行评分 Pipeline。
 
@@ -254,113 +228,24 @@ async def run_pipeline(
     """
     logger.info(
         "api.run.started",
-        project_count=len(request.projects),
+        has_input_projects=request.projects is not None and len(request.projects) > 0,
         enable_llm=request.enable_llm,
     )
 
+    trigger = "manual" if request.projects else "auto"
+
     try:
-        # 1. 转换输入为 RawProject
-        raw_projects = []
-        for idx, proj_input in enumerate(request.projects):
-            raw_project = RawProject(
-                id=f"api-input-{idx}",  # 临时 ID，Collector 会生成确定性 ID
-                name=proj_input.name,
-                url=proj_input.url,
-                sector=proj_input.sector,
-                stage=proj_input.stage,
-                source="api",
-                has_testnet=proj_input.has_testnet,
-                has_points_program=proj_input.has_points_program,
-                no_token_yet=proj_input.no_token_yet,
-                recent_funding=proj_input.recent_funding,
-            )
-            raw_projects.append(raw_project)
+        seed_projects = None
+        if request.projects:
+            seed_inputs = [p.model_dump() for p in request.projects]
+            seed_projects = CollectorAgent().collect_from_seed(seed_inputs)
 
-        # 2. 运行 Orchestrator
-        run_id = f"api-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
-        response = await run_orchestrator(
-            projects=raw_projects,
-            run_id=run_id,
+        data = await execute_analysis_pipeline(
+            projects=seed_projects,
             enable_llm=request.enable_llm,
-            # Note: llm_model parameter not yet supported in run_orchestrator
+            trigger=trigger,
         )
-
-        # 3. 构造响应
-        top_projects = []
-        for state in response.states[:10]:  # 返回前 10 个
-            project_result = {
-                "id": state.project.id,
-                "name": state.project.name,
-                "sector": state.project.sector,
-                "stage": state.project.stage,
-                "score": state.score,
-                "label": state.label,
-                "confidence": state.confidence,
-                "reason": state.reason,
-            }
-
-            # 可选：包含详细分析结果
-            if state.narrative:
-                project_result["narrative"] = {
-                    "sector": state.narrative.sector,
-                    "stage": state.narrative.stage,
-                    "heat_score": state.narrative.heat_score,
-                    "timing": state.narrative.timing,
-                }
-
-            if state.team:
-                project_result["team"] = {
-                    "team_score": state.team.team_score,
-                    "team_type": state.team.team_type,
-                    "team_flags": state.team.team_flags,
-                }
-
-            if state.risk:
-                project_result["risk"] = {
-                    "token_risk": state.risk.token_risk,
-                    "unlock_pressure": state.risk.unlock_pressure,
-                    "risk_flags": state.risk.risk_flags,
-                }
-
-            if state.tokenomics:
-                project_result["tokenomics"] = {
-                    "vc_share": state.tokenomics.vc_share,
-                    "team_share": state.tokenomics.team_share,
-                    "unlock_penalty": state.tokenomics.unlock_penalty,
-                }
-
-            if state.errors:
-                project_result["errors"] = [
-                    {
-                        "agent_name": err.agent_name,
-                        "kind": err.kind,
-                        "message": err.message,
-                    }
-                    for err in state.errors
-                ]
-
-            top_projects.append(project_result)
-
-        logger.info(
-            "api.run.completed",
-            run_id=run_id,
-            status=response.status,
-            project_count=response.project_count,
-        )
-
-        return RunResponse(
-            ok=True,
-            data={
-                "run_id": response.run_id,
-                "status": response.status,
-                "project_count": response.project_count,
-                "scored_count": len([s for s in response.states if s.score is not None]),
-                "error_count": len(response.errors),
-                "top_score": response.top_score,
-                "top_projects": top_projects,
-            }
-        )
+        return RunResponse(ok=True, data=data)
 
     except Exception as e:
         logger.error(
@@ -372,6 +257,6 @@ async def run_pipeline(
             status_code=500,
             detail={
                 "code": "PIPELINE_ERROR",
-                "message": f"Pipeline execution failed: {str(e)}",
-            }
-        )
+                "message": f"Pipeline execution failed: {e!s}",
+            },
+        ) from e

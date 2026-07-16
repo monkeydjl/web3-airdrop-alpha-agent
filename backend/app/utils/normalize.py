@@ -7,7 +7,6 @@ Reference:
 - TASK_BREAKDOWN.md W2-02
 """
 
-import re
 import unicodedata
 import uuid
 from typing import NamedTuple
@@ -24,54 +23,43 @@ SECTOR_ALIAS = {
     "l2": "L2",
     "layer-2": "L2",
     "layer 2": "L2",
-
     # Restaking
     "restake": "Restaking",
     "restaking": "Restaking",
     "re-staking": "Restaking",
-
     # DeFi variations
     "defi": "DeFi",
     "de-fi": "DeFi",
     "decentralized finance": "DeFi",
-
     # Gaming
     "gaming": "Gaming",
     "game": "Gaming",
     "gamefi": "GameFi",
-
     # Infrastructure
     "infra": "Infrastructure",
     "infrastructure": "Infrastructure",
-
     # NFT
     "nft": "NFT",
     "nfts": "NFT",
     "non-fungible token": "NFT",
-
     # DAO
     "dao": "DAO",
     "daos": "DAO",
-
     # DEX
     "dex": "DEX",
     "decentralized exchange": "DEX",
-
     # Lending
     "lending": "Lending",
     "loan": "Lending",
     "borrow": "Lending",
-
     # Bridge
     "bridge": "Bridge",
     "cross-chain": "Bridge",
-
     # Privacy
     "privacy": "Privacy",
     "private": "Privacy",
     "zero-knowledge": "ZK",
     "zk": "ZK",
-
     # AI
     "ai": "AI",
     "artificial intelligence": "AI",
@@ -129,7 +117,7 @@ def normalize_name(name: str) -> str:
     # Step 3: Remove common suffixes
     for suffix in PROJECT_SUFFIXES:
         if normalized.endswith(suffix):
-            normalized = normalized[:-len(suffix)]
+            normalized = normalized[: -len(suffix)]
 
     # Step 4: Unicode NFKC normalization
     normalized = unicodedata.normalize("NFKC", normalized)
@@ -171,6 +159,7 @@ class DedupKey(NamedTuple):
 
     Combines normalized name and sector.
     """
+
     name_key: str
     sector_key: str
 
@@ -236,12 +225,19 @@ def generate_deterministic_id(dedup_key: DedupKey) -> str:
     return str(project_uuid)
 
 
-# Source priority for conflict resolution
+# Source priority for conflict resolution (lower = higher priority)
 SOURCE_PRIORITY = {
-    "seed": 1,      # Highest priority
-    "defillama": 2,
-    "cryptorank": 3,
-    "twitter": 4,   # Lowest priority
+    "manual": 0,  # User manual input (highest)
+    "api": 1,  # API input
+    "seed": 2,  # Seed data
+    "defillama": 3,
+    "coingecko": 4,
+    "github": 5,
+    "cryptorank": 6,
+    "rootdata": 5,  # funding quality — merge ahead of twitter noise
+    "twitter_kol": 7,
+    "twitter_keyword": 8,
+    "twitter": 9,  # Generic twitter fallback
     "unknown": 99,
 }
 
@@ -272,11 +268,63 @@ def merge_sources(sources: list[str]) -> str:
         'seed,defillama'
     """
     # Deduplicate and sort by priority
-    unique_sources = sorted(
-        set(sources),
-        key=get_source_priority
-    )
+    unique_sources = sorted(set(sources), key=get_source_priority)
     return ",".join(unique_sources)
+
+
+def merge_raw_records(
+    records: list[dict],
+    source_key: str = "source",
+) -> dict:
+    """Merge multiple raw project records into one canonical record.
+
+    Resolution rules:
+    1. Primary record: highest source priority (manual > api > seed > defillama > ...)
+    2. Boolean signals: OR across all records (has_testnet, has_points_program, etc.)
+    3. discovery_score: max across all records
+    4. discovered_at: earliest non-null timestamp
+    5. sources: merged and sorted by priority
+
+    Args:
+        records: List of raw project dicts (must contain at least 'name')
+        source_key: Key for source field in record
+
+    Returns:
+        Merged canonical record dict
+
+    Raises:
+        ValueError: If records is empty
+    """
+    if not records:
+        raise ValueError("records must not be empty")
+
+    # Sort by source priority (highest priority first)
+    sorted_records = sorted(records, key=lambda r: get_source_priority(r.get(source_key, "unknown")))
+    primary = sorted_records[0]
+
+    merged = dict(primary)
+    sources = {r.get(source_key, "unknown") for r in sorted_records}
+    merged[source_key] = merge_sources(list(sources))
+
+    # Merge boolean signals: OR semantics
+    bool_fields = ["has_testnet", "has_points_program", "no_token_yet", "recent_funding"]
+    for field in bool_fields:
+        merged[field] = any(r.get(field) for r in sorted_records if field in r or isinstance(r.get(field), bool))
+
+    # Merge discovery_score: take max
+    scores = [r.get("discovery_score", 0.0) for r in sorted_records if r.get("discovery_score") is not None]
+    merged["discovery_score"] = max(scores) if scores else 0.0
+
+    # Merge auto_discovered: True if any source is auto-discovered
+    auto_discovered = any(r.get("auto_discovered") for r in sorted_records if r.get("auto_discovered") is not None)
+    merged["auto_discovered"] = auto_discovered
+
+    # Merge discovered_at: earliest non-null
+    discovered_ats = [r.get("discovered_at") for r in sorted_records if r.get("discovered_at")]
+    if discovered_ats:
+        merged["discovered_at"] = min(discovered_ats)
+
+    return merged
 
 
 if __name__ == "__main__":
@@ -322,7 +370,7 @@ if __name__ == "__main__":
     keys = [create_dedup_key(name, sector) for name, sector in projects]
     ids = [generate_deterministic_id(key) for key in keys]
 
-    for (name, sector), key, proj_id in zip(projects, keys, ids):
+    for (name, sector), key, proj_id in zip(projects, keys, ids, strict=False):
         print(f"{name:30} ({sector:10}) -> {key.to_string():20} -> {proj_id}")
 
     print(f"\nAll IDs same? {len(set(ids)) == 1}")

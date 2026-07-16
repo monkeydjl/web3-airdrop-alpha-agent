@@ -5,30 +5,18 @@ remains consistent and correct. Each case represents a real or realistic
 project with expected outputs.
 
 Reference:
-- DATA_SCORING_DICT.md §12 (LayerX example)
+- DATA_SCORING_DICT.md (v1.2 eight-factor weights)
 - ENGINEERING_ROADMAP.md W2-10
 """
 
 from dataclasses import dataclass
-from typing import List
 
 from app.agents.base import RawProject
 
 
 @dataclass
 class GoldenCase:
-    """A single golden test case.
-
-    Attributes:
-        name: Human-readable test case name
-        description: Brief description of what this case tests
-        project: Input RawProject
-        sector_count: Number of projects in this sector (for competition)
-        expected_score: Expected final score (±2 tolerance)
-        expected_label: Expected label (FARM/WATCH/IGNORE)
-        expected_reasons: Expected reason keywords (must match at least 2)
-        expected_confidence: Expected confidence (0.0-1.0)
-    """
+    """A single golden test case."""
 
     name: str
     description: str
@@ -36,21 +24,31 @@ class GoldenCase:
     sector_count: int
     expected_score: int
     expected_label: str
-    expected_reasons: List[str]
+    expected_reasons: list[str]
     expected_confidence: float
 
 
-# ══════════════════════════════════════════════════════════════
-# GOLDEN TEST CASES
-# ══════════════════════════════════════════════════════════════
+def _rich(**kwargs) -> dict:
+    """Default strong transparency/execution signals for high-quality cases."""
+    base = dict(
+        has_docs=True,
+        has_whitepaper=True,
+        has_roadmap=True,
+        has_github=True,
+        has_twitter=True,
+        has_discord=True,
+        github_stars=400,
+        github_recent_push_days=10,
+        explicit_airdrop_mention=False,
+    )
+    base.update(kwargs)
+    return base
+
 
 GOLDEN_CASES = [
-    # ──────────────────────────────────────────────────────────
-    # Case 1: LayerX - High quality project with strong signals
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="layerx_high_quality",
-        description="High-quality L2 with strong airdrop signals and strong fundamentals",
+        description="High-quality L2 with strong airdrop + docs/github (v1.2)",
         project=RawProject(
             id="layerx-001",
             name="LayerX",
@@ -62,16 +60,14 @@ GOLDEN_CASES = [
             has_points_program=True,
             no_token_yet=True,
             recent_funding=True,
+            **_rich(explicit_airdrop_mention=True),
         ),
         sector_count=4,
-        expected_score=80,
+        expected_score=85,  # strong signals + execution/transparency
         expected_label="FARM",
-        expected_reasons=["strong airdrop signal", "early narrative", "credible team"],
+        expected_reasons=["strong airdrop signal", "early narrative", "active development"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 2: Restaking Peak - Hot narrative at peak timing
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="restaking_peak_narrative",
         description="Restaking project at peak narrative timing",
@@ -86,16 +82,14 @@ GOLDEN_CASES = [
             has_points_program=True,
             no_token_yet=True,
             recent_funding=True,
+            **_rich(github_stars=800, github_recent_push_days=5),
         ),
         sector_count=2,
-        expected_score=85,
+        expected_score=88,
         expected_label="FARM",
         expected_reasons=["strong airdrop signal", "peak narrative", "low competition"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 3: DeFi Mature - Late narrative timing
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="defi_mature_late",
         description="Mature DeFi project with late narrative timing",
@@ -112,14 +106,11 @@ GOLDEN_CASES = [
             recent_funding=False,
         ),
         sector_count=20,
-        expected_score=45,
+        expected_score=44,
         expected_label="IGNORE",
         expected_reasons=["no airdrop signal", "late narrative", "high competition"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 4: Gaming Early - Early stage with moderate signals
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="gaming_early_moderate",
         description="Early-stage Gaming project with moderate signals",
@@ -136,14 +127,11 @@ GOLDEN_CASES = [
             recent_funding=False,
         ),
         sector_count=8,
-        expected_score=64,
+        expected_score=59,
         expected_label="WATCH",
         expected_reasons=["moderate airdrop signal", "early narrative"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 5: Infrastructure - Strong fundamentals, low competition
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="infrastructure_strong",
         description="Strong infrastructure project with low competition",
@@ -158,23 +146,21 @@ GOLDEN_CASES = [
             has_points_program=True,
             no_token_yet=True,
             recent_funding=True,
+            **_rich(github_stars=600, github_recent_push_days=3),
         ),
         sector_count=3,
-        expected_score=82,
+        expected_score=86,
         expected_label="FARM",
         expected_reasons=["strong airdrop signal", "early narrative", "low competition"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 6: Anonymous Team - High team risk
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="anonymous_team_risk",
         description="Project with anonymous team and no URL",
         project=RawProject(
             id="anon-001",
             name="AnonProtocol",
-            url=None,  # No URL = anonymous signal
+            url=None,
             sector="DeFi",
             stage="testnet",
             source="seed",
@@ -184,17 +170,14 @@ GOLDEN_CASES = [
             recent_funding=False,
         ),
         sector_count=15,
-        expected_score=60,  # Adjusted for team penalty
+        expected_score=53,
         expected_label="WATCH",
         expected_reasons=["strong airdrop signal", "team risk"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 7: Ideation Stage - Very early, high uncertainty
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="ideation_high_uncertainty",
-        description="Ideation-stage project with high uncertainty",
+        description="Ideation-stage project with high uncertainty (v1.2 may stay WATCH)",
         project=RawProject(
             id="idea-001",
             name="NewConcept",
@@ -204,18 +187,15 @@ GOLDEN_CASES = [
             source="seed",
             has_testnet=False,
             has_points_program=False,
-            no_token_yet=True,  # Only hint, no points
+            no_token_yet=True,
             recent_funding=True,
         ),
         sector_count=1,
-        expected_score=68,  # Low competition boost
+        expected_score=61,
         expected_label="WATCH",
         expected_reasons=["moderate airdrop signal", "low competition"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 8: Bridge - Mature sector with moderate signals
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="bridge_mature_moderate",
         description="Bridge project in mature sector",
@@ -232,14 +212,11 @@ GOLDEN_CASES = [
             recent_funding=False,
         ),
         sector_count=12,
-        expected_score=54,  # Actually WATCH, not IGNORE
+        expected_score=52,
         expected_label="WATCH",
         expected_reasons=["moderate airdrop signal", "late narrative"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 9: High Competition L2 - Many competitors
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="l2_high_competition",
         description="L2 project in highly competitive market",
@@ -254,16 +231,14 @@ GOLDEN_CASES = [
             has_points_program=True,
             no_token_yet=True,
             recent_funding=True,
+            **_rich(),
         ),
         sector_count=25,
-        expected_score=72,  # Strong signals but competition penalty
+        expected_score=81,
         expected_label="FARM",
-        expected_reasons=["strong airdrop signal", "early narrative", "high competition"],
+        expected_reasons=["strong airdrop signal", "active development", "strong public docs"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 10: Minimal Signals - Sparse data
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="minimal_signals",
         description="Project with minimal signals and data",
@@ -280,17 +255,14 @@ GOLDEN_CASES = [
             recent_funding=False,
         ),
         sector_count=18,
-        expected_score=45,  # All weak signals
+        expected_score=44,
         expected_label="IGNORE",
         expected_reasons=["no airdrop signal", "late narrative", "high competition"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 11: Mixed Signals - Some positive, some negative
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="mixed_signals_balanced",
-        description="Project with balanced mix of positive and negative signals",
+        description="Balanced mix — points without no_token stays WATCH under v1.2",
         project=RawProject(
             id="mixed-001",
             name="MixedProtocol",
@@ -300,21 +272,18 @@ GOLDEN_CASES = [
             source="seed",
             has_testnet=True,
             has_points_program=True,
-            no_token_yet=False,  # Points but no token hint
+            no_token_yet=False,
             recent_funding=False,
         ),
         sector_count=10,
-        expected_score=63,  # Balanced
+        expected_score=60,
         expected_label="WATCH",
         expected_reasons=["moderate airdrop signal", "early narrative"],
         expected_confidence=1.0,
     ),
-    # ──────────────────────────────────────────────────────────
-    # Case 12: Funding Boost - Recent funding with strong signals
-    # ──────────────────────────────────────────────────────────
     GoldenCase(
         name="recent_funding_boost",
-        description="Project with recent funding and strong fundamentals",
+        description="Recent funding with strong fundamentals + execution signals",
         project=RawProject(
             id="funded-001",
             name="FundedProtocol",
@@ -326,38 +295,23 @@ GOLDEN_CASES = [
             has_points_program=True,
             no_token_yet=True,
             recent_funding=True,
+            **_rich(github_stars=500, github_recent_push_days=7),
         ),
         sector_count=3,
-        expected_score=81,  # All positive signals
+        expected_score=85,
         expected_label="FARM",
-        expected_reasons=["strong airdrop signal", "peak narrative", "low competition"],
+        expected_reasons=["strong airdrop signal", "early narrative", "low competition"],
         expected_confidence=1.0,
     ),
 ]
 
 
+def get_all_golden_cases() -> list[GoldenCase]:
+    return list(GOLDEN_CASES)
+
+
 def get_golden_case(name: str) -> GoldenCase:
-    """Get a golden case by name.
-
-    Args:
-        name: Case name
-
-    Returns:
-        GoldenCase instance
-
-    Raises:
-        ValueError: If case not found
-    """
     for case in GOLDEN_CASES:
         if case.name == name:
             return case
-    raise ValueError(f"Golden case '{name}' not found")
-
-
-def get_all_golden_cases() -> List[GoldenCase]:
-    """Get all golden cases.
-
-    Returns:
-        List of all GoldenCase instances
-    """
-    return GOLDEN_CASES.copy()
+    raise ValueError(f"Golden case not found: {name}")

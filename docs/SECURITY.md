@@ -222,17 +222,37 @@
 
 **原则**：每个 Agent 仅能访问其职责所需的最小工具集，禁止越权调用。
 
+> **v2.0 更新（ADR-012）**：Collector 从"禁止外部 HTTP"调整为"允许采集源白名单 HTTP"。自动扫描模式下 Collector 需主动调用外部数据源 API，但仅限白名单域名。
+
 | Agent | 允许工具 | 禁止工具 |
 | --- | --- | --- |
-| Collector | `httpx.get`（DefiLlama/CryptoRank）、`db.write(raw_projects)` | LLM 调用、`db.drop`、`db.write(projects)` |
-| Narrative/Team/Risk/Tokenomics | `llm.complete`、`db.read(raw_signals)` | 外部 HTTP、`db.write` |
+| Collector | `httpx.get`（仅采集源白名单域名，见下表）、`db.write(raw_projects, project_signals, collection_logs)` | LLM 调用、`db.drop`、`db.write(projects)`（分析后由 Scorer 写入） |
+| Narrative/Team/Risk/Tokenomics | `llm.complete`、`db.read(raw_signals, project_signals)` | 外部 HTTP、`db.write` |
 | Scorer | `db.read(*)`、`db.write(projects, scores)` | LLM 调用、外部 HTTP |
 | Orchestrator | `agent.invoke`、`db.read(logs)` | 直接写业务表 |
+
+**Collector 采集源 HTTP 白名单（v2.0，ADR-012）**:
+
+| 域名 | 用途 | 阶段 |
+| --- | --- | --- |
+| `api.llama.fi` | DefiLlama 协议数据 | MVP/V1 |
+| `api.github.com` | GitHub 仓库活跃度 | MVP/V1 |
+| `api.coingecko.com` | CoinGecko 代币验证 | MVP/V1 |
+| `api.cryptorank.io` | CryptoRank 融资数据 | V1+ |
+| `api.twitter.com` | Twitter/X 信号采集 | V1+（付费） |
+| `api.etherscan.io` | Etherscan 链上数据 | V1+ |
+| `dashboard.alchemy.com` | Alchemy webhook | V1+ |
+| `api.galxe.com` | Galxe 任务平台 | V1+ |
+| `api.layer3.xyz` | Layer3 任务平台 | V1+ |
+| `api.dune.com` | Dune Analytics | V2（可选） |
+
+> 任何不在白名单的域名，Collector 调用将被 `http_client.py` 拒绝并记 `PermissionError`。新增数据源需先更新本表 + ADR 评审。
 
 **实现**：
 - 工具以显式白名单注入 Agent 实例（构造函数参数），不通过全局 registry 自由取用。
 - `backend/app/agents/base.py`（计划实现位置）定义 `allowed_tools: list[str]`，基类在调用前校验工具名 ∈ 白名单，否则抛 `PermissionError`。
-- 外部 HTTP 调用统一经 `backend/app/http_client.py`（计划实现位置）出口，便于审计与限流（§10.3）。
+- 外部 HTTP 调用统一经 `backend/app/http_client.py`（计划实现位置）出口，校验域名 ∈ 白名单，便于审计与限流（§10.3）。
+- 采集场景的速率限制由 `backend/app/utils/rate_limiter.py`（计划实现位置）令牌桶控制，超限自动降级（见 `DATA_SOURCE_STRATEGY.md §采集故障降级矩阵`）。
 
 ### 10.3 Sandbox 隔离
 
@@ -240,7 +260,7 @@
 | --- | --- | --- |
 | **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） |
 | **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP |
-| **网络级** | 外部 HTTP 仅允许白名单域名：`api.llama.fi`、`api.cryptorank.io`、`api.openai.com`、`api.twitter.com`、`api.dune.com` | V2 |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表）：`api.llama.fi`、`api.github.com`、`api.coingecko.com`、`api.cryptorank.io`、`api.twitter.com`、`api.etherscan.io`、`dashboard.alchemy.com`、`api.galxe.com`、`api.layer3.xyz`、`api.dune.com`、`api.openai.com` | MVP（v2.0，ADR-012） |
 | **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP |
 | **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 |
 

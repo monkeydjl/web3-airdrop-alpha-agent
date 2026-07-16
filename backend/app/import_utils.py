@@ -5,19 +5,16 @@
 - CSV (.csv)
 """
 
-import csv
 import io
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 import pandas as pd
 import structlog
 
-from app.agents.base import RawProject
-
 logger = structlog.get_logger(__name__)
 
 
-def import_projects_from_excel(file_content: bytes) -> List[Dict[str, Any]]:
+def import_projects_from_excel(file_content: bytes) -> list[dict[str, Any]]:
     """从 Excel 文件导入项目.
 
     Args:
@@ -105,10 +102,10 @@ def import_projects_from_excel(file_content: bytes) -> List[Dict[str, Any]]:
             error=str(e),
             exc_info=True,
         )
-        raise ValueError(f"Excel 导入失败: {str(e)}")
+        raise ValueError(f"Excel 导入失败: {e!s}") from e
 
 
-def import_projects_from_csv(file_content: str) -> List[Dict[str, Any]]:
+def import_projects_from_csv(file_content: str) -> list[dict[str, Any]]:
     """从 CSV 文件导入项目.
 
     Args:
@@ -193,10 +190,10 @@ def import_projects_from_csv(file_content: str) -> List[Dict[str, Any]]:
             error=str(e),
             exc_info=True,
         )
-        raise ValueError(f"CSV 导入失败: {str(e)}")
+        raise ValueError(f"CSV 导入失败: {e!s}") from e
 
 
-def validate_imported_projects(projects: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[str]]:
+def validate_imported_projects(projects: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     """验证导入的项目数据.
 
     Args:
@@ -259,15 +256,14 @@ def create_import_template_excel() -> bytes:
     df = pd.DataFrame(template_data)
 
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='导入模板', index=False)
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="导入模板", index=False)
 
         # 美化
-        workbook = writer.book
-        worksheet = writer.sheets['导入模板']
+        worksheet = writer.sheets["导入模板"]
 
         # 标题行样式
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
 
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True)
@@ -285,8 +281,8 @@ def create_import_template_excel() -> bytes:
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
-                    pass
+                except Exception as exc:
+                    logger.debug("import.template_column_width_failed", error=str(exc))
             adjusted_width = min(max_length + 2, 40)
             worksheet.column_dimensions[column_letter].width = adjusted_width
 

@@ -9,15 +9,16 @@ Reference:
 """
 
 import pytest
+from pydantic import ValidationError
 
 from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.tokenomics import (
-    TokenomicsAgent,
-    estimate_vc_share,
-    estimate_team_share,
-    infer_unlock_pressure,
-    calculate_unlock_penalty,
     UNLOCK_PENALTY_MAP,
+    TokenomicsAgent,
+    calculate_unlock_penalty,
+    estimate_team_share,
+    estimate_vc_share,
+    infer_unlock_pressure,
 )
 
 
@@ -40,7 +41,7 @@ class TestTokenomicsAgent:
             stage="mainnet",
             recent_funding=True,
             url="https://good.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -65,7 +66,7 @@ class TestTokenomicsAgent:
             stage="testnet",
             recent_funding=True,
             url="https://medium.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -89,7 +90,7 @@ class TestTokenomicsAgent:
             stage="ideation",
             recent_funding=True,
             url=None,
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -116,7 +117,7 @@ class TestTokenomicsAgent:
             stage="testnet",
             recent_funding=False,
             url="https://low.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -133,13 +134,7 @@ class TestTokenomicsAgent:
     @pytest.mark.asyncio
     async def test_result_immutability(self):
         """Test that TokenomicsResult is immutable."""
-        project = RawProject(
-            id="test-immutable",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-immutable", name="Test", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -150,7 +145,7 @@ class TestTokenomicsAgent:
         assert result_state.tokenomics is not None
 
         # Try to modify - should raise FrozenInstanceError
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result_state.tokenomics.vc_share = 0.99
 
 
@@ -159,39 +154,20 @@ class TestEstimateVcShare:
 
     def test_mainnet_with_funding(self):
         """Test mainnet with funding gets moderate VC allocation."""
-        project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            stage="mainnet",
-            recent_funding=True,
-            source="seed"
-        )
+        project = RawProject(id="test-1", name="Test", sector="L2", stage="mainnet", recent_funding=True, source="seed")
         vc_share = estimate_vc_share(project)
         assert vc_share == 0.25
 
     def test_testnet_with_funding(self):
         """Test testnet with funding gets higher VC allocation."""
-        project = RawProject(
-            id="test-2",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            recent_funding=True,
-            source="seed"
-        )
+        project = RawProject(id="test-2", name="Test", sector="L2", stage="testnet", recent_funding=True, source="seed")
         vc_share = estimate_vc_share(project)
         assert vc_share == 0.30
 
     def test_ideation_with_funding(self):
         """Test ideation with funding gets highest VC allocation."""
         project = RawProject(
-            id="test-3",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            recent_funding=True,
-            source="seed"
+            id="test-3", name="Test", sector="L2", stage="ideation", recent_funding=True, source="seed"
         )
         vc_share = estimate_vc_share(project)
         assert vc_share == 0.35
@@ -199,12 +175,7 @@ class TestEstimateVcShare:
     def test_no_funding(self):
         """Test project without funding gets lower VC allocation."""
         project = RawProject(
-            id="test-4",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            recent_funding=False,
-            source="seed"
+            id="test-4", name="Test", sector="L2", stage="testnet", recent_funding=False, source="seed"
         )
         vc_share = estimate_vc_share(project)
         assert vc_share == 0.20
@@ -222,7 +193,7 @@ class TestEstimateVcShare:
                     sector="L2",
                     stage=stage,
                     recent_funding=funding,
-                    source="seed"
+                    source="seed",
                 )
                 vc_share = estimate_vc_share(project)
                 assert 0.0 <= vc_share <= 1.0
@@ -234,12 +205,7 @@ class TestEstimateTeamShare:
     def test_mainnet(self):
         """Test mainnet gets standard team allocation."""
         project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            stage="mainnet",
-            url="https://test.xyz",
-            source="seed"
+            id="test-1", name="Test", sector="L2", stage="mainnet", url="https://test.xyz", source="seed"
         )
         team_share = estimate_team_share(project)
         assert team_share == 0.20
@@ -247,12 +213,7 @@ class TestEstimateTeamShare:
     def test_testnet(self):
         """Test testnet gets moderate team allocation."""
         project = RawProject(
-            id="test-2",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            url="https://test.xyz",
-            source="seed"
+            id="test-2", name="Test", sector="L2", stage="testnet", url="https://test.xyz", source="seed"
         )
         team_share = estimate_team_share(project)
         assert team_share == 0.25
@@ -260,26 +221,14 @@ class TestEstimateTeamShare:
     def test_ideation(self):
         """Test ideation gets higher team allocation."""
         project = RawProject(
-            id="test-3",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            url="https://test.xyz",
-            source="seed"
+            id="test-3", name="Test", sector="L2", stage="ideation", url="https://test.xyz", source="seed"
         )
         team_share = estimate_team_share(project)
         assert team_share == 0.30
 
     def test_anonymous_team(self):
         """Test anonymous team (no URL) gets highest allocation."""
-        project = RawProject(
-            id="test-4",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            url=None,
-            source="seed"
-        )
+        project = RawProject(id="test-4", name="Test", sector="L2", stage="testnet", url=None, source="seed")
         team_share = estimate_team_share(project)
         assert team_share == 0.35
 
@@ -291,12 +240,7 @@ class TestEstimateTeamShare:
         for stage in stages:
             for url in urls:
                 project = RawProject(
-                    id=f"test-{stage}-{url is not None}",
-                    name="Test",
-                    sector="L2",
-                    stage=stage,
-                    url=url,
-                    source="seed"
+                    id=f"test-{stage}-{url is not None}", name="Test", sector="L2", stage=stage, url=url, source="seed"
                 )
                 team_share = estimate_team_share(project)
                 assert 0.0 <= team_share <= 1.0
@@ -386,7 +330,7 @@ class TestIntegration:
             stage="testnet",
             recent_funding=True,
             url="https://pipeline.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -433,14 +377,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_missing_optional_fields(self):
         """Test project with minimal fields."""
-        project = RawProject(
-            id="test-minimal",
-            name="MinimalProject",
-            sector=None,
-            stage=None,
-            url=None,
-            source="seed"
-        )
+        project = RawProject(id="test-minimal", name="MinimalProject", sector=None, stage=None, url=None, source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -461,13 +398,7 @@ class TestEdgeCases:
         stages = ["ideation", "testnet", "mainnet"]
 
         for stage in stages:
-            project = RawProject(
-                id=f"test-{stage}",
-                name=f"Project-{stage}",
-                sector="L2",
-                stage=stage,
-                source="seed"
-            )
+            project = RawProject(id=f"test-{stage}", name=f"Project-{stage}", sector="L2", stage=stage, source="seed")
 
             context = AgentContext(run_id="test-001")
             state = PipelineState(project=project, context=context)
@@ -489,7 +420,7 @@ class TestEdgeCases:
             stage="ideation",
             recent_funding=True,
             url=None,
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -516,13 +447,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_tokenomics_result_schema(self):
         """Test that TokenomicsResult matches schema."""
-        project = RawProject(
-            id="test-schema",
-            name="SchemaTest",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-schema", name="SchemaTest", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -550,13 +475,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_tokenomics_result_serialization(self):
         """Test that TokenomicsResult can be serialized."""
-        project = RawProject(
-            id="test-serialize",
-            name="SerializeTest",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-serialize", name="SerializeTest", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)

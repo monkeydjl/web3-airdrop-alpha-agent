@@ -6,6 +6,15 @@
 
 ---
 
+## Opportunity v2 persistence invariants
+
+- Evidence is append-only. `supersedes_evidence_id` identifies the logical predecessor and is repository-validated for matching project and factor.
+- PostgreSQL opportunity evidence, assessment, and interaction outcome timestamps use `TIMESTAMPTZ`. Legacy naive evidence timestamps are interpreted as UTC during freshness checks.
+- Latest assessment ordering is `scored_at DESC`, `created_at DESC`, then `assessment_id DESC`.
+- Interaction creation reads the exact inserted row in the write transaction via `INSERT ... RETURNING *` on PostgreSQL and SQLite 3.35+, or an own-row ID lookup before commit on older SQLite.
+
+---
+
 ## 1. 设计原则
 
 1. **幂等建表**：所有 `CREATE TABLE` 使用 `IF NOT EXISTS`，重复调用不报错。
@@ -289,7 +298,216 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
 
 CREATE INDEX IF NOT EXISTS idx_prompt_agent ON prompt_versions(agent_name);
 CREATE INDEX IF NOT EXISTS idx_prompt_version ON prompt_versions(agent_name, version);
+
+
+-- ============================================
+-- 2.13 data_sources 表（数据源注册表，v2.0 起，ADR-012）
+-- ============================================
+CREATE TABLE IF NOT EXISTS data_sources (
+    source_id       TEXT PRIMARY KEY,              -- 如 "defillama", "twitter", "github"
+    source_type     TEXT NOT NULL,                 -- "api" / "stream" / "webhook" / "manual"
+    source_name     TEXT NOT NULL,
+    enabled         INTEGER DEFAULT 1,             -- SQLite 用 0/1 表示 BOOLEAN
+    last_sync       TIMESTAMP,
+    sync_status     TEXT DEFAULT 'idle',           -- "idle" / "running" / "error" / "rate_limited"
+    api_calls_today INTEGER DEFAULT 0,
+    api_limit       INTEGER,                       -- 每日限额（NULL 表示无限制）
+    config          TEXT,                          -- 源特定配置 JSON
+    created_at      TIMESTAMP DEFAULT (datetime('now')),
+    updated_at      TIMESTAMP DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_sources_enabled ON data_sources(enabled);
+CREATE INDEX IF NOT EXISTS idx_data_sources_status ON data_sources(sync_status);
+
+
+-- ============================================
+-- 2.14 raw_projects 表（采集原始项目池，v2.0 起，ADR-012）
+-- ============================================
+CREATE TABLE IF NOT EXISTS raw_projects (
+    raw_id          TEXT PRIMARY KEY,              -- 采集记录 id（UUID）
+    source_id       TEXT NOT NULL,                 -- 关联 data_sources
+    dedup_key       TEXT NOT NULL,                 -- 归一化去重键（§6.2.1）
+    raw_data        TEXT NOT NULL,                 -- 原始采集数据 JSON
+    discovered_at   TIMESTAMP DEFAULT (datetime('now')),
+    processed       INTEGER DEFAULT 0,             -- 0=未处理，1=已进入分析管道
+    processed_at    TIMESTAMP,
+    project_id      TEXT,                          -- 关联 projects 表 id（处理后回填）
+    discovery_score REAL DEFAULT 0.0               -- 发现质量分（初筛用，见 DATA_SOURCE_STRATEGY.md）
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_projects_dedup ON raw_projects(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_raw_projects_unprocessed ON raw_projects(processed) WHERE processed = 0;
+CREATE INDEX IF NOT EXISTS idx_raw_projects_source ON raw_projects(source_id);
+CREATE INDEX IF NOT EXISTS idx_raw_projects_discovered ON raw_projects(discovered_at DESC);
+
+
+-- ============================================
+-- 2.15 project_signals 表（项目信号聚合，v2.0 起，ADR-012）
+-- ============================================
+CREATE TABLE IF NOT EXISTS project_signals (
+    signal_id       TEXT PRIMARY KEY,              -- UUID
+    project_id      TEXT,                          -- 关联 projects 表（可为空，未建立关联时）
+    dedup_key       TEXT,                          -- 关联 raw_projects
+    signal_type     TEXT NOT NULL,                 -- "tvl" / "github_activity" / "twitter_mention" / "chain_activity" / "quest"
+    signal_source   TEXT NOT NULL,                 -- "defillama" / "github" / "twitter" / "chain" / "galxe"
+    signal_data     TEXT NOT NULL,                 -- 信号具体数据 JSON
+    signal_strength REAL DEFAULT 0.0,              -- 信号强度 0-1
+    captured_at     TIMESTAMP DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_project ON project_signals(project_id);
+CREATE INDEX IF NOT EXISTS idx_signals_dedup ON project_signals(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_signals_type ON project_signals(signal_type, signal_source);
+CREATE INDEX IF NOT EXISTS idx_signals_captured ON project_signals(captured_at DESC);
+
+
+-- ============================================
+-- 2.16 collection_logs 表（采集日志，v2.0 起，ADR-012）
+-- ============================================
+CREATE TABLE IF NOT EXISTS collection_logs (
+    log_id          TEXT PRIMARY KEY,              -- UUID
+    source_id       TEXT NOT NULL,                 -- 关联 data_sources
+    started_at      TIMESTAMP NOT NULL,
+    finished_at     TIMESTAMP,
+    items_collected INTEGER DEFAULT 0,
+    items_new       INTEGER DEFAULT 0,             -- 去重后的新项目数
+    items_duplicate INTEGER DEFAULT 0,
+    status          TEXT,                          -- "success" / "error" / "partial" / "rate_limited"
+    error_message   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_collection_logs_source ON collection_logs(source_id);
+CREATE INDEX IF NOT EXISTS idx_collection_logs_started ON collection_logs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
+
+
+-- ============================================
+-- 2.17 projects 表扩展字段（v2.0 起，ADR-012）
+-- ============================================
+-- 注：使用 ALTER TABLE 新增字段，已有记录自动填充 DEFAULT 值，不破坏既有数据
+ALTER TABLE projects ADD COLUMN discovery_source TEXT DEFAULT 'manual';      -- 首次发现的来源
+ALTER TABLE projects ADD COLUMN discovered_at TIMESTAMP;                    -- 首次发现时间
+ALTER TABLE projects ADD COLUMN auto_discovered INTEGER DEFAULT 0;          -- 0=手动，1=自动发现
+ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;             -- 关联信号数
+
+CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
+CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);
+CREATE INDEX IF NOT EXISTS idx_projects_discovered_at ON projects(discovered_at DESC);
+
+
+-- ============================================
+-- 2.18 raw_projects_archive 表（归档表，v2.0 起）
+-- ============================================
+-- 结构与 raw_projects 完全一致，用于存放 30 天前的采集记录
+CREATE TABLE IF NOT EXISTS raw_projects_archive (
+    raw_id          TEXT PRIMARY KEY,
+    source_id       TEXT NOT NULL,
+    dedup_key       TEXT NOT NULL,
+    raw_data        TEXT NOT NULL,
+    discovered_at   TIMESTAMP,
+    processed       INTEGER DEFAULT 0,
+    processed_at    TIMESTAMP,
+    project_id      TEXT,
+    discovery_score REAL DEFAULT 0.0,
+    archived_at     TIMESTAMP DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+
+
+-- ============================================
+-- 2.19 project_signals_archive 表（归档表，v2.0 起）
+-- ============================================
+CREATE TABLE IF NOT EXISTS project_signals_archive (
+    signal_id       TEXT PRIMARY KEY,
+    project_id      TEXT,
+    dedup_key       TEXT,
+    signal_type     TEXT NOT NULL,
+    signal_source   TEXT NOT NULL,
+    signal_data     TEXT NOT NULL,
+    signal_strength REAL DEFAULT 0.0,
+    captured_at     TIMESTAMP,
+    archived_at     TIMESTAMP DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
+CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+
+-- ============================================
+-- 2.20 Opportunity v2.0 Shadow 证据与不可变评估快照
+-- ============================================
+CREATE TABLE IF NOT EXISTS opportunity_evidence (
+    evidence_id         TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    factor_key          TEXT NOT NULL,
+    value_json          TEXT NOT NULL,
+    value_type          TEXT NOT NULL,
+    observation_type    TEXT NOT NULL,
+    source_url          TEXT NOT NULL,
+    source_type         TEXT NOT NULL,
+    source_grade        TEXT NOT NULL,
+    observed_at         TIMESTAMP NOT NULL,
+    effective_at        TIMESTAMP,
+    expires_at          TIMESTAMP,
+    verification_status TEXT NOT NULL,
+    independence_group  TEXT NOT NULL,
+    raw_snapshot_ref    TEXT,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_assessments (
+    assessment_id      TEXT PRIMARY KEY,
+    project_id         TEXT NOT NULL,
+    model_version      TEXT NOT NULL,
+    profile_version    TEXT NOT NULL,
+    assessment_json    TEXT NOT NULL,
+    decision_status    TEXT NOT NULL,
+    public_label       TEXT NOT NULL,
+    decision_value     REAL,
+    overall_confidence REAL NOT NULL,
+    scored_at          TIMESTAMP NOT NULL,
+    review_at          TIMESTAMP,
+    expires_at         TIMESTAMP NOT NULL,
+    created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_project
+ON opportunity_evidence(project_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_factor
+ON opportunity_evidence(project_id, factor_key, verification_status);
+CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_latest
+ON opportunity_assessments(project_id, profile_version, scored_at DESC);
+CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_label
+ON opportunity_assessments(public_label, expires_at);
+
+-- PostgreSQL 使用相同列；仅将 assessment 的两个 REAL 列改为 DOUBLE PRECISION。
+
+-- ============================================
+-- 2.21 interactions 的 Shadow outcome 追加列
+-- ============================================
+-- init_db() 通过 _add_column_if_not_exists() 幂等追加，不能删除旧 cost/profit/hours 列。
+-- SQLite exact columns:
+-- wallet_cohort_id TEXT
+-- wallet_count INTEGER DEFAULT 1
+-- actual_hard_cost_usd REAL
+-- actual_time_minutes INTEGER
+-- eligibility_result TEXT
+-- survival_result TEXT
+-- disqualification_reason TEXT
+-- reward_received_usd REAL
+-- claim_cost_usd REAL
+-- opportunity_assessment_id TEXT
+-- opportunity_model_version TEXT
+-- opportunity_profile_version TEXT
+-- outcome_observed_at TIMESTAMP
+
+-- PostgreSQL 将 actual_hard_cost_usd/reward_received_usd/claim_cost_usd 改为
+-- DOUBLE PRECISION；其余列保持一致。
 ```
+
+Opportunity 证据和评估均为追加式记录；评估没有 update 路径。`interactions.wallet_cohort_id` 是本地匿名 cohort ID，不是钱包地址。系统拒绝在 cohort、用户、活动、备注或取消资格原因字段中存储钱包地址；不得存储私钥、助记词、设备身份或 KYC 数据。模型/画像版本必须通过同项目的 `opportunity_assessment_id` 关联，`realized_net_usd` 仅在响应中计算，不落库。
 
 ---
 
@@ -370,7 +588,18 @@ projects (1) ──── (N) logs
          │
          ├──── (N) project_history
          │
-         └──── (1) dedup_keys
+         ├──── (1) dedup_keys
+         │
+         └──── (N) project_signals ──── (N) raw_projects (同 dedup_key 关联)
+
+data_sources (1) ──── (N) raw_projects
+            │
+            └──── (N) collection_logs
+
+raw_projects (1) ──── (1) projects（processed 后回填 project_id）
+
+raw_projects_archive ─── 独立表（raw_projects 30 天归档）
+project_signals_archive ─── 独立表（project_signals 90 天归档）
 
 quarantine ─── (N) projects (可选关联)
 
@@ -403,6 +632,39 @@ prompt_versions ─── 独立表（记录 Prompt 版本）
 | metrics | 1 年 | `DELETE FROM metrics WHERE timestamp < datetime('now', '-1 year')` |
 | dedup_keys | 永久 | — |
 | prompt_versions | 永久 | — |
+| **data_sources** | 永久（配置表） | — |
+| **raw_projects** | 30 天热数据 | 归档至 `raw_projects_archive`，> 180 天删除（见下方归档脚本） |
+| **project_signals** | 90 天热数据 | 归档至 `project_signals_archive`，> 365 天删除 |
+| **collection_logs** | 90 天 | `DELETE FROM collection_logs WHERE started_at < datetime('now', '-90 days')` |
+| **raw_projects_archive** | 180 天 | `DELETE FROM raw_projects_archive WHERE archived_at < datetime('now', '-180 days')` |
+| **project_signals_archive** | 365 天 | `DELETE FROM project_signals_archive WHERE archived_at < datetime('now', '-365 days')` |
+
+### 6.1 采集数据归档脚本（v2.0，每日 cron 执行）
+
+```sql
+-- 1. raw_projects 归档：30 天前未处理的采集记录
+INSERT INTO raw_projects_archive (raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score)
+SELECT raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score
+FROM raw_projects
+WHERE discovered_at < datetime('now', '-30 days');
+
+DELETE FROM raw_projects WHERE discovered_at < datetime('now', '-30 days');
+
+-- 2. project_signals 归档：90 天前信号
+INSERT INTO project_signals_archive (signal_id, project_id, dedup_key, signal_type, signal_source, signal_data, signal_strength, captured_at)
+SELECT signal_id, project_id, dedup_key, signal_type, signal_source, signal_data, signal_strength, captured_at
+FROM project_signals
+WHERE captured_at < datetime('now', '-90 days');
+
+DELETE FROM project_signals WHERE captured_at < datetime('now', '-90 days');
+
+-- 3. collection_logs 清理：90 天前日志直接删除
+DELETE FROM collection_logs WHERE started_at < datetime('now', '-90 days');
+
+-- 4. 归档表清理：raw_projects_archive 180 天、project_signals_archive 365 天
+DELETE FROM raw_projects_archive WHERE archived_at < datetime('now', '-180 days');
+DELETE FROM project_signals_archive WHERE archived_at < datetime('now', '-365 days');
+```
 
 ---
 
@@ -422,8 +684,21 @@ VALUES
     ('team', 'reputation_v1', 'v1.0', 'Evaluate team reputation for project: {name}...', 1, 'system'),
     ('risk', 'assessment_v1', 'v1.0', 'Assess risk for project: {name}...', 1, 'system'),
     ('tokenomics', 'analysis_v1', 'v1.0', 'Analyze tokenomics for project: {name}...', 1, 'system');
+
+-- 数据源注册（v2.0 起，ADR-012）
+INSERT INTO data_sources (source_id, source_type, source_name, enabled, api_limit) VALUES
+    ('defillama',  'api',      'DefiLlama',      1, NULL),
+    ('github',     'api',      'GitHub',         1, 5000),
+    ('coingecko',  'api',      'CoinGecko',      1, NULL),
+    ('twitter',    'api',      'Twitter/X',      0, NULL),   -- 默认关闭，需付费
+    ('chain',      'webhook',  'Chain (Etherscan/Alchemy)', 0, NULL),
+    ('galxe',      'api',      'Galxe',          0, NULL),
+    ('layer3',     'api',      'Layer3',         0, NULL),
+    ('cryptorank', 'api',      'CryptoRank',     0, 100),
+    ('dune',       'api',      'Dune Analytics', 0, NULL),
+    ('manual',     'manual',   'Manual Input',   1, NULL);
 ```
 
 ---
 
-_文档版本：v1.0 · 配套 ENGINEERING_ROADMAP.md §5 · 实现阶段 `init_db()` 直接引用本文件。_
+_文档版本：v2.0 · 配套 ENGINEERING_ROADMAP.md §5、ADR-012 · 实现阶段 `init_db()` 直接引用本文件。_

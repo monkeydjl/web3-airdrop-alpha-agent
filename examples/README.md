@@ -30,7 +30,7 @@ examples/
 
 ```bash
 # 用种子数据跑分析
-curl -X POST http://localhost:8000/api/v1/run \
+curl -X POST http://localhost:8002/api/v1/run \
   -H "Content-Type: application/json" \
   -d '{"source": "seed", "limit": 50}'
 
@@ -52,24 +52,24 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 ```bash
 # 获取 Top 10 FARM 项目
-curl "http://localhost:8000/api/v1/projects?label=FARM&limit=10&order=DESC"
+curl "http://localhost:8002/api/v1/projects?label=FARM&limit=10&order=DESC"
 
 # 获取特定赛道的项目
-curl "http://localhost:8000/api/v1/projects?sector=L2&limit=20"
+curl "http://localhost:8002/api/v1/projects?sector=L2&limit=20"
 ```
 
 ### 3. 查看项目详情
 
 ```bash
 # 获取单个项目完整信息
-curl "http://localhost:8000/api/v1/project/a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+curl "http://localhost:8002/api/v1/project/a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
 ```
 
 ### 4. 重算评分
 
 ```bash
 # 用最新规则重算某个项目的评分
-curl -X POST "http://localhost:8000/api/v1/re-score/a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+curl -X POST "http://localhost:8002/api/v1/re-score/a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
 ```
 
 ---

@@ -1,0 +1,38 @@
+# 测试用 PostgreSQL（不绑应用主 compose，避免误上生产）
+# 启动：docker compose -f docker-compose.postgres.yml up -d
+# 停止：docker compose -f docker-compose.postgres.yml down
+# 清数据：docker compose -f docker-compose.postgres.yml down -v
+#
+# 主机端口默认 5433（避开常见 5432 与其他项目冲突）
+# 连接串见下方 environment / .env.example
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: airdrop-alpha-postgres-test
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airdrop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airdrop_test}
+      POSTGRES_DB: ${POSTGRES_DB:-airdrop_test}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - airdrop_pg_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airdrop} -d ${POSTGRES_DB:-airdrop_test}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - airdrop-pg-test
+
+networks:
+  airdrop-pg-test:
+    driver: bridge
+
+volumes:
+  airdrop_pg_test_data:
+    driver: local

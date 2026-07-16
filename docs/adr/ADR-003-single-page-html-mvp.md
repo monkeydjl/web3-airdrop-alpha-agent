@@ -1,6 +1,6 @@
 # ADR-003: MVP 前端用单页 HTML
 
-- **Status**: Accepted
+- **Status**: Accepted（主路径已由 [ADR-013](ADR-013-nextjs-primary-frontend.md) 演进；本文保留为历史决策与 `frontend/` 静态原型说明）
 - **Date**: 2026-07-08
 - **Deciders**: 架构 / 前端
 

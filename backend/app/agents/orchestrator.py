@@ -16,17 +16,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from enum import StrEnum
+from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
 import structlog
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = structlog.get_logger()
 
 
-class AgentStatus(str, Enum):
+class AgentStatus(StrEnum):
     """Agent 执行状态"""
 
     PENDING = "pending"
@@ -44,11 +45,11 @@ class AgentNode(BaseModel):
     id: str
     name: str
     agent_fn: Any  # Callable，Pydantic 不序列化
-    input_keys: List[str] = Field(default_factory=list)
+    input_keys: list[str] = Field(default_factory=list)
     output_key: str
     retry: int = 0
-    timeout: Optional[float] = None
-    depends_on: List[str] = Field(default_factory=list)
+    timeout: float | None = None
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class AgentResult(BaseModel):
@@ -58,8 +59,8 @@ class AgentResult(BaseModel):
 
     node_id: str
     status: AgentStatus
-    output: Optional[Any] = None
-    error: Optional[str] = None
+    output: Any | None = None
+    error: str | None = None
     duration_ms: float
     timestamp: float
 
@@ -70,27 +71,27 @@ class PipelineContext(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     run_id: str = Field(default_factory=lambda: str(uuid4()))
-    data: Dict[str, Any] = Field(default_factory=dict)
-    results: Dict[str, AgentResult] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    results: dict[str, AgentResult] = Field(default_factory=dict)
 
 
 class Orchestrator:
     """Agent 编排器"""
 
     def __init__(self):
-        self.nodes: Dict[str, AgentNode] = {}
-        self.graph: Dict[str, Set[str]] = {}  # 依赖图
+        self.nodes: dict[str, AgentNode] = {}
+        self.graph: dict[str, set[str]] = {}  # 依赖图
 
     def add_node(
         self,
         node_id: str,
         name: str,
         agent_fn: Callable,
-        input_keys: List[str],
+        input_keys: list[str],
         output_key: str,
-        depends_on: Optional[List[str]] = None,
+        depends_on: list[str] | None = None,
         retry: int = 0,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> Orchestrator:
         """添加 Agent 节点"""
         node = AgentNode(
@@ -116,7 +117,7 @@ class Orchestrator:
 
         return self
 
-    def _topological_sort(self) -> List[str]:
+    def _topological_sort(self) -> list[str]:
         """拓扑排序"""
         in_degree = {node_id: len(deps) for node_id, deps in self.graph.items()}
         queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
@@ -209,11 +210,19 @@ class Orchestrator:
 
     async def run(
         self,
-        initial_data: Dict[str, Any],
+        initial_data: dict[str, Any],
         max_concurrency: int = 3,
     ) -> PipelineContext:
         """执行 Pipeline"""
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
+
         context = PipelineContext(data=initial_data)
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def execute_with_limit(node: AgentNode) -> AgentResult:
+            async with semaphore:
+                return await self._execute_node(node, context)
 
         logger.info(
             "orchestrator.pipeline_start",
@@ -225,8 +234,8 @@ class Orchestrator:
         execution_order = self._topological_sort()
 
         # 按依赖层级分组（支持并发）
-        levels: List[List[str]] = []
-        executed: Set[str] = set()
+        levels: list[list[str]] = []
+        executed: set[str] = set()
 
         while executed != set(execution_order):
             current_level = []
@@ -252,10 +261,7 @@ class Orchestrator:
             )
 
             # 并发执行同层节点
-            tasks = [
-                self._execute_node(self.nodes[node_id], context)
-                for node_id in level_nodes
-            ]
+            tasks = [execute_with_limit(self.nodes[node_id]) for node_id in level_nodes]
 
             results = await asyncio.gather(*tasks, return_exceptions=False)
 

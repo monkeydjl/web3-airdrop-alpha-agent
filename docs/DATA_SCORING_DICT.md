@@ -4,6 +4,15 @@
 
 ---
 
+## Opportunity v2 FARM gates
+
+- `official_identity` is tri-state: verified `true` is known, verified `false` produces `SAFETY_BLOCK`, and missing/unresolved evidence remains `WATCH`.
+- FARM requires `hard_cost_usd.high <= 10`; a high envelope above 10 is `WATCH/WAIT_COST_DROP`, while `low > 10` is structural `IGNORE/TOO_EXPENSIVE`.
+- FARM requires all five risk dimensions: capital security, eligibility, project failure, reward dilution, and liquidity.
+- `capital_at_risk_usd` requires direct evidence even when explicitly zero. Missing exposure is a critical unknown and never defaults to zero.
+
+---
+
 ## 1. `projects` 表字段字典
 
 | 字段 | 类型 | 含义 | 来源 Agent | 示例 |
@@ -85,15 +94,28 @@
 | `score` | int | 0–100 | 综合评分 |
 | `label` | str | `FARM`/`WATCH`/`IGNORE` | 分级 |
 | `recommendation` | str | 同 label | 建议 |
-| `confidence` | float | 0–1 | 数据完整度（非缺失分析 agent 数 / 4） |
+| `confidence` | float | 0–1 | **证据完整度**（v1.3）：0.35×Agent 覆盖 + 0.65×可验证信号（官网/文档/仓库/社媒/任务入口/合约·TVL/多源） |
 | `weight_version` | str | — | 评分权重版本（默认 "v1"，ADR-006） |
 | `reason` | list[str] | — | 决策理由（≥2 条） |
 
 ---
 
-## 4. 评分权重表
+## 4. 评分权重表（v1.2，八维）
 
-| 子项 | 权重 | 来源 Agent |
+| 子项 | 权重 | 来源 / 含义 |
+| --- | --- | --- |
+| `airdrop_signal` | 0.18 | 未发币 / 积分 / 测试网 / **明确空投表述** |
+| `narrative_timing` | 0.15 | Narrative 叙事时机 |
+| `team_reputation` | 0.12 | Team 团队信誉 |
+| `risk` | 0.12 | Risk 风险 |
+| `tokenomics` | 0.10 | Tokenomics 代币结构 |
+| `competition` | 0.10 | 同赛道拥挤度 |
+| `execution` | 0.13 | **GitHub 活跃 / 路线图 / TVL 推进** |
+| `transparency` | 0.10 | **白皮书·文档 / Twitter·Discord / 官网** |
+
+> v1 曾为六维（0.20/0.20/0.15×4）。v1.2 增加执行力与透明度，避免「只看是否未发币」过于片面。
+
+| 子项（历史 v1） | 权重 | 来源 Agent |
 | --- | --- | --- |
 | `airdrop_signal` | 0.20 | Collector（`raw_signals`） |
 | `narrative_timing` | 0.20 | Narrative |
@@ -106,12 +128,74 @@
 
 ## 5. 子分映射公式（均归一到 0–100）
 
-### 5.1 airdrop_signal（20%）
+### 5.1 airdrop_signal（18%，v1.2）
+
+> v1.2：`airdrop_hint` 以 `no_token_yet` 为主；纳入 `has_testnet`；**明确空投表述** `explicit_airdrop_mention` +12；近期融资 +5（有空投相关信号时）。
+
 | 条件 | 子分 |
 | --- | --- |
-| `has_points` 且 `airdrop_hint` | 100 |
-| 仅其一为真 | 60 |
+| `has_points` 且 `no_token_yet` | 100（封顶） |
+| `no_token_yet` 且 `has_testnet` | 85 |
+| 仅 `has_points` 或仅 `no_token_yet` | 60 |
+| 仅 `has_testnet` | 40 |
 | 均为否 | 20 |
+| + 明确空投表述 | +12 |
+| + 近期融资（且存在空投相关信号） | +5 |
+| 已上市且无积分/无明确空投 | 最高约 35 |
+
+### 5.1b execution（13%，v1.2 新增）
+
+| 信号 | 加分（约） |
+| --- | --- |
+| 有 GitHub | +12 |
+| stars 档位（50/200/1000） | +4～+18 |
+| 近 14/45/90 天有更新 | +18 / +12 / +6；>180 天 −10 |
+| 公开路线图 | +10 |
+| 测试网 | +8 |
+| TVL 档位 | +4～+12 |
+
+### 5.1c transparency（10%，v1.2/v1.3）
+
+| 信号 | 加分（约） |
+| --- | --- |
+| 白皮书 | +18（仅文档 +12） |
+| 路线图 | +8 |
+| Twitter / Discord | +10 / +8 |
+| GitHub / 官网 | +8 / +6 |
+| 任务入口 | +6 |
+| 多源 ≥2 / ≥3 | +6 / +12 |
+| 实名团队 | +6；匿名且无文档 −12 |
+
+### 5.1d 空投可验证路径（并入 airdrop_signal，v1.3）
+
+| 信号 | 加分 |
+| --- | --- |
+| `has_task_portal`（Galxe/Layer3/Quest 等） | +14 |
+| `explicit_airdrop_mention` | +10 |
+| `source_count` ≥2 / ≥3（且有空投相关信号） | +3 / +6 |
+
+### 5.1e 路线图履约（并入 execution，v1.3）
+
+| `roadmap_delivery` | 效应 |
+| --- | --- |
+| `aligned` | +16（路线图 + 测试网/TVL/近期提交） |
+| `partial` | +8 |
+| `unclear` | −8（纸面路线图、无交付） |
+| `has_contract` | +10 |
+
+### 5.1f 融资质量（v1.4，RootData / 结构化字段）
+
+| 字段 | 含义 |
+| --- | --- |
+| `funding_total_usd` | 累计融资金额 |
+| `funding_rounds` | 轮次数 |
+| `funding_investors` / `funding_lead_investors` | 投资方 |
+| `funding_tier` | `tier1` / `tier2` / `tier3` / `unknown` / `none` |
+| `funding_quality` | 0–1 综合（金额 + 轮次 + 投资方档位 + 新近度） |
+
+计入：`team_reputation`（blend）、`airdrop_signal`（高质量融资加成）、`transparency`；Team flags：`tier-1 vc backed` / `reputable vc backed`。
+
+数据源：RootData 采集器（需 API key）或 raw 手动字段。
 
 ### 5.2 narrative_timing（20%）
 ```
@@ -244,8 +328,8 @@ confidence = 非缺失分析 agent 数 / 4
 ## 7. Label 阈值
 | 区间 | label / recommendation |
 | --- | --- |
-| `score >= 70` | `FARM` |
-| `50 <= score < 70` | `WATCH` |
+| `score >= 65` | `FARM`（v1.1） |
+| `50 <= score < 65` | `WATCH` |
 | `score < 50` | `IGNORE` |
 
 ---

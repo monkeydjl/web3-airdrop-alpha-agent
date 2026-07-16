@@ -9,11 +9,10 @@ Reference:
 """
 
 import time
-from typing import Dict
 
 import structlog
 
-from app.agents.base import BaseAgent, PipelineState, AgentError
+from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import NarrativeResult
 
 logger = structlog.get_logger(__name__)
@@ -21,7 +20,7 @@ logger = structlog.get_logger(__name__)
 
 # Sector profile configuration
 # Format: sector -> {base_heat, stage, momentum}
-SECTOR_PROFILE: Dict[str, dict] = {
+SECTOR_PROFILE: dict[str, dict] = {
     # Layer 2
     "L2": {
         "base_heat": 0.85,
@@ -33,14 +32,12 @@ SECTOR_PROFILE: Dict[str, dict] = {
         "stage": "growth",
         "momentum": 1.1,
     },
-
     # Restaking (hot narrative)
     "Restaking": {
         "base_heat": 0.90,
         "stage": "peak",
         "momentum": 1.2,
     },
-
     # DeFi
     "DeFi": {
         "base_heat": 0.70,
@@ -57,7 +54,6 @@ SECTOR_PROFILE: Dict[str, dict] = {
         "stage": "mature",
         "momentum": 0.8,
     },
-
     # Gaming
     "Gaming": {
         "base_heat": 0.75,
@@ -69,7 +65,6 @@ SECTOR_PROFILE: Dict[str, dict] = {
         "stage": "growth",
         "momentum": 0.95,
     },
-
     # Infrastructure
     "Infrastructure": {
         "base_heat": 0.80,
@@ -81,7 +76,6 @@ SECTOR_PROFILE: Dict[str, dict] = {
         "stage": "mature",
         "momentum": 0.75,
     },
-
     # Privacy / ZK
     "Privacy": {
         "base_heat": 0.78,
@@ -93,21 +87,18 @@ SECTOR_PROFILE: Dict[str, dict] = {
         "stage": "growth",
         "momentum": 1.1,
     },
-
     # AI
     "AI": {
         "base_heat": 0.88,
         "stage": "early",
         "momentum": 1.3,
     },
-
     # NFT
     "NFT": {
         "base_heat": 0.50,
         "stage": "mature",
         "momentum": 0.7,
     },
-
     # DAO
     "DAO": {
         "base_heat": 0.55,
@@ -211,10 +202,7 @@ class NarrativeAgent(BaseAgent):
 
         except Exception as e:
             error = AgentError(
-                agent_name=self.name,
-                kind="narrative_error",
-                message=str(e),
-                project_id=state.project.id
+                agent_name=self.name, kind="narrative_error", message=str(e), project_id=state.project.id
             )
             state.add_error(error)
 
@@ -227,6 +215,7 @@ class NarrativeAgent(BaseAgent):
 if __name__ == "__main__":
     # Test narrative agent
     import asyncio
+
     from app.agents.base import AgentContext, RawProject
 
     async def test():
@@ -245,13 +234,7 @@ if __name__ == "__main__":
         agent = NarrativeAgent()
 
         for name, sector in test_projects:
-            project = RawProject(
-                id=f"test-{name}",
-                name=name,
-                sector=sector,
-                stage="testnet",
-                source="seed"
-            )
+            project = RawProject(id=f"test-{name}", name=name, sector=sector, stage="testnet", source="seed")
 
             context = AgentContext(run_id="test-001")
             state = PipelineState(project=project, context=context)

@@ -11,7 +11,7 @@ services:
     container_name: airdrop-alpha-backend
     restart: unless-stopped
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8002}:8002"
     volumes:
       # 持久化数据库
       - ./data:/app/data
@@ -22,6 +22,7 @@ services:
       - APP_ENV=${APP_ENV:-production}
       - APP_VERSION=${APP_VERSION:-0.1.0}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PORT=8002
 
       # 数据库配置
       - DB_PATH=/app/data/app.db
@@ -35,7 +36,7 @@ services:
       - MAX_CONCURRENT_PROJECTS=${MAX_CONCURRENT_PROJECTS:-10}
       - LLM_SEMAPHORE_SIZE=${LLM_SEMAPHORE_SIZE:-5}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

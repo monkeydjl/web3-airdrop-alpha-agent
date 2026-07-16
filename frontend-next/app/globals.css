@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --canvas: 248 250 252;
+  --surface: 255 255 255;
+  --surface-2: 248 250 252;
+  --surface-3: 241 245 249;
+  --ink: 15 23 42;
+  --ink-muted: 100 116 139;
+  --ink-faint: 148 163 184;
+  --line: 226 232 240;
+  --ring: 99 102 241;
+}
+
+.dark {
+  --canvas: 2 6 23;
+  --surface: 15 23 42;
+  --surface-2: 30 41 59;
+  --surface-3: 51 65 85;
+  --ink: 226 232 240;
+  --ink-muted: 148 163 184;
+  --ink-faint: 100 116 139;
+  --line: 51 65 85;
+  --ring: 129 140 248;
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+
+  html {
+    @apply antialiased scroll-smooth;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans min-h-screen;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgb(99 102 241 / 0.12), transparent),
+      radial-gradient(ellipse 40% 30% at 100% 0%, rgb(16 185 129 / 0.06), transparent);
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgb(99 102 241 / 0.18), transparent),
+      radial-gradient(ellipse 40% 30% at 100% 0%, rgb(16 185 129 / 0.08), transparent);
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-2xl shadow-card;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-lift hover:border-brand-300/50 dark:hover:border-brand-500/40;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium transition
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-500 shadow-glow;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface-2 text-ink border border-line hover:bg-surface-3;
+  }
+
+  .btn-ghost {
+    @apply btn text-ink-muted hover:text-ink hover:bg-surface-2;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint
+      focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400;
+  }
+
+  .select {
+    @apply input appearance-none pr-8 cursor-pointer;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide;
+  }
+
+  .skeleton {
+    @apply animate-pulse-soft rounded-lg bg-surface-3;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold tracking-tight text-ink sm:text-3xl;
+  }
+
+  .page-sub {
+    @apply text-sm text-ink-muted mt-1;
+  }
+}
+
+/* custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--ink-faint) / 0.45);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

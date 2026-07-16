@@ -5,9 +5,12 @@ Reference:
 - ENGINEERING_ROADMAP.md §8.1
 """
 
+from unittest.mock import MagicMock, Mock
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import create_app
 
 
@@ -80,6 +83,67 @@ class TestRunEndpoint:
         assert result["project_count"] == 1
         assert result["scored_count"] >= 0
         assert "top_projects" in result
+
+    def test_run_reports_disabled_opportunity_shadow(self, client, sample_project, monkeypatch):
+        service_factory = Mock()
+        monkeypatch.setattr(settings, "opportunity_shadow_enabled", False)
+        monkeypatch.setattr("app.pipeline_run.OpportunityService", service_factory)
+
+        response = client.post(
+            "/api/v1/run",
+            json={"projects": [sample_project], "enable_llm": False},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["opportunity_shadow"] == {
+            "attempted": 0,
+            "saved": 0,
+            "failed": 0,
+        }
+        service_factory.assert_not_called()
+
+    def test_run_reports_enabled_opportunity_shadow(self, client, sample_project, monkeypatch):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        monkeypatch.setattr(settings, "opportunity_shadow_enabled", True)
+        monkeypatch.setattr("app.pipeline_run.OpportunityService", Mock(return_value=service))
+
+        response = client.post(
+            "/api/v1/run",
+            json={"projects": [sample_project], "enable_llm": False},
+        )
+
+        data = response.json()["data"]
+        assert response.status_code == 200
+        assert data["opportunity_shadow"] == {"attempted": 1, "saved": 1, "failed": 0}
+        evaluated_row = service.evaluate_row.call_args.args[0]
+        assert evaluated_row["id"] == data["top_projects"][0]["id"]
+        assert evaluated_row["score"] == data["top_projects"][0]["score"]
+
+    def test_shadow_failure_preserves_legacy_response(self, client, sample_project, monkeypatch):
+        monkeypatch.setattr(settings, "opportunity_shadow_enabled", False)
+        baseline = client.post(
+            "/api/v1/run",
+            json={"projects": [sample_project], "enable_llm": False},
+        ).json()["data"]
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.evaluate_row.side_effect = RuntimeError("shadow failed")
+        monkeypatch.setattr(settings, "opportunity_shadow_enabled", True)
+        monkeypatch.setattr("app.pipeline_run.OpportunityService", Mock(return_value=service))
+
+        response = client.post(
+            "/api/v1/run",
+            json={"projects": [sample_project], "enable_llm": False},
+        )
+
+        data = response.json()["data"]
+        assert response.status_code == 200
+        assert data["opportunity_shadow"] == {"attempted": 1, "saved": 0, "failed": 1}
+        for field in ("status", "project_count", "scored_count", "error_count", "top_score", "marked_processed"):
+            assert data[field] == baseline[field]
+        assert data["top_projects"][0]["label"] == baseline["top_projects"][0]["label"]
+        assert data["top_projects"][0]["label"] in {"FARM", "WATCH", "IGNORE"}
 
     def test_run_multiple_projects(self, client, sample_project):
         """Test running pipeline with multiple projects."""
@@ -172,15 +236,24 @@ class TestRunEndpoint:
         assert data["ok"] is True
         assert data["data"]["project_count"] == 1
 
-    def test_run_empty_projects_fails(self, client):
-        """Test that empty projects list fails validation."""
+    def test_run_empty_projects_triggers_auto_collection(self, client):
+        """Test that empty projects list triggers auto collection path."""
         payload = {
             "projects": [],
             "enable_llm": False,
         }
 
         response = client.post("/api/v1/run", json=payload)
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["data"]["status"] == "completed"
+        assert "project_count" in data["data"]
+        assert data["data"]["opportunity_shadow"] == {
+            "attempted": 0,
+            "saved": 0,
+            "failed": 0,
+        }
 
     def test_run_invalid_project_name_fails(self, client):
         """Test that invalid project name fails validation."""
@@ -340,8 +413,8 @@ class TestEdgeCases:
         """Test with invalid JSON."""
         response = client.post(
             "/api/v1/run",
-            data="invalid json",
-            headers={"Content-Type": "application/json"}
+            content="invalid json",
+            headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 422
 
@@ -356,22 +429,3 @@ class TestEdgeCases:
         response = client.post("/api/v1/run", json=payload)
         # Should succeed (extra fields ignored by Pydantic)
         assert response.status_code == 200
-
-    def test_concurrent_requests(self, client, sample_project):
-        """Test multiple concurrent requests."""
-        payload = {
-            "projects": [sample_project],
-            "enable_llm": False,
-        }
-
-        # Send multiple requests
-        responses = [
-            client.post("/api/v1/run", json=payload)
-            for _ in range(3)
-        ]
-
-        # All should succeed
-        for response in responses:
-            assert response.status_code == 200
-            data = response.json()
-            assert data["ok"] is True

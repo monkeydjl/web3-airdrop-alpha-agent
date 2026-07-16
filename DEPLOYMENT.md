@@ -31,7 +31,7 @@ nano .env
 **关键配置项**:
 - `APP_ENV`: 环境（development/staging/production）
 - `LOG_LEVEL`: 日志级别（debug/info/warning/error）
-- `API_PORT`: API 服务端口（默认 8000）
+- `API_PORT`: API 服务端口（默认 8002）
 - `LLM_ENABLED`: 是否启用 LLM（默认 false）
 
 ### 3. 启动服务
@@ -51,12 +51,12 @@ docker-compose ps
 
 ```bash
 # 健康检查
-curl http://localhost:8000/health
+curl http://localhost:8002/health
 
 # 预期响应: {"ok": true, "status": "healthy"}
 
 # 访问 API 文档
-open http://localhost:8000/docs
+open http://localhost:8002/docs
 ```
 
 ## 📦 部署架构
@@ -68,7 +68,7 @@ services:
   backend:
     - FastAPI 应用
     - SQLite 数据库
-    - 端口: 8000
+    - 端口: 8002
 ```
 
 ```bash
@@ -152,10 +152,10 @@ docker-compose ps
 
 ```bash
 # 基础健康检查
-curl http://localhost:8000/health
+curl http://localhost:8002/health
 
 # 详细版本信息
-curl http://localhost:8000/version
+curl http://localhost:8002/version
 ```
 
 ### 数据库检查
@@ -258,7 +258,7 @@ df -h
 docker-compose ps
 
 # 检查健康状态
-curl http://localhost:8000/health
+curl http://localhost:8002/health
 
 # 重启容器
 docker-compose restart backend
@@ -334,8 +334,8 @@ docker-compose build --no-cache
 docker-compose up -d
 
 # 4. 验证
-curl http://localhost:8000/health
-curl http://localhost:8000/version
+curl http://localhost:8002/health
+curl http://localhost:8002/version
 ```
 
 ### 回滚版本
@@ -354,7 +354,7 @@ docker-compose up -d
 ## 📞 支持
 
 - **文档**: [ENGINEERING_ROADMAP.md](../docs/ENGINEERING_ROADMAP.md)
-- **API 文档**: http://localhost:8000/docs
+- **API 文档**: http://localhost:8002/docs
 - **Issues**: https://github.com/your-org/web3-airdrop-alpha/issues
 
 ## 📝 附录

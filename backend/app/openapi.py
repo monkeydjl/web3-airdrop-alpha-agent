@@ -3,8 +3,7 @@
 Provides example data and custom schema for OpenAPI documentation.
 """
 
-from typing import Dict, Any
-
+from typing import Any
 
 # ══════════════════════════════════════════════════════════════
 # Request Examples
@@ -28,7 +27,7 @@ RUN_REQUEST_EXAMPLES = {
                 }
             ],
             "enable_llm": False,
-        }
+        },
     },
     "multiple_projects": {
         "summary": "批量项目评分",
@@ -55,10 +54,10 @@ RUN_REQUEST_EXAMPLES = {
                     "sector": "Gaming",
                     "stage": "ideation",
                     "has_testnet": False,
-                }
+                },
             ],
             "enable_llm": False,
-        }
+        },
     },
     "minimal_project": {
         "summary": "最小项目信息",
@@ -70,7 +69,7 @@ RUN_REQUEST_EXAMPLES = {
                 }
             ],
             "enable_llm": False,
-        }
+        },
     },
 }
 
@@ -101,32 +100,15 @@ RUN_RESPONSE_EXAMPLE = {
                     "strong airdrop signal (testnet + points + no token)",
                     "early narrative timing",
                     "credible team (tier-1 backed)",
-                    "acceptable risk profile"
+                    "acceptable risk profile",
                 ],
-                "narrative": {
-                    "sector": "L2",
-                    "stage": "growth",
-                    "heat_score": 0.94,
-                    "timing": "early"
-                },
-                "team": {
-                    "team_score": 0.75,
-                    "team_type": "semi_anon",
-                    "team_flags": ["tier-1 vc backed"]
-                },
-                "risk": {
-                    "token_risk": 0.37,
-                    "unlock_pressure": "medium",
-                    "risk_flags": ["risk estimate uncertain"]
-                },
-                "tokenomics": {
-                    "vc_share": 0.30,
-                    "team_share": 0.25,
-                    "unlock_penalty": 0.35
-                }
+                "narrative": {"sector": "L2", "stage": "growth", "heat_score": 0.94, "timing": "early"},
+                "team": {"team_score": 0.75, "team_type": "semi_anon", "team_flags": ["tier-1 vc backed"]},
+                "risk": {"token_risk": 0.37, "unlock_pressure": "medium", "risk_flags": ["risk estimate uncertain"]},
+                "tokenomics": {"vc_share": 0.30, "team_share": 0.25, "unlock_penalty": 0.35},
             }
-        ]
-    }
+        ],
+    },
 }
 
 
@@ -141,7 +123,7 @@ PROJECTS_LIST_RESPONSE_EXAMPLE = {
                 "stage": "testnet",
                 "score": 85,
                 "label": "FARM",
-                "confidence": 1.0
+                "confidence": 1.0,
             },
             {
                 "id": "restake-002",
@@ -150,23 +132,15 @@ PROJECTS_LIST_RESPONSE_EXAMPLE = {
                 "stage": "mainnet",
                 "score": 78,
                 "label": "FARM",
-                "confidence": 1.0
-            }
+                "confidence": 1.0,
+            },
         ],
         "total": 2,
         "page": 1,
         "page_size": 20,
-        "filters": {
-            "label": "FARM",
-            "sector": None,
-            "stage": None,
-            "min_score": 70
-        },
-        "sort": {
-            "by": "score",
-            "order": "desc"
-        }
-    }
+        "filters": {"label": "FARM", "sector": None, "stage": None, "min_score": 70},
+        "sort": {"by": "score", "order": "desc"},
+    },
 }
 
 
@@ -185,26 +159,18 @@ ERROR_RESPONSE_EXAMPLES = {
                     "msg": "Field required",
                 }
             ]
-        }
+        },
     },
     "pipeline_error": {
         "summary": "Pipeline 执行错误",
         "value": {
             "ok": False,
-            "error": {
-                "code": "PIPELINE_ERROR",
-                "message": "Pipeline execution failed: unexpected error"
-            }
-        }
+            "error": {"code": "PIPELINE_ERROR", "message": "Pipeline execution failed: unexpected error"},
+        },
     },
     "not_found": {
         "summary": "项目未找到",
-        "value": {
-            "detail": {
-                "code": "NOT_FOUND",
-                "message": "Project abc-123 not found"
-            }
-        }
+        "value": {"detail": {"code": "NOT_FOUND", "message": "Project abc-123 not found"}},
     },
 }
 
@@ -213,7 +179,8 @@ ERROR_RESPONSE_EXAMPLES = {
 # Custom OpenAPI Schema
 # ══════════════════════════════════════════════════════════════
 
-def customize_openapi_schema(app) -> Dict[str, Any]:
+
+def customize_openapi_schema(app) -> dict[str, Any]:
     """自定义 OpenAPI schema.
 
     Args:
@@ -235,7 +202,7 @@ def customize_openapi_schema(app) -> Dict[str, Any]:
         tags=app.openapi_tags,
         servers=[
             {
-                "url": "http://localhost:8000",
+                "url": "http://localhost:8002",
                 "description": "本地开发环境",
             },
             {
@@ -260,7 +227,7 @@ def customize_openapi_schema(app) -> Dict[str, Any]:
     # Add custom info
     openapi_schema["info"]["x-logo"] = {
         "url": "https://fastapi.tiangolo.com/img/logo-margin/logo-teal.png",
-        "altText": "Web3 Airdrop Alpha System"
+        "altText": "Web3 Airdrop Alpha System",
     }
 
     app.openapi_schema = openapi_schema

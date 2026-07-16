@@ -27,7 +27,7 @@ REM Check dependencies
 echo [2/6] Checking backend dependencies...
 cd /d "%~dp0backend"
 
-if not exist "venv\" (
+if not exist "venv" (
     echo [INFO] First run, creating virtual environment...
     python -m venv venv
     if errorlevel 1 (
@@ -46,7 +46,7 @@ pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
     echo [INFO] Trying alternative installation method...
-    pip install fastapi uvicorn structlog pydantic pydantic-settings python-multipart openpyxl pandas pytest pytest-asyncio pytest-cov httpx
+    pip install fastapi uvicorn[standard] pydantic pydantic-settings structlog apscheduler httpx prometheus-client pandas openpyxl python-multipart pytest pytest-asyncio pytest-cov
     if errorlevel 1 (
         echo [ERROR] Dependency installation failed
         pause
@@ -74,22 +74,35 @@ timeout /t 3 /nobreak >nul
 echo [OK] Backend service started
 echo.
 
-REM Check frontend
-echo [5/6] Preparing frontend interface...
-cd /d "%~dp0frontend"
-if not exist "index.html" (
-    echo [ERROR] Frontend files not found
+REM Check Node.js
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Node.js not found. Please install Node.js 18+ to run the Next.js dashboard.
+    echo Download: https://nodejs.org/
     pause
     exit /b 1
 )
-echo [OK] Frontend files ready
+
+REM Check frontend
+echo [5/6] Preparing frontend interface...
+cd /d "%~dp0frontend-next"
+if not exist "node_modules" (
+    echo [INFO] Installing frontend dependencies ^(this may take a minute^)...
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] Failed to install frontend dependencies
+        pause
+        exit /b 1
+    )
+)
+echo [OK] Frontend dependencies ready
 echo.
 
-REM Start frontend (using Python HTTP server)
+REM Start frontend (Next.js dev server)
 echo [6/6] Starting frontend service...
-start "Frontend UI" cmd /k "cd /d "%~dp0frontend" && echo [OK] Frontend starting... && python -m http.server 3002"
+start "Frontend UI" cmd /k "cd /d "%~dp0frontend-next" && echo [OK] Frontend starting... && npm run dev"
 
-timeout /t 2 /nobreak >nul
+timeout /t 4 /nobreak >nul
 echo [OK] Frontend service started
 echo.
 

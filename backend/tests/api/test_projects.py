@@ -143,8 +143,8 @@ class TestListProjectsEndpoint:
         assert response.status_code == 422
 
     def test_list_projects_invalid_page_size_too_large(self, client):
-        """Test that page_size>100 fails validation."""
-        response = client.get("/api/v1/projects?page_size=101")
+        """Test that page_size>500 fails validation."""
+        response = client.get("/api/v1/projects?page_size=501")
         assert response.status_code == 422
 
     def test_list_projects_invalid_min_score_negative(self, client):
@@ -189,7 +189,8 @@ class TestGetProjectEndpoint:
         assert response.status_code == 404
 
         data = response.json()
-        assert "detail" in data
+        assert "error" in data
+        assert data["error"]["code"] == "NOT_FOUND"
 
     def test_get_project_with_various_ids(self, client):
         """Test getting projects with different ID formats."""
@@ -229,13 +230,7 @@ class TestProjectsResponseStructure:
 
     def test_filters_structure(self, client):
         """Test filters object structure."""
-        response = client.get(
-            "/api/v1/projects?"
-            "label=FARM&"
-            "sector=L2&"
-            "stage=testnet&"
-            "min_score=70"
-        )
+        response = client.get("/api/v1/projects?label=FARM&sector=L2&stage=testnet&min_score=70")
         data = response.json()
         filters = data["data"]["filters"]
 

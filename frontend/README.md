@@ -23,7 +23,7 @@ start frontend/index.html
 **注意**: 需要先启动后端 API 服务：
 ```bash
 cd backend
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8002
 ```
 
 ### 方式 2: 使用本地服务器（推荐用于开发）
@@ -31,10 +31,10 @@ uvicorn app.main:app --reload
 ```bash
 # Python 自带的 HTTP 服务器
 cd frontend
-python -m http.server 3000
+python -m http.server 3002
 
 # 访问
-open http://localhost:3000
+open http://localhost:3002
 ```
 
 ### 方式 3: Docker 部署（生产环境）
@@ -78,7 +78,7 @@ open http://localhost:3000
 # backend/app/main.py
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "file://"],
+    allow_origins=["http://localhost:3002", "file://"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

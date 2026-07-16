@@ -12,23 +12,22 @@ Reference:
 
 import asyncio
 import time
-from typing import List, Dict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
 from app.agents.base import (
-    BaseAgent,
-    PipelineState,
-    RawProject,
     AgentContext,
     AgentError,
+    PipelineState,
+    RawProject,
 )
 from app.agents.narrative import NarrativeAgent
-from app.agents.team import TeamAgent
 from app.agents.risk import RiskAgent
-from app.agents.tokenomics import TokenomicsAgent
 from app.agents.scorer import ScorerAgent
+from app.agents.team import TeamAgent
+from app.agents.tokenomics import TokenomicsAgent
+from app.config import settings
 from app.models import RunResponse
 from app.repository import ProjectRepository
 
@@ -57,7 +56,7 @@ class SimpleOrchestrator:
 
     async def run_pipeline(
         self,
-        projects: List[RawProject],
+        projects: list[RawProject],
         context: AgentContext,
         save_to_db: bool = True,
     ) -> RunResponse:
@@ -83,8 +82,8 @@ class SimpleOrchestrator:
         sector_counts = self._calculate_sector_counts(projects)
 
         # Process each project sequentially (MVP)
-        states: List[PipelineState] = []
-        errors: List[Dict[str, str]] = []
+        states: list[PipelineState] = []
+        errors: list[dict[str, str]] = []
 
         for idx, project in enumerate(projects):
             logger.info(
@@ -124,14 +123,15 @@ class SimpleOrchestrator:
         )
 
         # Save to database if enabled
+        persisted_project_rows = []
         if save_to_db and states:
             try:
                 repo = ProjectRepository()
-                saved_count = repo.save_batch(states)
+                persisted_project_rows = repo.save_batch_with_rows(states)
                 logger.info(
                     "orchestrator.db_save_complete",
                     run_id=context.run_id,
-                    saved_count=saved_count,
+                    saved_count=len(persisted_project_rows),
                     total_count=len(states),
                 )
             except Exception as e:
@@ -150,13 +150,14 @@ class SimpleOrchestrator:
             elapsed_ms=elapsed_ms,
             errors=errors,
             states=states,  # Include states for API access
+            persisted_project_rows=persisted_project_rows,
         )
 
     async def _run_single_project(
         self,
         project: RawProject,
         context: AgentContext,
-        sector_counts: Dict[str, int],
+        sector_counts: dict[str, int],
     ) -> PipelineState:
         """Run complete pipeline for a single project.
 
@@ -227,7 +228,7 @@ class SimpleOrchestrator:
             state = await scorer.run(state)
 
             # Mark completion
-            state.completed_at = datetime.now(timezone.utc)
+            state.completed_at = datetime.now(UTC)
 
             total_duration = (time.time() - state_start) * 1000
             logger.info(
@@ -258,7 +259,7 @@ class SimpleOrchestrator:
 
         return state
 
-    def _calculate_sector_counts(self, projects: List[RawProject]) -> Dict[str, int]:
+    def _calculate_sector_counts(self, projects: list[RawProject]) -> dict[str, int]:
         """Calculate project count per sector for competition scoring.
 
         Args:
@@ -267,7 +268,7 @@ class SimpleOrchestrator:
         Returns:
             Dict mapping sector -> count
         """
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
 
         for project in projects:
             if project.sector:
@@ -283,7 +284,7 @@ class SimpleOrchestrator:
 
 
 async def run_orchestrator(
-    projects: List[RawProject],
+    projects: list[RawProject],
     run_id: str | None = None,
     enable_llm: bool = False,
     save_to_db: bool = True,
@@ -305,6 +306,7 @@ async def run_orchestrator(
     context = AgentContext(
         run_id=run_id,
         enable_llm=enable_llm,
+        llm_discovery_score_threshold=settings.llm_discovery_score_threshold,
     )
 
     orchestrator = SimpleOrchestrator()

@@ -6,20 +6,20 @@ Reference:
 - app/routers/v1/export_import.py
 """
 
-import pytest
 import io
-from datetime import datetime
+
+import pytest
 
 from app.export import (
-    export_projects_to_excel,
-    export_projects_to_csv,
     export_project_detail_to_excel,
+    export_projects_to_csv,
+    export_projects_to_excel,
 )
 from app.import_utils import (
-    import_projects_from_excel,
-    import_projects_from_csv,
-    validate_imported_projects,
     create_import_template_excel,
+    import_projects_from_csv,
+    import_projects_from_excel,
+    validate_imported_projects,
 )
 
 
@@ -48,7 +48,7 @@ class TestExport:
         assert isinstance(result, bytes)
         assert len(result) > 0
         # Excel files start with PK (ZIP signature)
-        assert result[:2] == b'PK'
+        assert result[:2] == b"PK"
 
     def test_export_projects_to_csv(self):
         """Test exporting projects to CSV."""
@@ -123,7 +123,7 @@ class TestExport:
 
         assert isinstance(result, bytes)
         assert len(result) > 0
-        assert result[:2] == b'PK'
+        assert result[:2] == b"PK"
 
 
 class TestImport:
@@ -133,6 +133,7 @@ class TestImport:
         """Test importing projects from Excel."""
         # Create a simple Excel file
         import pandas as pd
+
         data = {
             "项目名称": ["Project A", "Project B"],
             "URL": ["https://a.xyz", "https://b.xyz"],
@@ -143,7 +144,7 @@ class TestImport:
         df = pd.DataFrame(data)
 
         output = io.BytesIO()
-        df.to_excel(output, index=False, engine='openpyxl')
+        df.to_excel(output, index=False, engine="openpyxl")
         excel_bytes = output.getvalue()
 
         # Import
@@ -223,7 +224,7 @@ https://a.xyz,L2
 
         assert isinstance(template, bytes)
         assert len(template) > 0
-        assert template[:2] == b'PK'
+        assert template[:2] == b"PK"
 
 
 class TestImportBooleanFields:

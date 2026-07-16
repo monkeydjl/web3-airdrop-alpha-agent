@@ -21,48 +21,53 @@
 
  严格遵循 [ENGINEERING_ROADMAP.md §4](ENGINEERING_ROADMAP.md) 定义的最终形态目录结构：
 
-> ⚠️ **规划结构说明**：下方为 Roadmap 定义的**目标形态**目录树。当前 MVP 已实现文件仅 `backend/app/{__init__,config,db,main,models}.py`，其余（fetcher/seed/scheduler/agents/ 等）为待实现规划文件，仅供 AI Agent 理解目标结构，勿假定其已存在。实现前请先确认文件是否存在。
+> **实现状态（2026-07-09 更新）**：下方为**实际已存在的 MVP 文件结构**（手动输入方向）。路由 `/api/v1/run`、`/api/v1/projects`、`/api/v1/export_import` 已在 `main.py` 注册，agents 目录已落地（`base/collector/narrative/team/risk/tokenomics/scorer/orchestrator/orchestrator_simple`）。
 
 ```
 backend/app/
 ├── __init__.py
-├── main.py              # FastAPI app + 路由
+├── main.py              # FastAPI app + 路由注册（/api/v1/run, /api/v1/projects, /api/v1/export_import）
 ├── config.py            # pydantic-settings 配置
 ├── models.py            # Pydantic 数据模型
-├── db.py                # SQLite/SQLAlchemy 数据层
-├── fetcher.py           # 统一 fetcher（缓存/重试/熔断）
-├── seed.py              # MVP 演示种子数据
-├── scheduler.py         # APScheduler 调度（ADR-005）
-├── backtest.py          # 权重回测（V2）
-├── cache.py             # 竞争度缓存（V2，ADR-010）
-├── auth.py              # 鉴权逻辑（V2+）
-├── middleware/           # FastAPI 中间件
-│   ├── auth.py           # 鉴权中间件
-│   └── version_check.py  # API 版本弃用中间件（ADR-009）
-├── routers/              # API 路由
+├── db.py                # SQLite 数据层
+├── repository.py        # 数据访问层（projects 读写封装）
+├── export.py            # 项目导出（CSV/JSON）
+├── import_utils.py      # 项目导入工具
+├── openapi.py           # OpenAPI 自定义配置
+├── agents/
+│   ├── __init__.py
+│   ├── base.py           # BaseAgent + RawProject + PipelineState + AgentContext
+│   ├── collector.py
+│   ├── narrative.py
+│   ├── team.py
+│   ├── risk.py
+│   ├── tokenomics.py
+│   ├── scorer.py
+│   ├── orchestrator.py
+│   └── orchestrator_simple.py  # 串行处理多项目
+├── routers/
 │   └── v1/
 │       ├── __init__.py
-│       ├── run.py
-│       ├── projects.py
-│       ├── project.py
-│       ├── rescores.py
-│       ├── insights.py
-│       ├── feedback.py   # V2
-│       ├── events.py     # V2
-│       ├── audit.py      # V2
-│       └── auth.py       # V2+
-└── agents/
+│       ├── run.py          # POST /api/v1/run（ProjectInput + RunRequest）
+│       ├── projects.py     # GET /api/v1/projects
+│       └── export_import.py # /api/v1/export_import 导出导入
+└── utils/
     ├── __init__.py
-    ├── base.py           # BaseAgent + PipelineState + AgentContext
-    ├── collector.py
-    ├── narrative.py
-    ├── team.py
-    ├── risk.py
-    ├── tokenomics.py
-    ├── scorer.py
-    ├── orchestrator.py
-    └── prompts/          # LLM prompt 模板（版本化）
+    ├── fetcher.py         # 统一 fetcher（缓存/重试/熔断）
+    └── normalize.py       # 归一化/去重工具
 ```
+
+> 注：以下为 V2 规划，尚未实现（勿假定其已存在）：`seed.py`（演示种子）、`scheduler.py`（APScheduler）、`backtest.py`（权重回测）、`cache.py`（竞争度缓存，ADR-010）、`auth.py` + `middleware/`（鉴权，V2+）、`agents/prompts/`（prompt 版本化）。
+>
+> **v2.0 更新（ADR-012，系统方向反转）**：系统从"手动输入为主"转为"自动扫描为主"。以下文件为 v2.0 计划实现，勿假定已存在：
+> - `backend/app/collectors/`（DefiLlama/GitHub/CoinGecko/Twitter/Chain/Quest/CryptoRank Collector）
+> - `backend/app/utils/rate_limiter.py`（采集速率限制器，令牌桶）
+> - `backend/app/http_client.py`（统一 HTTP 出口，域名白名单校验）
+> - `backend/app/scheduler/collection_scheduler.py`（采集调度器，独立于分析调度器）
+> - 采集表（`data_sources`/`raw_projects`/`project_signals`/`collection_logs`，见 DATABASE_DDL.md §2.13-2.16）
+> - 采集相关 API 端点（`/api/v1/discoveries`、`/api/v1/collections/*`，见 API_SPEC.md §16-21）
+>
+> 手动输入路径（`POST /api/v1/run`）保留为补充能力，覆盖采集盲区。详见 `SYSTEM_DIRECTION_CHANGE.md` 与 `DATA_SOURCE_STRATEGY.md`。
 
 - 不在 `backend/app/` 根目录存放业务逻辑文件（仅 `main.py` 例外）。
 - `tests/` 目录镜像 `backend/app/` 结构。

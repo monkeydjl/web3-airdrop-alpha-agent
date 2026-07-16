@@ -39,13 +39,37 @@ setup-venv: ## 创建虚拟环境
 
 # ── 开发 ──────────────────────────────────────
 dev: ## 启动开发服务器（热重载）
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
 
 dev-debug: ## 启动开发服务器（调试模式）
 	LOG_LEVEL=DEBUG $(PYTHON) -m app.main
 
 seed: ## 导入种子数据
 	$(PYTHON) scripts/seed.py
+
+rescore: ## 用当前评分规则重算全部 projects
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/rescore_all.py
+
+purge-noise: ## 删除 denylist 噪声 projects / mark raw
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/purge_noise_projects.py
+
+feedback-stats: ## 反馈样本计数（校准门槛）
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/feedback_snapshot.py
+
+e2e-collect: ## 多源采集 + 评分全链路
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/e2e_collect_score.py
+
+seed-feedback: ## 写入演示反馈样本
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/seed_demo_feedback.py
+
+calibrate: ## 权重校准报告（样本不足则 gate block）
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/calibrate_weights.py
+
+calibrate-search: ## 样本达标后记录 baseline（不改生产权重）
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/calibrate_weights.py --search
+
+quarantine-list: ## 列出隔离 raw_projects
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/quarantine_cli.py list
 
 # ── 测试 ──────────────────────────────────────
 test: ## 运行全部测试

@@ -4,18 +4,19 @@ Reference:
 - backend/app/agents/base.py
 """
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from app.agents.base import (
-    BaseAgent,
-    RawProject,
     AgentContext,
-    PipelineState,
     AgentError,
+    BaseAgent,
     NarrativeResult,
-    TeamResult,
+    PipelineState,
+    RawProject,
     RiskResult,
+    TeamResult,
     TokenomicsResult,
 )
 
@@ -200,7 +201,7 @@ class TestPipelineState:
         assert state.started_at is not None
         assert state.completed_at is None
 
-        state.completed_at = datetime.now(timezone.utc)
+        state.completed_at = datetime.now(UTC)
         assert state.completed_at is not None
 
     def test_set_narrative_result(self, project, context):

@@ -48,12 +48,12 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1
 
-# 暴露端口
-EXPOSE 8000
+# 暴露端口（本项目固定 8002，避免与其他本地项目 8000 冲突）
+EXPOSE 8002
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"
 
 # 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]

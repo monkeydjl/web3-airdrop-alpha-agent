@@ -7,28 +7,27 @@
 - POST /api/v1/import/projects - 批量导入项目并评分
 """
 
-from typing import Literal, Optional
+from typing import Literal
 
-from fastapi import APIRouter, Query, Path, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse, Response
 import structlog
+from fastapi import APIRouter, File, HTTPException, Path, Query, UploadFile
+from fastapi.responses import Response
 
-from app.repository import ProjectRepository
+from app.agents.base import RawProject
+from app.agents.orchestrator_simple import run_orchestrator
 from app.export import (
-    export_projects_to_excel,
-    export_projects_to_csv,
     export_project_detail_to_excel,
+    export_projects_to_csv,
+    export_projects_to_excel,
 )
 from app.import_utils import (
-    import_projects_from_excel,
-    import_projects_from_csv,
-    validate_imported_projects,
     create_import_template_excel,
+    import_projects_from_csv,
+    import_projects_from_excel,
+    validate_imported_projects,
 )
-from app.agents.orchestrator_simple import run_orchestrator
-from app.agents.base import RawProject, AgentContext
 from app.models import RunResponse
-import io
+from app.repository import ProjectRepository
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -48,10 +47,10 @@ logger = structlog.get_logger(__name__)
 )
 async def export_projects(
     format: Literal["excel", "csv"] = Query("excel", description="导出格式"),
-    label: Optional[str] = Query(None, description="按标签筛选"),
-    sector: Optional[str] = Query(None, description="按赛道筛选"),
-    stage: Optional[str] = Query(None, description="按阶段筛选"),
-    min_score: Optional[int] = Query(None, ge=0, le=100, description="最低分数"),
+    label: str | None = Query(None, description="按标签筛选"),
+    sector: str | None = Query(None, description="按赛道筛选"),
+    stage: str | None = Query(None, description="按阶段筛选"),
+    min_score: int | None = Query(None, ge=0, le=100, description="最低分数"),
 ):
     """导出项目列表."""
     logger.info(
@@ -65,7 +64,7 @@ async def export_projects(
     try:
         # 查询项目（不分页，获取所有）
         repo = ProjectRepository()
-        db_projects, total = repo.list_projects(
+        db_projects, _ = repo.list_projects(
             page=1,
             page_size=10000,  # 大数字获取所有
             label=label,
@@ -77,10 +76,7 @@ async def export_projects(
         )
 
         if not db_projects:
-            raise HTTPException(
-                status_code=404,
-                detail="没有找到符合条件的项目"
-            )
+            raise HTTPException(status_code=404, detail="没有找到符合条件的项目")
 
         # 转换为导出格式
         projects = [
@@ -116,11 +112,9 @@ async def export_projects(
         )
 
         return Response(
-            content=file_content if isinstance(file_content, bytes) else file_content.encode('utf-8'),
+            content=file_content if isinstance(file_content, bytes) else file_content.encode("utf-8"),
             media_type=media_type,
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     except HTTPException:
@@ -131,10 +125,7 @@ async def export_projects(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"导出失败: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"导出失败: {e!s}") from e
 
 
 @router.get(
@@ -157,13 +148,11 @@ async def export_project_detail(
         project = repo.get_by_id(project_id)
 
         if not project:
-            raise HTTPException(
-                status_code=404,
-                detail=f"项目 {project_id} 不存在"
-            )
+            raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
 
         # 解析 JSON 字段
         import json
+
         project_detail = {
             "id": project["id"],
             "name": project["name"],
@@ -194,9 +183,7 @@ async def export_project_detail(
         return Response(
             content=file_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f"attachment; filename*=UTF-8''{filename}"
-            }
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
         )
 
     except HTTPException:
@@ -208,10 +195,7 @@ async def export_project_detail(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"导出失败: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"导出失败: {e!s}") from e
 
 
 @router.get(
@@ -229,9 +213,7 @@ async def download_import_template():
         return Response(
             content=file_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": "attachment; filename=import_template.xlsx"
-            }
+            headers={"Content-Disposition": "attachment; filename=import_template.xlsx"},
         )
 
     except Exception as e:
@@ -240,10 +222,7 @@ async def download_import_template():
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"模板生成失败: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"模板生成失败: {e!s}") from e
 
 
 @router.post(
@@ -286,15 +265,15 @@ async def import_projects(
         content = await file.read()
 
         # 根据文件类型导入
-        if file.filename.endswith('.xlsx') or file.content_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+        if (
+            file.filename.endswith(".xlsx")
+            or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
             projects_data = import_projects_from_excel(content)
-        elif file.filename.endswith('.csv') or file.content_type == 'text/csv':
-            projects_data = import_projects_from_csv(content.decode('utf-8'))
+        elif file.filename.endswith(".csv") or file.content_type == "text/csv":
+            projects_data = import_projects_from_csv(content.decode("utf-8"))
         else:
-            raise HTTPException(
-                status_code=400,
-                detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件"
-            )
+            raise HTTPException(status_code=400, detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件")
 
         # 验证数据
         valid_projects, errors = validate_imported_projects(projects_data)
@@ -307,26 +286,17 @@ async def import_projects(
             )
 
         if not valid_projects:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "没有有效的项目数据",
-                    "errors": errors
-                }
-            )
+            raise HTTPException(status_code=400, detail={"message": "没有有效的项目数据", "errors": errors})
 
         # 限制数量
         if len(valid_projects) > 100:
-            raise HTTPException(
-                status_code=400,
-                detail=f"导入项目数量过多（{len(valid_projects)}），最多100个"
-            )
+            raise HTTPException(status_code=400, detail=f"导入项目数量过多（{len(valid_projects)}），最多100个")
 
         # 转换为 RawProject
         raw_projects = []
         for i, p in enumerate(valid_projects):
             raw_project = RawProject(
-                id=f"import-{i+1:03d}",  # 生成导入 ID
+                id=f"import-{i + 1:03d}",  # 生成导入 ID
                 name=p["name"],
                 url=p.get("url"),
                 sector=p.get("sector"),
@@ -372,7 +342,4 @@ async def import_projects(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"导入失败: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"导入失败: {e!s}") from e

@@ -86,4 +86,4 @@ jobs:
             docker compose pull && \
             docker compose up -d --force-recreate && \
             sleep 5 && \
-            curl -f http://localhost:8000/health"
+            curl -f http://localhost:8002/health"

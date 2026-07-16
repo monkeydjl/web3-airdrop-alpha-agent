@@ -9,8 +9,15 @@
 参考：CONVENTIONS.md §12 配置管理
 """
 
-from pydantic import Field, field_validator
+from pathlib import Path
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 优先仓库根 .env，其次 backend/.env（从 backend 启动时也能读到根配置）
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ROOT_DIR = _BACKEND_DIR.parent
+_ENV_FILES = tuple(str(p) for p in (_ROOT_DIR / ".env", _BACKEND_DIR / ".env") if p.is_file()) or (".env",)
 
 
 class Settings(BaseSettings):
@@ -22,7 +29,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
@@ -34,19 +41,21 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_version: str = "0.1.0"
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8002  # 本地默认 8002（避免与其他项目 8000 冲突）
     debug: bool = False
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
 
     # ── 数据库 ────────────────────────────────────
     db_path: str = "data/airdrop.db"
-    database_url: str | None = None  # 设置后使用 PostgreSQL
+    # 设置后走 PostgreSQL（测试: docker-compose.postgres.yml → :5433）
+    # 例: postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test
+    database_url: str | None = None
 
     # ── API 鉴权 ──────────────────────────────────
     api_key: str = ""  # 空 = 无鉴权（MVP 模式）
 
-    # ── LLM 配置 (ADR-001) ───────────────────────
+    # ── LLM 配置 (ADR-001, ADR-012 分级使用) ─────
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
@@ -54,29 +63,117 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 512
     llm_daily_budget_usd: float = 1.0
     llm_semaphore_size: int = 5
+    # v2.0 分级使用：仅 discovery_score ≥ 此阈值的项目启用 LLM（ADR-012）
+    llm_discovery_score_threshold: float = 0.7
 
-    # ── 评分权重 (Σ=1.0) ─────────────────────────
-    weight_airdrop_signal: float = 0.20
-    weight_narrative_timing: float = 0.20
-    weight_team_reputation: float = 0.15
-    weight_risk: float = 0.15
-    weight_tokenomics: float = 0.15
-    weight_competition: float = 0.15
+    # ── 采集质量阈值 (ADR-012) ───────────────────
+    discovery_score_analysis_threshold: float = 0.3
+    raw_projects_retention_days: int = 30
+    project_signals_retention_days: int = 90
+    collection_logs_retention_days: int = 90
+
+    # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
+    weight_airdrop_signal: float = 0.18
+    weight_narrative_timing: float = 0.15
+    weight_team_reputation: float = 0.12
+    weight_risk: float = 0.12
+    weight_tokenomics: float = 0.10
+    weight_competition: float = 0.10
+    weight_execution: float = 0.13  # GitHub/路线图/推进
+    weight_transparency: float = 0.10  # 文档/白皮书/社媒
 
     # ── 并发控制 (ADR-007) ───────────────────────
     max_concurrent_projects: int = 10
 
-    # ── 调度配置 (ADR-005) ───────────────────────
+    # ── 调度配置 (ADR-005, ADR-012 双调度) ──────
     scheduler_enabled: bool = True
-    cron_expression: str = "0 8 * * *"
+    cron_expression: str = "0 8 * * *"  # 分析调度：空队列 /run
     timezone: str = "UTC"
+    # 采集调度器（v2.0，ADR-012）
+    collection_scheduler_enabled: bool = True
+    # 采集成功后是否自动触发分析（handoff；默认关，由分析 cron / 手动 /run 消费）
+    collection_auto_run_enabled: bool = False
+    analysis_run_limit: int = 100
+    defillama_cron: str = "0 8 * * *"
+    github_cron: str = "30 8 * * *"
+    coingecko_cron: str = "0 9 * * *"
+    cryptorank_cron: str = "15 9 * * *"
+    twitter_kol_cron: str = "0 * * * *"
+    twitter_keyword_cron: str = "*/15 * * * *"
+    etherscan_cron: str = "0 */6 * * *"
+    galxe_cron: str = "0 10 * * *"
+    layer3_cron: str = "30 10 * * *"
+
+    # ── 外部数据源 (ADR-012) ─────────────────────
+    # DefiLlama（P0，免费）
+    defillama_enabled: bool = True
+    defillama_base_url: str = "https://api.llama.fi"
+    defillama_timeout: int = 30
+    defillama_retry: int = 3
+    # GitHub（P0，免费）
+    github_enabled: bool = True
+    github_token: str = ""
+    github_api_base_url: str = "https://api.github.com"
+    github_timeout: int = 30
+    github_retry: int = 3
+    # CoinGecko（P0，免费）
+    coingecko_enabled: bool = True
+    coingecko_api_key: str = ""
+    coingecko_api_base_url: str = "https://api.coingecko.com/api/v3"
+    coingecko_timeout: int = 30
+    coingecko_retry: int = 3
+    # CryptoRank（可选，需 API key）
+    cryptorank_enabled: bool = False
+    cryptorank_api_key: str = ""
+    cryptorank_base_url: str = "https://api.cryptorank.io/v1"
+    cryptorank_timeout: int = 30
+    cryptorank_retry: int = 3
+    # RootData（融资/项目库，需 API key — 官网申请免费 Basic）
+    rootdata_enabled: bool = False
+    rootdata_api_key: str = ""
+    rootdata_base_url: str = "https://api.rootdata.com"
+    rootdata_timeout: int = 30
+    rootdata_retry: int = 3
+    rootdata_cron: str = "45 9 * * *"
+    # Twitter/X（P0，付费）
+    twitter_enabled: bool = False
+    twitter_bearer_token: str = ""
+    twitter_api_key: str = ""
+    twitter_api_secret: str = ""
+    twitter_timeout: int = 30
+    twitter_retry: int = 3
+    twitter_kol_accounts: str = (
+        "a16z,paradigm,VitalikButerin,cz_binance,BinanceLabs,"
+        "coinbase,panteracapital,dragonfly_xyz,polychaincap,1kxnetwork"
+    )
+    twitter_keywords: str = "#airdrop,#testnet,#points,#mainnet,points program,no token yet,TGE soon"
+    # 链上数据（P1）
+    etherscan_enabled: bool = False
+    etherscan_api_key: str = ""
+    etherscan_timeout: int = 30
+    etherscan_retry: int = 3
+    alchemy_api_key: str = ""
+    alchemy_webhook_url: str = ""
+    # Galxe / Layer3（P1，任务平台）
+    galxe_enabled: bool = False
+    galxe_api_key: str = ""
+    galxe_timeout: int = 30
+    galxe_retry: int = 3
+    layer3_enabled: bool = False
+    layer3_api_key: str = ""
+    layer3_timeout: int = 30
+    layer3_retry: int = 3
+    # Dune Analytics（可选）
+    dune_enabled: bool = False
+    dune_api_key: str = ""
 
     # ── Feature Flags ─────────────────────────────
     enable_llm_enhancement: bool = False
-    enable_feedback_system: bool = False
+    enable_feedback_system: bool = True  # default on for sample collection
     enable_events_tracking: bool = False
     enable_user_system: bool = False
     enable_competition_cache: bool = True
+    opportunity_shadow_enabled: bool = False
 
     # ── 缓存配置 ──────────────────────────────────
     competition_cache_ttl: int = 3600
@@ -87,7 +184,7 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.5
 
     # ── 安全配置 ──────────────────────────────────
-    cors_origins: str = "http://localhost:3000,http://localhost:8000"
+    cors_origins: str = "http://localhost:3002,http://localhost:8002"
     cors_credentials: bool = True
     rate_limit_enabled: bool = True
     rate_limit_requests: int = 100
@@ -121,9 +218,16 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
     # ── 验证器 ────────────────────────────────────
-    @field_validator("weight_airdrop_signal", "weight_narrative_timing",
-                     "weight_team_reputation", "weight_risk",
-                     "weight_tokenomics", "weight_competition")
+    @field_validator(
+        "weight_airdrop_signal",
+        "weight_narrative_timing",
+        "weight_team_reputation",
+        "weight_risk",
+        "weight_tokenomics",
+        "weight_competition",
+        "weight_execution",
+        "weight_transparency",
+    )
     @classmethod
     def validate_weight_range(cls, v: float) -> float:
         """验证单个权重在 [0, 1] 范围内。"""
@@ -133,19 +237,20 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context) -> None:
         """启动时断言权重和为 1.0。"""
-        total = sum([
-            self.weight_airdrop_signal,
-            self.weight_narrative_timing,
-            self.weight_team_reputation,
-            self.weight_risk,
-            self.weight_tokenomics,
-            self.weight_competition,
-        ])
+        total = sum(
+            [
+                self.weight_airdrop_signal,
+                self.weight_narrative_timing,
+                self.weight_team_reputation,
+                self.weight_risk,
+                self.weight_tokenomics,
+                self.weight_competition,
+                self.weight_execution,
+                self.weight_transparency,
+            ]
+        )
         if abs(total - 1.0) > 0.001:
-            raise ValueError(
-                f"Weights sum to {total:.4f}, expected 1.0. "
-                f"Check your configuration."
-            )
+            raise ValueError(f"Weights sum to {total:.4f}, expected 1.0. Check your configuration.")
 
 
 # ── 全局配置单例 ──────────────────────────────────

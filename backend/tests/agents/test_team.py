@@ -9,16 +9,17 @@ Reference:
 """
 
 import pytest
+from pydantic import ValidationError
 
 from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.team import (
+    BASE_TEAM_SCORE,
+    FLAG_ADJUSTMENTS,
     TeamAgent,
     calculate_team_score,
-    score_to_risk_level,
     infer_team_flags,
     infer_team_type,
-    FLAG_ADJUSTMENTS,
-    BASE_TEAM_SCORE,
+    score_to_risk_level,
 )
 
 
@@ -41,7 +42,7 @@ class TestTeamAgent:
             stage="mainnet",
             recent_funding=True,
             url="https://eigenlayer.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -67,7 +68,7 @@ class TestTeamAgent:
             stage="testnet",
             recent_funding=True,
             url="https://layerx.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -92,7 +93,7 @@ class TestTeamAgent:
             stage="ideation",
             recent_funding=False,
             url=None,
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -117,7 +118,7 @@ class TestTeamAgent:
             stage="testnet",
             recent_funding=False,
             url="https://regular.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -135,13 +136,7 @@ class TestTeamAgent:
     @pytest.mark.asyncio
     async def test_result_immutability(self):
         """Test that TeamResult is immutable."""
-        project = RawProject(
-            id="test-immutable",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-immutable", name="Test", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -152,7 +147,7 @@ class TestTeamAgent:
         assert result_state.team is not None
 
         # Try to modify - should raise FrozenInstanceError
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result_state.team.team_score = 0.99
 
 
@@ -206,11 +201,7 @@ class TestCalculateTeamScore:
 
     def test_clamping_lower_bound(self):
         """Test score clamping to 0.0."""
-        score = calculate_team_score([
-            "anonymous team",
-            "previous failed project",
-            "wash-trading VC"
-        ])
+        score = calculate_team_score(["anonymous team", "previous failed project", "wash-trading VC"])
         assert score >= 0.0
         assert score == 0.0
 
@@ -262,7 +253,7 @@ class TestInferTeamFlags:
             stage="testnet",
             recent_funding=True,
             url="https://project.xyz",
-            source="seed"
+            source="seed",
         )
         flags = infer_team_flags(project)
         assert "tier-1 vc backed" in flags
@@ -276,7 +267,7 @@ class TestInferTeamFlags:
             stage="mainnet",
             recent_funding=False,
             url="https://project.xyz",
-            source="seed"
+            source="seed",
         )
         flags = infer_team_flags(project)
         assert "doxxed team" in flags
@@ -290,7 +281,7 @@ class TestInferTeamFlags:
             stage="ideation",
             recent_funding=False,
             url=None,
-            source="seed"
+            source="seed",
         )
         flags = infer_team_flags(project)
         assert "anonymous team" in flags
@@ -304,7 +295,7 @@ class TestInferTeamFlags:
             stage="testnet",
             recent_funding=False,
             url="https://project.xyz",
-            source="seed"
+            source="seed",
         )
         flags = infer_team_flags(project)
         assert len(flags) == 0
@@ -318,7 +309,7 @@ class TestInferTeamFlags:
             stage="mainnet",
             recent_funding=True,
             url="https://project.xyz",
-            source="seed"
+            source="seed",
         )
         flags = infer_team_flags(project)
         assert "tier-1 vc backed" in flags
@@ -373,7 +364,7 @@ class TestEdgeCases:
             stage=None,
             url=None,
             recent_funding=False,
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -401,7 +392,7 @@ class TestEdgeCases:
                 stage=stage,
                 recent_funding=False,
                 url="https://project.xyz",
-                source="seed"
+                source="seed",
             )
 
             context = AgentContext(run_id="test-001")
@@ -427,7 +418,7 @@ class TestDataConsistency:
             stage="testnet",
             recent_funding=True,
             url="https://test.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -455,13 +446,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_team_result_serialization(self):
         """Test that TeamResult can be serialized."""
-        project = RawProject(
-            id="test-serialize",
-            name="SerializeTest",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-serialize", name="SerializeTest", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)

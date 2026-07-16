@@ -1,0 +1,182 @@
+"""Collection Scheduler.
+
+基于 APScheduler 的采集调度器，按配置周期触发各数据源采集。
+与 Analysis Scheduler 分离，形成 ADR-012 双调度模型。
+
+参考：
+- ENGINEERING_ROADMAP.md §6.2 双调度
+- ADR-012-system-direction-auto-scan.md
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+import structlog
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+from app.collectors.base import CollectorResult
+from app.collectors.metrics import CollectionMetrics
+from app.config import settings
+from app.metrics import (
+    COLLECTION_DUPLICATES,
+    COLLECTION_DURATION,
+    COLLECTION_ITEMS,
+    COLLECTION_RUNS,
+)
+
+if TYPE_CHECKING:
+    from app.collectors.base import CollectorResult
+    from app.collectors.registry import CollectorRegistry
+
+logger = structlog.get_logger(__name__)
+
+
+CollectionCallback = Callable[[str, "CollectorResult"], Awaitable[None]]
+
+
+class CollectionScheduler:
+    """采集调度器。
+
+    负责按 cron 周期触发各 DataCollector，并把结果回调给处理函数。
+    """
+
+    def __init__(
+        self,
+        registry: CollectorRegistry,
+        on_collection: CollectionCallback | None = None,
+    ) -> None:
+        self.registry = registry
+        self.on_collection = on_collection
+        self.scheduler = AsyncIOScheduler(timezone=settings.timezone)
+        self.metrics = CollectionMetrics()
+        self._logger = logger.bind(component="collection_scheduler")
+
+    def start(self) -> None:
+        """启动调度器。"""
+        if not settings.collection_scheduler_enabled:
+            self._logger.info("collection_scheduler.disabled")
+            return
+
+        # 注册各采集源任务
+        cron_map = {
+            "defillama": settings.defillama_cron,
+            "github": settings.github_cron,
+            "coingecko": settings.coingecko_cron,
+            "cryptorank": settings.cryptorank_cron,
+            "rootdata": getattr(settings, "rootdata_cron", "45 9 * * *"),
+            # Twitter 分 KOL 监听与关键词监听
+            "twitter_kol": settings.twitter_kol_cron,
+            "twitter_keyword": settings.twitter_keyword_cron,
+            "etherscan": settings.etherscan_cron,
+            "galxe": settings.galxe_cron,
+            "layer3": settings.layer3_cron,
+        }
+
+        for source_id, cron in cron_map.items():
+            collector = self.registry.get(source_id)
+            if collector and collector.is_enabled():
+                self.scheduler.add_job(
+                    self._run_collection,
+                    trigger=CronTrigger.from_crontab(cron),
+                    id=f"collect_{source_id}",
+                    name=f"Collect {source_id}",
+                    replace_existing=True,
+                    args=(source_id,),
+                )
+                self._logger.info(
+                    "collection_scheduler.job_added",
+                    source_id=source_id,
+                    cron=cron,
+                )
+
+        self.scheduler.start()
+        self._logger.info("collection_scheduler.started")
+
+    def shutdown(self, wait: bool = True) -> None:
+        """停止调度器。"""
+        self.scheduler.shutdown(wait=wait)
+        self._logger.info("collection_scheduler.shutdown")
+
+    async def _run_collection(self, source_id: str) -> None:
+        """执行单个采集任务。"""
+        collector = self.registry.get(source_id)
+        if not collector or not collector.is_enabled():
+            self._logger.warning("collection_scheduler.skip_disabled", source_id=source_id)
+            return
+
+        started_at = datetime.now(UTC)
+        self._logger.info(
+            "collection_scheduler.run_started",
+            source_id=source_id,
+            started_at=started_at.isoformat(),
+        )
+
+        try:
+            result = await collector.collect()
+        except Exception as e:
+            result = CollectorResult(
+                source_id=source_id,
+                status="error",
+                error_message=str(e),
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+            )
+            self._logger.error(
+                "collection_scheduler.run_failed",
+                source_id=source_id,
+                error=str(e),
+            )
+
+        if not result.started_at:
+            result.started_at = started_at
+        if not result.finished_at:
+            result.finished_at = datetime.now(UTC)
+
+        duration = (result.finished_at - result.started_at).total_seconds()
+        COLLECTION_RUNS.labels(source_id=source_id, status=result.status).inc()
+        COLLECTION_DURATION.labels(source_id=source_id).observe(duration)
+        COLLECTION_ITEMS.labels(source_id=source_id).inc(len(result.items))
+        COLLECTION_DUPLICATES.labels(source_id=source_id).inc(result.duplicate_count or 0)
+
+        if self.on_collection:
+            try:
+                await self.on_collection(source_id, result)
+            except Exception as e:
+                self._logger.error(
+                    "collection_scheduler.callback_failed",
+                    source_id=source_id,
+                    error=str(e),
+                )
+
+        # Check quality metrics after each run
+        try:
+            self.metrics.check_alerts(window_hours=24)
+        except Exception as e:
+            self._logger.error("collection_scheduler.metrics_alert_failed", error=str(e))
+
+        self._logger.info(
+            "collection_scheduler.run_completed",
+            source_id=source_id,
+            status=result.status,
+            items=len(result.items),
+        )
+
+    async def trigger_now(self, source_id: str) -> Any:
+        """手动立即触发一次采集。"""
+        await self._run_collection(source_id)
+        return {"source_id": source_id, "triggered_at": datetime.now(UTC).isoformat()}
+
+    def get_jobs(self) -> list[dict[str, Any]]:
+        """获取已注册任务列表。"""
+        return [
+            {
+                "id": job.id,
+                "name": job.name,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            }
+            for job in self.scheduler.get_jobs()
+        ]

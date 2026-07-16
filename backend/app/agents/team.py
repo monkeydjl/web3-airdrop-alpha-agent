@@ -10,11 +10,10 @@ Reference:
 """
 
 import time
-from typing import Dict
 
 import structlog
 
-from app.agents.base import BaseAgent, PipelineState, AgentError
+from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import TeamResult
 
 logger = structlog.get_logger(__name__)
@@ -22,11 +21,13 @@ logger = structlog.get_logger(__name__)
 
 # Team flag adjustment configuration
 # Format: flag -> adjustment (added to base score)
-FLAG_ADJUSTMENTS: Dict[str, float] = {
+FLAG_ADJUSTMENTS: dict[str, float] = {
     "anonymous team": -0.25,
     "previous failed project": -0.30,
     "wash-trading VC": -0.20,
     "tier-1 vc backed": +0.25,
+    "reputable vc backed": +0.15,
+    "recent funding": +0.08,
     "doxxed team": +0.20,
     "successful prior exit": +0.30,
 }
@@ -95,26 +96,26 @@ def infer_team_flags(project: "RawProject") -> list[str]:
     """
     flags = []
 
-    # Check for VC backing (positive signal)
-    if project.recent_funding:
+    # Funding quality (RootData / structured). Legacy: bare recent_funding
+    # without quality still maps to tier-1 (historical heuristic / tests).
+    fq = float(getattr(project, "funding_quality", 0) or 0)
+    tier = str(getattr(project, "funding_tier", "unknown") or "unknown").lower()
+    if tier == "tier1" or fq >= 0.65:
         flags.append("tier-1 vc backed")
+    elif tier == "tier2" or fq >= 0.45:
+        flags.append("reputable vc backed")
+    elif project.recent_funding and fq <= 0:
+        flags.append("tier-1 vc backed")
+    elif project.recent_funding or fq >= 0.25:
+        flags.append("recent funding")
 
     # Check stage (early stage = higher uncertainty)
-    if project.stage == "ideation":
-        # No product yet = higher team uncertainty
-        # Don't assume anonymous, but no positive signals
-        pass
-    elif project.stage == "testnet":
-        # Testnet shows execution capability
-        # Neutral - no flags
+    if project.stage == "ideation" or project.stage == "testnet":
         pass
     elif project.stage == "mainnet":
-        # Mainnet = proven execution
         flags.append("doxxed team")
 
-    # MVP: If no positive signals and no URL, assume higher risk
-    # V2: Replace with real data (Twitter profiles, team pages)
-    if not project.url and not project.recent_funding:
+    if not project.url and not project.recent_funding and fq < 0.2:
         flags.append("anonymous team")
 
     return flags
@@ -139,7 +140,7 @@ def infer_team_type(flags: list[str]) -> str:
         return "doxxed"
     elif "anonymous team" in flags:
         return "anon"
-    elif any(f in flags for f in ["tier-1 vc backed", "recent funding"]):
+    elif any(f in flags for f in ["tier-1 vc backed", "reputable vc backed", "recent funding"]):
         return "semi_anon"
     else:
         return "unknown"
@@ -174,10 +175,6 @@ class TeamAgent(BaseAgent):
             # Calculate team score
             team_score = calculate_team_score(flags)
 
-            # Map score to risk level
-            # Note: Not using input risk_level - deriving from score
-            risk_level = score_to_risk_level(team_score)
-
             # Infer team type
             team_type = infer_team_type(flags)
 
@@ -200,12 +197,7 @@ class TeamAgent(BaseAgent):
             )
 
         except Exception as e:
-            error = AgentError(
-                agent_name=self.name,
-                kind="team_error",
-                message=str(e),
-                project_id=state.project.id
-            )
+            error = AgentError(agent_name=self.name, kind="team_error", message=str(e), project_id=state.project.id)
             state.add_error(error)
 
         duration_ms = (time.time() - start_time) * 1000
@@ -217,6 +209,7 @@ class TeamAgent(BaseAgent):
 if __name__ == "__main__":
     # Test team agent
     import asyncio
+
     from app.agents.base import AgentContext, RawProject
 
     async def test():
@@ -232,7 +225,7 @@ if __name__ == "__main__":
                 stage="mainnet",
                 recent_funding=True,
                 url="https://eigenlayer.xyz",
-                source="seed"
+                source="seed",
             ),
             # Medium: Testnet with funding
             RawProject(
@@ -242,7 +235,7 @@ if __name__ == "__main__":
                 stage="testnet",
                 recent_funding=True,
                 url="https://layerx.xyz",
-                source="seed"
+                source="seed",
             ),
             # Low: Anonymous team, no signals
             RawProject(
@@ -252,7 +245,7 @@ if __name__ == "__main__":
                 stage="ideation",
                 recent_funding=False,
                 url=None,
-                source="seed"
+                source="seed",
             ),
             # Neutral: Testnet, no special signals
             RawProject(
@@ -262,7 +255,7 @@ if __name__ == "__main__":
                 stage="testnet",
                 recent_funding=False,
                 url="https://regular.xyz",
-                source="seed"
+                source="seed",
             ),
         ]
 

@@ -9,29 +9,31 @@ Reference:
 """
 
 import time
-from typing import Dict, List, Tuple
 
 import structlog
 
-from app.agents.base import BaseAgent, PipelineState, AgentError
+from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import ScoreResult
 
 logger = structlog.get_logger(__name__)
 
 
-# ── Scoring Weights (v1) ──────────────────────────
+# ── Scoring Weights (v1.2) ────────────────────────
+# 在 v1 六维上增加：execution（路线图/GitHub 推进）、transparency（文档/社媒）
 WEIGHTS = {
-    "airdrop_signal": 0.20,
-    "narrative_timing": 0.20,
-    "team_reputation": 0.15,
-    "risk": 0.15,
-    "tokenomics": 0.15,
-    "competition": 0.15,
+    "airdrop_signal": 0.18,
+    "narrative_timing": 0.15,
+    "team_reputation": 0.12,
+    "risk": 0.12,
+    "tokenomics": 0.10,
+    "competition": 0.10,
+    "execution": 0.13,  # GitHub 活跃、路线图、TVL 推进
+    "transparency": 0.10,  # 白皮书/文档/Twitter/Discord
 }
 
-# ── Label Thresholds ──────────────────────────────
+# ── Label Thresholds (v1.1: FARM 70→65 for auto-scan early-signal mix) ──
 LABEL_THRESHOLDS = [
-    (70, "FARM"),
+    (65, "FARM"),
     (50, "WATCH"),
     (0, "IGNORE"),
 ]
@@ -53,17 +55,17 @@ SYBIL_FACTOR = {
 # ── Competition Mapping ───────────────────────────
 # sector_count -> subscore
 COMPETITION_MAP = [
-    (3, 100),   # n <= 3
-    (8, 75),    # 4 <= n <= 8
-    (15, 55),   # 9 <= n <= 15
-    (float('inf'), 40),  # n > 15
+    (3, 100),  # n <= 3
+    (8, 75),  # 4 <= n <= 8
+    (15, 55),  # 9 <= n <= 15
+    (float("inf"), 40),  # n > 15
 ]
 
 
 class ScorerAgent(BaseAgent):
     """Scorer Agent - Aggregates all analysis outputs into final score."""
 
-    def __init__(self, sector_counts: Dict[str, int] | None = None):
+    def __init__(self, sector_counts: dict[str, int] | None = None):
         """Initialize Scorer Agent.
 
         Args:
@@ -82,8 +84,8 @@ class ScorerAgent(BaseAgent):
             # Calculate all subscores
             subscores = self._calculate_subscores(state)
 
-            # Calculate confidence (non-missing analysis agents / 4)
-            confidence = self._calculate_confidence(state)
+            # Evidence-aware confidence (agents + verifiable signals)
+            confidence = self._calc_evidence_confidence(state)
 
             # Calculate weighted total score
             total_score = self._calculate_total_score(subscores)
@@ -135,8 +137,8 @@ class ScorerAgent(BaseAgent):
         self._log_complete(state, duration_ms)
         return state
 
-    def _calculate_subscores(self, state: PipelineState) -> Dict[str, float]:
-        """Calculate all 6 subscores."""
+    def _calculate_subscores(self, state: PipelineState) -> dict[str, float]:
+        """Calculate all 8 subscores (v1.2)."""
         return {
             "airdrop_signal": self._calc_airdrop_signal(state),
             "narrative_timing": self._calc_narrative_timing(state),
@@ -144,26 +146,213 @@ class ScorerAgent(BaseAgent):
             "risk": self._calc_risk(state),
             "tokenomics": self._calc_tokenomics(state),
             "competition": self._calc_competition(state),
+            "execution": self._calc_execution(state),
+            "transparency": self._calc_transparency(state),
         }
 
     def _calc_airdrop_signal(self, state: PipelineState) -> float:
         """Calculate airdrop signal subscore (0-100).
 
-        Logic:
-        - has_points + airdrop_hint: 100
-        - only one: 60
-        - neither: 20
+        v1.3: base ladder + explicit wording + **verifiable task portal** +
+        multi-source evidence bonus + funding.
         """
         project = state.project
-        has_points = project.has_points_program
-        has_hint = project.no_token_yet  # "airdrop_hint" proxy
+        has_points = bool(project.has_points_program)
+        no_token = bool(project.no_token_yet)
+        has_testnet = bool(project.has_testnet) or ((project.stage or "").lower() == "testnet")
+        explicit = bool(getattr(project, "explicit_airdrop_mention", False))
+        funding = bool(project.recent_funding)
+        fq = float(getattr(project, "funding_quality", 0) or 0)
+        f_tier = str(getattr(project, "funding_tier", "unknown") or "unknown").lower()
+        task_portal = bool(getattr(project, "has_task_portal", False))
+        sources = int(getattr(project, "source_count", 1) or 1)
 
-        if has_points and has_hint:
-            return 100.0
-        elif has_points or has_hint:
-            return 60.0
+        if has_points and no_token:
+            base = 100.0
+        elif no_token and has_testnet:
+            base = 85.0
+        elif has_points or no_token:
+            base = 60.0
+        elif has_testnet:
+            base = 40.0
         else:
-            return 20.0
+            base = 20.0
+
+        bonus = 0.0
+        if explicit:
+            bonus += 10.0
+        if task_portal:
+            # Galxe/Layer3/quest portal is stronger than wording alone
+            bonus += 14.0
+        # Funding quality (RootData etc.): better capital = more likely real campaign later
+        if fq >= 0.55 and (has_points or no_token or has_testnet or task_portal):
+            bonus += 8.0 + (5.0 if f_tier == "tier1" else 0.0)
+        elif funding and (has_points or no_token or has_testnet or task_portal):
+            bonus += 5.0
+        if sources >= 3 and (has_points or no_token or task_portal or explicit):
+            bonus += 6.0
+        elif sources >= 2 and (has_points or no_token or task_portal):
+            bonus += 3.0
+
+        # listed tokens without airdrop story stay capped
+        if not no_token and not has_points and not explicit and not task_portal:
+            return min(35.0, base + bonus)
+        return min(100.0, base + bonus)
+
+    def _calc_execution(self, state: PipelineState) -> float:
+        """Repo health / roadmap **delivery** / product running (0-100).
+
+        v1.3: roadmap_delivery aligned/partial/unclear, has_contract, TVL.
+        """
+        p = state.project
+        score = 38.0  # base
+
+        if getattr(p, "has_github", False):
+            score += 10.0
+            stars = int(getattr(p, "github_stars", 0) or 0)
+            if stars >= 1000:
+                score += 16.0
+            elif stars >= 200:
+                score += 11.0
+            elif stars >= 50:
+                score += 7.0
+            elif stars > 0:
+                score += 3.0
+
+            days = getattr(p, "github_recent_push_days", None)
+            if days is not None:
+                if days <= 14:
+                    score += 16.0
+                elif days <= 45:
+                    score += 11.0
+                elif days <= 90:
+                    score += 6.0
+                elif days > 180:
+                    score -= 12.0
+        else:
+            if p.url:
+                score += 4.0
+
+        # Roadmap presence vs delivery (履约)
+        delivery = str(getattr(p, "roadmap_delivery", "unknown") or "unknown").lower()
+        if delivery == "aligned":
+            score += 16.0
+        elif delivery == "partial":
+            score += 8.0
+        elif delivery == "unclear":
+            score -= 8.0  # paper roadmap only
+        elif getattr(p, "has_roadmap", False):
+            score += 6.0
+
+        if p.has_testnet or (p.stage or "").lower() == "testnet":
+            score += 7.0
+        if getattr(p, "has_contract", False):
+            score += 10.0  # product/contracts actually exist
+
+        tvl = getattr(p, "tvl_usd", None)
+        if tvl is not None:
+            try:
+                t = float(tvl)
+                if t >= 10_000_000:
+                    score += 12.0
+                elif t >= 1_000_000:
+                    score += 8.0
+                elif t >= 100_000:
+                    score += 4.0
+            except (TypeError, ValueError):
+                pass
+
+        return self._clamp(score, 0, 100)
+
+    def _calc_transparency(self, state: PipelineState) -> float:
+        """Docs / social / multi-source evidence (0-100). v1.3 + evidence density."""
+        p = state.project
+        score = 28.0
+
+        if getattr(p, "has_whitepaper", False):
+            score += 18.0
+        elif getattr(p, "has_docs", False):
+            score += 12.0
+
+        if getattr(p, "has_roadmap", False):
+            score += 8.0
+        if getattr(p, "has_twitter", False):
+            score += 10.0
+        if getattr(p, "has_discord", False):
+            score += 8.0
+        if getattr(p, "has_github", False):
+            score += 8.0
+        if p.url:
+            score += 6.0
+        if p.recent_funding:
+            score += 4.0
+        if getattr(p, "has_task_portal", False):
+            score += 6.0  # public campaign = some transparency
+
+        # Multi-source evidence density
+        sources = int(getattr(p, "source_count", 1) or 1)
+        if sources >= 3:
+            score += 12.0
+        elif sources >= 2:
+            score += 6.0
+
+        # Disclosed fundraising (RootData) improves transparency of capital story
+        fq = float(getattr(p, "funding_quality", 0) or 0)
+        if fq >= 0.5:
+            score += 8.0
+        elif fq >= 0.25:
+            score += 4.0
+        if str(getattr(p, "funding_tier", "")).lower() == "tier1":
+            score += 4.0
+
+        # anonymous + no docs is a red flag
+        if state.team is not None:
+            if state.team.team_type == "anon" and not getattr(p, "has_docs", False):
+                score -= 12.0
+            if state.team.team_type == "doxxed":
+                score += 6.0
+
+        return self._clamp(score, 0, 100)
+
+    def _calc_evidence_confidence(self, state: PipelineState) -> float:
+        """Data evidence completeness 0-1 (not just agent presence).
+
+        Mixes agent coverage with concrete signal coverage so confidence
+        reflects 'can we verify this project' rather than only pipeline shape.
+        """
+        agent_cov = self._agent_coverage(state)
+        p = state.project
+        checks = [
+            bool(p.url),
+            bool(getattr(p, "has_docs", False) or getattr(p, "has_whitepaper", False)),
+            bool(getattr(p, "has_github", False)),
+            bool(getattr(p, "has_twitter", False) or getattr(p, "has_discord", False)),
+            bool(
+                p.has_points_program
+                or getattr(p, "has_task_portal", False)
+                or getattr(p, "explicit_airdrop_mention", False)
+            ),
+            bool(getattr(p, "has_contract", False) or (getattr(p, "tvl_usd", None) is not None) or p.has_testnet),
+            int(getattr(p, "source_count", 1) or 1) >= 2,
+        ]
+        signal_cov = sum(1 for c in checks if c) / len(checks)
+        # weight toward signals; agent still matters
+        conf = 0.40 * agent_cov + 0.60 * signal_cov
+        # Full agent pipeline still gets a usable floor (label degradation is for sparse runs)
+        if agent_cov >= 1.0:
+            conf = max(conf, 0.55)
+        elif agent_cov >= 0.75:
+            conf = max(conf, 0.45)
+        return self._clamp(conf, 0.0, 1.0)
+
+    def _agent_coverage(self, state: PipelineState) -> float:
+        agents = [
+            state.narrative,
+            state.team,
+            state.risk,
+            state.tokenomics,
+        ]
+        return sum(1 for agent in agents if agent is not None) / 4.0
 
     def _calc_narrative_timing(self, state: PipelineState) -> float:
         """Calculate narrative timing subscore (0-100).
@@ -187,15 +376,18 @@ class ScorerAgent(BaseAgent):
     def _calc_team_reputation(self, state: PipelineState) -> float:
         """Calculate team reputation subscore (0-100).
 
-        Logic:
-        - subscore = team_score * 100
-
-        Fallback: 50 (neutral) if team missing.
+        Base: team_score * 100. v1.4: blend in funding_quality so RootData
+        tier-1 raises lift team even if flag heuristics are sparse.
         """
-        if state.team is None:
-            return 50.0
+        base = 50.0 if state.team is None else state.team.team_score * 100
 
-        return state.team.team_score * 100
+        fq = float(getattr(state.project, "funding_quality", 0) or 0)
+        if fq > 0:
+            # up to +18 from excellent capital formation
+            base = base * 0.85 + (fq * 100) * 0.15
+            if str(getattr(state.project, "funding_tier", "")).lower() == "tier1":
+                base += 6.0
+        return self._clamp(base, 0, 100)
 
     def _calc_risk(self, state: PipelineState) -> float:
         """Calculate risk subscore (0-100).
@@ -209,10 +401,7 @@ class ScorerAgent(BaseAgent):
         if state.risk is None:
             return 50.0
 
-        sybil_factor = SYBIL_FACTOR.get(
-            self._infer_sybil_difficulty(state),
-            0.85
-        )
+        sybil_factor = SYBIL_FACTOR.get(self._infer_sybil_difficulty(state), 0.85)
         subscore = (1 - state.risk.token_risk) * 100 * sybil_factor
 
         return self._clamp(subscore, 0, 100)
@@ -231,9 +420,7 @@ class ScorerAgent(BaseAgent):
 
         # Calculate tokenomics.risk from components
         tok_risk = (
-            state.tokenomics.vc_share * 0.4
-            + state.tokenomics.team_share * 0.3
-            + state.tokenomics.unlock_penalty * 0.3
+            state.tokenomics.vc_share * 0.4 + state.tokenomics.team_share * 0.3 + state.tokenomics.unlock_penalty * 0.3
         )
 
         subscore = (1 - tok_risk) * 100
@@ -263,15 +450,12 @@ class ScorerAgent(BaseAgent):
 
         return 40.0
 
-    def _calculate_total_score(self, subscores: Dict[str, float]) -> int:
+    def _calculate_total_score(self, subscores: dict[str, float]) -> int:
         """Calculate weighted total score."""
-        total = sum(
-            subscores[key] * WEIGHTS[key]
-            for key in WEIGHTS
-        )
+        total = sum(subscores[key] * WEIGHTS[key] for key in WEIGHTS)
 
         # Round using banker's rounding (Python default)
-        return int(round(self._clamp(total, 0, 100)))
+        return round(self._clamp(total, 0, 100))
 
     def _score_to_label(self, score: int) -> str:
         """Map score to label."""
@@ -280,11 +464,7 @@ class ScorerAgent(BaseAgent):
                 return label
         return "IGNORE"
 
-    def _apply_confidence_degradation(
-        self,
-        label: str,
-        confidence: float
-    ) -> str:
+    def _apply_confidence_degradation(self, label: str, confidence: float) -> str:
         """Degrade label if confidence < 0.5 (≥3 agents missing)."""
         if confidence < 0.5:
             if label == "FARM":
@@ -294,24 +474,16 @@ class ScorerAgent(BaseAgent):
         return label
 
     def _calculate_confidence(self, state: PipelineState) -> float:
-        """Calculate confidence (non-missing analysis agents / 4)."""
-        agents = [
-            state.narrative,
-            state.team,
-            state.risk,
-            state.tokenomics,
-        ]
-
-        present_count = sum(1 for agent in agents if agent is not None)
-        return present_count / 4.0
+        """Backward-compatible alias → evidence confidence (v1.3)."""
+        return self._calc_evidence_confidence(state)
 
     def _generate_reasons(
         self,
         state: PipelineState,
-        subscores: Dict[str, float],
+        subscores: dict[str, float],
         confidence: float,
         label: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate decision reasons (≥2 required).
 
         Algorithm:
@@ -322,16 +494,35 @@ class ScorerAgent(BaseAgent):
         5. Validate constraints (FARM needs ≥1 positive, IGNORE needs ≥1 negative)
         6. Return final list (≥2 items)
         """
-        candidates: List[Tuple[str, float, bool]] = []  # (reason, impact, is_forced)
+        candidates: list[tuple[str, float, bool]] = []  # (reason, impact, is_forced)
 
         # Airdrop signal
         airdrop_score = subscores["airdrop_signal"]
-        if airdrop_score == 100:
-            candidates.append(("strong airdrop signal", abs(100 - 50), False))
-        elif airdrop_score == 60:
-            candidates.append(("moderate airdrop signal", abs(60 - 50), False))
-        elif airdrop_score == 20:
-            candidates.append(("no airdrop signal", abs(20 - 50), False))
+        if airdrop_score >= 90:
+            candidates.append(("strong airdrop signal", abs(airdrop_score - 50), False))
+        elif airdrop_score >= 70:
+            candidates.append(("clear airdrop / points path", abs(airdrop_score - 50), False))
+        elif airdrop_score >= 50:
+            candidates.append(("moderate airdrop signal", abs(airdrop_score - 50), False))
+        elif airdrop_score <= 25:
+            candidates.append(("no airdrop signal", abs(airdrop_score - 50), False))
+        if getattr(state.project, "explicit_airdrop_mention", False):
+            candidates.append(("explicit airdrop mention", 25, False))
+        if getattr(state.project, "has_task_portal", False):
+            candidates.append(("verifiable task / points portal", 28, False))
+        sources = int(getattr(state.project, "source_count", 1) or 1)
+        if sources >= 3:
+            candidates.append(("multi-source evidence", 22, False))
+        elif sources >= 2:
+            candidates.append(("cross-checked by 2 sources", 12, False))
+        fq = float(getattr(state.project, "funding_quality", 0) or 0)
+        tier = str(getattr(state.project, "funding_tier", "unknown") or "unknown")
+        if tier == "tier1" or fq >= 0.65:
+            candidates.append(("tier-1 / high-quality funding", 26, False))
+        elif fq >= 0.4:
+            candidates.append(("solid disclosed fundraising", 16, False))
+        elif getattr(state.project, "recent_funding", False):
+            candidates.append(("recent funding signal", 10, False))
 
         # Narrative timing
         if state.narrative is None:
@@ -392,9 +583,39 @@ class ScorerAgent(BaseAgent):
         elif count > 15:
             candidates.append(("high competition", abs(comp_score - 50), False))
 
-        # Low confidence marker (≥3 agents missing)
+        # Execution (v1.2)
+        exec_score = subscores.get("execution", 50)
+        if exec_score >= 70:
+            candidates.append(("active development / roadmap traction", abs(exec_score - 50), False))
+        elif exec_score <= 35:
+            candidates.append(("weak execution signals (stale repo or no roadmap)", abs(exec_score - 50), False))
+        days = getattr(state.project, "github_recent_push_days", None)
+        if days is not None and days <= 14 and getattr(state.project, "has_github", False):
+            candidates.append(("github updated recently", 20, False))
+        if getattr(state.project, "has_roadmap", False):
+            candidates.append(("public roadmap present", 12, False))
+        delivery = str(getattr(state.project, "roadmap_delivery", "unknown") or "unknown")
+        if delivery == "aligned":
+            candidates.append(("roadmap delivery looks aligned with shipping", 24, False))
+        elif delivery == "unclear":
+            candidates.append(("roadmap unclear vs shipping signals", 18, False))
+        if getattr(state.project, "has_contract", False):
+            candidates.append(("on-chain product / contract signal", 16, False))
+
+        # Transparency (v1.2/v1.3)
+        tr_score = subscores.get("transparency", 50)
+        if tr_score >= 70:
+            candidates.append(("strong public docs / social presence", abs(tr_score - 50), False))
+        elif tr_score <= 35:
+            candidates.append(("low transparency (thin docs/social)", abs(tr_score - 50), False))
+        if getattr(state.project, "has_whitepaper", False) or getattr(state.project, "has_docs", False):
+            candidates.append(("docs or whitepaper available", 14, False))
+
+        # Low confidence marker (evidence-aware)
         if confidence < 0.5:
             candidates.append(("low data confidence", 0, True))
+        elif confidence >= 0.8:
+            candidates.append(("high evidence confidence", 10, False))
 
         # Separate forced and optional reasons
         forced = [reason for reason, _, is_forced in candidates if is_forced]
@@ -412,13 +633,26 @@ class ScorerAgent(BaseAgent):
         # Validate constraints
         positive_reasons = {
             "strong airdrop signal",
+            "clear airdrop / points path",
             "moderate airdrop signal",
+            "explicit airdrop mention",
+            "verifiable task / points portal",
+            "multi-source evidence",
             "early narrative, high heat",
             "early narrative",
             "heated narrative, peak timing",
             "peak narrative",
             "credible team",
             "low competition",
+            "active development / roadmap traction",
+            "roadmap delivery looks aligned with shipping",
+            "strong public docs / social presence",
+            "on-chain product / contract signal",
+            "high evidence confidence",
+            "tier-1 / high-quality funding",
+            "solid disclosed fundraising",
+            "recent funding signal",
+            "reputable vc backed",
         }
 
         negative_reasons = {
@@ -429,6 +663,10 @@ class ScorerAgent(BaseAgent):
             "elevated token structure risk",
             "high token unlock pressure",
             "high competition",
+            "weak execution signals (stale repo or no roadmap)",
+            "roadmap unclear vs shipping signals",
+            "low transparency (thin docs/social)",
+            "low data confidence",
         }
 
         has_positive = any(r in positive_reasons for r in final_reasons)
@@ -454,14 +692,12 @@ class ScorerAgent(BaseAgent):
                     break
 
         # Ensure minimum 2 reasons
-        if len(final_reasons) < 2:
-            # Add neutral fallback
-            if "moderate airdrop signal" not in final_reasons and optional:
-                for reason, _ in optional:
-                    if reason not in final_reasons:
-                        final_reasons.append(reason)
-                        if len(final_reasons) >= 2:
-                            break
+        if len(final_reasons) < 2 and "moderate airdrop signal" not in final_reasons and optional:
+            for reason, _ in optional:
+                if reason not in final_reasons:
+                    final_reasons.append(reason)
+                    if len(final_reasons) >= 2:
+                        break
 
         # Remove duplicates while preserving order
         seen = set()
@@ -474,22 +710,20 @@ class ScorerAgent(BaseAgent):
         return unique_reasons[:6]  # Cap at 6 to avoid excessive output
 
     def _infer_sybil_difficulty(self, state: PipelineState) -> str:
-        """Infer sybil difficulty from risk flags.
+        """Infer sybil difficulty from project friction + risk flags."""
+        friction = str(getattr(state.project, "sybil_friction", "unknown") or "unknown").lower()
+        if friction in ("high", "medium", "low"):
+            return friction
 
-        Fallback to 'medium' if no flags available.
-        """
         if state.risk is None or not state.risk.risk_flags:
             return "medium"
 
-        # Simple heuristic: check for sybil-related flags
         flags = state.risk.risk_flags
-
         if "kyc required" in flags or "soul-bound" in flags:
             return "high"
-        elif "testnet only" in flags:
+        if "testnet only" in flags or "easy sybil" in flags:
             return "low"
-        else:
-            return "medium"
+        return "medium"
 
     @staticmethod
     def _clamp(value: float, min_val: float, max_val: float) -> float:

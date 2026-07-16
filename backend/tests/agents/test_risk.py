@@ -9,17 +9,18 @@ Reference:
 """
 
 import pytest
+from pydantic import ValidationError
 
 from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.risk import (
+    STAGE_RISK_FACTOR,
     RiskAgent,
+    assess_farming_cost,
+    assess_sybil_difficulty,
     calculate_airdrop_signal_subscore,
     calculate_token_risk,
-    assess_sybil_difficulty,
-    assess_farming_cost,
-    infer_unlock_pressure,
     generate_risk_flags,
-    STAGE_RISK_FACTOR,
+    infer_unlock_pressure,
 )
 from app.models import TokenomicsResult
 
@@ -45,7 +46,7 @@ class TestRiskAgent:
             has_points_program=False,
             no_token_yet=False,
             url=None,
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -72,7 +73,7 @@ class TestRiskAgent:
             has_points_program=True,
             no_token_yet=True,
             url="https://medium.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -105,7 +106,7 @@ class TestRiskAgent:
             has_points_program=True,
             no_token_yet=False,
             url="https://low.xyz",
-            source="seed"
+            source="seed",
         )
 
         context = AgentContext(run_id="test-001")
@@ -130,11 +131,7 @@ class TestRiskAgent:
     async def test_missing_tokenomics(self):
         """Test project with missing tokenomics data."""
         project = RawProject(
-            id="test-missing",
-            name="MissingTokenomics",
-            sector="Gaming",
-            stage="testnet",
-            source="seed"
+            id="test-missing", name="MissingTokenomics", sector="Gaming", stage="testnet", source="seed"
         )
 
         context = AgentContext(run_id="test-001")
@@ -150,13 +147,7 @@ class TestRiskAgent:
     @pytest.mark.asyncio
     async def test_result_immutability(self):
         """Test that RiskResult is immutable."""
-        project = RawProject(
-            id="test-immutable",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-immutable", name="Test", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -167,7 +158,7 @@ class TestRiskAgent:
         assert result_state.risk is not None
 
         # Try to modify - should raise FrozenInstanceError
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result_state.risk.token_risk = 0.99
 
 
@@ -177,12 +168,7 @@ class TestCalculateAirdropSignalSubscore:
     def test_both_signals(self):
         """Test with both points and hint."""
         project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            has_points_program=True,
-            no_token_yet=True,
-            source="seed"
+            id="test-1", name="Test", sector="L2", has_points_program=True, no_token_yet=True, source="seed"
         )
         score = calculate_airdrop_signal_subscore(project)
         assert score == 100.0
@@ -190,28 +176,40 @@ class TestCalculateAirdropSignalSubscore:
     def test_points_only(self):
         """Test with points program only."""
         project = RawProject(
-            id="test-2",
-            name="Test",
-            sector="L2",
-            has_points_program=True,
-            no_token_yet=False,
-            source="seed"
+            id="test-2", name="Test", sector="L2", has_points_program=True, no_token_yet=False, source="seed"
         )
         score = calculate_airdrop_signal_subscore(project)
         assert score == 60.0
 
     def test_hint_only(self):
-        """Test with airdrop hint only."""
+        """Test with airdrop hint only (no testnet)."""
         project = RawProject(
             id="test-3",
             name="Test",
             sector="L2",
+            stage="mainnet",
             has_points_program=False,
             no_token_yet=True,
-            source="seed"
+            has_testnet=False,
+            source="seed",
         )
         score = calculate_airdrop_signal_subscore(project)
         assert score == 60.0
+
+    def test_no_token_and_testnet(self):
+        """Test no_token_yet + testnet -> 85."""
+        project = RawProject(
+            id="test-3b",
+            name="Test",
+            sector="L2",
+            stage="testnet",
+            has_points_program=False,
+            no_token_yet=True,
+            has_testnet=True,
+            source="seed",
+        )
+        score = calculate_airdrop_signal_subscore(project)
+        assert score == 85.0
 
     def test_no_signals(self):
         """Test with no signals."""
@@ -219,9 +217,11 @@ class TestCalculateAirdropSignalSubscore:
             id="test-4",
             name="Test",
             sector="L2",
+            stage="mainnet",
             has_points_program=False,
             no_token_yet=False,
-            source="seed"
+            has_testnet=False,
+            source="seed",
         )
         score = calculate_airdrop_signal_subscore(project)
         assert score == 20.0
@@ -239,7 +239,7 @@ class TestCalculateTokenRisk:
             stage="testnet",
             has_points_program=True,
             no_token_yet=True,
-            source="seed"
+            source="seed",
         )
 
         # High tokenomics risk
@@ -259,7 +259,7 @@ class TestCalculateTokenRisk:
             stage="testnet",
             has_points_program=True,
             no_token_yet=True,
-            source="seed"
+            source="seed",
         )
 
         token_risk = calculate_token_risk(project, tokenomics_risk=None)
@@ -275,11 +275,11 @@ class TestCalculateTokenRisk:
                 stage=stage,
                 has_points_program=True,
                 no_token_yet=True,
-                source="seed"
+                source="seed",
             )
 
             token_risk = calculate_token_risk(project, tokenomics_risk=0.5)
-            assert 0.0 <= token_risk <= 1.0
+            assert token_risk == pytest.approx(0.3 + 0.2 * expected_factor)
 
     def test_clamping(self):
         """Test that token risk is clamped to [0.0, 1.0]."""
@@ -290,7 +290,7 @@ class TestCalculateTokenRisk:
             stage="ideation",
             has_points_program=False,
             no_token_yet=False,
-            source="seed"
+            source="seed",
         )
 
         # Extreme values should still clamp
@@ -309,7 +309,7 @@ class TestCalculateTokenRisk:
             stage="testnet",  # stage_factor = 0.35
             has_points_program=True,
             no_token_yet=True,  # airdrop = 100
-            source="seed"
+            source="seed",
         )
 
         tokenomics_risk = 0.4
@@ -324,13 +324,7 @@ class TestAssessSybilDifficulty:
 
     def test_mainnet_high(self):
         """Test mainnet projects have high sybil difficulty."""
-        project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            stage="mainnet",
-            source="seed"
-        )
+        project = RawProject(id="test-1", name="Test", sector="L2", stage="mainnet", source="seed")
         difficulty = assess_sybil_difficulty(project)
         assert difficulty == "high"
 
@@ -343,33 +337,20 @@ class TestAssessSybilDifficulty:
             stage="testnet",
             has_testnet=True,
             has_points_program=True,
-            source="seed"
+            source="seed",
         )
         difficulty = assess_sybil_difficulty(project)
         assert difficulty == "high"
 
     def test_testnet_medium(self):
         """Test testnet without points has medium difficulty."""
-        project = RawProject(
-            id="test-3",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            has_testnet=True,
-            source="seed"
-        )
+        project = RawProject(id="test-3", name="Test", sector="L2", stage="testnet", has_testnet=True, source="seed")
         difficulty = assess_sybil_difficulty(project)
         assert difficulty == "medium"
 
     def test_ideation_low(self):
         """Test ideation projects have low difficulty."""
-        project = RawProject(
-            id="test-4",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            source="seed"
-        )
+        project = RawProject(id="test-4", name="Test", sector="L2", stage="ideation", source="seed")
         difficulty = assess_sybil_difficulty(project)
         assert difficulty == "low"
 
@@ -379,37 +360,20 @@ class TestAssessFarmingCost:
 
     def test_mainnet_high(self):
         """Test mainnet has high farming cost."""
-        project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            stage="mainnet",
-            source="seed"
-        )
+        project = RawProject(id="test-1", name="Test", sector="L2", stage="mainnet", source="seed")
         cost = assess_farming_cost(project)
         assert cost == "high"
 
     def test_testnet_medium(self):
         """Test testnet has medium farming cost."""
-        project = RawProject(
-            id="test-2",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-2", name="Test", sector="L2", stage="testnet", source="seed")
         cost = assess_farming_cost(project)
         assert cost == "medium"
 
     def test_points_medium(self):
         """Test points program has medium cost."""
         project = RawProject(
-            id="test-3",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            has_points_program=True,
-            source="seed"
+            id="test-3", name="Test", sector="L2", stage="ideation", has_points_program=True, source="seed"
         )
         cost = assess_farming_cost(project)
         assert cost == "medium"
@@ -417,12 +381,7 @@ class TestAssessFarmingCost:
     def test_ideation_low(self):
         """Test ideation without points has low cost."""
         project = RawProject(
-            id="test-4",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            has_points_program=False,
-            source="seed"
+            id="test-4", name="Test", sector="L2", stage="ideation", has_points_program=False, source="seed"
         )
         cost = assess_farming_cost(project)
         assert cost == "low"
@@ -463,49 +422,26 @@ class TestGenerateRiskFlags:
     def test_high_token_risk_flag(self):
         """Test high token risk generates flag."""
         project = RawProject(
-            id="test-1",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            has_points_program=True,
-            source="seed"
+            id="test-1", name="Test", sector="L2", stage="testnet", has_points_program=True, source="seed"
         )
         flags = generate_risk_flags(project, token_risk=0.7, sybil_difficulty="high", tokenomics_missing=False)
         assert "high token structure risk" in flags
 
     def test_easy_sybil_flag(self):
         """Test low sybil difficulty generates flag."""
-        project = RawProject(
-            id="test-2",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            source="seed"
-        )
+        project = RawProject(id="test-2", name="Test", sector="L2", stage="ideation", source="seed")
         flags = generate_risk_flags(project, token_risk=0.3, sybil_difficulty="low", tokenomics_missing=False)
         assert "easy to sybil farm" in flags
 
     def test_missing_tokenomics_flag(self):
         """Test missing tokenomics generates flag."""
-        project = RawProject(
-            id="test-3",
-            name="Test",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-3", name="Test", sector="L2", stage="testnet", source="seed")
         flags = generate_risk_flags(project, token_risk=0.5, sybil_difficulty="medium", tokenomics_missing=True)
         assert "risk estimate uncertain" in flags
 
     def test_ideation_flag(self):
         """Test ideation stage generates flag."""
-        project = RawProject(
-            id="test-4",
-            name="Test",
-            sector="L2",
-            stage="ideation",
-            source="seed"
-        )
+        project = RawProject(id="test-4", name="Test", sector="L2", stage="ideation", source="seed")
         flags = generate_risk_flags(project, token_risk=0.5, sybil_difficulty="medium", tokenomics_missing=False)
         assert "no product yet" in flags
 
@@ -518,7 +454,7 @@ class TestGenerateRiskFlags:
             stage="testnet",
             has_points_program=False,
             no_token_yet=False,
-            source="seed"
+            source="seed",
         )
         flags = generate_risk_flags(project, token_risk=0.5, sybil_difficulty="medium", tokenomics_missing=False)
         assert "weak airdrop signals" in flags
@@ -532,7 +468,7 @@ class TestGenerateRiskFlags:
             stage="ideation",
             has_points_program=False,
             no_token_yet=False,
-            source="seed"
+            source="seed",
         )
         flags = generate_risk_flags(project, token_risk=0.7, sybil_difficulty="low", tokenomics_missing=True)
         assert len(flags) >= 3
@@ -549,7 +485,7 @@ class TestGenerateRiskFlags:
             stage="mainnet",
             has_points_program=True,
             no_token_yet=True,
-            source="seed"
+            source="seed",
         )
         flags = generate_risk_flags(project, token_risk=0.2, sybil_difficulty="high", tokenomics_missing=False)
         assert len(flags) == 0
@@ -561,13 +497,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_missing_optional_fields(self):
         """Test project with minimal fields."""
-        project = RawProject(
-            id="test-minimal",
-            name="MinimalProject",
-            sector=None,
-            stage=None,
-            source="seed"
-        )
+        project = RawProject(id="test-minimal", name="MinimalProject", sector=None, stage=None, source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -587,13 +517,7 @@ class TestEdgeCases:
         stages = ["ideation", "testnet", "mainnet"]
 
         for stage in stages:
-            project = RawProject(
-                id=f"test-{stage}",
-                name=f"Project-{stage}",
-                sector="L2",
-                stage=stage,
-                source="seed"
-            )
+            project = RawProject(id=f"test-{stage}", name=f"Project-{stage}", sector="L2", stage=stage, source="seed")
 
             context = AgentContext(run_id="test-001")
             state = PipelineState(project=project, context=context)
@@ -611,13 +535,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_risk_result_schema(self):
         """Test that RiskResult matches schema."""
-        project = RawProject(
-            id="test-schema",
-            name="SchemaTest",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-schema", name="SchemaTest", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)
@@ -644,13 +562,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_risk_result_serialization(self):
         """Test that RiskResult can be serialized."""
-        project = RawProject(
-            id="test-serialize",
-            name="SerializeTest",
-            sector="L2",
-            stage="testnet",
-            source="seed"
-        )
+        project = RawProject(id="test-serialize", name="SerializeTest", sector="L2", stage="testnet", source="seed")
 
         context = AgentContext(run_id="test-001")
         state = PipelineState(project=project, context=context)

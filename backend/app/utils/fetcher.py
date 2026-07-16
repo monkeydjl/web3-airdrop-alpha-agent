@@ -14,7 +14,6 @@ Reference:
 import asyncio
 import time
 from collections import deque
-from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -34,12 +33,7 @@ class CircuitBreaker:
     - HALF_OPEN: Testing if service recovered
     """
 
-    def __init__(
-        self,
-        threshold: int = 5,
-        timeout: int = 60,
-        window_size: int = 100
-    ):
+    def __init__(self, threshold: int = 5, timeout: int = 60, window_size: int = 100):
         self.threshold = threshold
         self.timeout = timeout
         self.window_size = window_size
@@ -61,19 +55,11 @@ class CircuitBreaker:
         self.last_failure_time = time.time()
 
         # Count recent failures (within window)
-        recent_failures = sum(
-            1 for t in self.failures
-            if time.time() - t < self.timeout
-        )
+        recent_failures = sum(1 for t in self.failures if time.time() - t < self.timeout)
 
-        if recent_failures >= self.threshold:
-            if self.state != "OPEN":
-                self.state = "OPEN"
-                logger.warning(
-                    "circuit_breaker.opened",
-                    failures=recent_failures,
-                    threshold=self.threshold
-                )
+        if recent_failures >= self.threshold and self.state != "OPEN":
+            self.state = "OPEN"
+            logger.warning("circuit_breaker.opened", failures=recent_failures, threshold=self.threshold)
 
     def allow_request(self) -> bool:
         """Check if request should be allowed"""
@@ -130,7 +116,7 @@ _cache = HTTPCache(max_size=settings.competition_cache_max_size)
 _circuit_breaker = CircuitBreaker(
     threshold=5,  # Will be configurable via settings
     timeout=60,
-    window_size=100
+    window_size=100,
 )
 
 
@@ -143,7 +129,7 @@ async def fetch(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     method: str = "GET",
-    **kwargs
+    **kwargs,
 ) -> dict[str, Any]:
     """Fetch URL with caching, retry, and circuit breaker.
 
@@ -199,12 +185,7 @@ async def fetch(
             _circuit_breaker.record_success()
             _cache.set(cache_key, data)
 
-            logger.info(
-                "fetch.success",
-                url=url,
-                attempt=attempt + 1,
-                status=response.status_code
-            )
+            logger.info("fetch.success", url=url, attempt=attempt + 1, status=response.status_code)
             return data
 
         except (httpx.HTTPError, httpx.TimeoutException) as e:
@@ -213,23 +194,18 @@ async def fetch(
 
             if attempt < max_retries - 1:
                 # Exponential backoff: 1s, 2s, 4s, 8s...
-                delay = retry_delay * (2 ** attempt)
+                delay = retry_delay * (2**attempt)
                 logger.warning(
                     "fetch.retry",
                     url=url,
                     attempt=attempt + 1,
                     max_retries=max_retries,
                     error=str(e),
-                    retry_after=delay
+                    retry_after=delay,
                 )
                 await asyncio.sleep(delay)
             else:
-                logger.error(
-                    "fetch.failed",
-                    url=url,
-                    attempts=max_retries,
-                    error=str(e)
-                )
+                logger.error("fetch.failed", url=url, attempts=max_retries, error=str(e))
 
     # All retries exhausted
     raise last_error

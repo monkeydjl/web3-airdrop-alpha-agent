@@ -4,9 +4,9 @@ Reference:
 - app/routers/v1/export_import.py
 """
 
-import pytest
 import io
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -30,7 +30,9 @@ class TestExportAPI:
         assert response.status_code in [200, 404]
 
         if response.status_code == 200:
-            assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            assert (
+                response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             assert "attachment" in response.headers["content-disposition"]
             assert len(response.content) > 0
 
@@ -52,7 +54,7 @@ class TestExportAPI:
                 "format": "excel",
                 "label": "FARM",
                 "min_score": 80,
-            }
+            },
         )
 
         # 404 or 200 depending on data
@@ -81,6 +83,7 @@ class TestImportAPI:
         """Test importing projects from Excel."""
         # Create test Excel file
         import pandas as pd
+
         data = {
             "项目名称": ["Test Project"],
             "赛道": ["L2"],
@@ -89,12 +92,14 @@ class TestImportAPI:
         df = pd.DataFrame(data)
 
         output = io.BytesIO()
-        df.to_excel(output, index=False, engine='openpyxl')
+        df.to_excel(output, index=False, engine="openpyxl")
         excel_bytes = output.getvalue()
 
         response = client.post(
             "/api/v1/import/projects",
-            files={"file": ("test.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+            files={
+                "file": ("test.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            },
         )
 
         assert response.status_code == 200
@@ -110,10 +115,7 @@ class TestImportAPI:
 Test CSV Project,DeFi,true
 """
 
-        response = client.post(
-            "/api/v1/import/projects",
-            files={"file": ("test.csv", csv_content, "text/csv")}
-        )
+        response = client.post("/api/v1/import/projects", files={"file": ("test.csv", csv_content, "text/csv")})
 
         assert response.status_code == 200
         # RunResponse format
@@ -123,25 +125,27 @@ Test CSV Project,DeFi,true
     def test_import_invalid_file_type(self, client):
         """Test importing with invalid file type."""
         response = client.post(
-            "/api/v1/import/projects",
-            files={"file": ("test.txt", b"invalid content", "text/plain")}
+            "/api/v1/import/projects", files={"file": ("test.txt", b"invalid content", "text/plain")}
         )
 
         assert response.status_code == 400
-        assert "不支持的文件格式" in response.json()["detail"]
+        assert "不支持的文件格式" in response.json()["error"]["message"]
 
     def test_import_empty_file(self, client):
         """Test importing empty file."""
         import pandas as pd
+
         df = pd.DataFrame({"项目名称": []})
 
         output = io.BytesIO()
-        df.to_excel(output, index=False, engine='openpyxl')
+        df.to_excel(output, index=False, engine="openpyxl")
         excel_bytes = output.getvalue()
 
         response = client.post(
             "/api/v1/import/projects",
-            files={"file": ("empty.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+            files={
+                "file": ("empty.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            },
         )
 
         assert response.status_code == 400
@@ -152,10 +156,7 @@ Test CSV Project,DeFi,true
 L2,testnet
 """
 
-        response = client.post(
-            "/api/v1/import/projects",
-            files={"file": ("invalid.csv", csv_content, "text/csv")}
-        )
+        response = client.post("/api/v1/import/projects", files={"file": ("invalid.csv", csv_content, "text/csv")})
 
         # Should fail with 400 or 500
         assert response.status_code in [400, 500]
@@ -171,16 +172,18 @@ L2,testnet
         df = pd.DataFrame(data)
 
         output = io.BytesIO()
-        df.to_excel(output, index=False, engine='openpyxl')
+        df.to_excel(output, index=False, engine="openpyxl")
         excel_bytes = output.getvalue()
 
         response = client.post(
             "/api/v1/import/projects",
-            files={"file": ("large.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+            files={
+                "file": ("large.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            },
         )
 
         assert response.status_code == 400
-        assert "最多100个" in response.json()["detail"]
+        assert "最多100个" in response.json()["error"]["message"]
 
     def test_import_with_validation_errors(self, client):
         """Test import with some invalid rows."""
@@ -190,10 +193,7 @@ Valid Project,https://valid.xyz
 Bad URL Project,invalid-url
 """
 
-        response = client.post(
-            "/api/v1/import/projects",
-            files={"file": ("mixed.csv", csv_content, "text/csv")}
-        )
+        response = client.post("/api/v1/import/projects", files={"file": ("mixed.csv", csv_content, "text/csv")})
 
         # Should succeed with valid projects
         assert response.status_code == 200

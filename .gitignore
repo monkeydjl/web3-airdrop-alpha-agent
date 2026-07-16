@@ -114,6 +114,8 @@ yarn-error.log*
 .next/
 out/
 next-env.d.ts
+.npm-cache/
+*.tsbuildinfo
 
 # ── Build Artifacts ──────────────────────────
 *.tar.gz

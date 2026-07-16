@@ -5,10 +5,11 @@ Reference:
 - ENGINEERING_ROADMAP.md §6.8, §6.9
 """
 
-import pytest
-from datetime import datetime, timezone
+from unittest.mock import Mock
 
-from app.agents.base import RawProject, AgentContext
+import pytest
+
+from app.agents.base import AgentContext, RawProject
 from app.agents.orchestrator_simple import SimpleOrchestrator, run_orchestrator
 from app.models import RunResponse
 
@@ -155,6 +156,27 @@ class TestPipelineExecution:
         assert response.status == "completed"
         assert response.top_score is None
 
+    @pytest.mark.asyncio
+    async def test_response_tracks_only_successful_persisted_rows(self, sample_projects, context, monkeypatch):
+        repo = Mock()
+        repo.save_batch_with_rows.return_value = [
+            {"id": "project-001", "score": 75},
+            {"id": "project-003", "score": 49},
+        ]
+        monkeypatch.setattr(
+            "app.agents.orchestrator_simple.ProjectRepository",
+            Mock(return_value=repo),
+        )
+
+        response = await SimpleOrchestrator().run_pipeline(sample_projects, context)
+
+        assert [row["id"] for row in response.persisted_project_rows] == [
+            "project-001",
+            "project-003",
+        ]
+        assert "persisted_project_rows" not in response.model_dump()
+        repo.save_batch_with_rows.assert_called_once()
+
 
 class TestSingleProjectExecution:
     """Test single project execution flow."""
@@ -235,6 +257,7 @@ class TestParallelAnalysis:
         sector_counts = {"L2": 3}
 
         import time
+
         start = time.time()
         state = await orchestrator._run_single_project(project, context, sector_counts)
         duration = time.time() - start
@@ -368,6 +391,7 @@ class TestSequentialExecution:
         orchestrator = SimpleOrchestrator()
 
         import time
+
         start = time.time()
         response = await orchestrator.run_pipeline(sample_projects, context)
         duration = time.time() - start

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # ── 通用响应包络 ──────────────────────────────
 class ApiResponse(BaseModel):
     """统一 API 响应包络。"""
+
     ok: bool = Field(..., description="请求是否成功")
     data: Any | None = Field(None, description="响应数据")
     error: dict[str, str] | None = Field(None, description="错误信息")
@@ -25,6 +26,7 @@ class ApiResponse(BaseModel):
 # ── Agent 输出模型 ─────────────────────────────
 class NarrativeResult(BaseModel):
     """Narrative Agent 输出。"""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sector: str = Field(..., description="标准赛道名")
@@ -35,6 +37,7 @@ class NarrativeResult(BaseModel):
 
 class TeamResult(BaseModel):
     """Team Agent 输出。"""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     team_score: float = Field(..., ge=0.0, le=1.0, description="团队信誉分")
@@ -44,6 +47,7 @@ class TeamResult(BaseModel):
 
 class RiskResult(BaseModel):
     """Risk Agent 输出。"""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     token_risk: float = Field(..., ge=0.0, le=1.0, description="代币风险")
@@ -53,6 +57,7 @@ class RiskResult(BaseModel):
 
 class TokenomicsResult(BaseModel):
     """Tokenomics Agent 输出。"""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     vc_share: float = Field(..., ge=0.0, le=1.0, description="VC 占比")
@@ -63,6 +68,7 @@ class TokenomicsResult(BaseModel):
 # ── 评分结果 ──────────────────────────────────
 class ScoreResult(BaseModel):
     """评分结果。"""
+
     model_config = ConfigDict(frozen=True)
 
     score: int = Field(..., ge=0, le=100, description="总分 0-100")
@@ -75,6 +81,7 @@ class ScoreResult(BaseModel):
 # ── 项目记录 ──────────────────────────────────
 class ProjectRecord(BaseModel):
     """项目完整记录（API 响应）。"""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -97,6 +104,7 @@ class ProjectRecord(BaseModel):
 # ── 请求模型 ──────────────────────────────────
 class RunRequest(BaseModel):
     """触发运行请求。"""
+
     source: str = Field(default="seed", description="数据源")
     dry_run: bool = Field(default=False, description="仅分析不写入")
     limit: int = Field(default=50, ge=1, le=500, description="最大项目数")
@@ -104,6 +112,7 @@ class RunRequest(BaseModel):
 
 class RunResponse(BaseModel):
     """运行响应。"""
+
     run_id: str
     status: Literal["completed", "failed", "partial"]
     project_count: int
@@ -113,3 +122,4 @@ class RunResponse(BaseModel):
     validation_errors: list[str] | None = None  # 导入验证错误
     # Store states for API access
     states: list[Any] = Field(default_factory=list, exclude=True)
+    persisted_project_rows: list[dict[str, Any]] = Field(default_factory=list, exclude=True)

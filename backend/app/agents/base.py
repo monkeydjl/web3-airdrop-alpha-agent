@@ -10,15 +10,15 @@ Reference:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from app.models import (
     NarrativeResult,
-    TeamResult,
     RiskResult,
+    TeamResult,
     TokenomicsResult,
 )
 
@@ -33,7 +33,7 @@ class AgentError:
     kind: str  # "validation_error", "llm_error", "timeout", etc.
     message: str
     project_id: str | None = None
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,8 +65,45 @@ class RawProject:
     no_token_yet: bool = False
     recent_funding: bool = False
 
+    # v1.2 extended signals (docs / social / repo health / airdrop clarity)
+    has_docs: bool = False  # docs site / whitepaper / litepaper
+    has_whitepaper: bool = False
+    has_roadmap: bool = False
+    has_github: bool = False
+    has_twitter: bool = False
+    has_discord: bool = False
+    github_stars: int = 0
+    github_recent_push_days: int | None = None  # days since last push; None = unknown
+    explicit_airdrop_mention: bool = False  # "airdrop confirmed" / official wording
+    tvl_usd: float | None = None
+    description: str | None = None
+
+    # v1.3 evidence / verifiable path / delivery
+    has_task_portal: bool = False  # Galxe / Layer3 / quest / points portal
+    has_contract: bool = False  # on-chain product / verified contract signal
+    source_count: int = 1  # distinct discovery sources after merge
+    roadmap_delivery: str = "unknown"  # "aligned" | "partial" | "unclear" | "unknown"
+    sybil_friction: str = "unknown"  # "high" | "medium" | "low" | "unknown"
+
+    # v1.4 funding quality (RootData / CryptoRank / manual)
+    funding_total_usd: float | None = None
+    funding_rounds: int = 0
+    funding_last_date: str | None = None  # ISO date
+    funding_investors: list[str] = field(default_factory=list)
+    funding_lead_investors: list[str] = field(default_factory=list)
+    funding_tier: str = "unknown"  # tier1 | tier2 | tier3 | unknown | none
+    funding_quality: float = 0.0  # 0-1 composite
+
+    # v2.0 自动采集元数据
+    discovery_source: str | None = None  # "defillama", "github", "manual", etc.
+    auto_discovered: bool = False
+    discovered_at: datetime | None = None
+    discovery_score: float = 0.0  # 0-1, ADR-012 LLM 分级阈值依据
+    # 来源 raw_projects.raw_id 列表（handoff：成功评分后按项 mark processed）
+    raw_ids: list[str] = field(default_factory=list)
+
     # Metadata
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +117,29 @@ class RawProject:
             "has_points_program": self.has_points_program,
             "no_token_yet": self.no_token_yet,
             "recent_funding": self.recent_funding,
+            "has_docs": self.has_docs,
+            "has_whitepaper": self.has_whitepaper,
+            "has_roadmap": self.has_roadmap,
+            "has_github": self.has_github,
+            "has_twitter": self.has_twitter,
+            "has_discord": self.has_discord,
+            "github_stars": self.github_stars,
+            "github_recent_push_days": self.github_recent_push_days,
+            "explicit_airdrop_mention": self.explicit_airdrop_mention,
+            "tvl_usd": self.tvl_usd,
+            "description": self.description,
+            "has_task_portal": self.has_task_portal,
+            "has_contract": self.has_contract,
+            "source_count": self.source_count,
+            "roadmap_delivery": self.roadmap_delivery,
+            "sybil_friction": self.sybil_friction,
+            "funding_total_usd": self.funding_total_usd,
+            "funding_rounds": self.funding_rounds,
+            "funding_last_date": self.funding_last_date,
+            "funding_investors": list(self.funding_investors),
+            "funding_lead_investors": list(self.funding_lead_investors),
+            "funding_tier": self.funding_tier,
+            "funding_quality": self.funding_quality,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -94,6 +154,7 @@ class AgentContext:
     run_id: str  # Unique ID for this pipeline run
     enable_llm: bool = False
     llm_model: str = "gpt-4o-mini"
+    llm_discovery_score_threshold: float = 0.7  # ADR-012: 仅 discovery_score >= 阈值启用 LLM
 
     # Concurrency control (V2)
     max_concurrent_projects: int = 10
@@ -137,7 +198,7 @@ class PipelineState:
     errors: list[AgentError] = field(default_factory=list)
 
     # Timing
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
     def add_error(self, error: AgentError):
@@ -148,12 +209,12 @@ class PipelineState:
             project_id=self.project.id,
             agent=error.agent_name,
             kind=error.kind,
-            message=error.message
+            message=error.message,
         )
 
     def mark_completed(self):
         """Mark pipeline as completed."""
-        self.completed_at = datetime.now(timezone.utc)
+        self.completed_at = datetime.now(UTC)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for DB storage."""
@@ -202,52 +263,51 @@ class BaseAgent(ABC):
         """
         pass
 
-    async def llm_enhance(self, state: PipelineState, prompt: str) -> str | None:
+    async def llm_enhance(self, state: PipelineState, _prompt: str) -> str | None:
         """Optional LLM enhancement.
 
         Args:
             state: Current pipeline state
-            prompt: LLM prompt
+            _prompt: LLM prompt (reserved for V2 implementation)
 
         Returns:
             LLM response or None if disabled/failed
 
         Note:
-            - Only called if state.context.enable_llm is True
+            - Only called if state.context.enable_llm is True AND
+              project.discovery_score >= llm_discovery_score_threshold (ADR-012)
             - Failures are logged but not raised
             - Falls back to rule-based logic (ADR-001)
         """
         if not state.context.enable_llm:
             return None
 
-        try:
-            # TODO: Implement LLM call in V2
-            # For MVP, just return None (rule-based only)
+        threshold = state.context.llm_discovery_score_threshold
+        score = state.project.discovery_score
+        if score < threshold:
             self.logger.info(
-                "llm.skipped",
+                "llm.skipped_by_score",
                 agent=self.name,
                 project_id=state.project.id,
-                reason="MVP: rule-based only"
+                discovery_score=score,
+                threshold=threshold,
+                reason="ADR-012: discovery_score below LLM threshold",
             )
             return None
 
+        try:
+            # TODO: Implement LLM call in V2
+            # For MVP, just return None (rule-based only)
+            self.logger.info("llm.skipped", agent=self.name, project_id=state.project.id, reason="MVP: rule-based only")
+            return None
+
         except Exception as e:
-            self.logger.error(
-                "llm.failed",
-                agent=self.name,
-                project_id=state.project.id,
-                error=str(e)
-            )
+            self.logger.error("llm.failed", agent=self.name, project_id=state.project.id, error=str(e))
             return None
 
     def _log_start(self, state: PipelineState):
         """Log agent start."""
-        self.logger.info(
-            "agent.started",
-            agent=self.name,
-            project_id=state.project.id,
-            project_name=state.project.name
-        )
+        self.logger.info("agent.started", agent=self.name, project_id=state.project.id, project_name=state.project.name)
 
     def _log_complete(self, state: PipelineState, duration_ms: float):
         """Log agent completion."""
@@ -256,7 +316,7 @@ class BaseAgent(ABC):
             agent=self.name,
             project_id=state.project.id,
             duration_ms=round(duration_ms, 2),
-            has_error=len(state.errors) > 0
+            has_error=len(state.errors) > 0,
         )
 
 
@@ -265,25 +325,13 @@ if __name__ == "__main__":
     import uuid
 
     # Create test project
-    project = RawProject(
-        id=str(uuid.uuid4()),
-        name="TestProject",
-        sector="L2",
-        stage="testnet",
-        source="seed"
-    )
+    project = RawProject(id=str(uuid.uuid4()), name="TestProject", sector="L2", stage="testnet", source="seed")
 
     # Create context
-    context = AgentContext(
-        run_id="test-run-001",
-        enable_llm=False
-    )
+    context = AgentContext(run_id="test-run-001", enable_llm=False)
 
     # Create state
-    state = PipelineState(
-        project=project,
-        context=context
-    )
+    state = PipelineState(project=project, context=context)
 
     print("✓ BaseAgent models created successfully")
     print(f"  Project: {state.project.name}")

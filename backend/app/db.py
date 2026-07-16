@@ -1,70 +1,224 @@
 """Database Access Layer.
 
-MVP: SQLite (WAL 模式)
-V2+: PostgreSQL (通过 DATABASE_URL 切换)
+MVP: SQLite (WAL)
+Optional test/V2: PostgreSQL when DATABASE_URL is set.
 
-参考：
-- CONVENTIONS.md §13 数据库访问模式
-- DATABASE_DDL.md 完整 DDL 定义
+Reference:
+- CONVENTIONS.md §13
+- docs/adr/ADR-004-sqlite-to-postgres.md
+- docker-compose.postgres.yml
 """
 
+from __future__ import annotations
+
+import re
 import sqlite3
+from collections.abc import Iterable
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
 
+sqlite3.register_adapter(datetime, lambda value: value.isoformat(sep=" "))
+sqlite3.register_adapter(date, lambda value: value.isoformat())
 
-def get_connection() -> sqlite3.Connection:
-    """获取 SQLite 数据库连接。
+# Stable signed 64-bit key shared by every process serializing PostgreSQL init_db DDL.
+POSTGRES_INIT_ADVISORY_LOCK_ID = 7_314_738_183_274_209_024
 
-    使用 WAL 模式提升并发读写性能。
-    每次调用返回新连接，调用方负责关闭。
+# ── backend detection ───────────────────────────
 
-    Returns:
-        sqlite3.Connection: 配置好的数据库连接
 
-    Example:
-        conn = get_connection()
-        try:
-            conn.execute("SELECT * FROM projects")
-        finally:
-            conn.close()
-    """
+def is_postgres() -> bool:
+    """True when DATABASE_URL points at PostgreSQL."""
+    url = (settings.database_url or "").strip()
+    return url.startswith("postgresql://") or url.startswith("postgres://")
+
+
+def backend_name() -> str:
+    return "postgres" if is_postgres() else "sqlite"
+
+
+# ── connection wrapper (minimal dual backend) ───
+
+
+class DbConnection:
+    """Thin wrapper so callers can use SQLite-style `?` placeholders on both backends."""
+
+    def __init__(self, raw: Any, *, kind: str) -> None:
+        self._raw = raw
+        self.kind = kind  # "sqlite" | "postgres"
+
+    def execute(self, sql: str, params: Iterable[Any] | None = None):
+        sql_n, params_n = self._normalize(sql, params)
+        if self.kind == "postgres":
+            cur = self._raw.cursor()
+            cur.execute(sql_n, params_n or ())
+            return cur
+        if params_n is None:
+            return self._raw.execute(sql_n)
+        return self._raw.execute(sql_n, params_n)
+
+    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]):
+        sql_n, _ = self._normalize(sql, ())
+        params_n = [self._normalize_params(params) for params in seq_of_params]
+        if self.kind == "postgres":
+            cur = self._raw.cursor()
+            cur.executemany(sql_n, params_n)
+            return cur
+        return self._raw.executemany(sql_n, params_n)
+
+    def executescript(self, script: str) -> None:
+        if self.kind == "sqlite":
+            self._raw.executescript(script)
+            return
+        # PG: run statements one-by-one (no SQLite executescript)
+        for stmt in _split_sql_statements(script):
+            if stmt.strip():
+                cur = self._raw.cursor()
+                cur.execute(stmt)
+
+    def begin_serialized_write(self) -> None:
+        """Start a write transaction before any state used for validation is read."""
+        if self.kind == "sqlite":
+            self._raw.execute("BEGIN IMMEDIATE")
+
+    def begin_immediate(self) -> None:
+        """Backward-compatible SQLite transaction helper."""
+        self.begin_serialized_write()
+
+    def commit(self) -> None:
+        self._raw.commit()
+
+    def rollback(self) -> None:
+        self._raw.rollback()
+
+    def close(self) -> None:
+        self._raw.close()
+
+    def __enter__(self) -> DbConnection:
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
+
+    def _normalize(self, sql: str, params: Iterable[Any] | None) -> tuple[str, tuple[Any, ...] | None]:
+        if self.kind == "postgres":
+            # datetime('now', ?)  must become interval cast before `?` rewrite
+            sql = re.sub(
+                r"datetime\s*\(\s*'now'\s*,\s*\?\s*\)",
+                "(NOW() + (%s)::interval)",
+                sql,
+                flags=re.IGNORECASE,
+            )
+            sql = re.sub(
+                r"datetime\s*\(\s*'now'\s*,\s*'([^']+)'\s*\)",
+                r"(NOW() + INTERVAL '\1')",
+                sql,
+                flags=re.IGNORECASE,
+            )
+            sql = re.sub(
+                r"datetime\s*\(\s*'now'\s*\)",
+                "NOW()",
+                sql,
+                flags=re.IGNORECASE,
+            )
+            # remaining SQLite placeholders
+            sql = sql.replace("?", "%s")
+        if params is None:
+            return sql, None
+        return sql, self._normalize_params(params)
+
+    def _normalize_params(self, params: Iterable[Any]) -> tuple[Any, ...]:
+        if self.kind == "postgres":
+            return tuple(params)
+        return tuple(
+            value.isoformat(sep=" ")
+            if isinstance(value, datetime)
+            else value.isoformat()
+            if isinstance(value, date)
+            else value
+            for value in params
+        )
+
+
+def get_connection() -> DbConnection:
+    """Return a DB connection (SQLite by default; PostgreSQL if DATABASE_URL set)."""
+    if is_postgres():
+        return _connect_postgres()
+    return _connect_sqlite()
+
+
+def _connect_sqlite() -> DbConnection:
     db_path = Path(settings.db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
-    return conn
+    return DbConnection(conn, kind="sqlite")
 
 
-def init_db(conn: sqlite3.Connection | None = None) -> None:
-    """幂等建表。
+def _connect_postgres() -> DbConnection:
+    import psycopg
+    from psycopg.rows import dict_row
 
-    读取 DATABASE_DDL.md 中的 DDL 语句创建所有表。
-    安全重复执行（IF NOT EXISTS）。
+    dsn = _to_psycopg_dsn(settings.database_url or "")
+    conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False)
+    return DbConnection(conn, kind="postgres")
 
-    Args:
-        conn: 可选的数据库连接。不提供时创建新连接。
 
-    Example:
-        init_db()  # 使用默认连接
-        init_db(conn)  # 使用指定连接
-    """
-    if conn is None:
-        conn = get_connection()
-        should_close = True
-    else:
-        should_close = False
+def _to_psycopg_dsn(url: str) -> str:
+    """Accept postgresql:// or postgres:// URLs for psycopg3."""
+    # strip SQLAlchemy-style +driver suffixes
+    url = url.replace("postgresql+asyncpg://", "postgresql://")
+    url = url.replace("postgresql+psycopg://", "postgresql://")
+    url = url.replace("postgresql+psycopg2://", "postgresql://")
+    return url
 
-    try:
-        # 核心表 DDL（完整 DDL 见 docs/DATABASE_DDL.md）
-        # MVP 阶段仅创建核心表，V2 表通过 Alembic 迁移添加
-        conn.executescript("""
-            -- 项目主表
+
+def _split_sql_statements(script: str) -> list[str]:
+    parts: list[str] = []
+    buf: list[str] = []
+    for line in script.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("--"):
+            continue
+        buf.append(line)
+        if stripped.endswith(";"):
+            parts.append("\n".join(buf))
+            buf = []
+    if buf:
+        parts.append("\n".join(buf))
+    return parts
+
+
+def _column_exists(conn: DbConnection, table: str, column: str) -> bool:
+    if conn.kind == "sqlite":
+        cursor = conn.execute(f"PRAGMA table_info({table})")
+        return any(row["name"] == column for row in cursor.fetchall())
+    cursor = conn.execute(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+        """,
+        (table, column),
+    )
+    return cursor.fetchone() is not None
+
+
+def _add_column_if_not_exists(
+    conn: DbConnection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    if not _column_exists(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _sqlite_ddl() -> str:
+    return """
             CREATE TABLE IF NOT EXISTS projects (
                 id              TEXT PRIMARY KEY,
                 name            TEXT NOT NULL,
@@ -90,7 +244,6 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
                 updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 运行日志表
             CREATE TABLE IF NOT EXISTS logs (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id      TEXT NOT NULL,
@@ -103,27 +256,533 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
                 timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 索引
+            CREATE TABLE IF NOT EXISTS data_sources (
+                source_id       TEXT PRIMARY KEY,
+                source_type     TEXT NOT NULL,
+                source_name     TEXT NOT NULL,
+                enabled         INTEGER DEFAULT 1,
+                last_sync       TIMESTAMP,
+                sync_status     TEXT DEFAULT 'idle',
+                api_calls_today INTEGER DEFAULT 0,
+                api_limit       INTEGER,
+                config          TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS raw_projects (
+                raw_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                dedup_key       TEXT NOT NULL,
+                raw_data        TEXT NOT NULL,
+                discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed       INTEGER DEFAULT 0,
+                processed_at    TIMESTAMP,
+                project_id      TEXT,
+                discovery_score REAL DEFAULT 0.0,
+                quarantined     INTEGER DEFAULT 0,
+                quarantine_reason TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS project_signals (
+                signal_id       TEXT PRIMARY KEY,
+                project_id      TEXT,
+                dedup_key       TEXT,
+                signal_type     TEXT NOT NULL,
+                signal_source   TEXT NOT NULL,
+                signal_data     TEXT NOT NULL,
+                signal_strength REAL DEFAULT 0.0,
+                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS collection_logs (
+                log_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                started_at      TIMESTAMP NOT NULL,
+                finished_at     TIMESTAMP,
+                items_collected INTEGER DEFAULT 0,
+                items_new       INTEGER DEFAULT 0,
+                items_duplicate INTEGER DEFAULT 0,
+                status          TEXT,
+                error_message   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS raw_projects_archive (
+                raw_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                dedup_key       TEXT NOT NULL,
+                raw_data        TEXT NOT NULL,
+                discovered_at   TIMESTAMP,
+                processed       INTEGER DEFAULT 0,
+                processed_at    TIMESTAMP,
+                project_id      TEXT,
+                discovery_score REAL DEFAULT 0.0,
+                archived_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS project_signals_archive (
+                signal_id       TEXT PRIMARY KEY,
+                project_id      TEXT,
+                dedup_key       TEXT,
+                signal_type     TEXT NOT NULL,
+                signal_source   TEXT NOT NULL,
+                signal_data     TEXT NOT NULL,
+                signal_strength REAL DEFAULT 0.0,
+                captured_at     TIMESTAMP,
+                archived_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
+                signal      TEXT NOT NULL,
+                note        TEXT,
+                outcome     TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id  TEXT,
+                user_id     TEXT,
+                event_type  TEXT NOT NULL,
+                detail      TEXT,
+                timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 用户交互/参与记录（用于后期校准与复盘）
+            CREATE TABLE IF NOT EXISTS interactions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id      TEXT NOT NULL,
+                user_id         TEXT,
+                status          TEXT NOT NULL DEFAULT 'planned',
+                started_at      TEXT,
+                ended_at        TEXT,
+                cost_usd        REAL,
+                profit_usd      REAL,
+                hours_spent     REAL,
+                activities      TEXT,
+                note            TEXT,
+                outcome         TEXT,
+                score_at_start  INTEGER,
+                label_at_start  TEXT,
+                wallet_cohort_id TEXT,
+                wallet_count INTEGER DEFAULT 1,
+                actual_hard_cost_usd REAL,
+                actual_time_minutes INTEGER,
+                eligibility_result TEXT,
+                survival_result TEXT,
+                disqualification_reason TEXT,
+                reward_received_usd REAL,
+                claim_cost_usd REAL,
+                opportunity_assessment_id TEXT,
+                opportunity_model_version TEXT,
+                opportunity_profile_version TEXT,
+                outcome_observed_at TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_evidence (
+                evidence_id         TEXT PRIMARY KEY,
+                project_id          TEXT NOT NULL,
+                factor_key          TEXT NOT NULL,
+                value_json          TEXT NOT NULL,
+                value_type          TEXT NOT NULL,
+                observation_type    TEXT NOT NULL,
+                source_url          TEXT NOT NULL,
+                source_type         TEXT NOT NULL,
+                source_grade        TEXT NOT NULL,
+                observed_at         TIMESTAMP NOT NULL,
+                effective_at        TIMESTAMP,
+                expires_at          TIMESTAMP,
+                verification_status TEXT NOT NULL,
+                independence_group  TEXT NOT NULL,
+                raw_snapshot_ref    TEXT,
+                supersedes_evidence_id TEXT,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_assessments (
+                assessment_id      TEXT PRIMARY KEY,
+                project_id         TEXT NOT NULL,
+                model_version      TEXT NOT NULL,
+                profile_version    TEXT NOT NULL,
+                assessment_json    TEXT NOT NULL,
+                decision_status    TEXT NOT NULL,
+                public_label       TEXT NOT NULL,
+                decision_value     REAL,
+                overall_confidence REAL NOT NULL,
+                scored_at          TIMESTAMP NOT NULL,
+                review_at          TIMESTAMP,
+                expires_at         TIMESTAMP NOT NULL,
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
             CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at);
             CREATE INDEX IF NOT EXISTS idx_logs_run ON logs(run_id);
             CREATE INDEX IF NOT EXISTS idx_logs_project ON logs(project_id);
+            CREATE INDEX IF NOT EXISTS idx_data_sources_enabled ON data_sources(enabled);
+            CREATE INDEX IF NOT EXISTS idx_data_sources_status ON data_sources(sync_status);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_dedup ON raw_projects(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_unprocessed ON raw_projects(processed) WHERE processed = 0;
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_source ON raw_projects(source_id);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_discovered ON raw_projects(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_project ON project_signals(project_id);
+            CREATE INDEX IF NOT EXISTS idx_signals_dedup ON project_signals(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_signals_type ON project_signals(signal_type, signal_source);
+            CREATE INDEX IF NOT EXISTS idx_signals_captured ON project_signals(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_source ON collection_logs(source_id);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_started ON collection_logs(started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
+            CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
+            CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_interactions_project ON interactions(project_id);
+            CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status);
+            CREATE INDEX IF NOT EXISTS idx_interactions_started ON interactions(started_at);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_project ON opportunity_evidence(project_id, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_factor ON opportunity_evidence(project_id, factor_key, verification_status);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_latest ON opportunity_assessments(project_id, profile_version, scored_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_label ON opportunity_assessments(public_label, expires_at);
+    """
+
+
+def _postgres_ddl() -> str:
+    # Same schema; SERIAL for auto ids; INTEGER flags kept for app compatibility
+    return """
+            CREATE TABLE IF NOT EXISTS projects (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                url             TEXT,
+                sector          TEXT,
+                stage           TEXT,
+                score           INTEGER,
+                label           TEXT,
+                recommendation  TEXT,
+                confidence      DOUBLE PRECISION,
+                weight_version  TEXT,
+                reason          TEXT,
+                narrative_json  TEXT,
+                team_json       TEXT,
+                risk_json       TEXT,
+                tokenomics_json TEXT,
+                raw_signals     TEXT,
+                meta            TEXT,
+                source          TEXT,
+                raw_signals_hash TEXT,
+                fetched_at      TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id          SERIAL PRIMARY KEY,
+                run_id      TEXT NOT NULL,
+                project_id  TEXT,
+                agent_name  TEXT,
+                input       TEXT,
+                output      TEXT,
+                error       TEXT,
+                duration_ms INTEGER,
+                timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS data_sources (
+                source_id       TEXT PRIMARY KEY,
+                source_type     TEXT NOT NULL,
+                source_name     TEXT NOT NULL,
+                enabled         INTEGER DEFAULT 1,
+                last_sync       TIMESTAMP,
+                sync_status     TEXT DEFAULT 'idle',
+                api_calls_today INTEGER DEFAULT 0,
+                api_limit       INTEGER,
+                config          TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS raw_projects (
+                raw_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                dedup_key       TEXT NOT NULL,
+                raw_data        TEXT NOT NULL,
+                discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed       INTEGER DEFAULT 0,
+                processed_at    TIMESTAMP,
+                project_id      TEXT,
+                discovery_score DOUBLE PRECISION DEFAULT 0.0,
+                quarantined     INTEGER DEFAULT 0,
+                quarantine_reason TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS project_signals (
+                signal_id       TEXT PRIMARY KEY,
+                project_id      TEXT,
+                dedup_key       TEXT,
+                signal_type     TEXT NOT NULL,
+                signal_source   TEXT NOT NULL,
+                signal_data     TEXT NOT NULL,
+                signal_strength DOUBLE PRECISION DEFAULT 0.0,
+                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS collection_logs (
+                log_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                started_at      TIMESTAMP NOT NULL,
+                finished_at     TIMESTAMP,
+                items_collected INTEGER DEFAULT 0,
+                items_new       INTEGER DEFAULT 0,
+                items_duplicate INTEGER DEFAULT 0,
+                status          TEXT,
+                error_message   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS raw_projects_archive (
+                raw_id          TEXT PRIMARY KEY,
+                source_id       TEXT NOT NULL,
+                dedup_key       TEXT NOT NULL,
+                raw_data        TEXT NOT NULL,
+                discovered_at   TIMESTAMP,
+                processed       INTEGER DEFAULT 0,
+                processed_at    TIMESTAMP,
+                project_id      TEXT,
+                discovery_score DOUBLE PRECISION DEFAULT 0.0,
+                archived_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS project_signals_archive (
+                signal_id       TEXT PRIMARY KEY,
+                project_id      TEXT,
+                dedup_key       TEXT,
+                signal_type     TEXT NOT NULL,
+                signal_source   TEXT NOT NULL,
+                signal_data     TEXT NOT NULL,
+                signal_strength DOUBLE PRECISION DEFAULT 0.0,
+                captured_at     TIMESTAMP,
+                archived_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id          SERIAL PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
+                signal      TEXT NOT NULL,
+                note        TEXT,
+                outcome     TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id          SERIAL PRIMARY KEY,
+                project_id  TEXT,
+                user_id     TEXT,
+                event_type  TEXT NOT NULL,
+                detail      TEXT,
+                timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS interactions (
+                id              SERIAL PRIMARY KEY,
+                project_id      TEXT NOT NULL,
+                user_id         TEXT,
+                status          TEXT NOT NULL DEFAULT 'planned',
+                started_at      TEXT,
+                ended_at        TEXT,
+                cost_usd        DOUBLE PRECISION,
+                profit_usd      DOUBLE PRECISION,
+                hours_spent     DOUBLE PRECISION,
+                activities      TEXT,
+                note            TEXT,
+                outcome         TEXT,
+                score_at_start  INTEGER,
+                label_at_start  TEXT,
+                wallet_cohort_id TEXT,
+                wallet_count INTEGER DEFAULT 1,
+                actual_hard_cost_usd DOUBLE PRECISION,
+                actual_time_minutes INTEGER,
+                eligibility_result TEXT,
+                survival_result TEXT,
+                disqualification_reason TEXT,
+                reward_received_usd DOUBLE PRECISION,
+                claim_cost_usd DOUBLE PRECISION,
+                opportunity_assessment_id TEXT,
+                opportunity_model_version TEXT,
+                opportunity_profile_version TEXT,
+                outcome_observed_at TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_evidence (
+                evidence_id         TEXT PRIMARY KEY,
+                project_id          TEXT NOT NULL,
+                factor_key          TEXT NOT NULL,
+                value_json          TEXT NOT NULL,
+                value_type          TEXT NOT NULL,
+                observation_type    TEXT NOT NULL,
+                source_url          TEXT NOT NULL,
+                source_type         TEXT NOT NULL,
+                source_grade        TEXT NOT NULL,
+                observed_at         TIMESTAMPTZ NOT NULL,
+                effective_at        TIMESTAMPTZ,
+                expires_at          TIMESTAMPTZ,
+                verification_status TEXT NOT NULL,
+                independence_group  TEXT NOT NULL,
+                raw_snapshot_ref    TEXT,
+                supersedes_evidence_id TEXT,
+                created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_assessments (
+                assessment_id      TEXT PRIMARY KEY,
+                project_id         TEXT NOT NULL,
+                model_version      TEXT NOT NULL,
+                profile_version    TEXT NOT NULL,
+                assessment_json    TEXT NOT NULL,
+                decision_status    TEXT NOT NULL,
+                public_label       TEXT NOT NULL,
+                decision_value     DOUBLE PRECISION,
+                overall_confidence DOUBLE PRECISION NOT NULL,
+                scored_at          TIMESTAMPTZ NOT NULL,
+                review_at          TIMESTAMPTZ,
+                expires_at         TIMESTAMPTZ NOT NULL,
+                created_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
+            CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
+            CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
+            CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_logs_run ON logs(run_id);
+            CREATE INDEX IF NOT EXISTS idx_logs_project ON logs(project_id);
+            CREATE INDEX IF NOT EXISTS idx_data_sources_enabled ON data_sources(enabled);
+            CREATE INDEX IF NOT EXISTS idx_data_sources_status ON data_sources(sync_status);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_dedup ON raw_projects(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_unprocessed ON raw_projects(processed) WHERE processed = 0;
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_source ON raw_projects(source_id);
+            CREATE INDEX IF NOT EXISTS idx_raw_projects_discovered ON raw_projects(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_project ON project_signals(project_id);
+            CREATE INDEX IF NOT EXISTS idx_signals_dedup ON project_signals(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_signals_type ON project_signals(signal_type, signal_source);
+            CREATE INDEX IF NOT EXISTS idx_signals_captured ON project_signals(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_source ON collection_logs(source_id);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_started ON collection_logs(started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
+            CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
+            CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_interactions_project ON interactions(project_id);
+            CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status);
+            CREATE INDEX IF NOT EXISTS idx_interactions_started ON interactions(started_at);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_project ON opportunity_evidence(project_id, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_factor ON opportunity_evidence(project_id, factor_key, verification_status);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_latest ON opportunity_assessments(project_id, profile_version, scored_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_label ON opportunity_assessments(public_label, expires_at);
+    """
+
+
+def _as_db_connection(conn: Any) -> tuple[DbConnection, bool]:
+    """Normalize optional conn to DbConnection. Returns (conn, owns_lifecycle)."""
+    if conn is None:
+        return get_connection(), True
+    if isinstance(conn, DbConnection):
+        return conn, False
+    # Legacy: raw sqlite3.Connection from tests
+    if isinstance(conn, sqlite3.Connection):
+        if conn.row_factory is None:
+            conn.row_factory = sqlite3.Row
+        return DbConnection(conn, kind="sqlite"), False
+    raise TypeError(f"Unsupported connection type: {type(conn)}")
+
+
+def init_db(conn: Any = None) -> None:
+    """Idempotent schema init for SQLite or PostgreSQL."""
+    db, should_close = _as_db_connection(conn)
+
+    try:
+        if db.kind == "postgres":
+            db.execute(
+                "SELECT pg_advisory_xact_lock(?)",
+                (POSTGRES_INIT_ADVISORY_LOCK_ID,),
+            )
+        ddl = _postgres_ddl() if db.kind == "postgres" else _sqlite_ddl()
+        db.executescript(ddl)
+
+        _add_column_if_not_exists(db, "projects", "discovery_source", "TEXT DEFAULT 'manual'")
+        _add_column_if_not_exists(db, "projects", "discovered_at", "TIMESTAMP")
+        _add_column_if_not_exists(db, "projects", "auto_discovered", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(db, "projects", "signal_count", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
+
+        interaction_columns = {
+            "wallet_cohort_id": "TEXT",
+            "wallet_count": "INTEGER DEFAULT 1",
+            "actual_hard_cost_usd": ("DOUBLE PRECISION" if db.kind == "postgres" else "REAL"),
+            "actual_time_minutes": "INTEGER",
+            "eligibility_result": "TEXT",
+            "survival_result": "TEXT",
+            "disqualification_reason": "TEXT",
+            "reward_received_usd": ("DOUBLE PRECISION" if db.kind == "postgres" else "REAL"),
+            "claim_cost_usd": ("DOUBLE PRECISION" if db.kind == "postgres" else "REAL"),
+            "opportunity_assessment_id": "TEXT",
+            "opportunity_model_version": "TEXT",
+            "opportunity_profile_version": "TEXT",
+            "outcome_observed_at": ("TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP"),
+        }
+        for column, definition in interaction_columns.items():
+            _add_column_if_not_exists(db, "interactions", column, definition)
+        _add_column_if_not_exists(db, "opportunity_evidence", "supersedes_evidence_id", "TEXT")
+
+        db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
+            CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);
+            CREATE INDEX IF NOT EXISTS idx_projects_discovered_at ON projects(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_raw_quarantined ON raw_projects(quarantined);
         """)
-        conn.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         if should_close:
-            conn.close()
+            db.close()
 
 
-def dict_from_row(row: sqlite3.Row) -> dict[str, Any]:
-    """将 sqlite3.Row 转换为普通 dict。
+def dict_from_row(row: Any) -> dict[str, Any]:
+    """Convert a DB row to a plain dict."""
+    if row is None:
+        return {}
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(row)
 
-    Args:
-        row: 数据库行对象
 
-    Returns:
-        包含所有字段的字典
-    """
-    return dict(row) if row else {}
+def scalar(row: Any, default: Any = 0) -> Any:
+    """Read first column from a fetchone() result (sqlite Row or dict)."""
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except Exception:
+        return default

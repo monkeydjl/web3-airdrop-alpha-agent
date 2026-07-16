@@ -1,0 +1,66 @@
+"""AI project brief endpoint — natural language interpretation."""
+
+from __future__ import annotations
+
+import structlog
+from fastapi import APIRouter, HTTPException, Path
+
+from app.config import settings
+from app.repository import ProjectRepository
+from app.services.ai_brief import generate_project_brief
+
+logger = structlog.get_logger(__name__)
+router = APIRouter(tags=["ai"])
+
+
+@router.post("/projects/{project_id}/ai-brief")
+async def project_ai_brief(
+    project_id: str = Path(..., description="项目 ID"),
+):
+    """Generate a natural-language brief for a scored project.
+
+    Uses rule-based synthesis always; upgrades to LLM when OPENAI_API_KEY is set.
+    """
+    repo = ProjectRepository()
+    project = repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"},
+        )
+
+    try:
+        brief = await generate_project_brief(dict(project))
+    except Exception as e:
+        logger.error("ai_brief.failed", project_id=project_id, error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "BRIEF_FAILED", "message": str(e)},
+        ) from e
+
+    return {
+        "ok": True,
+        "data": {
+            "project_id": project_id,
+            "project_name": project.get("name"),
+            "mode": brief.get("mode"),
+            "llm_available": bool((settings.openai_api_key or "").strip()),
+            "headline": brief.get("headline"),
+            "summary": brief.get("summary"),
+            "bullets": brief.get("bullets") or [],
+            "paragraphs": brief.get("paragraphs") or [],
+            "display_text": brief.get("display_text") or "",
+            "label": brief.get("label"),
+            "label_zh": brief.get("label_zh"),
+            "score": brief.get("score"),
+            "confidence": brief.get("confidence"),
+        },
+    }
+
+
+@router.get("/projects/{project_id}/ai-brief")
+async def project_ai_brief_get(
+    project_id: str = Path(..., description="项目 ID"),
+):
+    """GET alias for convenience (same as POST)."""
+    return await project_ai_brief(project_id)

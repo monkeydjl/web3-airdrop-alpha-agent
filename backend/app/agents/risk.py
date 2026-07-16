@@ -10,20 +10,19 @@ Reference:
 """
 
 import time
-from typing import Dict
 
 import structlog
 
-from app.agents.base import BaseAgent, PipelineState, AgentError
+from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import RiskResult
 
 logger = structlog.get_logger(__name__)
 
 
 # Stage risk factor configuration
-STAGE_RISK_FACTOR: Dict[str, float] = {
-    "mainnet": 0.15,   # Proven execution, lower risk
-    "testnet": 0.35,   # Testing phase, medium risk
+STAGE_RISK_FACTOR: dict[str, float] = {
+    "mainnet": 0.15,  # Proven execution, lower risk
+    "testnet": 0.35,  # Testing phase, medium risk
     "ideation": 0.55,  # No product yet, higher risk
 }
 
@@ -40,26 +39,44 @@ def calculate_airdrop_signal_subscore(project: "RawProject") -> float:
     Returns:
         Airdrop signal subscore (0-100)
 
-    Logic (from DATA_SCORING_DICT.md §5.1):
-        - has_points AND airdrop_hint -> 100
-        - Only one is true -> 60
-        - Both false -> 20
+    Logic (DATA_SCORING_DICT §5.1 v1.2): ladder + explicit airdrop / funding bonus.
     """
-    has_points = project.has_points_program
-    has_hint = project.no_token_yet  # "no token yet" is an airdrop hint
+    has_points = bool(project.has_points_program)
+    no_token = bool(project.no_token_yet)
+    has_testnet = bool(project.has_testnet) or ((project.stage or "").lower() == "testnet")
+    explicit = bool(getattr(project, "explicit_airdrop_mention", False))
+    funding = bool(project.recent_funding)
+    task_portal = bool(getattr(project, "has_task_portal", False))
+    sources = int(getattr(project, "source_count", 1) or 1)
 
-    if has_points and has_hint:
-        return 100.0
-    elif has_points or has_hint:
-        return 60.0
+    if has_points and no_token:
+        base = 100.0
+    elif no_token and has_testnet:
+        base = 85.0
+    elif has_points or no_token:
+        base = 60.0
+    elif has_testnet:
+        base = 40.0
     else:
-        return 20.0
+        base = 20.0
+
+    bonus = 0.0
+    if explicit:
+        bonus += 10.0
+    if task_portal:
+        bonus += 14.0
+    if funding and (has_points or no_token or has_testnet or task_portal):
+        bonus += 5.0
+    if sources >= 3 and (has_points or no_token or task_portal or explicit):
+        bonus += 6.0
+    elif sources >= 2 and (has_points or no_token or task_portal):
+        bonus += 3.0
+    if not no_token and not has_points and not explicit and not task_portal:
+        return min(35.0, base + bonus)
+    return min(100.0, base + bonus)
 
 
-def calculate_token_risk(
-    project: "RawProject",
-    tokenomics_risk: float | None = None
-) -> float:
+def calculate_token_risk(project: "RawProject", tokenomics_risk: float | None = None) -> float:
     """Calculate token risk score using heuristic.
 
     MVP heuristic (DATA_SCORING_DICT.md §5.7.2):
@@ -88,11 +105,7 @@ def calculate_token_risk(
     stage_factor = STAGE_RISK_FACTOR.get(stage, DEFAULT_STAGE_FACTOR)
 
     # Calculate token risk
-    token_risk = (
-        0.6 * tokenomics_risk
-        + 0.2 * (1 - airdrop_subscore / 100)
-        + 0.2 * stage_factor
-    )
+    token_risk = 0.6 * tokenomics_risk + 0.2 * (1 - airdrop_subscore / 100) + 0.2 * stage_factor
 
     # Clamp to [0.0, 1.0]
     return max(0.0, min(1.0, token_risk))
@@ -171,10 +184,7 @@ def infer_unlock_pressure(token_risk: float) -> str:
 
 
 def generate_risk_flags(
-    project: "RawProject",
-    token_risk: float,
-    sybil_difficulty: str,
-    tokenomics_missing: bool
+    project: "RawProject", token_risk: float, sybil_difficulty: str, tokenomics_missing: bool
 ) -> list[str]:
     """Generate risk flags based on analysis.
 
@@ -245,10 +255,7 @@ class RiskAgent(BaseAgent):
                 tokenomics_missing = True
 
             # Calculate token risk
-            token_risk = calculate_token_risk(
-                state.project,
-                tokenomics_risk
-            )
+            token_risk = calculate_token_risk(state.project, tokenomics_risk)
 
             # Assess sybil difficulty
             sybil_difficulty = assess_sybil_difficulty(state.project)
@@ -260,12 +267,7 @@ class RiskAgent(BaseAgent):
             unlock_pressure = infer_unlock_pressure(token_risk)
 
             # Generate risk flags
-            risk_flags = generate_risk_flags(
-                state.project,
-                token_risk,
-                sybil_difficulty,
-                tokenomics_missing
-            )
+            risk_flags = generate_risk_flags(state.project, token_risk, sybil_difficulty, tokenomics_missing)
 
             # Create result
             result = RiskResult(
@@ -288,12 +290,7 @@ class RiskAgent(BaseAgent):
             )
 
         except Exception as e:
-            error = AgentError(
-                agent_name=self.name,
-                kind="risk_error",
-                message=str(e),
-                project_id=state.project.id
-            )
+            error = AgentError(agent_name=self.name, kind="risk_error", message=str(e), project_id=state.project.id)
             state.add_error(error)
 
         duration_ms = (time.time() - start_time) * 1000
@@ -305,6 +302,7 @@ class RiskAgent(BaseAgent):
 if __name__ == "__main__":
     # Test risk agent
     import asyncio
+
     from app.agents.base import AgentContext, RawProject
     from app.models import TokenomicsResult
 
@@ -325,7 +323,7 @@ if __name__ == "__main__":
                     has_points_program=False,
                     no_token_yet=False,
                     url=None,
-                    source="seed"
+                    source="seed",
                 ),
                 "tokenomics": None,
             },
@@ -341,7 +339,7 @@ if __name__ == "__main__":
                     has_points_program=True,
                     no_token_yet=True,
                     url="https://medium.xyz",
-                    source="seed"
+                    source="seed",
                 ),
                 "tokenomics": TokenomicsResult(
                     vc_share=0.25,
@@ -361,7 +359,7 @@ if __name__ == "__main__":
                     has_points_program=True,
                     no_token_yet=False,
                     url="https://low.xyz",
-                    source="seed"
+                    source="seed",
                 ),
                 "tokenomics": TokenomicsResult(
                     vc_share=0.15,
@@ -404,12 +402,7 @@ if __name__ == "__main__":
 
         for has_points, has_hint, expected, desc in test_signals:
             proj = RawProject(
-                id="test",
-                name="Test",
-                sector="L2",
-                has_points_program=has_points,
-                no_token_yet=has_hint,
-                source="seed"
+                id="test", name="Test", sector="L2", has_points_program=has_points, no_token_yet=has_hint, source="seed"
             )
             score = calculate_airdrop_signal_subscore(proj)
             print(f"[OK] {desc}: {score:.0f} (expected {expected})")

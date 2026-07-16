@@ -297,4 +297,4 @@ class TestSchemaComponents:
         # Check for key response models (may have module prefix)
         assert any("RunResponse" in name for name in schemas)
         assert "ProjectsResponse" in schemas
-        assert "ErrorResponse" in schemas
+        assert any("ErrorResponse" in name for name in schemas)

@@ -14,9 +14,12 @@ docs/PROJECT_BOOTSTRAP_V2_SUMMARY.md       # 快速总结
 docs/PROJECT_BOOTSTRAP_CHECKLIST_V2.md     # 检查清单
 
 # 架构与产品
+docs/IMPLEMENTATION_STATUS.md               # 实现现状（优先读）
 docs/01_product.md                          # 产品规格
 docs/02_architecture.md                     # 系统架构（C4 模型）
 docs/ENGINEERING_ROADMAP.md                 # 工程路线图
+docs/COLLECTION_ANALYSIS_HANDOFF.md         # 采集→分析交接
+docs/WEIGHT_CALIBRATION.md                  # 权重校准协议
 
 # 开发指南
 docs/AI_DEV_WORKFLOW.md                     # AI 开发工作流（12 步）
@@ -79,8 +82,8 @@ make typecheck
 # 数据库备份
 ./scripts/workflows/db-backup.sh
 
-# 健康检查
-curl http://localhost:8000/health
+# 健康检查（本地开发端口 8002；Docker 内多为 8000）
+curl http://localhost:8002/health
 ```
 
 ### 测试
@@ -135,7 +138,7 @@ P2（可选）：     11/11 ✅ 100%
 Web 框架：  FastAPI
 Agent 编排：自研 Orchestrator
 数据库：    SQLite (MVP) → PostgreSQL (V2)
-前端：      单页 HTML (MVP) → Next.js (V2)
+  前端：      Next.js (`frontend-next`，3002) + 旧 HTML 原型
 调度：      APScheduler 进程内
 配置：      pydantic-settings + .env
 部署：      Docker + docker-compose
@@ -282,7 +285,7 @@ docker logs <container-id>
 netstat -an | grep 8000
 
 # 手动健康检查
-curl http://localhost:8000/health
+curl http://localhost:8002/health
 ```
 
 **数据库锁定**

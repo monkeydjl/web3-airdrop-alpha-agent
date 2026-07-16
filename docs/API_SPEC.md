@@ -1,26 +1,32 @@
-# API 详细规范（FastAPI）
+# API 详细规范（FastAPI?
+> 配套文档：ENGINEERING_ROADMAP.md §8。本文档给出每个端点的请?响应样例、错误码、鉴权设计与数据模型，供前后端与测试对齐?
+---
 
-> 配套文档：ENGINEERING_ROADMAP.md §8。本文档给出每个端点的请求/响应样例、错误码、鉴权设计与数据模型，供前后端与测试对齐。
+## Opportunity v2 evidence safety and remediation
+
+- `source_url` rejects URL userinfo and query keys containing `token`, `key`, `secret`, `signature`, or `auth`.
+- `raw_snapshot_ref` is an opaque identifier using letters, digits, `.`, `_`, `:`, or `-`; URLs, paths, queries, and fragments are rejected.
+- `supersedes_evidence_id` appends remediation evidence and must target existing evidence for the same project and factor. Existing evidence is never updated.
+- A blocker clears only through current, verified, A-grade observed/derived evidence whose value is `false`; weak, expired, malformed, or circular remediation remains conservative.
+- `outcome_observed_at` requires a timezone-aware ISO 8601 datetime. Creating or patching eligibility, survival, or reward outcomes without one records server UTC.
 
 ---
 
 ## 1. 基础信息
 
-| 项 | 值 |
+| ?| ?|
 | --- | --- |
-| Base URL | `http://<host>:8000`（本地默认） |
+| Base URL | http://127.0.0.1:8002 (project fixed port; frontend 3002) |
 | API 前缀 | `/api/v1` |
 | 内容类型 | `application/json; charset=utf-8` |
-| 时间格式 | UTC 时间戳（`YYYY-MM-DD HH:MM:SS`） |
+| 时间格式 | UTC 时间戳（`YYYY-MM-DD HH:MM:SS`?|
 | 文档 | Swagger `/docs`、OpenAPI `/openapi.json` |
 
 ### 1.1 统一响应包络
-所有端点返回统一结构：
-```json
+所有端点返回统一结构?```json
 { "ok": true,  "data": <任意>, "error": null }
 ```
-失败：
-```json
+失败?```json
 { "ok": false, "data": null,  "error": { "code": 404, "message": "project not found" } }
 ```
 
@@ -28,73 +34,102 @@
 
 ## 2. 鉴权
 
-- **MVP**：无鉴权（仅限本地/内网使用）。
-- **V2**：Bearer Token。请求头 `Authorization: Bearer <API_KEY>`；`API_KEY` 来自环境变量。缺失或错误返回 `401`。
-- `/health` 与 Swagger 文档无需鉴权。
-
+- **MVP**：无鉴权（仅限本?内网使用）?- **V2**：Bearer Token。请求头 `Authorization: Bearer <API_KEY>`；`API_KEY` 来自环境变量。缺失或错误返回 `401`?- `/health` ?Swagger 文档无需鉴权?
 ---
 
 ## 3. 端点总览
 
 | 方法 | 路径 | API 版本 | 阶段 | 说明 |
 | --- | --- | --- | --- | --- |
-| POST | `/api/v1/run` | v1 | MVP | 触发一次完整分析 pipeline（collect→analyze→score→写库） |
-| GET | `/api/v1/projects` | v1 | MVP | 项目列表（支持筛选/排序/分页） |
-| GET | `/api/v1/project/{id}` | v1 | MVP | 单项目完整详情 |
-| POST | `/api/v1/re-score/{id}` | v1 | MVP | 用最新规则/数据对该项目重算评分 |
-| GET | `/api/v1/insights` | v1 | MVP（基础聚合）/ V2（增强） | 聚合洞察（MVP 返回 label/sector 计数等基础聚合，V2 接入实时热度与团队聚类） |
-| POST | `/api/v1/feedback` | v1 | V2 | 提交用户反馈（useful/useless/wrong_label + outcome） |
-| GET | `/api/v1/feedback` | v1 | V2 | 查询用户反馈（支持 project_id 过滤） |
+| POST | `/api/v1/run` | v1 | MVP（已实现?| 触发一次评?pipeline（手动输入项??analyze ?score ?写库?|
+| GET | `/api/v1/projects` | v1 | MVP（已实现?| 项目列表（支持筛?排序/分页?|
+| GET | `/api/v1/project/{id}` | v1 | MVP（已实现?| 单项目完整详?|
+| GET | `/api/v1/export/projects` | v1 | MVP（已实现?| 导出项目列表（Excel/CSV?|
+| GET | `/api/v1/export/project/{id}` | v1 | MVP（已实现?| 导出单项目完整详情（Excel?|
+| GET | `/api/v1/export/template` | v1 | MVP（已实现?| 下载导入模板（Excel?|
+| POST | `/api/v1/import/projects` | v1 | MVP（已实现?| 批量导入项目并评分（Excel/CSV，最?100 个） |
+| POST | `/api/v1/re-score/{id}` | v1 | MVP | 用最新规?数据对该项目重算评分 |
+| GET | `/api/v1/insights` | v1 | MVP（已实现?| 聚合洞察（label/sector 计数、最热叙事、高风险团队?|
+| GET | `/api/v1/discoveries` | v1 | V2（v2.0，ADR-012?| 查询自动发现的项目列表（支持 source/score 筛选） |
+| GET | `/api/v1/discoveries/{id}` | v1 | V2（v2.0，ADR-012?| 单个发现项目详情（含 raw_projects + signals?|
+| GET | `/api/v1/discoveries/stats` | v1 | V2（v2.0，ADR-012?| 发现统计（按??评分分布聚合?|
+| GET | `/api/v1/collections/sources` | v1 | V2（v2.0，ADR-012?| 查询数据源状态与最近同步信?|
+| GET | `/api/v1/collections/logs` | v1 | V2（v2.0，ADR-012?| 查询采集日志（支?source_id/状?时间筛选） |
+| POST | `/api/v1/collections/trigger/{source_id}` | v1 | V2（v2.0，ADR-012?| 手动触发指定源的采集（运?测试用） |
+| POST | `/api/v1/feedback` | v1 | V2 | 提交用户反馈（useful/useless/wrong_label + outcome?|
+| GET | `/api/v1/feedback` | v1 | V2 | 查询用户反馈（支?project_id 过滤?|
 | POST | `/api/v1/events` | v1 | V2 | 提交隐式行为埋点（click/expand/feedback 等，V2 起） |
-| GET | `/api/v1/audit` | v1 | V2 | 查询审计日志（action/user 过滤，V2 鉴权） |
-| POST | `/api/v1/auth/anonymous` | v1 | V2 | 获取匿名用户 token（Dashboard 首次访问） |
-| GET | `/api/version` | — | MVP | 版本元信息（当前/最新/Deprecated/Sunset） |
-| GET | `/health` | — | MVP | 健康检查（无版本，基础设施 API） |
+| GET | `/api/v1/audit` | v1 | V2 | 查询审计日志（action/user 过滤，V2 鉴权?|
+| POST | `/api/v1/auth/anonymous` | v1 | V2 | 获取匿名用户 token（Dashboard 首次访问?|
+| GET | `/api/version` | ?| MVP | 版本元信息（当前/最?Deprecated/Sunset?|
+| GET | `/health` | ?| MVP | 健康检查（无版本，基础设施 API?|
 
-> 所有业务端点当前均为 `/api/v1`（首个稳定版）。V2 发布后，该表将增加 `/api/v2/*` 行并标注 v1 为 Deprecated。详见 [ENGINEERING_ROADMAP.md §26](ENGINEERING_ROADMAP.md)。
-
+> 所有业务端点当前均?`/api/v1`（首个稳定版）。V2 发布后，该表将增?`/api/v2/*` 行并标注 v1 ?Deprecated。详?[ENGINEERING_ROADMAP.md §26](ENGINEERING_ROADMAP.md)?
 ---
 
 ## 4. POST /api/v1/run
 
-触发一次完整分析。MVP 同步执行（项目量小）；V2 改为后台任务并返回 `task_id`。
-
-**请求体**
+触发一次完整评分分析。MVP 为手动输入方向：接收项目列表（不自动采集外部源），同步运行并行评?Pipeline（Narrative/Team/Risk/Tokenomics 4 ?Agent + Scorer 加权），返回评分结果与三档分类。每次最?100 个项目?
+**请求?*
 ```json
 {
-  "source": "all",   // all | seed | defillama | cryptorank
-  "limit": 50        // 最大分析项目数（可选，默认 50）
+  "projects": [
+    {
+      "name": "LayerX",
+      "url": "https://layerx.xyz",
+      "sector": "L2",
+      "stage": "testnet",
+      "has_testnet": true,
+      "has_points_program": true,
+      "no_token_yet": true,
+      "recent_funding": true
+    }
+  ],
+  "enable_llm": false,
+  "llm_model": "gpt-4o-mini"
 }
 ```
 
-**响应 200**（含部分失败信息）
+字段说明?- `projects`（必填，1?00 项）：待评分项目列表。每项字段：
+  - `name`（必填，1?00 字符）：项目名称
+  - `url` / `sector` / `stage`（可选）：官网、赛道、阶?  - `has_testnet` / `has_points_program` / `no_token_yet` / `recent_funding`（可?bool，默?`false`）：空投信号
+- `enable_llm`（可?bool，默?`false`）：是否启用 LLM（默认使用启发式规则?- `llm_model`（可?string，默?`gpt-4o-mini`）：LLM 模型名称（仅?`enable_llm=true` 时生效）
+
+**响应 200**
 ```json
 {
   "ok": true,
   "data": {
-    "analyzed": 23,
-    "inserted": 18,
-    "updated": 5,
-    "failed": 0,
-    "errors": [],
-    "top_id": "a1b2c3d4",
-    "top_score": 83,
-    "elapsed_ms": 1240
+    "run_id": "api-run-20240708-120000",
+    "status": "completed",
+    "project_count": 1,
+    "scored_count": 1,
+    "error_count": 0,
+    "top_score": 85,
+    "top_projects": [
+      {
+        "id": "layerx-001",
+        "name": "LayerX",
+        "sector": "L2",
+        "stage": "testnet",
+        "score": 85,
+        "label": "FARM",
+        "confidence": 1.0,
+        "reason": ["strong airdrop signal", "early narrative", "credible team"]
+      }
+    ]
   }
 }
 ```
 
-> 注：`failed` 表示因超时/异常未写入的项目数；`errors` 数组包含每个失败项目的 `project_id` 与 `reason`（如 `{"project_id":"xxx", "reason":"timeout"}`）。部分失败时 `ok` 仍为 `true`（pipeline 未完全崩溃），`data.failed > 0` 表明有项目丢失。
-
+> 注：`top_projects` 按分数排序返回前 10 个；`scored_count` 为成功评分数量；`error_count` ?agent 执行失败的项目数。评分阈值：**FARM ≥65 / WATCH ≥50 / IGNORE <50 (v1.1)**?
 **错误**
-- `400`：`source` 非法枚举。
-- `500`：agent 执行失败（body 含 `error.message` 与定位信息）。
-
+- `400`：输入校验失败（如项目数超出 1?00、`name` 为空或超?200 字符）?- `500`：Pipeline 执行失败（body ?`error.message` 与定位信息）?
 **cURL**
 ```bash
-curl -X POST http://localhost:8000/api/v1/run \
+curl -X POST http://localhost:8002/api/v1/run \
   -H 'Content-Type: application/json' \
-  -d '{"source":"seed","limit":50}'
+  -d '{"projects":[{"name":"LayerX","url":"https://layerx.xyz","sector":"L2","stage":"testnet","has_testnet":true,"has_points_program":true,"no_token_yet":true,"recent_funding":true}],"enable_llm":false}'
 ```
 
 ---
@@ -105,12 +140,12 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 | 参数 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `label` | string | - | 过滤 `FARM`/`WATCH`/`IGNORE`；支持多选（逗号分隔） |
-| `sector` | string | - | 过滤赛道，如 `L2`/`Restaking`；支持多选（逗号分隔） |
-| `stage` | string | - | 过滤项目阶段 `testnet`/`mainnet`/`ideation`；支持多选（逗号分隔） |
+| `label` | string | - | 过滤 `FARM`/`WATCH`/`IGNORE`；支持多选（逗号分隔?|
+| `sector` | string | - | 过滤赛道，如 `L2`/`Restaking`；支持多选（逗号分隔?|
+| `stage` | string | - | 过滤项目阶段 `testnet`/`mainnet`/`ideation`；支持多选（逗号分隔?|
 | `search` | string | - | 项目名称模糊匹配（大小写不敏感） |
-| `limit` | int | 100 | 返回条数，上限 500 |
-| `order` | string | `DESC` | `DESC`/`ASC`（按 score） |
+| `limit` | int | 100 | 返回条数，上?500 |
+| `order` | string | `DESC` | `DESC`/`ASC`（按 score?|
 
 **响应 200**（精简字段，不含大体积 JSON 列）
 ```json
@@ -129,8 +164,7 @@ curl -X POST http://localhost:8000/api/v1/run \
 }
 ```
 
-**错误**：`400` 非法 `order`/`label` 值。
-
+**错误**：`400` 非法 `order`/`label` 值?
 ---
 
 ## 6. GET /api/v1/project/{id}
@@ -166,8 +200,7 @@ curl -X POST http://localhost:8000/api/v1/run \
 }
 ```
 
-**错误**：`404` 项目不存在。
-```json
+**错误**：`404` 项目不存在?```json
 { "ok": false, "data": null, "error": { "code": 404, "message": "project not found" } }
 ```
 
@@ -175,14 +208,11 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 ## 7. POST /api/v1/re-score/{id}
 
-用最新规则/数据对该项目重算评分（不重新采集，仅重跑 analyze+score）。
-
+用最新规?数据对该项目重算评分（不重新采集，仅重跑 analyze+score）?
 **路径参数**：`id`
 
-**响应 200**：更新后的完整 `ProjectRecord`（结构同 §6）。
-
-**错误**：`404` 项目不存在；`500` 重算失败。
-
+**响应 200**：更新后的完?`ProjectRecord`（结构同 §6）?
+**错误**：`404` 项目不存在；`500` 重算失败?
 ---
 
 ## 8. GET /api/v1/insights
@@ -192,29 +222,43 @@ curl -X POST http://localhost:8000/api/v1/run \
 {
   "ok": true,
   "data": {
-    "label_counts":       { "FARM": 5, "WATCH": 12, "IGNORE": 6 },
-    "score_distribution": { "0-49": 6, "50-69": 12, "70-100": 5 },
-    "hottest_narratives": [ { "sector": "Restaking", "heat_score": 0.82, "timing": "early" } ],
-    "risky_teams":        [ { "name": "LayerX", "risk_level": "medium", "flags": ["previous failed project"] } ],
-    "sector_counts":      { "L2": 8, "Restaking": 6, "DeFi": 9 }
+    "total_projects": 23,
+    "label_counts": { "FARM": 5, "WATCH": 12, "IGNORE": 6 },
+    "sector_counts": { "L2": 8, "Restaking": 6, "DeFi": 9 },
+    "hottest_narratives": [
+      {
+        "sector": "Restaking",
+        "project_count": 6,
+        "avg_heat_score": 0.82,
+        "trend": "up"
+      }
+    ],
+    "risky_teams": [
+      {
+        "id": "layerx-001",
+        "name": "LayerX",
+        "sector": "L2",
+        "risk_level": "medium",
+        "team_score": 0.35,
+        "flags": ["previous failed project"]
+      }
+    ]
   }
 }
 ```
 
-> MVP 由 `projects` 表聚合得出；V2 接入实时热度与团队聚类后增强。
-
+> ?`projects` 表聚合得出；`risk_level` 根据 `team_json.team_score` 推导?0.4 high，≤0.7 medium?0.7 low）。`trend` ?`avg_heat_score` 推导?
 ---
 
 ## 9. POST /api/v1/feedback
 
-提交用户对项目的反馈（显式反馈回流，V2 起支持）。
-
-**请求体**
+提交用户对项目的反馈（显式反馈回流，V2 起支持）?
+**请求?*
 ```json
 {
   "project_id": "a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d",
   "signal": "useful",
-  "note": "该项目确实有空投，已参与",     // 可选，最长 500 字符
+  "note": "该项目确实有空投，已参与",     // 可选，最?500 字符
   "outcome": "airdropped"                  // airdropped|not_airdropped|pumped|dumped
 }
 ```
@@ -227,14 +271,12 @@ curl -X POST http://localhost:8000/api/v1/run \
 }
 ```
 
-**错误**：`400` 非法 signal/outcome 枚举；`404` 项目不存在。
-
+**错误**：`400` 非法 signal/outcome 枚举；`404` 项目不存在?
 ---
 
 ## 10. GET /api/v1/feedback
 
-查询用户反馈（供 Dashboard 展示或数据校准使用）。
-
+查询用户反馈（供 Dashboard 展示或数据校准使用）?
 **Query 参数**
 
 | 参数 | 类型 | 默认 | 说明 |
@@ -242,14 +284,14 @@ curl -X POST http://localhost:8000/api/v1/run \
 | `project_id` | string | - | 过滤特定项目 |
 | `signal` | string | - | 过滤 `useful`/`useless`/`wrong_label`/`correct_outcome` |
 | `outcome` | string | - | 过滤 `airdropped`/`not_airdropped`/`pumped`/`dumped` |
-| `limit` | int | 50 | 返回条数，上限 200 |
+| `limit` | int | 50 | 返回条数，上?200 |
 
 **响应 200**
 ```json
 {
   "ok": true,
   "data": [
-    { "id": 1, "project_id": "uuid", "signal": "useful", "outcome": "airdropped", "note": "已参与", "created_at": "2026-07-08 08:00:12" }
+    { "id": 1, "project_id": "uuid", "signal": "useful", "outcome": "airdropped", "note": "已参?, "created_at": "2026-07-08 08:00:12" }
   ]
 }
 ```
@@ -258,17 +300,15 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 ## 11. GET /api/v1/audit
 
-查询审计日志（记录关键操作：run 触发、配置变更、权重切换）。
-
-> MVP 无鉴权（本地使用）；V2 需 API_KEY 鉴权。
-
+查询审计日志（记录关键操作：run 触发、配置变更、权重切换）?
+> MVP 无鉴权（本地使用）；V2 需 API_KEY 鉴权?
 **Query 参数**
 
 | 参数 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `action` | string | - | 过滤 `run`/`re-score`/`config_change`/`weight_change` |
 | `user` | string | - | 过滤触发者（system/手动/API key 名） |
-| `limit` | int | 50 | 返回条数，上限 200 |
+| `limit` | int | 50 | 返回条数，上?200 |
 
 **响应 200**
 ```json
@@ -293,15 +333,12 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 ## 13. POST /api/v1/events
 
-提交隐式行为埋点（V2 起）。前端在 Dashboard 交互时调用，用于后续反馈校准与个性化排序。
-
-**请求体**
+提交隐式行为埋点（V2 起）。前端在 Dashboard 交互时调用，用于后续反馈校准与个性化排序?
+**请求?*
 ```json
 {
-  "project_id": "a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d",  // 可选，全局事件如 page_view 可省略
-  "event_type": "expand",                                // click|expand|feedback|filter_change|page_view
-  "detail": { "duration_ms": 1200, "section": "reason" }   // 事件详情 JSON，按 event_type 自定义
-}
+  "project_id": "a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d",  // 可选，全局事件?page_view 可省?  "event_type": "expand",                                // click|expand|feedback|filter_change|page_view
+  "detail": { "duration_ms": 1200, "section": "reason" }   // 事件详情 JSON，按 event_type 自定?}
 ```
 
 **响应 200**
@@ -309,22 +346,18 @@ curl -X POST http://localhost:8000/api/v1/run \
 { "ok": true, "data": { "id": 1, "event_type": "expand", "created_at": "2026-07-08 08:00:12" } }
 ```
 
-**错误**：`400` 非法 `event_type`。
-
+**错误**：`400` 非法 `event_type`?
 ---
 
 ## 14. POST /api/v1/auth/anonymous
 
-获取匿名用户 token（V2 起）。Dashboard 首次访问时调用，无需鉴权。
-
-**请求体**
+获取匿名用户 token（V2 起）。Dashboard 首次访问时调用，无需鉴权?
+**请求?*
 ```json
 {}
 ```
-或
-```json
-{ "client_id": "optional-stable-id" }  // 可选，用于同一设备/浏览器稳定关联
-```
+?```json
+{ "client_id": "optional-stable-id" }  // 可选，用于同一设备/浏览器稳定关?```
 
 **响应 200**
 ```json
@@ -338,14 +371,12 @@ curl -X POST http://localhost:8000/api/v1/run \
 }
 ```
 
-> Token 有效期 30 天，过期后 Dashboard 自动静默刷新。
-
+> Token 有效?30 天，过期?Dashboard 自动静默刷新?
 ---
 
 ## 15. GET /api/version
 
-版本元信息，供客户端/前端判断是否需要迁移。
-
+版本元信息，供客户端/前端判断是否需要迁移?
 **响应 200**
 ```json
 {
@@ -363,54 +394,261 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 ---
 
-## 16. 数据模型（概要，详见 DATA_SCORING_DICT.md）
+## 16. GET /api/v1/discoveries
 
-- `ProjectRecord`：`id,name,url,sector,stage,score,label,recommendation,confidence,reason[],narrative_json,team_json,risk_json,tokenomics_json,lineage,source,created_at`
-- `NarrativeResult` / `TeamResult` / `RiskResult` / `TokenomicsResult` / `ScoreResult`：见各 Agent 输出字典。
+> v2.0 新增（ADR-012）。查询自动发现的项目列表，支持按数据源、评分、时间筛选?
+**鉴权**: V2 Bearer Token（MVP 无鉴权）
+
+**查询参数**:
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `source` | string | ?| 按发现来源筛选：`defillama`/`github`/`twitter`/`chain`/`manual` |
+| `min_score` | number | ?| discovery_score 下限?-1?|
+| `auto_discovered` | bool | ?| `true` 仅自动发现，`false` 仅手?|
+| `label` | string | ?| FARM/WATCH/IGNORE |
+| `since` | string | ?| 起始时间（UTC，`YYYY-MM-DD`?|
+| `page` | int | 1 | 页码 |
+| `page_size` | int | 20 | 每页条数（max 100?|
+
+**响应示例**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "project_id": "uuid-v5",
+        "name": "LayerX",
+        "sector": "L2",
+        "stage": "testnet",
+        "score": 82,
+        "label": "FARM",
+        "discovery_source": "defillama",
+        "discovered_at": "2026-07-09 08:15:00",
+        "auto_discovered": true,
+        "discovery_score": 0.78,
+        "signal_count": 4
+      }
+    ],
+    "total": 156,
+    "page": 1,
+    "page_size": 20
+  },
+  "error": null
+}
+```
 
 ---
 
-## 17. 版本管理
+## 17. GET /api/v1/discoveries/{id}
 
-- 当前 API 版本：**v1**（稳定版）。
-- 版本元端点：`GET /api/version` 返回当前版本信息（当前/最新/已弃用/已下架版本列表）。
-- 版本策略与弃用流程详见 [ENGINEERING_ROADMAP.md §26](ENGINEERING_ROADMAP.md)。
-- 同一大版本内保证向后兼容（字段仅增不减，响应仅扩不缩）。V2 发布时 v1 进入 Deprecated 状态，至少 90 天弃用窗口。
-- 弃用期间旧版响应头含 `Deprecation: true`、`Sunset` 日期与 `Link` 迁移指引。
+> v2.0 新增（ADR-012）。单个发现项目详情，?raw_projects 原始数据与关?signals?
+**响应示例**:
 
+```json
+{
+  "ok": true,
+  "data": {
+    "project": { "id": "uuid", "name": "LayerX", "..." : "..." },
+    "discovery": {
+      "raw_id": "uuid",
+      "source_id": "defillama",
+      "dedup_key": "layerx::l2",
+      "raw_data": { "tvl": 5000000, "has_token": false },
+      "discovered_at": "2026-07-09 08:15:00",
+      "discovery_score": 0.78
+    },
+    "signals": [
+      {
+        "signal_type": "tvl",
+        "signal_source": "defillama",
+        "signal_data": { "tvl": 5000000 },
+        "signal_strength": 0.5,
+        "captured_at": "2026-07-09 08:15:00"
+      },
+      {
+        "signal_type": "github_activity",
+        "signal_source": "github",
+        "signal_data": { "commits_last_30d": 45 },
+        "signal_strength": 0.9,
+        "captured_at": "2026-07-09 08:30:00"
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+---
+
+## 18. GET /api/v1/discoveries/stats
+
+> v2.0 新增（ADR-012）。发现统计聚合，用于 Dashboard 概览?
+**查询参数**: `since`（起始日期，默认?7 天）
+
+**响应示例**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "total_discovered": 156,
+    "by_source": {
+      "defillama": 89,
+      "github": 32,
+      "twitter": 21,
+      "chain": 14
+    },
+    "by_label": {
+      "FARM": 12,
+      "WATCH": 45,
+      "IGNORE": 99
+    },
+    "daily_trend": [
+      { "date": "2026-07-03", "count": 22 },
+      { "date": "2026-07-04", "count": 31 }
+    ],
+    "avg_discovery_score": 0.42
+  },
+  "error": null
+}
+```
+
+---
+
+## 19. GET /api/v1/collections/sources
+
+> v2.0 新增（ADR-012）。查询所有数据源的当前状态与最近同步信息?
+**响应示例**:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "source_id": "defillama",
+      "source_name": "DefiLlama",
+      "enabled": true,
+      "sync_status": "idle",
+      "last_sync": "2026-07-09 08:00:12",
+      "api_calls_today": 142,
+      "api_limit": null
+    },
+    {
+      "source_id": "twitter",
+      "source_name": "Twitter/X",
+      "enabled": false,
+      "sync_status": "idle",
+      "last_sync": null,
+      "api_calls_today": 0,
+      "api_limit": null
+    }
+  ],
+  "error": null
+}
+```
+
+---
+
+## 20. GET /api/v1/collections/logs
+
+> v2.0 新增（ADR-012）。查询采集日志，用于运维监控与故障排查?
+**查询参数**: `source_id` / `status` / `since` / `page` / `page_size`
+
+---
+
+## 21. POST /api/v1/collections/trigger/{source_id}
+
+> v2.0 新增（ADR-012）。手动触发指定数据源的采集，用于运维测试?
+**鉴权**: V2 Bearer Token（需管理员权限）
+
+**响应**: `202 Accepted`，返回采集任?id?
+```json
+{
+  "ok": true,
+  "data": {
+    "task_id": "uuid",
+    "source_id": "defillama",
+    "status": "queued",
+    "message": "Collection triggered, check logs at /api/v1/collections/logs?source_id=defillama"
+  },
+  "error": null
+}
+```
+
+---
+
+## 22. 数据模型（概要，详见 DATA_SCORING_DICT.md?
+- `ProjectRecord`：`id,name,url,sector,stage,score,label,recommendation,confidence,reason[],narrative_json,team_json,risk_json,tokenomics_json,lineage,source,discovery_source,discovered_at,auto_discovered,signal_count,created_at`
+- `DiscoveryRecord`（v2.0）：`raw_id,source_id,dedup_key,raw_data,discovered_at,processed,discovery_score`
+- `SignalRecord`（v2.0）：`signal_id,project_id,signal_type,signal_source,signal_data,signal_strength,captured_at`
+- `NarrativeResult` / `TeamResult` / `RiskResult` / `TokenomicsResult` / `ScoreResult`：见?Agent 输出字典?
+
+### 22.1 Opportunity v2.0 Shadow API
+
+`opportunity-v2.0` 当前只以 Shadow 模式追加证据和不可变评估快照。`opportunity_shadow_enabled` 默认 `false`，仅控制评分 pipeline 是否自动旁路执行；以下显式 API 在开关关闭时仍可调用。Shadow 结果不会更新 `projects.score`、`projects.label` 或 `projects.recommendation`，现有 `score-v1.4` 标签仍是权威输出。
+
+| 方法 | 路径 | 成功状态码 | 说明 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/projects/{project_id}/opportunity/evidence` | `201` | 追加一条带来源和验证状态的证据 |
+| `GET` | `/api/v1/projects/{project_id}/opportunity/evidence` | `200` | 按时间倒序返回完整证据历史，包括 invalidated 记录 |
+| `POST` | `/api/v1/projects/{project_id}/opportunity/evaluate` | `200` | 显式执行评估并追加不可变快照 |
+| `GET` | `/api/v1/projects/{project_id}/opportunity` | `200` | 返回默认画像的最新快照及 `stale`、`review_due` |
+
+追加证据示例：
+
+```json
+{
+  "factor_key": "participation_open",
+  "value": true,
+  "value_type": "bool",
+  "observation_type": "observed",
+  "source_url": "https://project.example/rules",
+  "source_type": "official_docs",
+  "source_grade": "A",
+  "observed_at": "2026-07-15T11:00:00Z",
+  "verification_status": "verified",
+  "independence_group": "official-rules"
+}
+```
+
+评估响应同时包含内部 `status` 和公开 `public_label`。映射为：`ACTIONABLE → FARM`、`MONITOR/INSUFFICIENT_EVIDENCE → WATCH`、`NOT_FIT → IGNORE`；`BLOCKED` 表示必须先提供可信修复证据，不能因时间经过自动解除。稀疏 legacy 输入不会补中性默认值，而是返回 `INSUFFICIENT_EVIDENCE/WATCH`。完整响应还包含模型/画像版本、概率与经济区间、风险、置信度、原因码、证据 ID、复查和过期时间。
+
+错误：四个端点在项目不存在时返回 `404 PROJECT_NOT_FOUND`；`POST evidence` 的未知因子、值类型不匹配、非法范围或额外字段返回统一 `422 VALIDATION_ERROR`。显式 evaluate 的意外服务/数据库错误按全局 `500` 处理。
+---
+
+## 23. 版本管理
+
+- 当前 API 版本?*v1**（稳定版）?- 版本元端点：`GET /api/version` 返回当前版本信息（当?最?已弃?已下架版本列表）?- 版本策略与弃用流程详?[ENGINEERING_ROADMAP.md §26](ENGINEERING_ROADMAP.md)?- 同一大版本内保证向后兼容（字段仅增不减，响应仅扩不缩）。V2 发布?v1 进入 Deprecated 状态，至少 90 天弃用窗口?- 弃用期间旧版响应头含 `Deprecation: true`、`Sunset` 日期?`Link` 迁移指引?
 ---
 
 ## 18. 错误码表
 
 | 状态码 | 含义 | 触发场景 |
 | --- | --- | --- |
-| 400 | Bad Request | 参数非法（枚举/类型错误） |
+| 400 | Bad Request | 参数非法（枚?类型错误?|
 | 401 | Unauthorized | V2 缺失/错误 API Key |
-| 404 | Not Found | `id` 不存在 |
-| 422 | Validation Error | Pydantic 校验失败（FastAPI 自动） |
-| 500 | Internal Error | agent 执行异常 / DB 不可写 |
+| 404 | Not Found | `id` 不存?|
+| 422 | Validation Error | Pydantic 校验失败（FastAPI 自动?|
+| 500 | Internal Error | agent 执行异常 / DB 不可?|
 
 ---
 
 ## 19. 速率限制
 
-- MVP：不限制。
-- V2：每 IP 60 req/min（超限返回 `429`），Dashboard 轮询与 cron 不受影响。
-
+- MVP：不限制?- V2：每 IP 60 req/min（超限返?`429`），Dashboard 轮询?cron 不受影响?
 ---
 
 
-## 20. 示例：端到端最小流程
-
+## 20. 示例：端到端最小流?
 ```bash
-# 1) 启动服务（见 DEPLOYMENT.md）
-python run.py &
-# 2) 跑分析
-curl -X POST http://localhost:8000/api/v1/run -H 'Content-Type: application/json' -d '{"source":"seed"}'
-# 3) 取 Top 项目
-curl 'http://localhost:8000/api/v1/projects?label=FARM&limit=10'
-# 4) 看详情
-curl http://localhost:8000/api/v1/project/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
+# 1) 启动服务（见 DEPLOYMENT.md?python run.py &
+# 2) 跑分?curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json' -d '{"projects":[{"name":"LayerX","sector":"L2","stage":"testnet","has_testnet":true,"has_points_program":true,"no_token_yet":true,"recent_funding":true}],"enable_llm":false}'
+# 3) ?Top 项目
+curl 'http://localhost:8002/api/v1/projects?label=FARM&limit=10'
+# 4) 看详?curl http://localhost:8002/api/v1/project/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
 # 5) 重算
-curl -X POST http://localhost:8000/api/v1/re-score/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
+curl -X POST http://localhost:8002/api/v1/re-score/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
 ```

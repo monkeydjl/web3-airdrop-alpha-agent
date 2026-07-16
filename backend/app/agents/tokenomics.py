@@ -10,11 +10,10 @@ Reference:
 """
 
 import time
-from typing import Dict
 
 import structlog
 
-from app.agents.base import BaseAgent, PipelineState, AgentError
+from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import TokenomicsResult
 
 logger = structlog.get_logger(__name__)
@@ -22,7 +21,7 @@ logger = structlog.get_logger(__name__)
 
 # Unlock pressure to penalty mapping
 # From DATA_SCORING_DICT.md §5.7.1
-UNLOCK_PENALTY_MAP: Dict[str, float] = {
+UNLOCK_PENALTY_MAP: dict[str, float] = {
     "low": 0.15,
     "medium": 0.35,
     "high": 0.65,
@@ -50,16 +49,24 @@ def estimate_vc_share(project: "RawProject") -> float:
         - No funding signals -> 0.20 (assume some seed funding)
         - Ideation with funding -> 0.35 (early stage, higher VC%)
     """
-    if project.recent_funding:
-        if project.stage == "mainnet":
-            return 0.25
+    fq = float(getattr(project, "funding_quality", 0) or 0)
+    total = getattr(project, "funding_total_usd", None)
+    if fq >= 0.55 or project.recent_funding:
+        # Higher disclosed raise often → higher VC share (heuristic)
+        if total is not None and float(total) >= 20_000_000:
+            base = 0.32
+        elif project.stage == "ideation":
+            base = 0.35
         elif project.stage == "testnet":
-            return 0.30
-        else:  # ideation
-            return 0.35
-    else:
-        # No funding signal - assume lower VC allocation
-        return 0.20
+            base = 0.30
+        elif project.stage == "mainnet":
+            base = 0.25
+        else:
+            base = 0.28
+        if str(getattr(project, "funding_tier", "")).lower() == "tier1":
+            base = min(0.40, base + 0.03)
+        return base
+    return 0.20
 
 
 def estimate_team_share(project: "RawProject") -> float:
@@ -188,10 +195,7 @@ class TokenomicsAgent(BaseAgent):
 
         except Exception as e:
             error = AgentError(
-                agent_name=self.name,
-                kind="tokenomics_error",
-                message=str(e),
-                project_id=state.project.id
+                agent_name=self.name, kind="tokenomics_error", message=str(e), project_id=state.project.id
             )
             state.add_error(error)
 
@@ -204,6 +208,7 @@ class TokenomicsAgent(BaseAgent):
 if __name__ == "__main__":
     # Test tokenomics agent
     import asyncio
+
     from app.agents.base import AgentContext, RawProject
 
     async def test():
@@ -219,7 +224,7 @@ if __name__ == "__main__":
                 stage="mainnet",
                 recent_funding=True,
                 url="https://good.xyz",
-                source="seed"
+                source="seed",
             ),
             # Medium tokenomics: Testnet with funding
             RawProject(
@@ -229,7 +234,7 @@ if __name__ == "__main__":
                 stage="testnet",
                 recent_funding=True,
                 url="https://medium.xyz",
-                source="seed"
+                source="seed",
             ),
             # High risk: Ideation with funding, no URL
             RawProject(
@@ -239,7 +244,7 @@ if __name__ == "__main__":
                 stage="ideation",
                 recent_funding=True,
                 url=None,
-                source="seed"
+                source="seed",
             ),
             # Low allocation: No funding signals
             RawProject(
@@ -249,7 +254,7 @@ if __name__ == "__main__":
                 stage="testnet",
                 recent_funding=False,
                 url="https://low.xyz",
-                source="seed"
+                source="seed",
             ),
         ]
 

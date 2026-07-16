@@ -7,8 +7,8 @@ Reference:
 
 import pytest
 
+from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.collector import CollectorAgent
-from app.agents.base import RawProject, PipelineState, AgentContext
 
 
 @pytest.fixture
@@ -464,12 +464,12 @@ class TestIntegration:
         assert len(projects) == 2
 
         # Find LayerX
-        layerx = [p for p in projects if "layer" in p.name.lower()][0]
+        layerx = next(p for p in projects if "layer" in p.name.lower())
         assert layerx.url == "https://layerx.xyz"  # Seed URL wins
         assert "seed" in layerx.source
         assert "defillama" in layerx.source
 
         # Find RestakeDAO
-        restake = [p for p in projects if "restake" in p.name.lower()][0]
+        restake = next(p for p in projects if "restake" in p.name.lower())
         assert restake.sector == "Restaking"
         assert restake.source == "cryptorank"

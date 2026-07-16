@@ -34,8 +34,8 @@ Start.bat
 - ✅ 检查 Python 环境
 - ✅ 创建虚拟环境
 - ✅ 安装依赖
-- ✅ 启动后端 API (http://localhost:8000)
-- ✅ 启动前端界面 (http://localhost:3000)
+- ✅ 启动后端 API (http://localhost:8002)
+- ✅ 启动前端界面 (http://localhost:3002)
 - ✅ 自动打开浏览器
 
 **停止服务**:
@@ -49,19 +49,25 @@ Stop.bat
 ```bash
 cd backend
 pip install -e .
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8002
 ```
 
 **启动前端**:
 ```bash
 cd frontend
-python -m http.server 3000
+python -m http.server 3002
+```
+
+**导入种子数据**（可选，首次运行查看示例项目）:
+```bash
+cd backend
+make seed
 ```
 
 **访问**:
-- 前端界面: http://localhost:3000
-- API 文档: http://localhost:8000/docs
-- API 端点: http://localhost:8000/api/v1
+- 前端界面: http://localhost:3002
+- API 文档: http://localhost:8002/docs
+- API 端点: http://localhost:8002/api/v1
 
 ### 方式 3: Docker 部署
 
@@ -86,7 +92,7 @@ docker-compose down
 ### Web 界面使用
 
 1. **评分单个项目**
-   - 打开 http://localhost:3000
+   - 打开 http://localhost:3002
    - 填写项目信息（名称、赛道、阶段等）
    - 勾选空投信号（测试网、积分计划等）
    - 点击"开始评分"
@@ -113,7 +119,7 @@ docker-compose down
 
 **评分单个项目**:
 ```bash
-curl -X POST http://localhost:8000/api/v1/run \
+curl -X POST http://localhost:8002/api/v1/run \
   -H 'Content-Type: application/json' \
   -d '{
     "projects": [{
@@ -131,18 +137,18 @@ curl -X POST http://localhost:8000/api/v1/run \
 
 **查询项目列表**:
 ```bash
-curl http://localhost:8000/api/v1/projects?label=FARM&min_score=80
+curl http://localhost:8002/api/v1/projects?label=FARM&min_score=80
 ```
 
 **导出 Excel**:
 ```bash
 curl -o projects.xlsx \
-  "http://localhost:8000/api/v1/export/projects?format=excel&label=FARM"
+  "http://localhost:8002/api/v1/export/projects?format=excel&label=FARM"
 ```
 
 **批量导入**:
 ```bash
-curl -X POST http://localhost:8000/api/v1/import/projects \
+curl -X POST http://localhost:8002/api/v1/import/projects \
   -F "file=@projects.xlsx"
 ```
 
@@ -153,13 +159,13 @@ curl -X POST http://localhost:8000/api/v1/import/projects \
 ```
 ┌─────────────────────────────────────────┐
 │           Web Frontend (HTML)           │
-│         http://localhost:3000           │
+│         http://localhost:3002           │
 └──────────────┬──────────────────────────┘
                │
                ↓
 ┌─────────────────────────────────────────┐
 │         FastAPI Backend                 │
-│      http://localhost:8000/api/v1       │
+│      http://localhost:8002/api/v1       │
 ├─────────────────────────────────────────┤
 │  ┌─────────────────────────────────┐   │
 │  │   Multi-Agent Pipeline          │   │
@@ -322,8 +328,8 @@ MAX_CONCURRENT_PROJECTS=10
 - [DEPLOYMENT.md](DEPLOYMENT.md) - 部署指南
 
 ### API 文档
-- [Swagger UI](http://localhost:8000/docs) - 交互式 API 文档
-- [ReDoc](http://localhost:8000/redoc) - API 参考文档
+- [Swagger UI](http://localhost:8002/docs) - 交互式 API 文档
+- [ReDoc](http://localhost:8002/redoc) - API 参考文档
 - [docs/API_SPEC.md](docs/API_SPEC.md) - API 规格说明
 
 ### 技术文档
@@ -357,7 +363,7 @@ open htmlcov/index.html
 
 ```bash
 # 检查端口占用
-netstat -ano | findstr :8000
+netstat -ano | findstr :8002
 
 # 重新安装依赖
 cd backend
@@ -369,7 +375,7 @@ python --version  # 需要 3.10+
 
 ### 前端无法连接后端
 
-1. 检查后端是否运行: http://localhost:8000/health
+1. 检查后端是否运行: http://localhost:8002/health
 2. 检查浏览器控制台是否有 CORS 错误
 3. 确认 API 地址配置正确（`frontend/index.html` 中的 `API_BASE`）
 

@@ -13,16 +13,16 @@ cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python run.py
-# 服务启动于 http://localhost:8000
+# 本地开发默认 http://localhost:8002（见 IMPLEMENTATION_STATUS）；下列 8000 多指 Docker 映射
 ```
 
 首次启动会自动建库（`backend/data/airdrop.db`）。导入演示数据并跑分析：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/run -H 'Content-Type: application/json' -d '{"source":"seed"}'
+curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json' -d '{"source":"seed"}'
 ```
 
-打开 `http://localhost:8000/`（若挂载了静态前端）或 `frontend/index.html` 预览 Dashboard。
+打开 `http://localhost:8002/`（若挂载了静态前端）或 `frontend/index.html` 预览 Dashboard。
 
 ---
 
@@ -36,7 +36,7 @@ docker build -t airdrop-alpha:latest .
 ### 2.2 单容器运行
 ```bash
 docker run -d --name airdrop-alpha \
-  -p 8000:8000 \
+  -p 8000:8002 \
   -v $(pwd)/data:/app/backend/data \
   -e PORT=8000 \
   airdrop-alpha:latest
@@ -48,9 +48,9 @@ docker compose up -d --build
 ```
 `docker-compose.yml` 定义：
 - `web`：FastAPI 服务，暴露 8000，挂载 `./data` 持久化 SQLite，含 `/health` 健康检查。
-- （可选）`frontend`：Nginx 托管静态 Dashboard，反向代理 `/api` 到 `web:8000`。
+- （可选）`frontend`：Nginx 托管静态 Dashboard，反向代理 `/api` 到 `web:8002`。
 
-访问 `http://localhost:8000`。
+访问 `http://localhost:8002`。
 
 ---
 
@@ -154,7 +154,7 @@ jobs:
 
 | 现象 | 排查 |
 | --- | --- |
-| 端口被占用 | 修改 `PORT` 或释放 8000；`lsof -i:8000` |
+| 端口被占用 | 修改 `PORT` 或释放 8000；`lsof -i:8002` |
 | DB 锁（SQLite busy） | 并发写冲突，确保单写者；V2 换 Postgres |
 | 依赖安装慢/失败 | 使用国内镜像 `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `/run` 无数据 | 检查 `source` 与网络（DefiLlama 需联网）；`seed` 模式离线可用 |

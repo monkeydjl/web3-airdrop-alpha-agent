@@ -2,7 +2,7 @@
 
 > 本文档是基于《Web3 Airdrop Alpha Agent System（完整版工程方案）》拆解出的**可执行的工程路线图**。
 > 目标：把一份"方案/PPT 级"的设计，转成"团队拿到就能开工"的实施计划。
-> 适用范围：MVP → V2 → V3 全周期。当前阶段（用户已确认）为 **规划阶段**，代码实现待 Roadmap 评审通过后再启动。
+> 适用范围：MVP → V2 → V3 全周期。**实现状态**：W1–W4 已完成（见 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)）；本文保留规划全文，与代码冲突时以实现现状表 + 代码为准。
 
 ---
 
@@ -129,30 +129,42 @@ cron
 ---
 
 ## 4. 目标目录结构（最终形态）
+> **实现状态（2026-07-09 更新）**：MVP 已实现并完整落地。下方 `backend/app/` 为**实际已存在的文件结构**（手动输入方向，非 seed 自动采集）。`fetcher/seed/scheduler/backtest/cache/auth` 等曾规划的模块**未实现**，列入文末"V2 规划（尚未实现）"小节。
+
 ```
 Web3 Airdrop Alpha Agent System/
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                 # FastAPI app + 路由
+│   │   ├── main.py                 # FastAPI app + 路由注册（/api/v1/run, /api/v1/projects, /api/v1/export_import 已注册）
 │   │   ├── config.py               # pydantic-settings：权重/阈值/源/LLM/调度
-│   │   ├── models.py               # Pydantic 模型（Result 系列 + AgentContext）
-│   │   ├── db.py                   # SQLite/SQLAlchemy 数据层（WAL，V2 切 PG）
-│   │   ├── fetcher.py              # 统一外部源 fetcher（缓存/重试/熔断，§10.1）
-│   │   ├── seed.py                 # MVP 演示种子数据
-│   │   ├── scheduler.py            # APScheduler 定时触发（ADR-005）
-│   │   ├── backtest.py             # 权重回测（V2，§7.9）
-│   │   └── agents/
+│   │   ├── models.py               # Pydantic 模型（RawProject / AgentResult 系列 + AgentContext）
+│   │   ├── db.py                   # SQLite 数据层（WAL）
+│   │   ├── repository.py           # 数据访问层（projects 读写封装）
+│   │   ├── export.py               # 项目导出（CSV/JSON）
+│   │   ├── import_utils.py         # 项目导入工具
+│   │   ├── openapi.py              # OpenAPI 自定义配置
+│   │   ├── agents/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py             # BaseAgent + RawProject + PipelineState + AgentContext（§6.1）
+│   │   │   ├── collector.py        # Collector（MVP 由 run.py 的 ProjectInput 手动输入驱动）
+│   │   │   ├── narrative.py        # Narrative Agent（已落地）
+│   │   │   ├── team.py             # Team Agent（已落地）
+│   │   │   ├── risk.py             # Risk Agent（已落地）
+│   │   │   ├── tokenomics.py       # Tokenomics Agent（已落地）
+│   │   │   ├── scorer.py           # Scorer（加权评分，已落地，§7）
+│   │   │   ├── orchestrator.py     # Orchestrator（并行编排）
+│   │   │   └── orchestrator_simple.py  # SimpleOrchestrator（串行处理多项目）
+│   │   ├── routers/
+│   │   │   └── v1/
+│   │   │       ├── __init__.py
+│   │   │       ├── run.py          # POST /api/v1/run（ProjectInput + RunRequest，手动输入方向）
+│   │   │       ├── projects.py     # GET /api/v1/projects
+│   │   │       └── export_import.py # /api/v1/export_import 导出导入端点
+│   │   └── utils/
 │   │       ├── __init__.py
-│   │       ├── base.py             # BaseAgent + PipelineState + AgentContext（§6.1）
-│   │       ├── collector.py
-│   │       ├── narrative.py
-│   │       ├── team.py
-│   │       ├── risk.py
-│   │       ├── tokenomics.py
-│   │       ├── scorer.py
-│   │       ├── orchestrator.py
-│   │       └── prompts/            # LLM prompt 模板（版本化，§19.2）
+│   │       ├── fetcher.py          # 统一外部源 fetcher（缓存/重试/熔断，§10.1）
+│   │       └── normalize.py        # 归一化/去重工具（§6.2.1）
 │   ├── requirements.txt
 │   └── run.py                      # uvicorn 入口
 ├── frontend/
@@ -173,8 +185,16 @@ Web3 Airdrop Alpha Agent System/
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore
-└── README.md
-```
+ └── README.md
+ ```
+
+> **注：以下为 V2 规划，尚未实现**（Roadmap 目标形态，非当前代码）：
+> - `backend/app/seed.py` — MVP 演示种子数据（当前 MVP 为手动输入方向，无 seed 模块）
+> - `backend/app/scheduler.py` — APScheduler 定时触发（ADR-005），当前由外部 cron / 手动 `POST /run` 触发
+> - `backend/app/backtest.py` — 权重回测（V2，§7.9）
+> - `backend/app/cache.py` — 竞争度缓存（V2，ADR-010，§7.5.1）
+> - `backend/app/auth.py` + `middleware/` — 鉴权逻辑与中间件（V2+）
+> - `backend/app/agents/prompts/` — LLM prompt 模板版本化（§19.2，当前 prompt 内联）
 
 ---
 
@@ -410,16 +430,18 @@ class PipelineState:
 
 ### 6.2 Collector Agent
 - **职责**：持续发现 Web3 新项目，产出 `RawProject[]`。
-- **MVP 数据源（静态/种子）**：内置 `seed.py` 示例项目（LayerX 等）。
-- **V2 数据源（真实）**：
-  - DefiLlama `/protocols` 与 `/new` 端点（新协议）。
-  - CryptoRank 项目库 API。
-  - Twitter 关键词扫描（见 §10）。
+- **v2.0 方向（ADR-012，自动扫描为主）**：Collector 从被动接收转为**主动采集**，通过多数据源自动发现未空投的早期项目。
+  - **P0 核心采集源**：DefiLlama（全量协议扫描，每日）/ GitHub（仓库活跃度，每日）/ CoinGecko（代币状态验证，每日）/ Twitter（VC/KOL + 关键词，每小时或实时流）。
+  - **P1 增强源**：链上（新合约监控，webhook）/ Galxe/Layer3（任务平台扫描）/ CryptoRank（融资数据）。
+  - **手动输入（补充）**：保留 `POST /api/v1/run` 手动输入路径作为补充，覆盖采集盲区。
+  - **双调度**：采集调度器（按源不同频率）+ 分析调度器（新项目入队即触发）。详见 `DATA_SOURCE_STRATEGY.md §双调度模型`。
 - **输出结构**（对齐设计文档 `proj`）：
 ```json
 { "id":"uuid", "name":"LayerX", "url":"...", "sector":"L2",
-  "stage":"testnet", "raw_signals": { "has_points": true, "airdrop_hint": true } }
+  "stage":"testnet", "raw_signals": { "has_points": true, "airdrop_hint": true, "sources": ["defillama", "github"] } }
 ```
+- **新项目识别**：硬规则过滤（未发币 + 活跃度达标），`discovery_score ≥ 0.3` 才进入分析管道。详见 `DATA_SOURCE_STRATEGY.md §新项目识别规则`。
+- **LLM 分级使用**：仅 `discovery_score ≥ 0.7` 的高价值项目启用 LLM 增强（ADR-012），其余走规则引擎。
 
 #### 6.2.1 归一化与去重（关键）
 不同来源对同一项目命名/大小写/前后缀不一致，必须归一化后再去重：
@@ -441,8 +463,19 @@ class PipelineState:
 - 项目 `id` 由 `dedup_key` 的确定性 UUID v5（namespace + dedup_key）生成，**保证跨 run 稳定**，避免重复入库产生新 id。
 - `re-score` 端点对同一 `id` 并发调用靠 SQLite WAL + 应用层 `threading.Lock`（MVP）/ 行锁（V2 PG）串行化。
 
-### 6.2.4 MVP 种子数据约定（关键）
-MVP 数据源为 `seed.py`（人工 curated），除 `RawProject` 必备字段（`id/name/sector/stage/raw_signals`）外，**应直接携带各分析 agent 所需的策划字段**，使 MVP 规则引擎能产出非中性评分（而非全部走 §7.6 缺失降级）。约定 seed 项目额外携带：
+### 6.2.4 输入数据约定（关键，v2.0 更新 ADR-012）
+
+> **v2.0 方向反转**：系统从"手动输入为主"转为"自动扫描为主"。手动输入路径保留为补充能力。
+
+**自动扫描路径（v2.0 主路径）**：
+- Collector 从多数据源（DefiLlama/GitHub/CoinGecko/Twitter 等）自动采集项目，写入 `raw_projects` 表。
+- 经 `discovery_score` 过滤后，自动进入分析管道。
+- 各分析 agent 所需字段（`heat_score`/`team_score`/`vc_share` 等）由对应 agent 从采集信号推导，不再依赖用户输入。
+
+**手动输入路径（补充能力）**：
+- `POST /api/v1/run` 接收 `RunRequest{ projects: ProjectInput[], enable_llm, llm_model }` 扁平字段。
+- 用于覆盖采集盲区（未上 DefiLlama 的新项目、未公开代码库的项目）。
+- 手动输入项目可额外携带策划字段（见下表），使规则引擎能产出非中性评分。
 
 | 字段（在 RawProject 扩展） | 消费方 | 说明 |
 | --- | --- | --- |
@@ -454,8 +487,9 @@ MVP 数据源为 `seed.py`（人工 curated），除 `RawProject` 必备字段�
 | `vc_share` / `team_share` | Tokenomics | VC/团队占比（0–1） |
 | `unlock_pressure` | Tokenomics | `low/medium/high` |
 
-- 这些字段为 MVP 演示用，**V2 真实源接入后由对应 agent 从外部数据推导，不再依赖 seed 携带**。
-- `confidence` 仍按实际成功产出的 agent 数计算；seed 全字段齐备时 `confidence=1.0`。
+- 自动采集路径下，这些字段由 agent 从 `project_signals` 表的信号推导，不依赖用户携带。
+- 手动输入路径下，用户可直接携带上述字段（MVP 演示用）。
+- `confidence` 仍按实际成功产出的 agent 数计算；全字段齐备时 `confidence=1.0`。
 - `W4-03` 种子数据任务验收需包含上述字段（见 TASK_BREAKDOWN）。
 
 ### 6.3 Narrative Engine（赛道周期）

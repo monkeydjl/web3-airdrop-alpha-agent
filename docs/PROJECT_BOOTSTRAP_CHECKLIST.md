@@ -34,12 +34,12 @@
 | 9 | CI/CD 流水线 | §15 | ✅ 完成 | ci.yml / security.yml / release.yml |
 | 10 | PR 模板 | §6 | ✅ 完成 | 16 项自查清单 |
 | 11 | Issue 模板 | §16 | ✅ 完成 | Bug Report + Feature Request + Meeting Notes |
-| 12 | 测试骨架 | §12 | ✅ 完成 | `tests/` + `conftest.py` + `__init__.py` |
+| 12 | 测试套件 | §12 | ✅ 完成 | `tests/` 含 unit（agents/models/collector/fetcher/normalize/base_agent/orchestrator）/contracts/golden/api/e2e/load + `conftest.py` + `__init__.py` |
 | 13 | 启动检查清单 | §18 | ✅ 完成 | 本文档 |
 | 14 | pyproject.toml | §7 | ✅ 完成 | ruff/mypy/pytest/项目元数据 |
 | 15 | .editorconfig | §7 | ✅ 完成 | 跨编辑器格式统一 |
 | 16 | Makefile | §1 | ✅ 完成 | 开发常用命令 |
-| 17 | 后端应用骨架 | §1 | ✅ 完成 | backend/app/ (config/db/main/models) |
+| 17 | 后端应用实现 | §1 | ✅ 完成 | backend/app/ 完整实现（config/db/main/models/routers[v1: run/projects/export_import]/agents[base + 4 分析 Agent + scorer + orchestrator]/export/import_utils/utils） |
 
 ---
 
@@ -62,10 +62,20 @@
 | 13 | Git 策略文档 | §6 | ✅ 完成 | `docs/GIT_STRATEGY.md`（完整 Version/Release/Tag/Hotfix/Rollback 流程）+ `CONVENTIONS.md §11` |
 | 14 | CHANGELOG | §16 | ✅ 完成 | `CHANGELOG.md` |
 | 15 | CONTRIBUTING | §6 | ✅ 完成 | `CONTRIBUTING.md` |
-| 16 | 测试骨架可运行 | §12 | ✅ 完成 | `tests/` 含 unit/contracts/golden/api + 22 passed |
+| 16 | 测试套件可运行 | §12 | ✅ 完成 | `tests/` 含完整测试（unit/contracts/golden/api/e2e/load，覆盖 agents 单元测试、orchestrator、models、scorer、collector、fetcher、normalize、base_agent、golden cases、export/import、codegen 等） |
 | 17 | 文档 00-15 编号索引 | §2 | ✅ 完成 | `docs/00_index.md` 编号映射 |
 | 18 | 测试框架规范 | §12 | ✅ 完成 | `docs/TESTING_FRAMEWORK.md`（12 节，含 LLM Evaluation / Prompt Benchmark / Regression / 自动化测试规范） |
 | 19 | LLM 评估脚本 | §12 | ✅ 完成 | `evaluation/llm/template_validation.py`（模板校验 + LLM 评估 + Benchmark，被多处 README 引用） |
+| 20 | 系统方向决策文档 | §2 | ✅ 完成 | `docs/SYSTEM_DIRECTION_CHANGE.md` v2.0（方向反转：手动→自动扫描，含 KPI/迁移/备选方案） |
+| 21 | 数据源策略文档 | §2 | ✅ 完成 | `docs/DATA_SOURCE_STRATEGY.md` v2.0（采集管道/双调度/识别规则/降级矩阵/保留策略/质量指标） |
+| 22 | 方向反转 ADR | §3 | ✅ 完成 | `docs/adr/ADR-012-system-direction-auto-scan.md`（含 LLM 分级使用子决策） |
+| 23 | 采集表 DDL | §1 | ✅ 完成 | `DATABASE_DDL.md` §2.13-2.19（4 张采集表 + 2 张归档表 + projects 扩展字段 + 归档脚本） |
+| 24 | 采集源配置 | §11 | ✅ 完成 | `.env.example` + `backend/app/config.py` 新增 8 类采集源字段 + 采集调度器 + LLM 分级阈值 |
+| 25 | 采集 API 端点 | §6 | ✅ 完成 | `API_SPEC.md` §16-21（/discoveries × 3 + /collections × 3，含请求/响应示例） |
+| 26 | 采集安全白名单 | §14 | ✅ 完成 | `SECURITY.md` §10.2 Collector 权限调整为采集源白名单 + §10.3 网络级白名单对齐 |
+| 27 | 采集故障 runbook | §13 | ✅ 完成 | `OPERATIONS.md` §4.3 扩充（L1-L4 四级故障 + 采集质量退化，含降级矩阵对齐） |
+| 28 | 采集监控指标 | §13 | ✅ 完成 | `OBSERVABILITY.md` §3.2 采集层 13 个 metrics + §5.2 采集告警规则 6 条 |
+| 29 | 采集数据质量 | §13 | ✅ 完成 | `DATA_QUALITY.md` §6.1 采集质量 6 维度 + §6 新增 5 个采集源 reliability 分级 |
 
 ---
 
@@ -89,12 +99,13 @@
 | 级别 | 总计 | 完成 | 未开始 | 完成率 |
 | --- | --- | --- | --- | --- |
 | **P0** | 17 | 17 | 0 | **100%** |
-| **P1** | 19 | 19 | 0 | **100%** |
+| **P1** | 29 | 29 | 0 | **100%** |
 | **P2** | 8 | 8 | 0 | **100%** |
-| **总计** | 44 | 44 | 0 | **100%** |
+| **总计** | 54 | 54 | 0 | **100%** |
 
 > ✅ P0 + P1 + P2 全部完成。Bootstrap 工程基础设施已达进入业务开发标准。
 > v1.4 架构师审查补充：AI 特有安全（SECURITY.md §10）、完整 Git 策略（GIT_STRATEGY.md）、测试框架规范（TESTING_FRAMEWORK.md）、LLM 评估脚本（template_validation.py）。
+> **v2.0 方向反转补充（ADR-012）**：系统方向决策文档、数据源策略文档、方向反转 ADR、采集表 DDL、采集源配置、采集 API 端点、采集安全白名单、采集故障 runbook、采集监控指标、采集数据质量。设计层面方向反转已完成，关联文档全部对齐。
 
 ---
 
@@ -106,6 +117,23 @@
 | `docs/GIT_STRATEGY.md` | 完整 Git 工作流（分支/提交/版本/发布/Tag/Code Review/Hotfix/Rollback/CHANGELOG） | P1 |
 | `docs/TESTING_FRAMEWORK.md` | 测试框架规范（12 节：Unit/Contract/Golden/API/E2E/Load/LLM Eval/Prompt Benchmark/Regression/自动化规范） | P1 |
 | `evaluation/llm/template_validation.py` | LLM 评估脚本（模板校验 + LLM 评估 + Benchmark + 阈值告警 + 历史指标） | P1 |
+
+## 新增文件清单（v2.0 方向反转补充，ADR-012）
+
+| 文件 | 用途 | 优先级 |
+| --- | --- | --- |
+| `docs/SYSTEM_DIRECTION_CHANGE.md` v2.0 | 系统方向反转决策（手动→自动扫描，含 KPI/数据迁移/备选方案） | P1 |
+| `docs/DATA_SOURCE_STRATEGY.md` v2.0 | 数据源策略（采集管道/双调度/识别规则/降级矩阵/保留策略/质量指标） | P1 |
+| `docs/adr/ADR-012-system-direction-auto-scan.md` | 方向反转 ADR（含 LLM 分级使用子决策） | P1 |
+| `DATABASE_DDL.md` §2.13-2.19 | 4 张采集表 + 2 张归档表 + projects 扩展字段 + 归档脚本 | P1 |
+| `.env.example` + `backend/app/config.py` | 8 类采集源配置 + 采集调度器 cron + LLM 分级阈值 + 采集质量阈值 | P1 |
+| `API_SPEC.md` §16-21 | 6 个新端点（/discoveries × 3 + /collections × 3） | P1 |
+| `SECURITY.md` §10.2-10.3 | Collector 权限调整为采集源白名单 + 网络级白名单对齐 | P1 |
+| `ENGINEERING_ROADMAP.md` §6.2 | Collector Agent 章节重写为自动扫描 + 输入数据约定更新 | P1 |
+| `CONVENTIONS.md` §2 | 实现状态说明更新为自动扫描方向 | P1 |
+| `OPERATIONS.md` §4.3 | 采集故障 runbook（L1 限流/L2 故障/L3 停服/L4 付费超限 + 采集质量退化 + 5 个采集监控项） | P1 |
+| `OBSERVABILITY.md` §3.2+§5.2 | 采集层 13 个 metrics 定义 + 6 条采集告警规则 | P1 |
+| `DATA_QUALITY.md` §6+§6.1 | 5 个采集源 reliability 分级 + 采集质量 6 维度（映射到数据质量维度） | P1 |
 
 ---
 
