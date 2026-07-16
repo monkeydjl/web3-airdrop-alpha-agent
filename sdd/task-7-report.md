@@ -119,19 +119,21 @@ E       assert 'COPY data/' not in '# ...'
 
 Commands were run from `backend`.
 
+This section records fresh branch-head verification updates for current-reference docs only. Historical implementation plan text remains unchanged because those files document the baseline that was current when the plans were written.
+
 ### Strict backend full suite
 
 ## `python -m pytest --strict-markers --strict-config --cov=app --cov-report=term-missing`
 
 ```text
-1523 passed, 1 skipped in 107.95s
+1524 passed, 1 skipped in 106.37s
 TOTAL coverage: 84.44%
 ```
 
 ### Documentation updates
 
-- Updated `README.md` verified test baseline to `1,523 passed, 1 skipped`; retained rounded README coverage as `84%` because `84.44%` rounds to `84%` at whole-percent badge/stat precision.
-- Updated `docs/IMPLEMENTATION_STATUS.md` exact verified baseline to `1,523 passed / 1 skipped` and `84.44%` coverage.
+- Updated `README.md` verified test baseline to `1,524 passed, 1 skipped`; retained rounded README coverage as `84%` because `84.44%` rounds to `84%` at whole-percent badge/stat precision.
+- Updated `docs/IMPLEMENTATION_STATUS.md` exact verified baseline to `1,524 passed / 1 skipped` and `84.44%` coverage.
 - Updated `docs/superpowers/specs/2026-07-16-shadow-rollout-observability-design.md` because it states current verified facts rather than historical execution notes.
 - Left `docs/superpowers/plans/2026-07-16-shadow-rollout-observability.md` unchanged because it is historical plan text documenting the baseline that was current when that plan was written.
 
