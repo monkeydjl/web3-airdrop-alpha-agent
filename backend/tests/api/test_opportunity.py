@@ -470,7 +470,8 @@ def test_health_registers_shadow_capability_without_claiming_replacement(client)
     assert response.status_code == 200
     body = response.json()
     assert body["opportunity_model_version"] == "opportunity-v2.0"
-    assert body["opportunity_shadow_enabled"] is getattr(settings, "opportunity_shadow_enabled", False)
+    assert body["opportunity_shadow_enabled"] is settings.opportunity_shadow_enabled
+    assert body["opportunity_shadow_sample_rate"] == settings.opportunity_shadow_sample_rate
     assert "replace" not in str(body).lower()
 
 

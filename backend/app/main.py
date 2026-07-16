@@ -313,7 +313,8 @@ def create_app(db_override=None) -> FastAPI:
             "auth_required": bool((settings.api_key or "").strip()),
             "feedback_enabled": settings.enable_feedback_system,
             "opportunity_model_version": "opportunity-v2.0",
-            "opportunity_shadow_enabled": getattr(settings, "opportunity_shadow_enabled", False),
+            "opportunity_shadow_enabled": settings.opportunity_shadow_enabled,
+            "opportunity_shadow_sample_rate": settings.opportunity_shadow_sample_rate,
         }
 
     # ── Prometheus metrics ─────────────────────
