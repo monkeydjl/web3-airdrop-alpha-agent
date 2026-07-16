@@ -9,6 +9,8 @@ Reference:
 - docs/ENGINEERING_ROADMAP.md §20
 """
 
+from typing import Mapping
+
 import structlog
 from prometheus_client import (
     Counter,
@@ -43,6 +45,44 @@ PROJECTS_BY_LABEL = Counter(
     "airdrop_projects_by_label_total",
     "Projects scored grouped by final label.",
     ["label"],
+)
+
+# ── Opportunity Shadow metrics ───────────────────────────────────
+OPPORTUNITY_SHADOW_PROJECT_RESULTS = (
+    "eligible",
+    "sampled",
+    "attempted",
+    "saved",
+    "failed",
+    "skipped",
+)
+
+OPPORTUNITY_SHADOW_PROJECTS = Counter(
+    "airdrop_opportunity_shadow_projects_total",
+    "Automatic Opportunity Shadow projects by batch result.",
+    ["result"],
+)
+
+OPPORTUNITY_SHADOW_ASSESSMENTS = Counter(
+    "airdrop_opportunity_shadow_assessments_total",
+    "Persisted Opportunity Shadow assessments by bounded model outcome.",
+    ["status", "public_label", "model_version", "profile_version"],
+)
+
+OPPORTUNITY_SHADOW_DURATION = Histogram(
+    "airdrop_opportunity_shadow_duration_seconds",
+    "Automatic Opportunity Shadow selected-batch duration.",
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+)
+
+OPPORTUNITY_SHADOW_ENABLED = Gauge(
+    "airdrop_opportunity_shadow_enabled",
+    "Whether automatic Opportunity Shadow evaluation is enabled.",
+)
+
+OPPORTUNITY_SHADOW_SAMPLE_RATE = Gauge(
+    "airdrop_opportunity_shadow_sample_rate",
+    "Configured deterministic Opportunity Shadow sample rate.",
 )
 
 # ── Collection metrics ──────────────────────────────────────────────
@@ -121,6 +161,57 @@ class MetricsExporter:
     @staticmethod
     def render() -> bytes:
         return generate_latest()
+
+
+def _assessment_metric_value(assessment: object, attribute: str) -> str:
+    value = getattr(assessment, attribute, None)
+    if value is None:
+        return "unknown"
+    enum_value = getattr(value, "value", None)
+    return str(enum_value) if enum_value is not None else str(value)
+
+
+def set_opportunity_shadow_rollout(enabled: bool, sample_rate: float) -> None:
+    try:
+        if not MetricsExporter.is_enabled():
+            return
+        OPPORTUNITY_SHADOW_ENABLED.set(1 if enabled else 0)
+        OPPORTUNITY_SHADOW_SAMPLE_RATE.set(sample_rate)
+    except Exception as error:
+        logger.warning("metrics.opportunity_shadow_update_failed", error=str(error))
+
+
+def record_opportunity_shadow_projects(stats: Mapping[str, int]) -> None:
+    try:
+        if not MetricsExporter.is_enabled():
+            return
+        for result in OPPORTUNITY_SHADOW_PROJECT_RESULTS:
+            OPPORTUNITY_SHADOW_PROJECTS.labels(result=result).inc(stats.get(result, 0))
+    except Exception as error:
+        logger.warning("metrics.opportunity_shadow_update_failed", error=str(error))
+
+
+def record_opportunity_shadow_assessment(assessment: object) -> None:
+    try:
+        if not MetricsExporter.is_enabled():
+            return
+        OPPORTUNITY_SHADOW_ASSESSMENTS.labels(
+            status=_assessment_metric_value(assessment, "status"),
+            public_label=_assessment_metric_value(assessment, "public_label"),
+            model_version=_assessment_metric_value(assessment, "model_version"),
+            profile_version=_assessment_metric_value(assessment, "profile_version"),
+        ).inc()
+    except Exception as error:
+        logger.warning("metrics.opportunity_shadow_update_failed", error=str(error))
+
+
+def observe_opportunity_shadow_duration(duration_seconds: float) -> None:
+    try:
+        if not MetricsExporter.is_enabled():
+            return
+        OPPORTUNITY_SHADOW_DURATION.observe(duration_seconds)
+    except Exception as error:
+        logger.warning("metrics.opportunity_shadow_update_failed", error=str(error))
 
 
 def update_db_gauges(conn) -> None:

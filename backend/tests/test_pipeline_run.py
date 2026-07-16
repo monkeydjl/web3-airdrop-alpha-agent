@@ -211,6 +211,79 @@ class TestRunOpportunityShadow:
         assert stats == EMPTY_SHADOW_STATS
         service_factory.assert_not_called()
 
+    def test_records_saved_assessment_and_batch_summary(self, monkeypatch):
+        assessment = SimpleNamespace(
+            status="MONITOR",
+            public_label="WATCH",
+            model_version="opportunity-v2.0",
+            profile_version="low-cost-curated-multiwallet-v1",
+        )
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.evaluate_row.return_value = assessment
+        recorded = []
+        monkeypatch.setattr("app.pipeline_run.record_opportunity_shadow_assessment", recorded.append)
+        monkeypatch.setattr(
+            "app.pipeline_run.record_opportunity_shadow_projects",
+            lambda stats: recorded.append(stats.copy()),
+        )
+
+        stats = run_opportunity_shadow(
+            [{"id": "project-1", "score": 80}],
+            enabled=True,
+            sample_rate=1.0,
+            service_factory=Mock(return_value=service),
+        )
+
+        assert recorded == [assessment, stats]
+
+    def test_metrics_failure_cannot_change_shadow_result(self, monkeypatch):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        monkeypatch.setattr(
+            "app.pipeline_run.record_opportunity_shadow_assessment",
+            Mock(side_effect=RuntimeError("metrics failed")),
+        )
+        monkeypatch.setattr(
+            "app.pipeline_run.record_opportunity_shadow_projects",
+            Mock(side_effect=RuntimeError("metrics failed")),
+        )
+
+        stats = run_opportunity_shadow(
+            [{"id": "project-1", "score": 80}],
+            enabled=True,
+            sample_rate=1.0,
+            service_factory=Mock(return_value=service),
+        )
+
+        assert stats["saved"] == 1
+        assert stats["failed"] == 0
+
+    @pytest.mark.parametrize(
+        ("enabled", "sample_rate", "expected_duration_calls"),
+        [(False, 1.0, 0), (True, 0.0, 0), (True, 1.0, 1)],
+    )
+    def test_records_rollout_summary_on_every_path_and_duration_only_when_sampled(
+        self, monkeypatch, enabled, sample_rate, expected_duration_calls
+    ):
+        summary = Mock()
+        duration = Mock(side_effect=RuntimeError("metrics failed"))
+        service = MagicMock()
+        service.__enter__.return_value = service
+        monkeypatch.setattr("app.pipeline_run.record_opportunity_shadow_projects", summary)
+        monkeypatch.setattr("app.pipeline_run.observe_opportunity_shadow_duration", duration)
+
+        stats = run_opportunity_shadow(
+            [{"id": "project-1", "score": 80}],
+            enabled=enabled,
+            sample_rate=sample_rate,
+            service_factory=Mock(return_value=service),
+        )
+
+        summary.assert_called_once_with(stats)
+        assert set(summary.call_args.args[0]) == set(EMPTY_SHADOW_STATS)
+        assert duration.call_count == expected_duration_calls
+
 
 def test_sampled_out_rows_do_not_construct_service():
     service_factory = Mock()
@@ -249,6 +322,7 @@ def test_all_in_summary_counts_unscored_rows_as_ineligible():
 @pytest.mark.asyncio
 async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     events = []
+    rollout_metric = Mock()
     project = RawProject(id="project-1", name="Project One")
     response = SimpleNamespace(
         run_id="run-1",
@@ -274,6 +348,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
         return function(*args, **kwargs)
 
     monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+    monkeypatch.setattr("app.pipeline_run.set_opportunity_shadow_rollout", rollout_metric)
     monkeypatch.setattr("app.pipeline_run.run_opportunity_shadow", fake_shadow)
     monkeypatch.setattr("app.pipeline_run.asyncio.to_thread", fake_to_thread)
     monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_enabled", True)
@@ -311,6 +386,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     ):
         assert events.index(legacy_event) < events.index("to-thread")
     assert events.index("to-thread") < events.index("shadow-evaluated")
+    rollout_metric.assert_called_once_with(True, 1.0)
     assert result["opportunity_shadow"] == EMPTY_SHADOW_STATS
 
 

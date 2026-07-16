@@ -24,6 +24,10 @@ from app.metrics import (
     PIPELINE_RUNS,
     PROJECTS_BY_LABEL,
     PROJECTS_SCORED,
+    observe_opportunity_shadow_duration,
+    record_opportunity_shadow_assessment,
+    record_opportunity_shadow_projects,
+    set_opportunity_shadow_rollout,
     update_db_gauges,
 )
 from app.opportunity.service import OpportunityService
@@ -40,6 +44,13 @@ OPPORTUNITY_SHADOW_EMPTY_STATS = {
     "skipped": 0,
 }
 OPPORTUNITY_SHADOW_BUCKETS = 10_000
+
+
+def _record_shadow_metric(callback, *args) -> None:
+    try:
+        callback(*args)
+    except Exception as error:
+        logger.warning("pipeline.opportunity_shadow_metrics_failed", error=str(error))
 
 
 def opportunity_shadow_bucket(project_id: str) -> int:
@@ -63,50 +74,58 @@ def run_opportunity_shadow(
 ) -> dict[str, int]:
     """Persist opportunity assessments without changing legacy pipeline state."""
     stats = OPPORTUNITY_SHADOW_EMPTY_STATS.copy()
-    if not enabled:
-        return stats
-
-    eligible_rows = [row for row in persisted_project_rows if row.get("score") is not None]
-    stats["eligible"] = len(eligible_rows)
-    sampled_rows = [
-        row for row in eligible_rows if is_opportunity_shadow_sampled(row.get("id"), sample_rate)
-    ]
-    stats["sampled"] = len(sampled_rows)
-    stats["skipped"] = stats["eligible"] - stats["sampled"]
-    if not sampled_rows:
-        return stats
-
-    service_factory = service_factory or OpportunityService
+    shadow_start = None
     try:
-        service_context = service_factory()
-    except Exception as error:
-        logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="constructor", error=str(error))
-        return stats
-    try:
-        service = service_context.__enter__()
-    except Exception as error:
-        logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="enter", error=str(error))
-        return stats
+        if not enabled:
+            return stats
 
-    try:
-        for row in sampled_rows:
-            stats["attempted"] += 1
-            try:
-                service.evaluate_row(row)
-                stats["saved"] += 1
-            except Exception as error:
-                stats["failed"] += 1
-                logger.warning(
-                    "pipeline.opportunity_shadow_failed",
-                    project_id=row.get("id"),
-                    error=str(error),
-                )
-    finally:
+        eligible_rows = [row for row in persisted_project_rows if row.get("score") is not None]
+        stats["eligible"] = len(eligible_rows)
+        sampled_rows = [
+            row for row in eligible_rows if is_opportunity_shadow_sampled(row.get("id"), sample_rate)
+        ]
+        stats["sampled"] = len(sampled_rows)
+        stats["skipped"] = stats["eligible"] - stats["sampled"]
+        if not sampled_rows:
+            return stats
+
+        shadow_start = time.perf_counter()
+        service_factory = service_factory or OpportunityService
         try:
-            service_context.__exit__(None, None, None)
+            service_context = service_factory()
         except Exception as error:
-            logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="exit", error=str(error))
-    return stats
+            logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="constructor", error=str(error))
+            return stats
+        try:
+            service = service_context.__enter__()
+        except Exception as error:
+            logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="enter", error=str(error))
+            return stats
+
+        try:
+            for row in sampled_rows:
+                stats["attempted"] += 1
+                try:
+                    assessment = service.evaluate_row(row)
+                    stats["saved"] += 1
+                    _record_shadow_metric(record_opportunity_shadow_assessment, assessment)
+                except Exception as error:
+                    stats["failed"] += 1
+                    logger.warning(
+                        "pipeline.opportunity_shadow_failed",
+                        project_id=row.get("id"),
+                        error=str(error),
+                    )
+        finally:
+            try:
+                service_context.__exit__(None, None, None)
+            except Exception as error:
+                logger.warning("pipeline.opportunity_shadow_lifecycle_failed", phase="exit", error=str(error))
+        return stats
+    finally:
+        _record_shadow_metric(record_opportunity_shadow_projects, stats)
+        if stats["sampled"] > 0:
+            _record_shadow_metric(observe_opportunity_shadow_duration, time.perf_counter() - shadow_start)
 
 
 def mark_successful_raw_projects(
@@ -160,6 +179,11 @@ async def execute_analysis_pipeline(
 
     Returns a dict suitable for RunResponse.data.
     """
+    _record_shadow_metric(
+        set_opportunity_shadow_rollout,
+        settings.opportunity_shadow_enabled,
+        settings.opportunity_shadow_sample_rate,
+    )
     PIPELINE_RUNS.labels(trigger=trigger).inc()
     start_time = time.perf_counter()
 
