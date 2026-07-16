@@ -59,7 +59,7 @@ jobs:
 
   # ── Phase 2: Tests ───────────────────────
   test:
-    name: Tests (Unit + Contract + Golden)
+    name: Full Backend Test Suite
     needs: lint
     runs-on: ubuntu-latest
     defaults:
@@ -85,27 +85,17 @@ jobs:
           fi
           pip install pytest pytest-cov
 
-      - name: Run unit tests
-        run: pytest tests/unit -v --cov=app --cov-report=term --cov-report=xml
+      - name: Run full backend test suite
+        run: >-
+          pytest tests -q
+          --cov=app
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=80
+          -W error::DeprecationWarning
+          -W error::ResourceWarning
+          -W error::pytest.PytestUnraisableExceptionWarning
         continue-on-error: false
-
-      - name: Run contract tests
-        run: pytest tests/contracts -v
-        continue-on-error: false
-
-      - name: Run golden regression tests
-        run: pytest tests/golden -v
-        continue-on-error: false
-
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('coverage.xml'); print(tree.getroot().attrib['line-rate'])")
-          THRESHOLD=0.80
-          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
-            echo "❌ Coverage $COVERAGE below threshold $THRESHOLD"
-            exit 1
-          fi
-          echo "✅ Coverage $COVERAGE meets threshold $THRESHOLD"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -114,39 +104,7 @@ jobs:
           name: coverage-report
           path: backend/coverage.xml
 
-  # ── Phase 3: API Integration Tests ───────
-  api-test:
-    name: API Integration Tests
-    needs: test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: "pip"
-          cache-dependency-path: |
-            backend/requirements.txt
-            pyproject.toml
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-          pip install pytest httpx
-
-      - name: Run API tests
-        run: pytest tests/api -v -x
-        continue-on-error: false
-
-  # ── Phase 4: Docker Build ────────────────
+  # ── Phase 3: Docker Build ────────────────
   docker-build:
     name: Docker Build Check
     needs: test
@@ -175,7 +133,7 @@ jobs:
           curl -f http://localhost:8002/health || exit 1
           docker stop airdrop-smoke
 
-  # ── Phase 5: Type Check (optional, V2+) ─
+  # ── Phase 4: Type Check (optional, V2+) ─
   type-check:
     name: Type Check (mypy)
     needs: lint
