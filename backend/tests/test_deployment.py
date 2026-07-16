@@ -6,6 +6,7 @@ Reference:
 """
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 def load_workflow(filename):
     """Load a GitHub Actions workflow without coercing the ``on`` key."""
-    content = Path(PROJECT_ROOT, ".github", "workflows", filename).read_text(
-        encoding="utf-8"
-    )
-    return yaml.load(content, Loader=yaml.BaseLoader)
+    content = Path(PROJECT_ROOT, ".github", "workflows", filename).read_text(encoding="utf-8")
+    return yaml.safe_load(re.sub(r"(?m)^on:", '"on":', content, count=1))
 
 
 def test_ci_supports_master_and_main_branches():
@@ -39,9 +38,7 @@ def test_ci_supports_master_and_main_branches():
 def test_ci_health_smoke_is_bounded_and_has_cleanup():
     workflow = load_workflow("ci.yml")
     smoke_step = next(
-        step
-        for step in workflow["jobs"]["docker-build"]["steps"]
-        if step.get("name") == "Smoke test — health check"
+        step for step in workflow["jobs"]["docker-build"]["steps"] if step.get("name") == "Smoke test — health check"
     )
     script = smoke_step["run"]
     assert "set -euo pipefail" in script
@@ -56,12 +53,8 @@ def test_ci_health_smoke_is_bounded_and_has_cleanup():
 def test_release_demo_health_probe_is_bounded_and_diagnostic():
     workflow = load_workflow("release.yml")
     deploy_demo = workflow["jobs"]["deploy-demo"]
-    assert deploy_demo["if"] == "false"
-    deploy_step = next(
-        step
-        for step in deploy_demo["steps"]
-        if step.get("name") == "Deploy via SSH"
-    )
+    assert deploy_demo["if"] is False
+    deploy_step = next(step for step in deploy_demo["steps"] if step.get("name") == "Deploy via SSH")
     script = deploy_step["run"]
     assert script.startswith("ssh deploy@demo-server 'bash -se' <<'EOF'\n")
     assert script.endswith("\nEOF\n")
@@ -74,10 +67,7 @@ def test_release_demo_health_probe_is_bounded_and_diagnostic():
     assert script.index("sleep 1") < script.index("done")
     assert script.index("done") < script.index("docker compose logs backend")
     assert script.index("docker compose logs backend") < script.index("exit 1")
-    assert all(
-        command not in script
-        for command in ("docker compose down", "docker compose stop", "docker compose rm")
-    )
+    assert all(command not in script for command in ("docker compose down", "docker compose stop", "docker compose rm"))
 
 
 def test_release_remains_tag_driven_with_root_docker_context():
@@ -86,9 +76,7 @@ def test_release_remains_tag_driven_with_root_docker_context():
     assert set(workflow["on"]["push"]) == {"tags"}
     assert workflow["on"]["push"]["tags"] == ["v*"]
     build_step = next(
-        step
-        for step in workflow["jobs"]["release"]["steps"]
-        if step.get("name") == "Build and push Docker image"
+        step for step in workflow["jobs"]["release"]["steps"] if step.get("name") == "Build and push Docker image"
     )
     assert build_step["with"]["context"] == "."
     assert build_step["with"]["file"] == "docker/Dockerfile"

@@ -69,7 +69,10 @@ def test_opportunity_shadow_defaults_disabled_and_unsampled(monkeypatch):
 
 @pytest.mark.parametrize("sample_rate", [0.0, 0.05, 1.0])
 def test_opportunity_shadow_sample_rate_accepts_closed_interval(sample_rate):
-    assert Settings(_env_file=None, opportunity_shadow_sample_rate=sample_rate).opportunity_shadow_sample_rate == sample_rate
+    assert (
+        Settings(_env_file=None, opportunity_shadow_sample_rate=sample_rate).opportunity_shadow_sample_rate
+        == sample_rate
+    )
 
 
 @pytest.mark.parametrize("sample_rate", [-0.01, 1.01, float("inf"), float("-inf"), float("nan")])

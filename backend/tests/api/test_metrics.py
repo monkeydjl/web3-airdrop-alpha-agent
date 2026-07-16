@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
 
-from app.main import create_app
 from app import metrics as metrics_module
+from app.main import create_app
 from app.metrics import record_opportunity_shadow_assessment
 
 

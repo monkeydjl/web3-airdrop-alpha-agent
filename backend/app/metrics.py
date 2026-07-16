@@ -9,7 +9,7 @@ Reference:
 - docs/ENGINEERING_ROADMAP.md §20
 """
 
-from typing import Mapping
+from collections.abc import Mapping
 
 import structlog
 from prometheus_client import (

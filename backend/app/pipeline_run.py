@@ -81,9 +81,7 @@ def run_opportunity_shadow(
 
         eligible_rows = [row for row in persisted_project_rows if row.get("score") is not None]
         stats["eligible"] = len(eligible_rows)
-        sampled_rows = [
-            row for row in eligible_rows if is_opportunity_shadow_sampled(row.get("id"), sample_rate)
-        ]
+        sampled_rows = [row for row in eligible_rows if is_opportunity_shadow_sampled(row.get("id"), sample_rate)]
         stats["sampled"] = len(sampled_rows)
         stats["skipped"] = stats["eligible"] - stats["sampled"]
         if not sampled_rows:
