@@ -6,8 +6,10 @@ Reference: docs/COLLECTION_ANALYSIS_HANDOFF.md
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from datetime import datetime
+from math import floor
 from typing import Any
 
 import structlog
@@ -30,6 +32,19 @@ from app.utils.normalize import create_dedup_key
 logger = structlog.get_logger(__name__)
 
 OPPORTUNITY_SHADOW_EMPTY_STATS = {"attempted": 0, "saved": 0, "failed": 0}
+OPPORTUNITY_SHADOW_BUCKETS = 10_000
+
+
+def opportunity_shadow_bucket(project_id: str) -> int:
+    digest = hashlib.sha256(project_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False) % OPPORTUNITY_SHADOW_BUCKETS
+
+
+def is_opportunity_shadow_sampled(project_id: object, sample_rate: float) -> bool:
+    if not isinstance(project_id, str) or not project_id.strip():
+        return False
+    threshold = floor(sample_rate * OPPORTUNITY_SHADOW_BUCKETS)
+    return opportunity_shadow_bucket(project_id) < threshold
 
 
 def run_opportunity_shadow(

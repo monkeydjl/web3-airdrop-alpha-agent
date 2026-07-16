@@ -9,6 +9,7 @@
 参考：CONVENTIONS.md §12 配置管理
 """
 
+from math import isfinite
 from pathlib import Path
 
 from pydantic import field_validator
@@ -174,6 +175,7 @@ class Settings(BaseSettings):
     enable_user_system: bool = False
     enable_competition_cache: bool = True
     opportunity_shadow_enabled: bool = False
+    opportunity_shadow_sample_rate: float = 0.0
 
     # ── 缓存配置 ──────────────────────────────────
     competition_cache_ttl: int = 3600
@@ -234,6 +236,13 @@ class Settings(BaseSettings):
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"Weight must be between 0 and 1, got {v}")
         return v
+
+    @field_validator("opportunity_shadow_sample_rate")
+    @classmethod
+    def validate_opportunity_shadow_sample_rate(cls, value: float) -> float:
+        if not isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError("sample rate must be finite and between 0 and 1")
+        return value
 
     def model_post_init(self, __context) -> None:
         """启动时断言权重和为 1.0。"""

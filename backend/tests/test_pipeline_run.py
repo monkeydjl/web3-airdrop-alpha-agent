@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, call
 
 import pytest
+from pydantic import ValidationError
 
 from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.collector import CollectorAgent
@@ -19,7 +20,9 @@ from app.config import Settings
 from app.db import init_db
 from app.pipeline_run import (
     execute_analysis_pipeline,
+    is_opportunity_shadow_sampled,
     mark_successful_raw_projects,
+    opportunity_shadow_bucket,
     run_opportunity_shadow,
 )
 from app.repository import ProjectRepository
@@ -54,9 +57,55 @@ def _insert_raw(conn, raw_id: str, name: str, score: float = 0.6) -> str:
     return project_id
 
 
-def test_opportunity_shadow_defaults_disabled(monkeypatch):
+def test_opportunity_shadow_defaults_disabled_and_unsampled(monkeypatch):
     monkeypatch.delenv("OPPORTUNITY_SHADOW_ENABLED", raising=False)
-    assert Settings(_env_file=None).opportunity_shadow_enabled is False
+    monkeypatch.delenv("OPPORTUNITY_SHADOW_SAMPLE_RATE", raising=False)
+
+    configured = Settings(_env_file=None)
+
+    assert configured.opportunity_shadow_enabled is False
+    assert configured.opportunity_shadow_sample_rate == 0.0
+
+
+@pytest.mark.parametrize("sample_rate", [0.0, 0.05, 1.0])
+def test_opportunity_shadow_sample_rate_accepts_closed_interval(sample_rate):
+    assert Settings(_env_file=None, opportunity_shadow_sample_rate=sample_rate).opportunity_shadow_sample_rate == sample_rate
+
+
+@pytest.mark.parametrize("sample_rate", [-0.01, 1.01, float("inf"), float("-inf"), float("nan")])
+def test_opportunity_shadow_sample_rate_rejects_invalid_values(sample_rate):
+    with pytest.raises(ValidationError, match="sample rate must be finite and between 0 and 1"):
+        Settings(_env_file=None, opportunity_shadow_sample_rate=sample_rate)
+
+
+@pytest.mark.parametrize(
+    ("project_id", "expected_bucket"),
+    [
+        ("project-1", 3389),
+        ("alpha", 2974),
+    ],
+)
+def test_opportunity_shadow_bucket_is_stable(project_id, expected_bucket):
+    assert opportunity_shadow_bucket(project_id) == expected_bucket
+
+
+@pytest.mark.parametrize("project_id", [None, "", "   "])
+def test_opportunity_shadow_sampling_rejects_empty_ids(project_id):
+    assert is_opportunity_shadow_sampled(project_id, 1.0) is False
+
+
+def test_opportunity_shadow_sampling_has_explicit_boundaries():
+    assert is_opportunity_shadow_sampled("project-1", 0.0) is False
+    assert is_opportunity_shadow_sampled("project-1", 1.0) is True
+
+
+def test_opportunity_shadow_sampling_is_monotonic():
+    project_ids = [f"project-{index}" for index in range(500)]
+    low = {project_id for project_id in project_ids if is_opportunity_shadow_sampled(project_id, 0.05)}
+    high = {project_id for project_id in project_ids if is_opportunity_shadow_sampled(project_id, 0.25)}
+
+    assert low
+    assert low < high
 
 
 class TestRunOpportunityShadow:
