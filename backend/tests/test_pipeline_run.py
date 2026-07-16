@@ -108,6 +108,16 @@ def test_opportunity_shadow_sampling_is_monotonic():
     assert low < high
 
 
+EMPTY_SHADOW_STATS = {
+    "eligible": 0,
+    "sampled": 0,
+    "attempted": 0,
+    "saved": 0,
+    "failed": 0,
+    "skipped": 0,
+}
+
+
 class TestRunOpportunityShadow:
     def test_disabled_does_not_construct_service(self):
         service_factory = Mock()
@@ -115,10 +125,11 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             [{"id": "project-1", "score": 80}],
             enabled=False,
+            sample_rate=0.0,
             service_factory=service_factory,
         )
 
-        assert stats == {"attempted": 0, "saved": 0, "failed": 0}
+        assert stats == EMPTY_SHADOW_STATS
         service_factory.assert_not_called()
 
     def test_skips_unscored_states_without_mutating_and_closes_once(self):
@@ -130,10 +141,11 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             rows,
             enabled=True,
+            sample_rate=1.0,
             service_factory=Mock(return_value=service),
         )
 
-        assert stats == {"attempted": 1, "saved": 1, "failed": 0}
+        assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "sampled": 1, "attempted": 1, "saved": 1}
         service.evaluate_row.assert_called_once_with(rows[0])
         service.__enter__.assert_called_once_with()
         service.__exit__.assert_called_once()
@@ -148,10 +160,11 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             rows,
             enabled=True,
+            sample_rate=1.0,
             service_factory=Mock(return_value=service),
         )
 
-        assert stats == {"attempted": 2, "saved": 1, "failed": 1}
+        assert stats == {**EMPTY_SHADOW_STATS, "eligible": 2, "sampled": 2, "attempted": 2, "saved": 1, "failed": 1}
         assert service.evaluate_row.call_args_list == [call(rows[0]), call(rows[1])]
 
     @pytest.mark.parametrize("failure_point", ["constructor", "enter"])
@@ -165,10 +178,11 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             [{"id": "project-1", "score": 80}],
             enabled=True,
+            sample_rate=1.0,
             service_factory=service_factory,
         )
 
-        assert stats == {"attempted": 0, "saved": 0, "failed": 0}
+        assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "sampled": 1}
 
     def test_exit_failure_does_not_relabel_saved_assessments(self):
         service = MagicMock()
@@ -178,10 +192,11 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             [{"id": "project-1", "score": 80}],
             enabled=True,
+            sample_rate=1.0,
             service_factory=Mock(return_value=service),
         )
 
-        assert stats == {"attempted": 1, "saved": 1, "failed": 0}
+        assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "sampled": 1, "attempted": 1, "saved": 1}
 
     def test_empty_persisted_rows_do_not_construct_service(self):
         service_factory = Mock()
@@ -189,11 +204,46 @@ class TestRunOpportunityShadow:
         stats = run_opportunity_shadow(
             [],
             enabled=True,
+            sample_rate=1.0,
             service_factory=service_factory,
         )
 
-        assert stats == {"attempted": 0, "saved": 0, "failed": 0}
+        assert stats == EMPTY_SHADOW_STATS
         service_factory.assert_not_called()
+
+
+def test_sampled_out_rows_do_not_construct_service():
+    service_factory = Mock()
+
+    stats = run_opportunity_shadow(
+        [{"id": "project-1", "score": 80}],
+        enabled=True,
+        sample_rate=0.0,
+        service_factory=service_factory,
+    )
+
+    assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "skipped": 1}
+    service_factory.assert_not_called()
+
+
+def test_invalid_ids_are_eligible_but_skipped_without_service():
+    service_factory = Mock()
+    rows = [{"id": None, "score": 80}, {"id": "", "score": 70}, {"score": 60}]
+
+    stats = run_opportunity_shadow(rows, enabled=True, sample_rate=1.0, service_factory=service_factory)
+
+    assert stats == {**EMPTY_SHADOW_STATS, "eligible": 3, "skipped": 3}
+    service_factory.assert_not_called()
+
+
+def test_all_in_summary_counts_unscored_rows_as_ineligible():
+    rows = [{"id": "one", "score": 80}, {"id": "two", "score": 70}, {"id": "three", "score": None}]
+    service = MagicMock()
+    service.__enter__.return_value = service
+
+    stats = run_opportunity_shadow(rows, enabled=True, sample_rate=1.0, service_factory=Mock(return_value=service))
+
+    assert stats == {"eligible": 2, "sampled": 2, "attempted": 2, "saved": 2, "failed": 0, "skipped": 0}
 
 
 @pytest.mark.asyncio
@@ -214,9 +264,10 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
         events.append("legacy-saved")
         return response
 
-    def fake_shadow(rows, *, enabled):
+    def fake_shadow(rows, *, enabled, sample_rate):
         events.append("shadow-evaluated")
-        return {"attempted": 0, "saved": 0, "failed": 0}
+        assert sample_rate == 1.0
+        return EMPTY_SHADOW_STATS.copy()
 
     async def fake_to_thread(function, *args, **kwargs):
         events.append("to-thread")
@@ -226,6 +277,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     monkeypatch.setattr("app.pipeline_run.run_opportunity_shadow", fake_shadow)
     monkeypatch.setattr("app.pipeline_run.asyncio.to_thread", fake_to_thread)
     monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_enabled", True)
+    monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_sample_rate", 1.0)
     monkeypatch.setattr(
         "app.pipeline_run.CollectorAgent.collect_from_repository",
         lambda self, repo, **kwargs: [project],
@@ -259,7 +311,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     ):
         assert events.index(legacy_event) < events.index("to-thread")
     assert events.index("to-thread") < events.index("shadow-evaluated")
-    assert result["opportunity_shadow"] == {"attempted": 0, "saved": 0, "failed": 0}
+    assert result["opportunity_shadow"] == EMPTY_SHADOW_STATS
 
 
 @pytest.mark.asyncio
@@ -329,12 +381,13 @@ async def test_failed_current_save_never_assesses_existing_stale_row(repo_conn, 
     stats = run_opportunity_shadow(
         response.persisted_project_rows,
         enabled=True,
+        sample_rate=1.0,
         service_factory=service_factory,
     )
 
     assert response.persisted_project_rows == []
     assert repo.get_by_id("stale-project")["name"] == "Stale Project"
-    assert stats == {"attempted": 0, "saved": 0, "failed": 0}
+    assert stats == EMPTY_SHADOW_STATS
     service_factory.assert_not_called()
 
 
@@ -346,6 +399,7 @@ def test_shadow_evaluates_detached_snapshot_after_concurrent_overwrite():
     stats = run_opportunity_shadow(
         [deepcopy(row)],
         enabled=True,
+        sample_rate=1.0,
         service_factory=Mock(return_value=service),
     )
     row["name"] = "Overwritten"
@@ -354,7 +408,7 @@ def test_shadow_evaluates_detached_snapshot_after_concurrent_overwrite():
     evaluated = service.evaluate_row.call_args.args[0]
     assert evaluated["name"] == "First"
     assert evaluated["meta"] == {"version": 1}
-    assert stats == {"attempted": 1, "saved": 1, "failed": 0}
+    assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "sampled": 1, "attempted": 1, "saved": 1}
 
 
 @pytest.mark.asyncio
@@ -371,14 +425,17 @@ async def test_empty_run_logs_zero_shadow_completion(monkeypatch):
 
     result = await execute_analysis_pipeline(projects=None)
 
-    assert result["opportunity_shadow"] == {"attempted": 0, "saved": 0, "failed": 0}
+    assert result["opportunity_shadow"] == EMPTY_SHADOW_STATS
     assert (
         "pipeline.opportunity_shadow_completed",
         {
             "run_id": result["run_id"],
+            "eligible": 0,
+            "sampled": 0,
             "attempted": 0,
             "saved": 0,
             "failed": 0,
+            "skipped": 0,
         },
     ) in events
 

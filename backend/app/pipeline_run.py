@@ -31,7 +31,14 @@ from app.utils.normalize import create_dedup_key
 
 logger = structlog.get_logger(__name__)
 
-OPPORTUNITY_SHADOW_EMPTY_STATS = {"attempted": 0, "saved": 0, "failed": 0}
+OPPORTUNITY_SHADOW_EMPTY_STATS = {
+    "eligible": 0,
+    "sampled": 0,
+    "attempted": 0,
+    "saved": 0,
+    "failed": 0,
+    "skipped": 0,
+}
 OPPORTUNITY_SHADOW_BUCKETS = 10_000
 
 
@@ -51,6 +58,7 @@ def run_opportunity_shadow(
     persisted_project_rows: list[dict[str, Any]],
     *,
     enabled: bool,
+    sample_rate: float,
     service_factory=None,
 ) -> dict[str, int]:
     """Persist opportunity assessments without changing legacy pipeline state."""
@@ -58,8 +66,14 @@ def run_opportunity_shadow(
     if not enabled:
         return stats
 
-    scored_rows = [row for row in persisted_project_rows if row.get("score") is not None]
-    if not scored_rows:
+    eligible_rows = [row for row in persisted_project_rows if row.get("score") is not None]
+    stats["eligible"] = len(eligible_rows)
+    sampled_rows = [
+        row for row in eligible_rows if is_opportunity_shadow_sampled(row.get("id"), sample_rate)
+    ]
+    stats["sampled"] = len(sampled_rows)
+    stats["skipped"] = stats["eligible"] - stats["sampled"]
+    if not sampled_rows:
         return stats
 
     service_factory = service_factory or OpportunityService
@@ -75,7 +89,7 @@ def run_opportunity_shadow(
         return stats
 
     try:
-        for row in scored_rows:
+        for row in sampled_rows:
             stats["attempted"] += 1
             try:
                 service.evaluate_row(row)
@@ -225,6 +239,7 @@ async def execute_analysis_pipeline(
             run_opportunity_shadow,
             response.persisted_project_rows,
             enabled=True,
+            sample_rate=settings.opportunity_shadow_sample_rate,
         )
     logger.info(
         "pipeline.opportunity_shadow_completed",
