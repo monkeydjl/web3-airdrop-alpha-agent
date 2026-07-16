@@ -78,3 +78,39 @@ All checks passed!
 ```text
 1 file already formatted
 ```
+
+## Docker workflow build failure regression
+
+Commands were run from the repository root unless noted.
+
+### RED: deployment tests before Dockerfile fix
+
+## `python -m pytest tests/test_deployment.py --no-cov -q` from `backend`
+
+```text
+........F.........s..........                                            [100%]
+FAILED tests/test_deployment.py::TestDockerConfiguration::test_dockerfile_does_not_copy_ignored_data_directory
+E       assert 'COPY data/' not in '# ...'
+1 failed, 27 passed, 1 skipped in 0.44s
+```
+
+### GREEN: deployment tests after Dockerfile fix
+
+## `python -m pytest tests/test_deployment.py --no-cov -q` from `backend`
+
+```text
+..................s..........                                            [100%]
+28 passed, 1 skipped in 0.19s
+```
+
+### Docker build after Dockerfile fix
+
+## `docker build -f docker/Dockerfile -t airdrop-alpha:shadow-rollout .`
+
+```text
+#13 [production 5/7] COPY backend/ ./backend/
+#14 [production 6/7] COPY frontend/ ./frontend/
+#15 [production 7/7] RUN mkdir -p /app/data/cache /app/backups &&     chown -R appuser:appuser /app
+#16 naming to docker.io/library/airdrop-alpha:shadow-rollout done
+#16 DONE 19.8s
+```

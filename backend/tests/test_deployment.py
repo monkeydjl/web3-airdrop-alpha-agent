@@ -85,33 +85,42 @@ def test_release_remains_tag_driven_with_root_docker_context():
 class TestDockerConfiguration:
     """Test Docker configuration files."""
 
+    @staticmethod
+    def _workflow_dockerfile() -> Path:
+        return Path(PROJECT_ROOT, "docker", "Dockerfile")
+
+    @staticmethod
+    def _dockerignore() -> Path:
+        return Path(PROJECT_ROOT, ".dockerignore")
+
     def test_dockerfile_exists(self):
-        """Test that Dockerfile exists."""
-        dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        assert os.path.exists(dockerfile)
+        """Test that the workflow Dockerfile exists."""
+        assert self._workflow_dockerfile().exists()
 
     def test_dockerfile_has_healthcheck(self):
-        """Test that Dockerfile includes HEALTHCHECK."""
-        dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, encoding="utf-8") as f:
-            content = f.read()
-            assert "HEALTHCHECK" in content
-            assert "/health" in content
+        """Test that the workflow Dockerfile includes HEALTHCHECK."""
+        content = self._workflow_dockerfile().read_text(encoding="utf-8")
+        assert "HEALTHCHECK" in content
+        assert "/health" in content
 
     def test_dockerfile_uses_non_root_user(self):
-        """Test that Dockerfile uses non-root user."""
-        dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, encoding="utf-8") as f:
-            content = f.read()
-            assert "useradd" in content
-            assert "USER appuser" in content
+        """Test that the workflow Dockerfile uses non-root user."""
+        content = self._workflow_dockerfile().read_text(encoding="utf-8")
+        assert "useradd" in content
+        assert "USER appuser" in content
 
     def test_dockerfile_exposes_port(self):
-        """Test that Dockerfile exposes port 8002."""
-        dockerfile = os.path.join(PROJECT_ROOT, "backend", "Dockerfile")
-        with open(dockerfile, encoding="utf-8") as f:
-            content = f.read()
-            assert "EXPOSE 8002" in content
+        """Test that the workflow Dockerfile exposes port 8002."""
+        content = self._workflow_dockerfile().read_text(encoding="utf-8")
+        assert "EXPOSE 8002" in content
+
+    def test_dockerfile_does_not_copy_ignored_data_directory(self):
+        """When .dockerignore excludes data/, workflow Dockerfile must not COPY data/."""
+        dockerignore = self._dockerignore().read_text(encoding="utf-8")
+        assert re.search(r"(?m)^data/$", dockerignore)
+
+        content = self._workflow_dockerfile().read_text(encoding="utf-8")
+        assert "COPY data/" not in content
 
 
 class TestDockerCompose:
