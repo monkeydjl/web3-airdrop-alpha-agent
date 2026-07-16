@@ -138,7 +138,7 @@ Operator and onboarding documentation must reflect verified facts:
 - Local frontend and backend ports are 3002 and 8002.
 - SQLite is the default database and PostgreSQL is supported through
   `DATABASE_URL`.
-- The current full suite baseline is 1,486 passed, 1 skipped, with 84% coverage.
+- The current full suite baseline is 1,523 passed, 1 skipped, with 84.44% coverage.
 - The primary score remains the current eight-factor `score-v1.4` model with
   FARM at 65 or above.
 - Opportunity v2.0 remains a non-authoritative Shadow model.

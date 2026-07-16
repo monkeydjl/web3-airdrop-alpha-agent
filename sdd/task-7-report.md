@@ -114,3 +114,23 @@ E       assert 'COPY data/' not in '# ...'
 #16 naming to docker.io/library/airdrop-alpha:shadow-rollout done
 #16 DONE 19.8s
 ```
+
+## Fresh strict full-suite verified baseline
+
+Commands were run from `backend`.
+
+### Strict backend full suite
+
+## `python -m pytest --strict-markers --strict-config --cov=app --cov-report=term-missing`
+
+```text
+1523 passed, 1 skipped in 107.95s
+TOTAL coverage: 84.44%
+```
+
+### Documentation updates
+
+- Updated `README.md` verified test baseline to `1,523 passed, 1 skipped`; retained rounded README coverage as `84%` because `84.44%` rounds to `84%` at whole-percent badge/stat precision.
+- Updated `docs/IMPLEMENTATION_STATUS.md` exact verified baseline to `1,523 passed / 1 skipped` and `84.44%` coverage.
+- Updated `docs/superpowers/specs/2026-07-16-shadow-rollout-observability-design.md` because it states current verified facts rather than historical execution notes.
+- Left `docs/superpowers/plans/2026-07-16-shadow-rollout-observability.md` unchanged because it is historical plan text documenting the baseline that was current when that plan was written.
