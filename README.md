@@ -2,7 +2,8 @@
 
 多智能体驱动的 Web3 早期项目识别与空投参与决策系统
 
-[![Tests](https://img.shields.io/badge/tests-417%20passed-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-1%2C486%20passed%2C%201%20skipped-brightgreen)](backend/tests/)
+[![Coverage](https://img.shields.io/badge/coverage-84%25-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.14-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -12,7 +13,7 @@
 - 🤖 **多 Agent 智能分析** - 4 个专业 Agent 并行评估项目
 - 📊 **三档分类建议** - FARM (高推荐) / WATCH (观察) / IGNORE (忽略)
 - 🚀 **批量评分** - 一次最多评分 100 个项目
-- 💾 **数据持久化** - SQLite 存储，支持历史查询
+- 💾 **数据持久化** - 默认使用 SQLite，也可通过 `DATABASE_URL` 使用 PostgreSQL
 - 📁 **导入导出** - Excel/CSV 批量导入导出
 - 🌐 **REST API** - 完整的 OpenAPI 文档
 - 🐳 **Docker 部署** - 一键容器化部署
@@ -54,9 +55,12 @@ uvicorn app.main:app --reload --port 8002
 
 **启动前端**:
 ```bash
-cd frontend
-python -m http.server 3002
+cd frontend-next
+npm install
+npm run dev
 ```
+
+生产模式使用同一包提供的脚本：先运行 `npm run build`，再运行 `npm run start`。
 
 **导入种子数据**（可选，首次运行查看示例项目）:
 ```bash
@@ -158,7 +162,7 @@ curl -X POST http://localhost:8002/api/v1/import/projects \
 
 ```
 ┌─────────────────────────────────────────┐
-│           Web Frontend (HTML)           │
+│   Next.js 16 / React 19 Web Frontend    │
 │         http://localhost:3002           │
 └──────────────┬──────────────────────────┘
                │
@@ -176,7 +180,7 @@ curl -X POST http://localhost:8002/api/v1/import/projects \
 │                ↓                        │
 │  ┌─────────────────────────────────┐   │
 │  │   Repository Pattern            │   │
-│  │   (SQLite Database)             │   │
+│  │   (SQLite / PostgreSQL)          │   │
 │  └─────────────────────────────────┘   │
 └─────────────────────────────────────────┘
 ```
@@ -191,31 +195,26 @@ Collector → [Narrative, Team, Risk, Tokenomics] → Scorer
 - Team: 团队信誉分析 (VC 背书 + 创始人)
 - Risk: 风险评估 (代币风险 + 解锁压力)
 - Tokenomics: 代币经济学 (分配比例 + 解锁)
-- Scorer: 综合评分 (6维加权 + 竞争系数)
+- Scorer: `score-v1.4` 八维加权评分
 ```
 
 ### 评分算法
 
-```python
-score = (
-    airdrop_signal * 0.30 +      # 空投信号权重 30%
-    narrative_timing * 0.25 +     # 叙事时机权重 25%
-    team_reputation * 0.20 +      # 团队信誉权重 20%
-    risk_factor * 0.15 +          # 风险因素权重 15%
-    tokenomics * 0.10             # 代币经济权重 10%
-) * competition_factor            # 竞争系数调整
-```
+主评分模型为八因子 `score-v1.4`：空投信号、叙事时机、团队信誉、风险、代币经济、竞争度、执行力和透明度。
 
 **三档分类**:
-- **FARM** (≥75分): 高度推荐参与
-- **WATCH** (60-74分): 观察等待
-- **IGNORE** (<60分): 不推荐
+- **FARM** (≥65分): 高度推荐参与
+- **WATCH**: 观察等待
+- **IGNORE**: 不推荐
+
+Opportunity 旁路模型使用 `opportunity-v2.0` 和配置档案 `low-cost-curated-multiwallet-v1`。其评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
 
 ## 📊 项目统计
 
 ```
 总代码行数: ~5,000+ 行
-测试覆盖: 417 个测试 (100% 通过)
+测试基线: 1,486 passed, 1 skipped
+测试覆盖率: 84%
 API 端点: 12 个
 Agent 数量: 6 个
 开发用时: ~32 小时
@@ -223,14 +222,7 @@ Agent 数量: 6 个
 
 ### 测试统计
 
-| 模块 | 测试数 | 状态 |
-|------|--------|------|
-| Agent 核心 | 272 | ✅ 100% |
-| API 层 | 76 | ✅ 100% |
-| Repository | 20 | ✅ 100% |
-| 部署配置 | 23 | ✅ 100% |
-| 导入导出 | 26 | ✅ 100% |
-| **总计** | **417** | **✅ 100%** |
+已验证基线为 **1,486 passed, 1 skipped**，总体覆盖率为 **84%**。
 
 ## 🛠️ 技术栈
 
@@ -238,15 +230,15 @@ Agent 数量: 6 个
 
 - **框架**: FastAPI 0.115
 - **Python**: 3.14
-- **数据库**: SQLite 3 (WAL 模式)
+- **数据库**: 默认 SQLite 3（WAL 模式）；通过 `DATABASE_URL` 支持 PostgreSQL
 - **日志**: structlog
 - **测试**: pytest + pytest-asyncio
 - **文档**: OpenAPI 3.1.0
 
 ### 前端
 
-- **当前版本**: 纯 HTML/CSS/JavaScript (测试界面)
-- **未来版本**: React + TypeScript + TailwindCSS
+- **主前端**: `frontend-next/`，Next.js 16 + React 19 + TypeScript，端口 3002
+- **保留原型**: `frontend/` HTML/CSS/JavaScript 界面，不作为主入口
 
 ### 部署
 
@@ -268,10 +260,11 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── export.py        # 导出工具
 │   │   ├── import_utils.py  # 导入工具
 │   │   └── main.py          # 应用入口
-│   ├── tests/               # 测试套件 (417 tests)
+│   ├── tests/               # 后端测试套件
 │   ├── data/                # SQLite 数据库
 │   └── pyproject.toml       # 依赖配置
-├── frontend/                # 前端界面
+├── frontend-next/           # Next.js 16 / React 19 主前端
+├── frontend/                # 保留的 HTML 原型
 │   ├── index.html           # 单页面应用
 │   └── README.md            # 前端文档
 ├── scripts/                 # 运维脚本
@@ -315,8 +308,8 @@ MAX_CONCURRENT_PROJECTS=10
 
 ### API 端口
 
-- 默认后端: `8000`
-- 默认前端: `3000`
+- 默认后端: `8002`
+- 默认前端: `3002`
 
 可在 `docker-compose.yml` 或启动时修改。
 
@@ -324,7 +317,8 @@ MAX_CONCURRENT_PROJECTS=10
 
 ### 快速入门
 - [README.md](README.md) - 本文件
-- [frontend/README.md](frontend/README.md) - 前端使用
+- [frontend-next/](frontend-next/) - Next.js 主前端
+- [frontend/README.md](frontend/README.md) - 保留的 HTML 原型说明
 - [DEPLOYMENT.md](DEPLOYMENT.md) - 部署指南
 
 ### API 文档
@@ -377,7 +371,7 @@ python --version  # 需要 3.10+
 
 1. 检查后端是否运行: http://localhost:8002/health
 2. 检查浏览器控制台是否有 CORS 错误
-3. 确认 API 地址配置正确（`frontend/index.html` 中的 `API_BASE`）
+3. 确认 `frontend-next` 的 API rewrite 指向 `http://127.0.0.1:8002`
 
 ### 数据库错误
 
@@ -406,7 +400,7 @@ rm backend/data/app.db
 
 ### 🔜 计划中
 
-- [ ] 完整 React 前端
+- [x] Next.js 16 / React 19 主前端
 - [ ] 图表可视化
 - [ ] 用户认证
 - [ ] 定时任务调度

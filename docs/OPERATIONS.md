@@ -93,6 +93,27 @@ docker build -t airdrop-alpha:latest .
 
 ### 3.5 蓝绿/金丝雀（V3�?- V3 引入：新版本先发 10% 流量，观�?1h 无异常再全量
 - 数据库迁移仍需"先兼容双�?�?切读 �?删旧�?三步（ENGINEERING_ROADMAP.md §15.3�?
+### 3.6 Opportunity Shadow rollout
+
+Opportunity v2.0 Shadow is a non-authoritative side evaluation. It does not replace the `score-v1.4` project score or label. Roll it out in this order:
+
+1. Start with `OPPORTUNITY_SHADOW_ENABLED=false` and `OPPORTUNITY_SHADOW_SAMPLE_RATE=0.0`.
+2. Verify `/health`, including `opportunity_model_version`, `opportunity_shadow_enabled`, and `opportunity_shadow_sample_rate`.
+3. After baseline health verification, set enabled to `true`, set the rate to `0.05`, and restart the service.
+4. Observe one normal scheduling window. Check the health fields; Shadow `eligible`, `sampled`, `attempted`, `saved`, `failed`, and `skipped` counters; assessment statuses and public labels; and duration.
+5. Increase the sample rate gradually after the signals remain normal. Project-ID buckets are deterministic, so higher thresholds select monotonic supersets: a project selected at a lower rate remains selected at a higher rate.
+6. Roll back by setting `OPPORTUNITY_SHADOW_ENABLED=false` and restarting. No schema rollback or legacy-score rollback is required because Shadow assessments are append-only and non-authoritative.
+
+#### Sequential PostgreSQL verification
+
+Run the following commands from `backend`. They share test database state and must run in this exact order; do not parallelize them:
+
+```powershell
+$env:DATABASE_URL='postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test'
+python scripts/verify_postgres.py
+python scripts/verify_opportunity_shadow.py
+python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test' --workers 4 --rounds 2
+```
 ---
 
 ## 4. 故障处理手册

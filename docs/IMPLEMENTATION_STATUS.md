@@ -64,7 +64,7 @@
 | 归档 | `archive.py` | ✅ | raw_projects 保留期默认 30 天 |
 | 鉴权 / 多租户 | ADR-008 | ⬜ | MVP 无鉴权 |
 | PG 双后端 | ADR-004 | 🟡 | `DATABASE_URL` → PG；默认 SQLite；`verify_postgres.py` 验收；health 含 `db_backend` |
-| Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | 🟡 | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；默认关闭、非权威；显式 API 可评估并保存不可变快照，稀疏输入为 `INSUFFICIENT_EVIDENCE/WATCH` |
+| Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | ✅ | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；默认关闭、非权威；按项目 ID 确定性灰度并追加保存不可变快照 |
 | 竞争度缓存 | ADR-010 | 🟡 | 规则在；缓存策略按阶段演进 |
 
 ---
@@ -94,7 +94,7 @@
 | discovery_score 分级 | ✅ 配置+部分链路 | 见 `COLLECTION_ANALYSIS_HANDOFF.md` |
 | 去重 / 归一化 | ✅ | `utils/normalize.py` |
 | weight_changelog / 双跑校准 | 🟡 | 脚本+门禁有；样本≥200 后搜索 |
-| Opportunity Shadow 决策 | 🟡 | 当前只旁路采集预测/结果；`score-v1.4` 的 `projects.score/label` 仍是主决策，不得将 Shadow `public_label` 当成替代标签 |
+| Opportunity Shadow 决策 | ✅ | 旁路结果为非权威追加快照；`score-v1.4` 的 `projects.score/label` 仍是主决策，不得将 Shadow `public_label` 当成替代标签 |
 | V3 Memory 系统 | ⬜ | Roadmap §24 |
 
 ---
@@ -103,10 +103,14 @@
 
 | 项 | 状态 |
 |----|------|
-| pytest（W4 记录） | ✅ ~531 passed / 1 skipped，覆盖率 ~84% |
-| CI `.github/workflows/ci.yml` | ✅ Python 3.13 路径已修 |
+| pytest（已验证基线） | ✅ 1,486 passed / 1 skipped，覆盖率 84.26% |
+| CI `.github/workflows/ci.yml` | ✅ Python 3.13；push 支持 master/main/feat/**/fix/**/docs/**，PR 支持 master/main |
 | seed `make seed` | ✅ |
-| Prometheus 指标暴露 | 🟡 有部分 counter/gauge |
+| Opportunity Shadow 汇总 | ✅ `eligible`/`sampled`/`attempted`/`saved`/`failed`/`skipped` 六字段 |
+| Opportunity Shadow 指标 | ✅ 五个指标族；仅有限 `result`、状态、标签和版本维度 |
+| Health 灰度配置 | ✅ 暴露模型版本、Shadow 开关与采样率 |
+| Docker 健康轮询 | ✅ compose healthcheck 使用有限 timeout、retries 与 start period |
+| Prometheus 指标暴露 | 🟡 Shadow 指标已实现；其他目录仍有部分 counter/gauge |
 | 完整 Grafana/Loki 日常使用 | ⬜ 配置存在，非默认必开 |
 | Next 依赖安全告警 | 🟡 升级待办 |
 

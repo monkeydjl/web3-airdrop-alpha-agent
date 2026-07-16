@@ -131,6 +131,26 @@
 - �?`prometheus_client`（Python）�?- MVP：进程内 collector；V2：接 Prometheus scrape�?0s interval）�?- histogram buckets 需覆盖实际分布，避免全部落同一�?bucket�?
 ### 3.4 标签基数控制
 - 标签值必须有限集（如 `status` 只能 success/error）；禁止�?`project_id`/`run_id` 作标签（高基数爆炸）�?- 高基数信息走日志/追踪，不走指标�?
+### 3.5 Opportunity Shadow
+
+Opportunity v2.0 Shadow exposes these five metric families:
+
+```text
+airdrop_opportunity_shadow_projects_total{result}
+airdrop_opportunity_shadow_assessments_total{status,public_label,model_version,profile_version}
+airdrop_opportunity_shadow_duration_seconds
+airdrop_opportunity_shadow_enabled
+airdrop_opportunity_shadow_sample_rate
+```
+
+The `result` label allows exactly six bounded values: `eligible`, `sampled`, `attempted`, `saved`, `failed`, and `skipped`. The assessment `status`, `public_label`, `model_version`, and `profile_version` labels must also remain bounded enums or version constants. Never use project ID, assessment ID, URL, or error text as metric labels; send that high-cardinality context to structured logs instead.
+
+Build alerts from the observed scheduling baseline rather than treating one threshold as universal production fact. For example:
+
+- Calculate `failed / attempted` over a normal scheduling window, and evaluate it only when `attempted` increases.
+- After increasing the sample rate, investigate when `sampled` or `attempted` increases but `saved` does not. Check assessment statuses and labels, logs, and database health.
+
+Choose ratios and durations for each environment based on its normal volume and error budget.
 ---
 
 ## 4. 链路追踪
