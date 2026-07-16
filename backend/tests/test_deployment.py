@@ -6,11 +6,58 @@ Reference:
 """
 
 import os
+from pathlib import Path
 
 import pytest
+import yaml
 
 # Get project root directory (one level up from backend)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def load_workflow(filename):
+    """Load a GitHub Actions workflow without coercing the ``on`` key."""
+    content = Path(PROJECT_ROOT, ".github", "workflows", filename).read_text(
+        encoding="utf-8"
+    )
+    return yaml.load(content, Loader=yaml.BaseLoader)
+
+
+def test_ci_supports_master_and_main_branches():
+    content = Path(PROJECT_ROOT, ".github", "workflows", "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "branches: [master, main" in content
+
+
+def test_ci_health_smoke_is_bounded_and_has_cleanup():
+    content = Path(PROJECT_ROOT, ".github", "workflows", "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "seq 1 30" in content
+    assert "sleep 1" in content
+    assert "/health" in content
+    assert "docker logs" in content
+    assert "docker rm -f" in content
+
+
+def test_release_demo_health_probe_is_bounded_and_diagnostic():
+    content = Path(PROJECT_ROOT, ".github", "workflows", "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "seq 1 30" in content
+    assert "sleep 1" in content
+    assert "/health" in content
+    assert "docker compose logs backend" in content
+
+
+def test_release_remains_tag_driven_with_root_docker_context():
+    content = Path(PROJECT_ROOT, ".github", "workflows", "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "tags:" in content and '"v*"' in content
+    assert "context: ." in content
+    assert "file: docker/Dockerfile" in content
 
 
 class TestDockerConfiguration:

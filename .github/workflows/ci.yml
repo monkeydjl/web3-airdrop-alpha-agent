@@ -9,9 +9,9 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'fix/**', 'docs/**']
+    branches: [master, main, 'feat/**', 'fix/**', 'docs/**']
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 env:
   PYTHON_VERSION: "3.13"
@@ -128,10 +128,19 @@ jobs:
 
       - name: Smoke test — health check
         run: |
-          docker run --rm -d --name airdrop-smoke -p 8002:8002 airdrop-alpha:ci-${{ github.sha }}
-          sleep 5
-          curl -f http://localhost:8002/health || exit 1
-          docker stop airdrop-smoke
+          set -euo pipefail
+          container=airdrop-smoke
+          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name "$container" -p 8002:8002 airdrop-alpha:ci-${{ github.sha }}
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://localhost:8002/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1
 
   # ── Phase 4: Type Check (optional, V2+) ─
   type-check:

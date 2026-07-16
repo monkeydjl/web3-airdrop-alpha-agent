@@ -82,8 +82,16 @@ jobs:
     steps:
       - name: Deploy via SSH
         run: |
-          ssh deploy@demo-server "cd /opt/airdrop-alpha && \
-            docker compose pull && \
-            docker compose up -d --force-recreate && \
-            sleep 5 && \
-            curl -f http://localhost:8002/health"
+          ssh deploy@demo-server 'bash -se' <<'EOF'
+          cd /opt/airdrop-alpha
+          docker compose pull
+          docker compose up -d --force-recreate
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://localhost:8002/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs backend
+          exit 1
+          EOF
