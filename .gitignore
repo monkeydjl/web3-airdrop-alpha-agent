@@ -151,6 +151,9 @@ $RECYCLE.BIN/
 .nfs*
 
 # ── Project Specific ──────────────────────────
+# Local Git worktrees
+.worktrees/
+
 # 临时 local 开发数据
 local_data/
 tmp/
