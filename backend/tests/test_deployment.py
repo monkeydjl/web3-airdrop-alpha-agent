@@ -57,11 +57,23 @@ def test_release_demo_health_probe_is_bounded_and_diagnostic():
     workflow = load_workflow("release.yml")
     deploy_demo = workflow["jobs"]["deploy-demo"]
     assert deploy_demo["if"] == "false"
-    script = deploy_demo["steps"][0]["run"]
+    deploy_step = next(
+        step
+        for step in deploy_demo["steps"]
+        if step.get("name") == "Deploy via SSH"
+    )
+    script = deploy_step["run"]
+    assert script.startswith("ssh deploy@demo-server 'bash -se' <<'EOF'\n")
+    assert script.endswith("\nEOF\n")
     assert "seq 1 30" in script
     assert "sleep 1" in script
     assert "/health" in script
-    assert script.index("docker compose logs backend") > script.index("done")
+    assert script.index("docker compose up") < script.index("for attempt")
+    assert script.index("for attempt") < script.index("curl --fail")
+    assert script.index("curl --fail") < script.index("sleep 1")
+    assert script.index("sleep 1") < script.index("done")
+    assert script.index("done") < script.index("docker compose logs backend")
+    assert script.index("docker compose logs backend") < script.index("exit 1")
     assert all(
         command not in script
         for command in ("docker compose down", "docker compose stop", "docker compose rm")
