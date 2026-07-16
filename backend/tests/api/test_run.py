@@ -96,9 +96,12 @@ class TestRunEndpoint:
 
         assert response.status_code == 200
         assert response.json()["data"]["opportunity_shadow"] == {
+            "eligible": 0,
+            "sampled": 0,
             "attempted": 0,
             "saved": 0,
             "failed": 0,
+            "skipped": 0,
         }
         service_factory.assert_not_called()
 
@@ -106,6 +109,7 @@ class TestRunEndpoint:
         service = MagicMock()
         service.__enter__.return_value = service
         monkeypatch.setattr(settings, "opportunity_shadow_enabled", True)
+        monkeypatch.setattr(settings, "opportunity_shadow_sample_rate", 1.0)
         monkeypatch.setattr("app.pipeline_run.OpportunityService", Mock(return_value=service))
 
         response = client.post(
@@ -115,7 +119,14 @@ class TestRunEndpoint:
 
         data = response.json()["data"]
         assert response.status_code == 200
-        assert data["opportunity_shadow"] == {"attempted": 1, "saved": 1, "failed": 0}
+        assert data["opportunity_shadow"] == {
+            "eligible": 1,
+            "sampled": 1,
+            "attempted": 1,
+            "saved": 1,
+            "failed": 0,
+            "skipped": 0,
+        }
         evaluated_row = service.evaluate_row.call_args.args[0]
         assert evaluated_row["id"] == data["top_projects"][0]["id"]
         assert evaluated_row["score"] == data["top_projects"][0]["score"]
@@ -130,6 +141,7 @@ class TestRunEndpoint:
         service.__enter__.return_value = service
         service.evaluate_row.side_effect = RuntimeError("shadow failed")
         monkeypatch.setattr(settings, "opportunity_shadow_enabled", True)
+        monkeypatch.setattr(settings, "opportunity_shadow_sample_rate", 1.0)
         monkeypatch.setattr("app.pipeline_run.OpportunityService", Mock(return_value=service))
 
         response = client.post(
@@ -139,7 +151,14 @@ class TestRunEndpoint:
 
         data = response.json()["data"]
         assert response.status_code == 200
-        assert data["opportunity_shadow"] == {"attempted": 1, "saved": 0, "failed": 1}
+        assert data["opportunity_shadow"] == {
+            "eligible": 1,
+            "sampled": 1,
+            "attempted": 1,
+            "saved": 0,
+            "failed": 1,
+            "skipped": 0,
+        }
         for field in ("status", "project_count", "scored_count", "error_count", "top_score", "marked_processed"):
             assert data[field] == baseline[field]
         assert data["top_projects"][0]["label"] == baseline["top_projects"][0]["label"]
@@ -250,9 +269,12 @@ class TestRunEndpoint:
         assert data["data"]["status"] == "completed"
         assert "project_count" in data["data"]
         assert data["data"]["opportunity_shadow"] == {
+            "eligible": 0,
+            "sampled": 0,
             "attempted": 0,
             "saved": 0,
             "failed": 0,
+            "skipped": 0,
         }
 
     def test_run_invalid_project_name_fails(self, client):
