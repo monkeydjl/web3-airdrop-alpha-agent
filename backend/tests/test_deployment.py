@@ -24,40 +24,62 @@ def load_workflow(filename):
 
 
 def test_ci_supports_master_and_main_branches():
-    content = Path(PROJECT_ROOT, ".github", "workflows", "ci.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "branches: [master, main" in content
+    workflow = load_workflow("ci.yml")
+    assert "on" in workflow
+    assert workflow["on"]["push"]["branches"] == [
+        "master",
+        "main",
+        "feat/**",
+        "fix/**",
+        "docs/**",
+    ]
+    assert workflow["on"]["pull_request"]["branches"] == ["master", "main"]
 
 
 def test_ci_health_smoke_is_bounded_and_has_cleanup():
-    content = Path(PROJECT_ROOT, ".github", "workflows", "ci.yml").read_text(
-        encoding="utf-8"
+    workflow = load_workflow("ci.yml")
+    smoke_step = next(
+        step
+        for step in workflow["jobs"]["docker-build"]["steps"]
+        if step.get("name") == "Smoke test — health check"
     )
-    assert "seq 1 30" in content
-    assert "sleep 1" in content
-    assert "/health" in content
-    assert "docker logs" in content
-    assert "docker rm -f" in content
+    script = smoke_step["run"]
+    assert "set -euo pipefail" in script
+    assert script.index("trap cleanup EXIT") < script.index("docker run")
+    assert script.index("curl --fail") < script.index("sleep 1")
+    assert script.index("exit 0") < script.index("done")
+    assert "seq 1 30" in script
+    assert script.index("docker logs") > script.index("done")
+    assert "docker rm -f" in script
 
 
 def test_release_demo_health_probe_is_bounded_and_diagnostic():
-    content = Path(PROJECT_ROOT, ".github", "workflows", "release.yml").read_text(
-        encoding="utf-8"
+    workflow = load_workflow("release.yml")
+    deploy_demo = workflow["jobs"]["deploy-demo"]
+    assert deploy_demo["if"] == "false"
+    script = deploy_demo["steps"][0]["run"]
+    assert "seq 1 30" in script
+    assert "sleep 1" in script
+    assert "/health" in script
+    assert script.index("docker compose logs backend") > script.index("done")
+    assert all(
+        command not in script
+        for command in ("docker compose down", "docker compose stop", "docker compose rm")
     )
-    assert "seq 1 30" in content
-    assert "sleep 1" in content
-    assert "/health" in content
-    assert "docker compose logs backend" in content
 
 
 def test_release_remains_tag_driven_with_root_docker_context():
-    content = Path(PROJECT_ROOT, ".github", "workflows", "release.yml").read_text(
-        encoding="utf-8"
+    workflow = load_workflow("release.yml")
+    assert set(workflow["on"]) == {"push"}
+    assert set(workflow["on"]["push"]) == {"tags"}
+    assert workflow["on"]["push"]["tags"] == ["v*"]
+    build_step = next(
+        step
+        for step in workflow["jobs"]["release"]["steps"]
+        if step.get("name") == "Build and push Docker image"
     )
-    assert "tags:" in content and '"v*"' in content
-    assert "context: ." in content
-    assert "file: docker/Dockerfile" in content
+    assert build_step["with"]["context"] == "."
+    assert build_step["with"]["file"] == "docker/Dockerfile"
 
 
 class TestDockerConfiguration:

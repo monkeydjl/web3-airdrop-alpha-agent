@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────
 # CI/CD Pipeline — Web3 Airdrop Alpha Agent System
 # ──────────────────────────────────────────────
-# 触发器: push（任意分支）、pull_request（main）
+# 触发器: push（master/main/feat/**/fix/**/docs/**）、pull_request（master/main）
 # 阶段: lint → test (unit + contract + golden + api) → build docker → smoke test
 # ──────────────────────────────────────────────
 
