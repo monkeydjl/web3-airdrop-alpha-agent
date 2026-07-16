@@ -22,6 +22,7 @@ from prometheus_client import (
 from app.config import settings
 
 logger = structlog.get_logger(__name__)
+_MISSING = object()
 
 # ── Pipeline metrics ──────────────────────────────────────────────
 PIPELINE_RUNS = Counter(
@@ -164,11 +165,11 @@ class MetricsExporter:
 
 
 def _assessment_metric_value(assessment: object, attribute: str) -> str:
-    value = getattr(assessment, attribute, None)
-    if value is None:
+    value = getattr(assessment, attribute, _MISSING)
+    if value is _MISSING:
         return "unknown"
-    enum_value = getattr(value, "value", None)
-    return str(enum_value) if enum_value is not None else str(value)
+    enum_value = getattr(value, "value", _MISSING)
+    return str(enum_value) if enum_value is not _MISSING else str(value)
 
 
 def set_opportunity_shadow_rollout(enabled: bool, sample_rate: float) -> None:

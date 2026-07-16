@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 
 from app.main import create_app
 from app import metrics as metrics_module
@@ -44,10 +45,9 @@ class TestMetricsEndpoint:
     def test_opportunity_shadow_assessment_metrics_use_bounded_labels(self, client):
         record_opportunity_shadow_assessment(
             SimpleNamespace(
-                status="MONITOR",
+                status=SimpleNamespace(value=None),
                 public_label="WATCH",
                 model_version="opportunity-v2.0",
-                profile_version="low-cost-curated-multiwallet-v1",
                 project_id="project-1",
                 assessment_id="assessment-1",
                 source_url="https://example.test/project-1",
@@ -56,16 +56,58 @@ class TestMetricsEndpoint:
         )
 
         content = client.get("/metrics").content.decode()
-        assessment_line = next(
-            line
-            for line in content.splitlines()
-            if line.startswith("airdrop_opportunity_shadow_assessments_total{")
+        assessment_sample = next(
+            sample
+            for family in text_string_to_metric_families(content)
+            for sample in family.samples
+            if sample.name == "airdrop_opportunity_shadow_assessments_total"
+            and sample.labels.get("public_label") == "WATCH"
         )
 
-        for label_name in ("status", "public_label", "model_version", "profile_version"):
-            assert f'{label_name}="' in assessment_line
-        for forbidden_label in ("project_id", "assessment_id", "source_url", "error"):
-            assert f'{forbidden_label}="' not in assessment_line
+        assert assessment_sample.labels == {
+            "status": "None",
+            "public_label": "WATCH",
+            "model_version": "opportunity-v2.0",
+            "profile_version": "unknown",
+        }
+
+    def test_opportunity_shadow_project_metric_has_only_bounded_results(self, client):
+        metrics_module.record_opportunity_shadow_projects(
+            {result: 1 for result in metrics_module.OPPORTUNITY_SHADOW_PROJECT_RESULTS}
+        )
+
+        samples = [
+            sample
+            for family in text_string_to_metric_families(client.get("/metrics").text)
+            for sample in family.samples
+            if sample.name == "airdrop_opportunity_shadow_projects_total"
+        ]
+
+        assert {frozenset(sample.labels) for sample in samples} == {frozenset({"result"})}
+        assert {sample.labels["result"] for sample in samples} == {
+            "eligible",
+            "sampled",
+            "attempted",
+            "saved",
+            "failed",
+            "skipped",
+        }
+
+    def test_opportunity_shadow_metric_helpers_do_not_touch_instruments_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(metrics_module.MetricsExporter, "is_enabled", lambda: False)
+        for instrument, method in (
+            (metrics_module.OPPORTUNITY_SHADOW_ENABLED, "set"),
+            (metrics_module.OPPORTUNITY_SHADOW_SAMPLE_RATE, "set"),
+            (metrics_module.OPPORTUNITY_SHADOW_PROJECTS, "labels"),
+            (metrics_module.OPPORTUNITY_SHADOW_ASSESSMENTS, "labels"),
+            (metrics_module.OPPORTUNITY_SHADOW_DURATION, "observe"),
+        ):
+            monkeypatch.setattr(instrument, method, Mock(side_effect=AssertionError("instrument touched")))
+
+        metrics_module.set_opportunity_shadow_rollout(True, 1.0)
+        metrics_module.record_opportunity_shadow_projects({})
+        metrics_module.record_opportunity_shadow_assessment(SimpleNamespace())
+        metrics_module.observe_opportunity_shadow_duration(1.0)
 
     def test_opportunity_shadow_metric_helpers_isolate_enabled_check_failure(self, monkeypatch):
         monkeypatch.setattr(

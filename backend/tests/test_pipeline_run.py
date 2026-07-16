@@ -184,6 +184,45 @@ class TestRunOpportunityShadow:
 
         assert stats == {**EMPTY_SHADOW_STATS, "eligible": 1, "sampled": 1}
 
+    @pytest.mark.parametrize("failure_point", ["constructor", "enter"])
+    def test_lifecycle_start_failure_records_summary_and_duration(self, monkeypatch, failure_point):
+        service_factory = Mock(side_effect=RuntimeError("constructor failed"))
+        if failure_point == "enter":
+            service = MagicMock()
+            service.__enter__.side_effect = RuntimeError("enter failed")
+            service_factory = Mock(return_value=service)
+        summary = Mock()
+        duration = Mock()
+        monkeypatch.setattr("app.pipeline_run.record_opportunity_shadow_projects", summary)
+        monkeypatch.setattr("app.pipeline_run.observe_opportunity_shadow_duration", duration)
+
+        stats = run_opportunity_shadow(
+            [{"id": "project-1", "score": 80}],
+            enabled=True,
+            sample_rate=1.0,
+            service_factory=service_factory,
+        )
+
+        summary.assert_called_once_with(stats)
+        duration.assert_called_once()
+
+    def test_evaluation_failure_does_not_record_assessment_metric(self, monkeypatch):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.evaluate_row.side_effect = RuntimeError("evaluation failed")
+        assessment_metric = Mock()
+        monkeypatch.setattr("app.pipeline_run.record_opportunity_shadow_assessment", assessment_metric)
+
+        stats = run_opportunity_shadow(
+            [{"id": "project-1", "score": 80}],
+            enabled=True,
+            sample_rate=1.0,
+            service_factory=Mock(return_value=service),
+        )
+
+        assert stats["failed"] == 1
+        assessment_metric.assert_not_called()
+
     def test_exit_failure_does_not_relabel_saved_assessments(self):
         service = MagicMock()
         service.__enter__.return_value = service
@@ -388,6 +427,98 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     assert events.index("to-thread") < events.index("shadow-evaluated")
     rollout_metric.assert_called_once_with(True, 1.0)
     assert result["opportunity_shadow"] == EMPTY_SHADOW_STATS
+
+
+@pytest.mark.asyncio
+async def test_rollout_metric_failure_preserves_primary_pipeline_response(monkeypatch):
+    project = RawProject(id="project-1", name="Project One")
+    response = SimpleNamespace(
+        run_id="run-1",
+        status="completed",
+        project_count=1,
+        states=[],
+        errors=[],
+        top_score=None,
+        persisted_project_rows=[],
+    )
+
+    async def fake_orchestrator(**kwargs):
+        return response
+
+    monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+    monkeypatch.setattr(
+        "app.pipeline_run.set_opportunity_shadow_rollout",
+        Mock(side_effect=RuntimeError("metrics failed")),
+    )
+
+    result = await execute_analysis_pipeline(projects=[project], save_to_db=False)
+
+    assert result == {
+        "run_id": "run-1",
+        "status": "completed",
+        "project_count": 1,
+        "scored_count": 0,
+        "error_count": 0,
+        "top_score": None,
+        "top_projects": [],
+        "marked_processed": 0,
+        "opportunity_shadow": EMPTY_SHADOW_STATS,
+    }
+
+
+@pytest.mark.asyncio
+async def test_shadow_metric_failures_preserve_primary_pipeline_response(monkeypatch):
+    project = RawProject(id="project-1", name="Project One")
+    assessment = object()
+    service = MagicMock()
+    service.__enter__.return_value = service
+    service.evaluate_row.return_value = assessment
+    response = SimpleNamespace(
+        run_id="run-1",
+        status="completed",
+        project_count=1,
+        states=[],
+        errors=[],
+        top_score=None,
+        persisted_project_rows=[{"id": "project-1", "score": 80}],
+    )
+
+    async def fake_orchestrator(**kwargs):
+        return response
+
+    async def fake_to_thread(function, *args, **kwargs):
+        return function(*args, service_factory=Mock(return_value=service), **kwargs)
+
+    monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+    monkeypatch.setattr("app.pipeline_run.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_enabled", True)
+    monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_sample_rate", 1.0)
+    for helper in (
+        "record_opportunity_shadow_assessment",
+        "record_opportunity_shadow_projects",
+        "observe_opportunity_shadow_duration",
+    ):
+        monkeypatch.setattr(f"app.pipeline_run.{helper}", Mock(side_effect=RuntimeError("metrics failed")))
+
+    result = await execute_analysis_pipeline(projects=[project], save_to_db=True)
+
+    assert result == {
+        "run_id": "run-1",
+        "status": "completed",
+        "project_count": 1,
+        "scored_count": 0,
+        "error_count": 0,
+        "top_score": None,
+        "top_projects": [],
+        "marked_processed": 0,
+        "opportunity_shadow": {
+            **EMPTY_SHADOW_STATS,
+            "eligible": 1,
+            "sampled": 1,
+            "attempted": 1,
+            "saved": 1,
+        },
+    }
 
 
 @pytest.mark.asyncio
