@@ -63,7 +63,7 @@
 | 分析调度 / handoff | `analysis_scheduler.py` + `pipeline_run.py` | ✅ | 成功项 mark processed；`COLLECTION_AUTO_RUN_ENABLED` 默认关 |
 | 归档 | `archive.py` | ✅ | raw_projects 保留期默认 30 天 |
 | 鉴权 / 多租户 | ADR-008 | ⬜ | MVP 无鉴权 |
-| PG 双后端 | ADR-004 | 🟡 | `DATABASE_URL` → PG；默认 SQLite；`verify_postgres.py` 验收；health 含 `db_backend` |
+| SQLite / PostgreSQL 双后端 | ADR-004 | ✅ | 默认 SQLite；设置 `DATABASE_URL` 后使用 PostgreSQL；`verify_postgres.py` 已验收；health 含 `db_backend`（不表示已完成生产部署） |
 | Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | ✅ | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；默认关闭、非权威；按项目 ID 确定性灰度并追加保存不可变快照 |
 | 竞争度缓存 | ADR-010 | 🟡 | 规则在；缓存策略按阶段演进 |
 
