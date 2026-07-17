@@ -148,6 +148,30 @@ def test_maps_outcome_dimensions(updates, field, expected):
 @pytest.mark.parametrize(
     "updates",
     [
+        {"outcome": "not_airdropped", "reward_received_usd": None},
+        {"eligibility_result": "ineligible", "reward_received_usd": None},
+        {"survival_result": "disqualified", "reward_received_usd": None},
+    ],
+)
+def test_explicit_no_reward_conditions_map_reward_to_zero(updates):
+    values, concerns = map_outcomes(sample(**updates))
+
+    assert values.reward == 0
+    assert concerns == ()
+
+
+def test_negative_numeric_reward_remains_unresolved():
+    values, concerns = map_outcomes(sample(reward_received_usd=-1.0))
+
+    assert values.reward is None
+    assert values.realized_net_usd is None
+    assert values.realized_class is None
+    assert concerns == ()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
         {"eligibility_result": "ineligible"},
         {"survival_result": "disqualified"},
         {"outcome": "not_airdropped"},
@@ -203,6 +227,39 @@ def test_maps_realized_net_and_class(
 
     assert values.realized_net_usd == net
     assert values.realized_class == realized_class
+    assert concerns == ()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"eligibility_result": "ineligible", "reward_received_usd": None},
+        {"survival_result": "disqualified", "reward_received_usd": None},
+    ],
+)
+def test_explicit_failure_maps_realized_class_to_negative(updates):
+    values, concerns = map_outcomes(sample(**updates))
+
+    assert values.realized_net_usd is None
+    assert values.realized_class == "NEGATIVE"
+    assert concerns == ()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"eligibility_result": None},
+        {"survival_result": None},
+        {"eligibility_result": None, "reward_received_usd": 6.0},
+        {"survival_result": None, "reward_received_usd": 6.0},
+    ],
+)
+def test_nonnegative_realized_class_requires_explicit_eligible_and_passed(updates):
+    values, concerns = map_outcomes(sample(**updates))
+
+    assert values.realized_net_usd is not None
+    assert values.realized_net_usd >= 0
+    assert values.realized_class is None
     assert concerns == ()
 
 

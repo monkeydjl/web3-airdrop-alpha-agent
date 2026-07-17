@@ -22,33 +22,40 @@ def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, .
     event = {"airdropped": 1, "not_airdropped": 0}.get(sample.outcome)
     eligibility = {"eligible": 1, "ineligible": 0}.get(sample.eligibility_result)
     survival = {"passed": 1, "disqualified": 0}.get(sample.survival_result)
-    reward = None if sample.reward_received_usd is None else int(sample.reward_received_usd > 0)
+    positive_reward = sample.reward_received_usd is not None and sample.reward_received_usd > 0
+    explicit_no_reward = sample.reward_received_usd == 0 or event == 0 or eligibility == 0 or survival == 0
 
-    contradictory = (
-        sample.reward_received_usd is not None
-        and sample.reward_received_usd > 0
-        and (event == 0 or eligibility == 0 or survival == 0)
-    )
+    contradictory = positive_reward and (event == 0 or eligibility == 0 or survival == 0)
     if contradictory:
+        reward = None
+    elif positive_reward:
+        reward = 1
+    elif explicit_no_reward:
+        reward = 0
+    else:
         reward = None
 
     realized_net_usd = None
     realized_class = None
-    if not contradictory and all(
-        value is not None
-        for value in (
-            sample.reward_received_usd,
-            sample.actual_hard_cost_usd,
-            sample.claim_cost_usd,
+    if (
+        not contradictory
+        and reward is not None
+        and all(
+            value is not None
+            for value in (
+                sample.reward_received_usd,
+                sample.actual_hard_cost_usd,
+                sample.claim_cost_usd,
+            )
         )
     ):
         realized_net_usd = sample.reward_received_usd - sample.actual_hard_cost_usd - sample.claim_cost_usd
-        if realized_net_usd > 0:
-            realized_class = "POSITIVE"
-        elif realized_net_usd < 0:
+
+    if not contradictory:
+        if eligibility == 0 or survival == 0 or (realized_net_usd is not None and realized_net_usd < 0):
             realized_class = "NEGATIVE"
-        else:
-            realized_class = "NEUTRAL"
+        elif eligibility == 1 and survival == 1 and realized_net_usd is not None:
+            realized_class = "POSITIVE" if realized_net_usd > 0 else "NEUTRAL"
 
     return (
         OutcomeValues(
