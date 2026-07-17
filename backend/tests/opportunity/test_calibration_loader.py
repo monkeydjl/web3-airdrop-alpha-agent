@@ -1,6 +1,8 @@
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from types import MappingProxyType
+
+import pytest
 
 from app.db import init_db
 from app.opportunity.calibration import RangeValue, load_calibration_dataset
@@ -11,6 +13,7 @@ PROFILE_VERSION = "low-cost-curated-multiwallet-v1"
 SCORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 OBSERVED_AT = datetime(2026, 4, 1, tzinfo=UTC)
 QUALITY_KEYS = {
+    "invalid_project_id",
     "missing_linkage",
     "mismatched_project",
     "unsupported_version",
@@ -30,6 +33,26 @@ def _connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     init_db(conn)
     return conn
+
+
+def _datetime_row_factory(*, naive: bool = False):
+    def factory(cursor, row):
+        values = dict(zip((column[0] for column in cursor.description), row, strict=True))
+        for name in ("scored_at", "outcome_observed_at"):
+            value = values.get(name)
+            if isinstance(value, str):
+                parsed = datetime.fromisoformat(value)
+                values[name] = parsed.replace(tzinfo=None) if naive else parsed
+        return values
+
+    return factory
+
+
+def _non_string_linkage_row_factory(cursor, row):
+    values = dict(zip((column[0] for column in cursor.description), row, strict=True))
+    if "opportunity_assessment_id" in values:
+        values["opportunity_assessment_id"] = 123
+    return values
 
 
 def _assessment(**updates) -> OpportunityAssessment:
@@ -251,6 +274,7 @@ def test_loader_accounts_for_every_exclusion_and_excludes_all_duplicate_members(
 
     assert [(sample.assessment_id, sample.cohort_id) for sample in dataset.samples] == [("assessment-8", _cohort(8))]
     assert dataset.quality == {
+        "invalid_project_id": 0,
         "missing_linkage": 1,
         "mismatched_project": 1,
         "unsupported_version": 1,
@@ -333,6 +357,49 @@ def test_loader_rejects_timezone_naive_timestamps():
     conn.close()
 
 
+@pytest.mark.parametrize("database_datetimes", [False, True])
+def test_loader_normalizes_string_and_database_datetimes_to_utc(database_datetimes):
+    conn = _connection()
+    offset = timezone(timedelta(hours=8))
+    scored_at = datetime(2026, 1, 1, 8, tzinfo=offset)
+    observed_at = datetime(2026, 4, 1, 8, tzinfo=offset)
+    _insert_assessment(conn, _assessment(scored_at=scored_at))
+    _insert_interaction(conn, outcome_observed_at=observed_at.isoformat())
+    conn.commit()
+    if database_datetimes:
+        conn.row_factory = _datetime_row_factory()
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.samples[0].scored_at == SCORED_AT
+    assert dataset.samples[0].scored_at.tzinfo is UTC
+    assert dataset.samples[0].outcome_observed_at == OBSERVED_AT
+    assert dataset.samples[0].outcome_observed_at.tzinfo is UTC
+    conn.close()
+
+
+def test_loader_rejects_timezone_naive_database_datetimes():
+    conn = _connection()
+    _insert_assessment(conn, _assessment())
+    _insert_interaction(conn)
+    conn.commit()
+    conn.row_factory = _datetime_row_factory(naive=True)
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.samples == ()
+    assert dataset.quality["invalid_timestamp"] == 1
+    conn.close()
+
+
 def test_loader_returns_immutable_quality_mapping():
     conn = _connection()
 
@@ -362,4 +429,98 @@ def test_loader_excludes_every_duplicate_member_before_other_validation():
     assert dataset.samples == ()
     assert dataset.quality["duplicate_pair"] == 2
     assert dataset.quality["invalid_timestamp"] == 0
+    conn.close()
+
+
+@pytest.mark.parametrize("linkage", [None, "", "   ", 123])
+def test_repeated_invalid_linkage_remains_missing_linkage(linkage):
+    conn = _connection()
+    for _ in range(2):
+        _insert_interaction(
+            conn,
+            opportunity_assessment_id=linkage,
+            wallet_cohort_id=_cohort(20),
+        )
+    conn.commit()
+    if linkage == 123:
+        conn.row_factory = _non_string_linkage_row_factory
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.quality["missing_linkage"] == 2
+    assert dataset.quality["duplicate_pair"] == 0
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "cohort_id",
+    [None, "", "cohort-not-a-uuid", "cohort-550E8400-E29B-41D4-A716-446655440000"],
+)
+def test_repeated_invalid_cohort_remains_cohort_quality_reason(cohort_id):
+    conn = _connection()
+    _insert_assessment(conn, _assessment())
+    for _ in range(2):
+        _insert_interaction(conn, wallet_cohort_id=cohort_id)
+    conn.commit()
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.quality["missing_or_invalid_cohort"] == 2
+    assert dataset.quality["duplicate_pair"] == 0
+    conn.close()
+
+
+@pytest.mark.parametrize("location", ["interaction", "assessment_row", "parsed_assessment"])
+def test_loader_rejects_empty_project_ids_at_every_boundary(location):
+    conn = _connection()
+    assessment = _assessment(project_id="" if location == "parsed_assessment" else "project-1")
+    _insert_assessment(conn, assessment)
+    if location == "assessment_row":
+        conn.execute("UPDATE opportunity_assessments SET project_id = ''")
+    elif location == "parsed_assessment":
+        conn.execute("UPDATE opportunity_assessments SET project_id = 'project-1'")
+    _insert_interaction(conn, project_id="" if location == "interaction" else "project-1")
+    conn.commit()
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.samples == ()
+    assert dataset.quality["invalid_project_id"] == 1
+    assert set(dataset.quality) == QUALITY_KEYS
+    conn.close()
+
+
+@pytest.mark.parametrize("location", ["assessment_row", "linkage", "parsed_assessment"])
+def test_loader_counts_empty_assessment_ids_and_links_as_missing_linkage(location):
+    conn = _connection()
+    assessment = _assessment(assessment_id="" if location == "parsed_assessment" else "assessment-1")
+    _insert_assessment(conn, assessment)
+    if location == "assessment_row":
+        conn.execute("UPDATE opportunity_assessments SET assessment_id = ''")
+    elif location == "parsed_assessment":
+        conn.execute("UPDATE opportunity_assessments SET assessment_id = 'assessment-1'")
+    _insert_interaction(conn, opportunity_assessment_id="" if location == "linkage" else "assessment-1")
+    conn.commit()
+
+    dataset = load_calibration_dataset(
+        conn,
+        model_version=MODEL_VERSION,
+        profile_version=PROFILE_VERSION,
+    )
+
+    assert dataset.samples == ()
+    assert dataset.quality["missing_linkage"] == 1
+    assert dataset.quality["duplicate_pair"] == 0
     conn.close()

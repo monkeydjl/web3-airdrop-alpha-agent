@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -27,6 +27,7 @@ FROM interactions
 """
 
 _QUALITY_KEYS = (
+    "invalid_project_id",
     "missing_linkage",
     "mismatched_project",
     "unsupported_version",
@@ -47,14 +48,19 @@ def _range(value: Any) -> RangeValue:
 
 
 def _timestamp(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str) or not value.strip():
+    if isinstance(value, str) and value.strip():
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif isinstance(value, datetime):
+        parsed = value
+    else:
         raise ValueError("timestamp must be a non-empty string or datetime")
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("timestamp must include a timezone")
-    return parsed
+    return parsed.astimezone(UTC)
+
+
+def _non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _valid_cohort_id(value: Any) -> bool:
@@ -65,12 +71,7 @@ def _valid_cohort_id(value: Any) -> bool:
         parsed = uuid.UUID(supplied_uuid)
     except (AttributeError, ValueError):
         return False
-    return (
-        supplied_uuid.lower() == str(parsed)
-        and parsed.int != 0
-        and parsed.version == 4
-        and parsed.variant == uuid.RFC_4122
-    )
+    return supplied_uuid == str(parsed) and parsed.int != 0 and parsed.version == 4 and parsed.variant == uuid.RFC_4122
 
 
 def _assessment_from_row(row: dict[str, Any]) -> OpportunityAssessment | None:
@@ -137,29 +138,39 @@ def load_calibration_dataset(
 ) -> CalibrationDataset:
     assessment_rows = _rows(conn.execute(_ASSESSMENT_SQL))
     interaction_rows = _rows(conn.execute(_INTERACTION_SQL))
-    assessment_rows_by_id = {row["assessment_id"]: row for row in assessment_rows}
+    assessment_rows_by_id = {
+        row["assessment_id"]: row for row in assessment_rows if _non_empty_string(row["assessment_id"])
+    }
     quality = dict.fromkeys(_QUALITY_KEYS, 0)
     candidates: list[CalibrationSample] = []
     pair_counts = Counter(
-        (
-            interaction["opportunity_assessment_id"],
-            interaction["wallet_cohort_id"],
-        )
+        (interaction["opportunity_assessment_id"], interaction["wallet_cohort_id"])
         for interaction in interaction_rows
+        if _non_empty_string(interaction["opportunity_assessment_id"])
+        and _valid_cohort_id(interaction["wallet_cohort_id"])
     )
 
     for interaction in interaction_rows:
+        linkage = interaction["opportunity_assessment_id"]
+        if not _non_empty_string(linkage):
+            quality["missing_linkage"] += 1
+            continue
+
         pair = (
-            interaction["opportunity_assessment_id"],
+            linkage,
             interaction["wallet_cohort_id"],
         )
         if pair_counts[pair] > 1:
             quality["duplicate_pair"] += 1
             continue
 
-        assessment_row = assessment_rows_by_id.get(interaction["opportunity_assessment_id"])
+        assessment_row = assessment_rows_by_id.get(linkage)
         if assessment_row is None:
             quality["missing_linkage"] += 1
+            continue
+
+        if not _non_empty_string(interaction["project_id"]) or not _non_empty_string(assessment_row["project_id"]):
+            quality["invalid_project_id"] += 1
             continue
 
         if interaction["project_id"] != assessment_row["project_id"]:
@@ -190,6 +201,12 @@ def load_calibration_dataset(
         assessment = _assessment_from_row(assessment_row)
         if assessment is None:
             quality["malformed_assessment_json"] += 1
+            continue
+        if not _non_empty_string(assessment.assessment_id):
+            quality["missing_linkage"] += 1
+            continue
+        if not _non_empty_string(assessment.project_id):
+            quality["invalid_project_id"] += 1
             continue
         if assessment.project_id != assessment_row["project_id"]:
             quality["mismatched_project"] += 1
