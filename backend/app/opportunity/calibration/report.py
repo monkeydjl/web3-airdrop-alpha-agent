@@ -4,10 +4,12 @@ import hashlib
 import json
 import math
 import os
+import random
 import shutil
 import tempfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ from .models import (
     NumericObservation,
     OutcomeValues,
 )
-from .outcomes import map_outcomes, maturity_state
+from .outcomes import MappedOutcome, map_sample, maturity_state
 
 SCHEMA = "opportunity-calibration-v1"
 WINDOWS = (90, 180)
@@ -84,6 +86,130 @@ def canonical_report_json(report: Mapping[str, Any]) -> bytes:
     return _canonical_bytes(report)
 
 
+def _project_probability_records(records: Sequence[BinaryObservation]) -> tuple[BinaryObservation, ...]:
+    groups = dict(_group_by_project(records))
+    return tuple(
+        BinaryObservation(
+            project,
+            sum(item.predicted for item in items) / len(items),
+            round(sum(item.actual for item in items) / len(items)),
+        )
+        for project, items in sorted(groups.items())
+    )
+
+
+def _project_numeric_records(records: Sequence[NumericObservation]) -> tuple[NumericObservation, ...]:
+    groups = dict(_group_by_project(records))
+    return tuple(
+        NumericObservation(
+            project,
+            sum(item.low for item in items) / len(items),
+            sum(item.base for item in items) / len(items),
+            sum(item.high for item in items) / len(items),
+            sum(item.actual for item in items) / len(items),
+        )
+        for project, items in sorted(groups.items())
+    )
+
+
+def _group_by_project(records: Sequence[Any]) -> tuple[tuple[str, tuple[Any, ...]], ...]:
+    groups: dict[str, list[Any]] = {}
+    for record in records:
+        groups.setdefault(record.project_id, []).append(record)
+    return tuple((project, tuple(items)) for project, items in sorted(groups.items()))
+
+
+def _project_net_records(records: Sequence[tuple[CalibrationSample, OutcomeValues]]) -> tuple[dict[str, Any], ...]:
+    groups: dict[str, list[float]] = {}
+    for sample, outcome in records:
+        groups.setdefault(sample.project_id, []).append(outcome.realized_net_usd)
+    return tuple(
+        {"project_id": project, "net": sum(values) / len(values)} for project, values in sorted(groups.items())
+    )
+
+
+def _project_label_net_records(
+    records: Sequence[tuple[CalibrationSample, OutcomeValues]],
+) -> tuple[dict[str, Any], ...]:
+    groups: dict[tuple[str, str], list[float]] = {}
+    for sample, outcome in records:
+        groups.setdefault((sample.project_id, sample.public_label), []).append(outcome.realized_net_usd)
+    return tuple(
+        {"project_id": project, "label": label, "net": sum(values) / len(values)}
+        for (project, label), values in sorted(groups.items())
+    )
+
+
+def _separation_from_label_records(records: Sequence[Mapping[str, Any]], separation: str) -> float:
+    by_label: dict[str, list[float]] = {}
+    for record in records:
+        by_label.setdefault(record["label"], []).append(record["net"])
+    left, right = ("FARM", "WATCH") if separation == "farm_minus_watch" else ("WATCH", "IGNORE")
+    if left not in by_label or right not in by_label:
+        raise ValueError("adjacent separation requires both labels")
+    return sum(by_label[left]) / len(by_label[left]) - sum(by_label[right]) / len(by_label[right])
+
+
+def _stratified_label_interval(
+    records: Sequence[Mapping[str, Any]], separation: str, *, seed: int, replicates: int
+) -> tuple[float, float]:
+    left, right = ("FARM", "WATCH") if separation == "farm_minus_watch" else ("WATCH", "IGNORE")
+    strata = {label: tuple(record for record in records if record["label"] == label) for label in (left, right)}
+    generator = random.Random(seed)  # noqa: S311 - deterministic statistical bootstrap
+    values = []
+    for _ in range(replicates):
+        sampled = tuple(
+            record for label in (left, right) for record in generator.choices(strata[label], k=len(strata[label]))
+        )
+        values.append(_separation_from_label_records(sampled, separation))
+    values.sort()
+    return values[max(0, math.ceil(0.025 * replicates) - 1)], values[max(0, math.ceil(0.975 * replicates) - 1)]
+
+
+def _project_equal_decision(mapped: Sequence[MappedOutcome]) -> dict[str, Any]:
+    eligible = tuple(
+        (item.sample, item.outcome)
+        for item in mapped
+        if not item.concerns
+        and item.outcome.realized_net_usd is not None
+        and item.outcome.realized_class is not None
+        and item.sample.public_label in CALIBRATION_LABELS
+    )
+    grouped = _project_label_net_records(eligible)
+    matrix = {label: {klass: 0.0 for klass in ("POSITIVE", "NEUTRAL", "NEGATIVE")} for label in CALIBRATION_LABELS}
+    for record in grouped:
+        matrix[record["label"]][
+            "POSITIVE" if record["net"] > 0 else "NEGATIVE" if record["net"] < 0 else "NEUTRAL"
+        ] += 1
+    utility = {
+        label: {
+            "mean_net": (
+                sum(item["net"] for item in grouped if item["label"] == label)
+                / sum(item["label"] == label for item in grouped)
+                if any(item["label"] == label for item in grouped)
+                else None
+            ),
+            "median_net": None,
+        }
+        for label in CALIBRATION_LABELS
+    }
+    return {
+        "sample_count": len(eligible),
+        "project_count": len({s.project_id for s, _ in eligible}),
+        "confusion_matrix": matrix,
+        "utility_by_label": utility,
+        "rates_by_label": {label: {} for label in CALIBRATION_LABELS},
+        "adjacent_utility_separation": {
+            "farm_minus_watch": _separation_from_label_records(grouped, "farm_minus_watch")
+            if {r["label"] for r in grouped} >= {"FARM", "WATCH"}
+            else None,
+            "watch_minus_ignore": _separation_from_label_records(grouped, "watch_minus_ignore")
+            if {r["label"] for r in grouped} >= {"WATCH", "IGNORE"}
+            else None,
+        },
+    }
+
+
 def _observations(
     samples: Sequence[CalibrationSample], outcomes: Sequence[OutcomeValues], concerns: Sequence[tuple[str, ...]]
 ) -> tuple[dict[str, tuple[BinaryObservation, ...]], dict[str, tuple[NumericObservation, ...]]]:
@@ -98,7 +224,7 @@ def _observations(
                 )
         for name, prediction_name, actual_name in ECONOMIC_FIELDS:
             actual = getattr(outcome, actual_name)
-            if actual is not None and (name != "net_reward" or not sample_concerns):
+            if actual is not None and (name != "net_reward" or "contradictory_outcome" not in sample_concerns):
                 prediction = getattr(sample, prediction_name)
                 economic[name].append(
                     NumericObservation(sample.project_id, prediction.low, prediction.base, prediction.high, actual)
@@ -113,13 +239,27 @@ def _probability_evidence(
     records: Sequence[BinaryObservation], view: str, denominator: int, seed: int, *, segmented: bool
 ) -> dict[str, Any]:
     result = dict(probability_metrics(records, view=view, coverage_denominator=denominator))
+    result["sample_count"] = len(records)
+    result["project_count"] = len({record.project_id for record in records})
     result["observed_gap"] = result["bias"]
-    result["ci95"] = cluster_bootstrap_interval(
-        records,
-        lambda resample: probability_metrics(resample, view=view, coverage_denominator=len(resample))["bias"],
-        seed=seed,
-        replicates=BOOTSTRAP_REPLICATES,
-    )
+    if view == "project_equal":
+        summaries = tuple(
+            {"project_id": project, "bias": sum(item.actual - item.predicted for item in items) / len(items)}
+            for project, items in _group_by_project(records)
+        )
+        result["ci95"] = cluster_bootstrap_interval(
+            summaries,
+            lambda rows: sum(row["bias"] for row in rows) / len(rows),
+            seed=seed,
+            replicates=BOOTSTRAP_REPLICATES,
+        )
+    else:
+        result["ci95"] = cluster_bootstrap_interval(
+            records,
+            lambda rows: probability_metrics(rows, view=view, coverage_denominator=denominator)["bias"],
+            seed=seed,
+            replicates=BOOTSTRAP_REPLICATES,
+        )
     result["gate"] = gate_state(result["sample_count"], result["project_count"], segmented=segmented)
     return result
 
@@ -127,11 +267,18 @@ def _probability_evidence(
 def _economic_evidence(
     records: Sequence[NumericObservation], view: str, seed: int, *, segmented: bool
 ) -> dict[str, Any]:
-    result = dict(economic_metrics(records, view=view))
+    estimator_records = _project_numeric_records(records) if view == "project_equal" else tuple(records)
+    result = dict(economic_metrics(estimator_records, view="cohort_weighted"))
+    result["sample_count"] = len(records)
+    result["project_count"] = len({record.project_id for record in records})
     result["observed_gap"] = result["mean_signed_error"]
+    bootstrap_records = estimator_records if view == "project_equal" else records
     result["ci95"] = cluster_bootstrap_interval(
-        records,
-        lambda resample: economic_metrics(resample, view=view)["mean_signed_error"],
+        bootstrap_records,
+        lambda resample: economic_metrics(
+            resample,
+            view="cohort_weighted",
+        )["mean_signed_error"],
         seed=seed,
         replicates=BOOTSTRAP_REPLICATES,
     )
@@ -140,23 +287,29 @@ def _economic_evidence(
 
 
 def _decision_view(
-    samples: Sequence[CalibrationSample],
-    outcomes: Sequence[OutcomeValues],
+    mapped: Sequence[MappedOutcome],
     *,
     view: str,
     seed: int,
     segmented: bool,
 ) -> dict[str, Any]:
-    result = _plain(decision_metrics(samples, outcomes, view=view))
+    samples = tuple(item.sample for item in mapped)
+    outcomes = tuple(item.outcome for item in mapped)
+    result = _plain(decision_metrics(samples, outcomes, view="cohort_weighted", mapped=True))
+    if view == "project_equal":
+        result = _project_equal_decision(mapped)
     eligible = tuple(
         (sample, outcome)
-        for sample, outcome in zip(samples, outcomes, strict=True)
-        if outcome.realized_net_usd is not None and outcome.realized_class is not None
+        for item, sample, outcome in zip(mapped, samples, outcomes, strict=True)
+        if not item.concerns and outcome.realized_net_usd is not None and outcome.realized_class is not None
     )
     for label, utility in result["utility_by_label"].items():
         records = tuple((sample, outcome) for sample, outcome in eligible if sample.public_label == label)
+        utility["sample_count"] = len(records)
+        utility["project_count"] = len({sample.project_id for sample, _ in records})
+        utility["gate"] = gate_state(utility["sample_count"], utility["project_count"], segmented=segmented)
         utility["mean_net_ci95"] = cluster_bootstrap_interval(
-            tuple({"project_id": sample.project_id, "net": outcome.realized_net_usd} for sample, outcome in records),
+            _project_net_records(records),
             lambda rows: sum(row["net"] for row in rows) / len(rows),
             seed=seed,
             replicates=BOOTSTRAP_REPLICATES,
@@ -164,41 +317,33 @@ def _decision_view(
     for name, observed_gap in result["adjacent_utility_separation"].items():
         interval = None
         adjacent_labels = ("FARM", "WATCH") if name == "farm_minus_watch" else ("WATCH", "IGNORE")
-        labels_by_project: dict[str, set[str]] = {}
-        for sample, _ in eligible:
-            labels_by_project.setdefault(sample.project_id, set()).add(sample.public_label)
-        bootstrap_is_defined = len(labels_by_project) >= 2 and all(
-            set(adjacent_labels) <= labels for labels in labels_by_project.values()
+        bootstrap_records = tuple(
+            row for row in _project_label_net_records(eligible) if row["label"] in adjacent_labels
+        )
+        bootstrap_is_defined = all(
+            sum(row["label"] == label for row in bootstrap_records) >= 2 for label in adjacent_labels
         )
         if observed_gap is not None and bootstrap_is_defined:
-            interval = cluster_bootstrap_interval(
-                tuple(
-                    {"project_id": sample.project_id, "sample": sample, "outcome": outcome}
-                    for sample, outcome in eligible
-                ),
-                lambda rows, separation=name: decision_metrics(
-                    tuple(row["sample"] for row in rows),
-                    tuple(row["outcome"] for row in rows),
-                    view=view,
-                )["adjacent_utility_separation"][separation],
-                seed=seed,
-                replicates=BOOTSTRAP_REPLICATES,
-            )
+            interval = _stratified_label_interval(bootstrap_records, name, seed=seed, replicates=BOOTSTRAP_REPLICATES)
         result["adjacent_utility_separation"][name] = {
             "observed_gap": observed_gap,
             "ci95": interval,
-            "sample_count": result["sample_count"],
-            "project_count": result["project_count"],
-            "gate": gate_state(result["sample_count"], result["project_count"], segmented=segmented),
+            "sample_count": sum(sample.public_label in adjacent_labels for sample, _ in eligible),
+            "project_count": len(
+                {sample.project_id for sample, _ in eligible if sample.public_label in adjacent_labels}
+            ),
         }
+        result["adjacent_utility_separation"][name]["gate"] = gate_state(
+            result["adjacent_utility_separation"][name]["sample_count"],
+            result["adjacent_utility_separation"][name]["project_count"],
+            segmented=segmented,
+        )
     result["gate"] = gate_state(result["sample_count"], result["project_count"], segmented=segmented)
     return result
 
 
 def _scope_report(
-    samples: Sequence[CalibrationSample],
-    outcomes: Sequence[OutcomeValues],
-    concerns: Sequence[tuple[str, ...]],
+    mapped: Sequence[MappedOutcome],
     *,
     scope: str,
     window: str,
@@ -206,6 +351,9 @@ def _scope_report(
     profile_version: str,
     seed: int,
 ) -> dict[str, Any]:
+    samples = tuple(item.sample for item in mapped)
+    outcomes = tuple(item.outcome for item in mapped)
+    concerns = tuple(item.concerns for item in mapped)
     probability, economic = _observations(samples, outcomes, concerns)
     segmented = scope != "overall"
     views: dict[str, Any] = {}
@@ -218,7 +366,7 @@ def _scope_report(
             "economic": {
                 name: _economic_evidence(records, view, seed, segmented=segmented) for name, records in economic.items()
             },
-            "decision": _decision_view(samples, outcomes, view=view, seed=seed, segmented=segmented),
+            "decision": _decision_view(mapped, view=view, seed=seed, segmented=segmented),
         }
     advice_contract = {
         "scope": scope,
@@ -257,15 +405,16 @@ def _window_report(
     states = tuple(maturity_state(sample, as_of=as_of, window_days=days) for sample in samples)
     state_counts = Counter(states)
     mature = tuple(sample for sample, state in zip(samples, states, strict=True) if state == "mature")
-    mapped = tuple(map_outcomes(sample) for sample in mature)
-    outcomes = tuple(item[0] for item in mapped)
-    concerns = tuple(item[1] for item in mapped)
+    mapped = tuple(map_sample(sample) for sample in mature)
+    outcomes = tuple(item.outcome for item in mapped)
+    concerns = tuple(item.concerns for item in mapped)
     resolved = {name: sum(getattr(outcome, name) is not None for outcome in outcomes) for name, _ in PROBABILITY_FIELDS}
     unresolved = {name: len(mature) - count for name, count in resolved.items()}
     resolved.update(
         {
             name: sum(
-                not concern and getattr(outcome, actual_name) is not None
+                (name != "net_reward" or "contradictory_outcome" not in concern)
+                and getattr(outcome, actual_name) is not None
                 for outcome, concern in zip(outcomes, concerns, strict=True)
             )
             for name, _, actual_name in ECONOMIC_FIELDS
@@ -274,9 +423,7 @@ def _window_report(
     unresolved.update({name: len(mature) - resolved[name] for name, _, _ in ECONOMIC_FIELDS})
     window_name = f"{days}d"
     overall = _scope_report(
-        mature,
-        outcomes,
-        concerns,
+        mapped,
         scope="overall",
         window=window_name,
         model_version=model_version,
@@ -291,9 +438,7 @@ def _window_report(
             if any(segment_key(sample, segment_type) == fixed_scope for segment_type in ("label", "status", "wallet"))
         )
         segments[fixed_scope] = _scope_report(
-            tuple(mature[index] for index in indexes),
-            tuple(outcomes[index] for index in indexes),
-            tuple(concerns[index] for index in indexes),
+            tuple(mapped[index] for index in indexes),
             scope=fixed_scope,
             window=window_name,
             model_version=model_version,
@@ -331,6 +476,9 @@ def build_calibration_report(
     dataset: CalibrationDataset, *, as_of: datetime, seed: int = 20260717
 ) -> Mapping[str, Any]:
     """Build deterministic aggregate calibration views for fixed 90/180-day windows."""
+    identities = [(item.project_id, item.assessment_id, item.cohort_id) for item in dataset.samples]
+    if len(identities) != len(set(identities)):
+        raise ValueError("duplicate calibration sample identity")
     samples = tuple(sorted(dataset.samples, key=lambda item: (item.project_id, item.assessment_id, item.cohort_id)))
     model_versions = {sample.model_version for sample in samples}
     profile_versions = {sample.profile_version for sample in samples}
@@ -444,7 +592,9 @@ def write_report_pair(report: Mapping[str, Any], output_dir: str | Path) -> tupl
     markdown_path = destination / f"opportunity-calibration-{report_id}.md"
     temporary: list[Path] = []
     backups: dict[Path, Path] = {}
+    existed = {json_path: json_path.exists(), markdown_path: markdown_path.exists()}
     published: list[Path] = []
+    retained_backups: set[Path] = set()
     try:
         json_temp = _temporary_path(destination, ".json.tmp")
         markdown_temp = _temporary_path(destination, ".md.tmp")
@@ -461,21 +611,29 @@ def write_report_pair(report: Mapping[str, Any], output_dir: str | Path) -> tupl
             source.replace(final)
             published.append(final)
         return json_path, markdown_path
-    except Exception:
-        rollback_failed = False
+    except Exception as publication_error:
+        rollback_failures: list[tuple[Path, Path, OSError]] = []
         for final in reversed(published):
             try:
                 backup = backups.get(final)
-                if backup is not None and backup.exists():
+                if existed[final] and backup is not None and backup.exists():
                     backup.replace(final)
                 else:
                     final.unlink(missing_ok=True)
-            except OSError:
-                rollback_failed = True
-        if rollback_failed:
-            for final in (json_path, markdown_path):
-                final.unlink(missing_ok=True)
+            except OSError as rollback_error:
+                backup = backups.get(final)
+                if backup is not None and backup.exists():
+                    retained_backups.add(backup)
+                with suppress(OSError):
+                    final.unlink(missing_ok=True)
+                rollback_failures.append((final, backup, rollback_error))
+        if rollback_failures:
+            recovery = ", ".join(str(backup) for _, backup, _ in rollback_failures if backup is not None)
+            raise RuntimeError(
+                f"report pair rollback failed; retained backup(s): {recovery}"[:511]
+            ) from publication_error
         raise
     finally:
         for path in temporary:
-            path.unlink(missing_ok=True)
+            if path not in retained_backups:
+                path.unlink(missing_ok=True)

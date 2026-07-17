@@ -231,13 +231,14 @@ def decision_metrics(
     outcomes: Sequence[OutcomeValues],
     *,
     view: str,
+    mapped: bool = False,
 ) -> Mapping[str, Any]:
     if len(samples) != len(outcomes):
         raise ValueError("samples and outcomes must have equal lengths")
 
     eligible_records = []
     for sample, supplied_outcome in zip(samples, outcomes, strict=True):
-        derived_outcome, concerns = map_outcomes(sample)
+        derived_outcome, concerns = (supplied_outcome, ()) if mapped else map_outcomes(sample)
         if (
             not concerns
             and supplied_outcome == derived_outcome

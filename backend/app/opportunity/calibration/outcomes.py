@@ -1,6 +1,14 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from .models import CalibrationSample, OutcomeValues
+
+
+@dataclass(frozen=True)
+class MappedOutcome:
+    sample: CalibrationSample
+    outcome: OutcomeValues
+    concerns: tuple[str, ...]
 
 
 def maturity_state(
@@ -72,3 +80,8 @@ def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, .
         ),
         ("contradictory_outcome",) if contradictory else (),
     )
+
+
+def map_sample(sample: CalibrationSample) -> MappedOutcome:
+    outcome, concerns = map_outcomes(sample)
+    return MappedOutcome(sample, outcome, concerns)
