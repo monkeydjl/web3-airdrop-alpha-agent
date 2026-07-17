@@ -192,6 +192,19 @@ def test_probability_metrics_reject_invalid_coverage_denominator(coverage_denomi
 
 
 @pytest.mark.parametrize(
+    "coverage_denominator",
+    (True, False, 2.0, 2.5, float("nan"), float("inf"), float("-inf")),
+)
+def test_probability_metrics_reject_non_integer_coverage_denominator(coverage_denominator):
+    with pytest.raises(ValueError, match="coverage_denominator"):
+        probability_metrics(
+            (),
+            view="cohort_weighted",
+            coverage_denominator=coverage_denominator,
+        )
+
+
+@pytest.mark.parametrize(
     "predicted",
     (float("nan"), float("inf"), float("-inf"), -0.01, 1.01),
     ids=("nan", "positive-infinity", "negative-infinity", "below-zero", "above-one"),

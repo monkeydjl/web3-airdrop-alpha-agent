@@ -57,7 +57,7 @@ def probability_metrics(
     coverage_denominator: int,
 ) -> Mapping[str, Any]:
     coverage_count = len(observations)
-    if coverage_denominator < 0 or coverage_denominator < coverage_count:
+    if type(coverage_denominator) is not int or coverage_denominator < 0 or coverage_denominator < coverage_count:
         raise ValueError("coverage_denominator must be non-negative and at least coverage_count")
 
     weights = sample_weights(observations, view)
