@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
-from .models import CALIBRATION_LABELS, CALIBRATION_STATUSES, CalibrationSample
+from .models import CALIBRATION_LABELS, CALIBRATION_STATUSES, CALIBRATION_WALLET_BANDS, CalibrationSample
 
 PROBABILITY_ADVICE = MappingProxyType(
     {
@@ -29,7 +29,7 @@ VALID_SCOPES = frozenset(
     {"overall"}
     | {f"label:{value}" for value in CALIBRATION_LABELS}
     | {f"status:{value}" for value in CALIBRATION_STATUSES}
-    | {"wallet:1-2", "wallet:3-10", "wallet:11+"}
+    | {f"wallet:{value}" for value in CALIBRATION_WALLET_BANDS}
 )
 
 
