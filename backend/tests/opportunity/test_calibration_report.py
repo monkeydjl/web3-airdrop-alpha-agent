@@ -370,6 +370,29 @@ def test_decision_dimensions_have_their_own_counts_and_gates(monkeypatch):
     assert adjacent["project_count"] == 32
 
 
+def test_project_equal_decision_median_uses_project_label_means(monkeypatch):
+    samples = (
+        aged_sample(180, 1, project_id="large", public_label="FARM", reward_received_usd=6),
+        aged_sample(180, 2, project_id="large", public_label="FARM", reward_received_usd=6),
+        aged_sample(180, 3, project_id="large", public_label="FARM", reward_received_usd=18),
+        aged_sample(180, 4, project_id="small", public_label="FARM", reward_received_usd=16),
+    )
+    monkeypatch.setattr(report_module, "BOOTSTRAP_REPLICATES", 10)
+
+    first = report_module._decision_view(
+        tuple(report_module.map_sample(item) for item in samples), view="project_equal", seed=3, segmented=False
+    )
+    second = report_module._decision_view(
+        tuple(report_module.map_sample(item) for item in reversed(samples)),
+        view="project_equal",
+        seed=3,
+        segmented=False,
+    )
+
+    assert first["utility_by_label"]["FARM"]["median_net"] == pytest.approx(7.0)
+    assert second["utility_by_label"]["FARM"]["median_net"] == pytest.approx(7.0)
+
+
 def test_quality_predicates_keep_cost_and_time_when_reward_is_contradictory():
     contradictory = aged_sample(
         180,

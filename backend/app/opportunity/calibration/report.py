@@ -6,6 +6,7 @@ import math
 import os
 import random
 import shutil
+import statistics
 import tempfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -189,7 +190,9 @@ def _project_equal_decision(mapped: Sequence[MappedOutcome]) -> dict[str, Any]:
                 if any(item["label"] == label for item in grouped)
                 else None
             ),
-            "median_net": None,
+            "median_net": statistics.median(item["net"] for item in grouped if item["label"] == label)
+            if any(item["label"] == label for item in grouped)
+            else None,
         }
         for label in CALIBRATION_LABELS
     }
