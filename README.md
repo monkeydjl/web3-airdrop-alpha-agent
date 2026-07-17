@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-1%2C524%20passed%2C%201%20skipped-brightgreen)](backend/tests/)
 [![Coverage](https://img.shields.io/badge/coverage-84%25-brightgreen)](backend/tests/)
-[![Python](https://img.shields.io/badge/python-3.14-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B%20%7C%20CI%203.13-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -229,7 +229,7 @@ Agent 数量: 6 个
 ### 后端
 
 - **框架**: FastAPI 0.115
-- **Python**: 3.14
+- **Python**: 3.11+（CI 验证 3.13）
 - **数据库**: 默认 SQLite 3（WAL 模式）；通过 `DATABASE_URL` 支持 PostgreSQL
 - **日志**: structlog
 - **测试**: pytest + pytest-asyncio
@@ -364,7 +364,7 @@ cd backend
 pip install -e . --force-reinstall
 
 # 检查 Python 版本
-python --version  # 需要 3.10+
+python --version  # 支持 3.11+，CI 验证 3.13
 ```
 
 ### 前端无法连接后端
