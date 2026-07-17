@@ -43,6 +43,13 @@
 
 ---
 
+## Completion Record
+
+- Completed and locally merged to master on 2026-07-17.
+- Final strict backend suite: 1,524 passed, 1 skipped, 84.44% coverage.
+- Ruff check/format, frontend TypeScript, SQLite Shadow verifier, sequential PostgreSQL verifiers, Docker build/health smoke, and final branch review passed.
+- No remote push was performed because no remote is configured.
+
 ### Task 1: Validated Sample-Rate Configuration and Pure Sampling
 
 **Files:**
@@ -56,7 +63,7 @@
 - Produces: `is_opportunity_shadow_sampled(project_id: object, sample_rate: float) -> bool`.
 - Consumes: no interfaces introduced by later tasks.
 
-- [ ] **Step 1: Write failing settings tests**
+- [x] **Step 1: Write failing settings tests**
 
 Add `ValidationError` and parameterized boundary tests to `backend/tests/test_pipeline_run.py`:
 
@@ -87,7 +94,7 @@ def test_opportunity_shadow_sample_rate_rejects_invalid_values(sample_rate):
 
 Replace the existing defaults-only test rather than retaining duplicate coverage.
 
-- [ ] **Step 2: Run settings tests to verify failure**
+- [x] **Step 2: Run settings tests to verify failure**
 
 Run: `python -m pytest tests/test_pipeline_run.py -k "sample_rate or defaults_disabled_and_unsampled" -v`
 
@@ -95,7 +102,7 @@ Working directory: `backend`
 
 Expected: FAIL because `Settings` has no `opportunity_shadow_sample_rate` field and currently ignores that extra input.
 
-- [ ] **Step 3: Implement the setting and finite-range validator**
+- [x] **Step 3: Implement the setting and finite-range validator**
 
 Add the setting beside `opportunity_shadow_enabled` in `backend/app/config.py`:
 
@@ -115,13 +122,13 @@ Import `isfinite` from `math`, then add a dedicated validator before `model_post
         return value
 ```
 
-- [ ] **Step 4: Run settings tests to verify pass**
+- [x] **Step 4: Run settings tests to verify pass**
 
 Run: `python -m pytest tests/test_pipeline_run.py -k "sample_rate or defaults_disabled_and_unsampled" -v`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 5: Write failing deterministic sampling tests**
+- [x] **Step 5: Write failing deterministic sampling tests**
 
 Import the two new functions from `app.pipeline_run` and add:
 
@@ -158,13 +165,13 @@ def test_opportunity_shadow_sampling_is_monotonic():
 
 The literal expected buckets are fixed compatibility vectors; do not calculate expected values with the production implementation in the test.
 
-- [ ] **Step 6: Run sampling tests to verify failure**
+- [x] **Step 6: Run sampling tests to verify failure**
 
 Run: `python -m pytest tests/test_pipeline_run.py -k "bucket or sampling" -v`
 
 Expected: test collection FAILS because the sampling functions do not exist.
 
-- [ ] **Step 7: Implement pure deterministic sampling**
+- [x] **Step 7: Implement pure deterministic sampling**
 
 Add imports and pure helpers to `backend/app/pipeline_run.py`:
 
@@ -189,7 +196,7 @@ def is_opportunity_shadow_sampled(project_id: object, sample_rate: float) -> boo
 
 Do not normalize case or whitespace for non-empty IDs: the persisted ID's exact UTF-8 representation is the sampling key.
 
-- [ ] **Step 8: Run Task 1 tests and commit**
+- [x] **Step 8: Run Task 1 tests and commit**
 
 Run: `python -m pytest tests/test_pipeline_run.py -k "sample_rate or bucket or sampling or defaults_disabled_and_unsampled" -v`
 
@@ -216,7 +223,7 @@ git commit -m "feat: add deterministic shadow sampling"
 - Produces: `run_opportunity_shadow(..., enabled: bool, sample_rate: float, service_factory=None) -> dict[str, int]`.
 - Produces: `execute_analysis_pipeline()` passes both configured rollout values and returns the six-field summary.
 
-- [ ] **Step 1: Update existing expectations and write failing rollout tests**
+- [x] **Step 1: Update existing expectations and write failing rollout tests**
 
 Define this test helper near the Shadow tests:
 
@@ -268,13 +275,13 @@ def test_all_in_summary_counts_unscored_rows_as_ineligible():
     assert stats == {"eligible": 2, "sampled": 2, "attempted": 2, "saved": 2, "failed": 0, "skipped": 0}
 ```
 
-- [ ] **Step 2: Run batch tests to verify failure**
+- [x] **Step 2: Run batch tests to verify failure**
 
 Run: `python -m pytest tests/test_pipeline_run.py -k "RunOpportunityShadow or sampled_out or invalid_ids or all_in_summary" -v`
 
 Expected: FAIL because `sample_rate` is not accepted and the new summary fields are absent.
 
-- [ ] **Step 3: Implement selection before service construction**
+- [x] **Step 3: Implement selection before service construction**
 
 Change the constant and function in `backend/app/pipeline_run.py`:
 
@@ -317,7 +324,7 @@ def run_opportunity_shadow(
 
 Keep lifecycle-start failures truthful: `eligible`, `sampled`, and `skipped` remain populated while `attempted`, `saved`, and `failed` remain zero.
 
-- [ ] **Step 4: Wire the configured rate through automatic execution**
+- [x] **Step 4: Wire the configured rate through automatic execution**
 
 Change the pipeline call to:
 
@@ -333,13 +340,13 @@ Change the pipeline call to:
 
 Update `fake_shadow` in `test_opportunity_shadow_runs_after_orchestrator` to accept `sample_rate`, set the monkeypatched rate to `1.0`, and assert that the fake received it. Keep `save_to_db=False` proving no thread or service runs.
 
-- [ ] **Step 5: Run focused pipeline tests**
+- [x] **Step 5: Run focused pipeline tests**
 
 Run: `python -m pytest tests/test_pipeline_run.py -v`
 
 Expected: all tests in the file PASS.
 
-- [ ] **Step 6: Commit sampled batch behavior**
+- [x] **Step 6: Commit sampled batch behavior**
 
 ```bash
 git add backend/app/pipeline_run.py backend/tests/test_pipeline_run.py
@@ -365,7 +372,7 @@ git commit -m "feat: apply shadow rollout to pipeline"
 - Produces: `observe_opportunity_shadow_duration(duration_seconds: float) -> None`.
 - All four helpers return `None`, no-op when metrics are disabled, and swallow/log metric exceptions.
 
-- [ ] **Step 1: Write failing exported-metric tests**
+- [x] **Step 1: Write failing exported-metric tests**
 
 Extend `test_metrics_contains_airdrop_metrics` in `backend/tests/api/test_metrics.py`:
 
@@ -382,13 +389,13 @@ Extend `test_metrics_contains_airdrop_metrics` in `backend/tests/api/test_metric
 
 Add a focused bounded-label test that imports `record_opportunity_shadow_assessment`, passes a `SimpleNamespace` with `status`, `public_label`, `model_version`, and `profile_version`, renders metrics, and asserts those four label names are present while `project_id`, `assessment_id`, `source_url`, and `error` are absent from the assessment metric line.
 
-- [ ] **Step 2: Run endpoint metric tests to verify failure**
+- [x] **Step 2: Run endpoint metric tests to verify failure**
 
 Run: `python -m pytest tests/api/test_metrics.py -k "airdrop_metrics or bounded" -v`
 
 Expected: FAIL because no Shadow metric instruments or recording helper exist.
 
-- [ ] **Step 3: Define instruments and best-effort helpers**
+- [x] **Step 3: Define instruments and best-effort helpers**
 
 Add `Mapping` import and these instruments to `backend/app/metrics.py`:
 
@@ -420,13 +427,13 @@ OPPORTUNITY_SHADOW_SAMPLE_RATE = Gauge(
 
 Use the fixed project result tuple `("eligible", "sampled", "attempted", "saved", "failed", "skipped")`. Each helper first checks `MetricsExporter.is_enabled()`, wraps all Prometheus operations in `try/except Exception`, and logs `metrics.opportunity_shadow_update_failed` without re-raising. Assessment values use `str(value.value)` for enum-like values, `str(value)` otherwise, and `"unknown"` only when a value is absent.
 
-- [ ] **Step 4: Run endpoint metric tests to verify pass**
+- [x] **Step 4: Run endpoint metric tests to verify pass**
 
 Run: `python -m pytest tests/api/test_metrics.py -k "airdrop_metrics or bounded" -v`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 5: Write failing pipeline metric-isolation tests**
+- [x] **Step 5: Write failing pipeline metric-isolation tests**
 
 Add tests in `backend/tests/test_pipeline_run.py` that monkeypatch the imported recording helpers:
 
@@ -480,7 +487,7 @@ def test_metrics_failure_cannot_change_shadow_or_primary_result(monkeypatch):
 
 Also verify a duration observer failure does not escape by injecting or monkeypatching it around the selected-batch timer.
 
-- [ ] **Step 6: Integrate best-effort recording into the Shadow batch**
+- [x] **Step 6: Integrate best-effort recording into the Shadow batch**
 
 Import `time` and the four helpers in `pipeline_run.py`. At pipeline start, call `set_opportunity_shadow_rollout(...)` inside an additional local `try/except` so even a monkeypatched helper that violates its own contract cannot escape. For selected rows, start `time.perf_counter()` immediately before service construction, record each returned assessment after `saved` increments, record the six summary counters once at every return path, and observe duration only when at least one row was sampled.
 
@@ -496,13 +503,13 @@ def _record_shadow_metric(callback, *args) -> None:
 
 Do not count metric failures as assessment failures.
 
-- [ ] **Step 7: Run all Shadow and metric tests**
+- [x] **Step 7: Run all Shadow and metric tests**
 
 Run: `python -m pytest tests/test_pipeline_run.py tests/api/test_metrics.py -v`
 
 Expected: all tests PASS.
 
-- [ ] **Step 8: Commit metrics**
+- [x] **Step 8: Commit metrics**
 
 ```bash
 git add backend/app/metrics.py backend/app/pipeline_run.py backend/tests/test_pipeline_run.py backend/tests/api/test_metrics.py
@@ -521,7 +528,7 @@ git commit -m "feat: observe shadow rollout metrics"
 - Consumes: `settings.opportunity_shadow_enabled` and `settings.opportunity_shadow_sample_rate`.
 - Produces: `/health` JSON fields `opportunity_shadow_enabled: bool` and `opportunity_shadow_sample_rate: float`.
 
-- [ ] **Step 1: Write the failing health assertion**
+- [x] **Step 1: Write the failing health assertion**
 
 Update the existing Opportunity health test:
 
@@ -537,13 +544,13 @@ def test_health_registers_shadow_capability_without_claiming_replacement(client)
     assert "replace" not in str(body).lower()
 ```
 
-- [ ] **Step 2: Run health test to verify failure**
+- [x] **Step 2: Run health test to verify failure**
 
 Run: `python -m pytest tests/api/test_opportunity.py::test_health_registers_shadow_capability_without_claiming_replacement -v`
 
 Expected: FAIL with missing `opportunity_shadow_sample_rate`.
 
-- [ ] **Step 3: Add inexpensive configured state to health**
+- [x] **Step 3: Add inexpensive configured state to health**
 
 Change the two health fields in `backend/app/main.py` to direct settings access:
 
@@ -554,13 +561,13 @@ Change the two health fields in `backend/app/main.py` to direct settings access:
 
 Do not query Opportunity tables or Prometheus from the health endpoint.
 
-- [ ] **Step 4: Run health and metrics endpoint tests**
+- [x] **Step 4: Run health and metrics endpoint tests**
 
 Run: `python -m pytest tests/api/test_opportunity.py::test_health_registers_shadow_capability_without_claiming_replacement tests/api/test_metrics.py -v`
 
 Expected: all tests PASS.
 
-- [ ] **Step 5: Commit health state**
+- [x] **Step 5: Commit health state**
 
 ```bash
 git add backend/app/main.py backend/tests/api/test_opportunity.py
@@ -581,7 +588,7 @@ git commit -m "feat: expose shadow rollout health"
 - Produces: a 30-attempt, one-second health loop that prints logs on timeout and always removes the smoke container.
 - Preserves: tag-only release trigger, repository-root Docker context, and `docker/Dockerfile`.
 
-- [ ] **Step 1: Write failing workflow structure tests**
+- [x] **Step 1: Write failing workflow structure tests**
 
 Import `Path` and `yaml`, add a loader that prevents PyYAML from coercing the key `on` by reading the workflow as text for branch assertions, and add:
 
@@ -617,13 +624,13 @@ def test_release_remains_tag_driven_with_root_docker_context():
 
 The release test may match the disabled demo script; it is a structural guard, not a claim that demo deployment runs in CI.
 
-- [ ] **Step 2: Run workflow tests to verify failure**
+- [x] **Step 2: Run workflow tests to verify failure**
 
 Run: `python -m pytest tests/test_deployment.py -k "workflow or ci_supports or release_remains" -v`
 
 Expected: FAIL because `master`, bounded polling, logs, and unconditional cleanup are absent.
 
-- [ ] **Step 3: Update CI branch filters and smoke script**
+- [x] **Step 3: Update CI branch filters and smoke script**
 
 Set both branch filters to include `master` and `main` while preserving current patterns:
 
@@ -656,19 +663,19 @@ Replace the fixed sleep with:
 
 The `trap` guarantees cleanup after success, timeout, curl failure, or shell interruption.
 
-- [ ] **Step 4: Update the disabled release demo probe**
+- [x] **Step 4: Update the disabled release demo probe**
 
 Keep `if: false`, but replace its fixed sleep with a remote shell command that runs `for attempt in $(seq 1 30)`, checks `/health`, sleeps one second, and on timeout runs `docker compose logs backend` before returning non-zero. Do not stop the demo compose stack after a successful deployment; unlike the disposable CI smoke container, it is the deployed service.
 
 Prefer a self-contained remote script using `ssh ... 'bash -se' <<'EOF'` so loop quoting is readable and deterministic.
 
-- [ ] **Step 5: Run deployment structure tests**
+- [x] **Step 5: Run deployment structure tests**
 
 Run: `python -m pytest tests/test_deployment.py -v`
 
 Expected: all tests PASS.
 
-- [ ] **Step 6: Inspect workflow diffs and commit**
+- [x] **Step 6: Inspect workflow diffs and commit**
 
 Run: `git diff --check -- .github/workflows/ci.yml .github/workflows/release.yml backend/tests/test_deployment.py`
 
@@ -696,7 +703,7 @@ git commit -m "fix(ci): harden docker health smoke"
 - Consumes: rollout environment names, metric names, health fields, and verifier commands from Tasks 1-5.
 - Produces: one consistent operator narrative for enablement, increase, observation, rollback, and verification.
 
-- [ ] **Step 1: Correct `.env.example` database, scoring, and rollout settings**
+- [x] **Step 1: Correct `.env.example` database, scoring, and rollout settings**
 
 Replace the stale PostgreSQL comments with:
 
@@ -718,7 +725,7 @@ OPPORTUNITY_SHADOW_ENABLED=false
 OPPORTUNITY_SHADOW_SAMPLE_RATE=0.0
 ```
 
-- [ ] **Step 2: Update README verified facts**
+- [x] **Step 2: Update README verified facts**
 
 Make these exact corrections without rewriting unrelated sections:
 
@@ -730,7 +737,7 @@ Make these exact corrections without rewriting unrelated sections:
 - Opportunity: `opportunity-v2.0` with profile `low-cost-curated-multiwallet-v1`, append-only and non-authoritative.
 - Quick start: use the actual `frontend-next` package scripts from its `package.json`; do not retain `python -m http.server 3002` as the primary route.
 
-- [ ] **Step 3: Document metrics and bounded labels**
+- [x] **Step 3: Document metrics and bounded labels**
 
 Add a dedicated Opportunity Shadow section to `docs/OBSERVABILITY.md` listing the five metric families exactly:
 
@@ -744,7 +751,7 @@ airdrop_opportunity_shadow_sample_rate
 
 Document the six allowed `result` values and explicitly prohibit project ID, assessment ID, URL, and error text labels. Include practical alert examples based on failure ratio and absence of saved assessments after sampled/attempted increases, without presenting a universal production threshold as verified fact.
 
-- [ ] **Step 4: Document rollout and sequential verification operations**
+- [x] **Step 4: Document rollout and sequential verification operations**
 
 Add to `docs/OPERATIONS.md`:
 
@@ -765,11 +772,11 @@ python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdro
 
 State that they run from `backend` and must not be parallelized.
 
-- [ ] **Step 5: Update implementation status**
+- [x] **Step 5: Update implementation status**
 
 Record deterministic rollout, six-field summaries, low-cardinality metrics, health configuration, CI branch support, and bounded Docker health polling as implemented. Record the verified baseline as `1,486 passed, 1 skipped` and `84.26%` coverage, while README may use rounded `84%`.
 
-- [ ] **Step 6: Scan documentation for specifically superseded claims**
+- [x] **Step 6: Scan documentation for specifically superseded claims**
 
 Run from repository root:
 
@@ -779,7 +786,7 @@ rg -n "417|FARM.*75|纯 HTML|SQLite-only|未完全接线|当前代码未完全�
 
 Expected: no matches that describe the current system. Historical context must be explicitly labeled historical if retained.
 
-- [ ] **Step 7: Check documentation diff and commit**
+- [x] **Step 7: Check documentation diff and commit**
 
 Run: `git diff --check -- .env.example README.md docs/OBSERVABILITY.md docs/OPERATIONS.md docs/IMPLEMENTATION_STATUS.md`
 
@@ -803,7 +810,7 @@ git commit -m "docs: document shadow rollout operations"
 - Consumes: all prior deliverables.
 - Produces: evidence that lint, format, tests, frontend types, both database backends, workflows, and whitespace gates pass.
 
-- [ ] **Step 1: Run focused backend regression tests**
+- [x] **Step 1: Run focused backend regression tests**
 
 Run from `backend`:
 
@@ -813,7 +820,7 @@ python -m pytest tests/test_pipeline_run.py tests/api/test_metrics.py tests/api/
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 2: Run Ruff gates**
+- [x] **Step 2: Run Ruff gates**
 
 Run from `backend`:
 
@@ -824,7 +831,7 @@ python -m ruff format --check .
 
 Expected: `All checks passed!` and all files already formatted. If format check fails, run `python -m ruff format <only-the-files-changed-by-this-plan>` and rerun both gates.
 
-- [ ] **Step 3: Run strict full backend suite**
+- [x] **Step 3: Run strict full backend suite**
 
 Run from `backend`:
 
@@ -834,7 +841,7 @@ python -m pytest tests -q --cov=app --cov-report=term-missing --cov-fail-under=8
 
 Expected: all tests pass, at least 80% coverage, and no strict warning failure. Record the new exact pass/skip count in `docs/IMPLEMENTATION_STATUS.md`; update README only if the baseline intentionally tracks the post-change exact count.
 
-- [ ] **Step 4: Run frontend type checking**
+- [x] **Step 4: Run frontend type checking**
 
 Run: `npx tsc --noEmit`
 
@@ -842,7 +849,7 @@ Working directory: `frontend-next`
 
 Expected: exit code 0 with no TypeScript errors.
 
-- [ ] **Step 5: Run SQLite Shadow verifier**
+- [x] **Step 5: Run SQLite Shadow verifier**
 
 Run: `python scripts/verify_opportunity_shadow.py`
 
@@ -850,7 +857,7 @@ Working directory: `backend`
 
 Expected: output contains `RESULT: PASS` and reports SQLite backend. Launch this command with `DATABASE_URL` explicitly removed from the child process environment; do not inspect `.env` to establish backend selection.
 
-- [ ] **Step 6: Run PostgreSQL verifiers sequentially**
+- [x] **Step 6: Run PostgreSQL verifiers sequentially**
 
 Ensure the existing `airdrop-alpha-postgres-test` container is healthy, then run each command separately from `backend` with an explicit URL:
 
@@ -863,7 +870,7 @@ python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdro
 
 Expected in order: `RESULT: OK`, `db_backend=postgres` plus `RESULT: PASS`, then `RESULT: PASS`. Never launch these three commands in parallel.
 
-- [ ] **Step 7: Build and smoke-test the Docker image locally**
+- [x] **Step 7: Build and smoke-test the Docker image locally**
 
 Run from repository root:
 
@@ -874,7 +881,7 @@ docker run --rm -d --name airdrop-shadow-smoke -p 8002:8002 airdrop-alpha:shadow
 
 Poll `http://localhost:8002/health` once per second for at most 30 attempts. Confirm HTTP 200 and both Shadow rollout fields. On failure inspect `docker logs airdrop-shadow-smoke`; always run `docker rm -f airdrop-shadow-smoke` afterward.
 
-- [ ] **Step 8: Inspect repository state and final diff**
+- [x] **Step 8: Inspect repository state and final diff**
 
 Run from repository root:
 
@@ -886,6 +893,6 @@ git log --oneline -10
 
 Expected: no whitespace errors, only intended files changed, and no secrets or generated artifacts. Do not modify unrelated concurrent work.
 
-- [ ] **Step 9: Request code review and address only concrete findings**
+- [x] **Step 9: Request code review and address only concrete findings**
 
 Use `superpowers:requesting-code-review` against the commits created by this plan. Review for sampling formula correctness, summary invariants, failure isolation, metric cardinality, workflow cleanup, and documentation accuracy. If a finding requires a code change, add or adjust a failing regression test first, implement the minimum fix, rerun the relevant focused gate, and create a new commit rather than amending prior commits.
