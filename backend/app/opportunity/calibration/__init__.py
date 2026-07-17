@@ -16,6 +16,7 @@ from .models import (
     RangeValue,
 )
 from .outcomes import map_outcomes, maturity_state
+from .report import build_calibration_report, canonical_report_json, render_markdown, write_report_pair
 
 __all__ = [
     "BinaryObservation",
@@ -24,8 +25,10 @@ __all__ = [
     "NumericObservation",
     "OutcomeValues",
     "RangeValue",
+    "build_calibration_report",
     "build_probability_observations",
     "build_suggestions",
+    "canonical_report_json",
     "cluster_bootstrap_interval",
     "decision_metrics",
     "economic_metrics",
@@ -34,6 +37,8 @@ __all__ = [
     "map_outcomes",
     "maturity_state",
     "probability_metrics",
+    "render_markdown",
     "sample_weights",
     "segment_key",
+    "write_report_pair",
 ]
