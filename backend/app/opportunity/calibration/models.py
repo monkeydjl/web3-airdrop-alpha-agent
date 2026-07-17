@@ -75,6 +75,23 @@ class BinaryObservation:
 
 
 @dataclass(frozen=True)
+class NumericObservation:
+    project_id: str
+    low: float
+    base: float
+    high: float
+    actual: float
+
+    def __post_init__(self) -> None:
+        if not self.project_id:
+            raise ValueError("project_id must not be empty")
+        if not all(math.isfinite(value) for value in (self.low, self.base, self.high, self.actual)):
+            raise ValueError("numeric observation values must be finite")
+        if not self.low <= self.base <= self.high:
+            raise ValueError("prediction range must satisfy low <= base <= high")
+
+
+@dataclass(frozen=True)
 class CalibrationDataset:
     samples: tuple[CalibrationSample, ...]
     quality: Mapping[str, int]
