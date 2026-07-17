@@ -20,10 +20,17 @@ def test_probability_metrics_match_hand_calculated_scores():
         observation(predicted, actual) for predicted, actual in ((0.1, 0), (0.7, 1), (0.8, 1), (0.4, 0))
     )
 
-    metrics = probability_metrics(observations, view="cohort_weighted")
+    metrics = probability_metrics(
+        observations,
+        view="cohort_weighted",
+        coverage_denominator=5,
+    )
 
     assert metrics["sample_count"] == 4
     assert metrics["project_count"] == 1
+    assert metrics["coverage_count"] == 4
+    assert metrics["coverage_denominator"] == 5
+    assert metrics["coverage"] == pytest.approx(0.8)
     assert metrics["observed_rate"] == pytest.approx(0.5)
     assert metrics["mean_prediction"] == pytest.approx(0.5)
     assert metrics["brier"] == pytest.approx((0.01 + 0.09 + 0.04 + 0.16) / 4)
@@ -38,6 +45,7 @@ def test_probability_metrics_use_fixed_ten_bins_with_explicit_boundaries():
     metrics = probability_metrics(
         (observation(0.0, 0), observation(0.1, 1), observation(1.0, 1)),
         view="cohort_weighted",
+        coverage_denominator=3,
     )
 
     bins = metrics["reliability_bins"]
@@ -51,10 +59,17 @@ def test_probability_metrics_use_fixed_ten_bins_with_explicit_boundaries():
 
 
 def test_probability_metrics_return_null_scores_for_empty_data():
-    metrics = probability_metrics((), view="project_equal")
+    metrics = probability_metrics(
+        (),
+        view="project_equal",
+        coverage_denominator=7,
+    )
 
     assert metrics["sample_count"] == 0
     assert metrics["project_count"] == 0
+    assert metrics["coverage_count"] == 0
+    assert metrics["coverage_denominator"] == 7
+    assert metrics["coverage"] == 0.0
     assert all(
         metrics[name] is None
         for name in (
@@ -76,6 +91,7 @@ def test_probability_metrics_return_null_skill_for_constant_outcomes():
     metrics = probability_metrics(
         (observation(0.2, 1), observation(0.8, 1)),
         view="cohort_weighted",
+        coverage_denominator=2,
     )
 
     assert metrics["climatology_brier"] == 0.0
@@ -102,18 +118,87 @@ def test_project_equal_metrics_use_weights_for_scores_ece_and_sharpness():
         observation(0.2, 0, "project-b"),
     )
 
-    metrics = probability_metrics(observations, view="project_equal")
+    metrics = probability_metrics(
+        observations,
+        view="project_equal",
+        coverage_denominator=10,
+    )
 
     assert metrics["observed_rate"] == pytest.approx(0.5)
     assert metrics["mean_prediction"] == pytest.approx(0.55)
     assert metrics["brier"] == pytest.approx(0.025)
     assert metrics["climatology_brier"] == pytest.approx(0.25)
     assert metrics["skill"] == pytest.approx(0.9)
-    assert metrics["bias"] == pytest.approx(0.05)
+    assert metrics["bias"] == pytest.approx(-0.05)
     assert metrics["ece"] == pytest.approx(0.15)
     assert metrics["sharpness"] == pytest.approx(0.1225)
     assert metrics["reliability_bins"][2]["weight"] == pytest.approx(1.0)
     assert metrics["reliability_bins"][9]["weight"] == pytest.approx(1.0)
+
+
+def test_probability_metrics_bias_is_observed_rate_minus_mean_prediction():
+    metrics = probability_metrics(
+        (observation(0.6, 1), observation(0.5, 0)),
+        view="cohort_weighted",
+        coverage_denominator=2,
+    )
+
+    assert metrics["observed_rate"] == pytest.approx(0.5)
+    assert metrics["mean_prediction"] == pytest.approx(0.55)
+    assert metrics["bias"] == pytest.approx(-0.05)
+
+
+def test_project_equal_reliability_and_ece_equalize_projects_within_one_bin():
+    observations = (
+        observation(0.21, 1, "project-a"),
+        observation(0.21, 1, "project-a"),
+        observation(0.29, 0, "project-b"),
+    )
+
+    metrics = probability_metrics(
+        observations,
+        view="project_equal",
+        coverage_denominator=3,
+    )
+
+    shared_bin = metrics["reliability_bins"][2]
+    assert shared_bin["sample_count"] == 3
+    assert shared_bin["weight"] == pytest.approx(2.0)
+    assert shared_bin["mean_prediction"] == pytest.approx(0.25)
+    assert shared_bin["observed_rate"] == pytest.approx(0.5)
+    assert metrics["ece"] == pytest.approx(0.25)
+
+
+def test_probability_metrics_expose_null_coverage_for_zero_denominator():
+    metrics = probability_metrics(
+        (),
+        view="cohort_weighted",
+        coverage_denominator=0,
+    )
+
+    assert metrics["coverage_count"] == 0
+    assert metrics["coverage_denominator"] == 0
+    assert metrics["coverage"] is None
+
+
+@pytest.mark.parametrize("coverage_denominator", (-1, 1))
+def test_probability_metrics_reject_invalid_coverage_denominator(coverage_denominator):
+    with pytest.raises(ValueError, match="coverage_denominator"):
+        probability_metrics(
+            (observation(0.5, 1), observation(0.5, 0)),
+            view="cohort_weighted",
+            coverage_denominator=coverage_denominator,
+        )
+
+
+@pytest.mark.parametrize(
+    "predicted",
+    (float("nan"), float("inf"), float("-inf"), -0.01, 1.01),
+    ids=("nan", "positive-infinity", "negative-infinity", "below-zero", "above-one"),
+)
+def test_binary_observation_rejects_invalid_predictions(predicted):
+    with pytest.raises(ValueError, match="predicted must be finite and between 0 and 1"):
+        observation(predicted, 1)
 
 
 def test_sample_weights_reject_unknown_view_even_when_empty():

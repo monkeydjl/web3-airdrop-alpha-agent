@@ -54,7 +54,12 @@ def probability_metrics(
     observations: Sequence[BinaryObservation],
     *,
     view: str,
+    coverage_denominator: int,
 ) -> Mapping[str, Any]:
+    coverage_count = len(observations)
+    if coverage_denominator < 0 or coverage_denominator < coverage_count:
+        raise ValueError("coverage_denominator must be non-negative and at least coverage_count")
+
     weights = sample_weights(observations, view)
     project_count = len({observation.project_id for observation in observations})
     reliability_bins: list[Mapping[str, Any]] = []
@@ -107,6 +112,9 @@ def probability_metrics(
             {
                 "sample_count": 0,
                 "project_count": 0,
+                "coverage_count": coverage_count,
+                "coverage_denominator": coverage_denominator,
+                "coverage": None if coverage_denominator == 0 else 0.0,
                 **empty_scores,
                 "reliability_bins": tuple(reliability_bins),
             }
@@ -134,12 +142,15 @@ def probability_metrics(
         {
             "sample_count": len(observations),
             "project_count": project_count,
+            "coverage_count": coverage_count,
+            "coverage_denominator": coverage_denominator,
+            "coverage": coverage_count / coverage_denominator,
             "observed_rate": observed_rate,
             "mean_prediction": mean_prediction,
             "brier": brier,
             "climatology_brier": climatology_brier,
             "skill": None if climatology_brier == 0 else 1 - brier / climatology_brier,
-            "bias": mean_prediction - observed_rate,
+            "bias": observed_rate - mean_prediction,
             "ece": ece,
             "sharpness": _weighted_mean(
                 tuple((predicted - mean_prediction) ** 2 for predicted in predictions),
