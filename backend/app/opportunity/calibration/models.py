@@ -60,6 +60,21 @@ class OutcomeValues:
 
 
 @dataclass(frozen=True)
+class BinaryObservation:
+    project_id: str
+    predicted: float
+    actual: int
+
+    def __post_init__(self) -> None:
+        if not self.project_id:
+            raise ValueError("project_id must not be empty")
+        if not math.isfinite(self.predicted) or not 0 <= self.predicted <= 1:
+            raise ValueError("predicted must be finite and between 0 and 1")
+        if self.actual not in (0, 1):
+            raise ValueError("actual must be 0 or 1")
+
+
+@dataclass(frozen=True)
 class CalibrationDataset:
     samples: tuple[CalibrationSample, ...]
     quality: Mapping[str, int]
