@@ -1,3 +1,4 @@
+from .advice import build_suggestions, cluster_bootstrap_interval, gate_state, segment_key
 from .loader import load_calibration_dataset
 from .metrics import (
     build_probability_observations,
@@ -24,11 +25,15 @@ __all__ = [
     "OutcomeValues",
     "RangeValue",
     "build_probability_observations",
+    "build_suggestions",
+    "cluster_bootstrap_interval",
     "decision_metrics",
     "economic_metrics",
+    "gate_state",
     "load_calibration_dataset",
     "map_outcomes",
     "maturity_state",
     "probability_metrics",
     "sample_weights",
+    "segment_key",
 ]

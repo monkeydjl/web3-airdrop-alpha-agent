@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 
+CALIBRATION_STATUSES = ("ACTIONABLE", "MONITOR", "INSUFFICIENT_EVIDENCE", "NOT_FIT", "BLOCKED")
+CALIBRATION_LABELS = ("FARM", "WATCH", "IGNORE")
+CALIBRATION_WALLET_BANDS = ("1-2", "3-10", "11+")
+
 
 @dataclass(frozen=True)
 class RangeValue:
