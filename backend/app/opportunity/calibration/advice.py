@@ -7,6 +7,31 @@ from typing import Any
 
 from .models import CALIBRATION_LABELS, CALIBRATION_STATUSES, CalibrationSample
 
+PROBABILITY_ADVICE = MappingProxyType(
+    {
+        "event": ("probability:event", "Project-equal event calibration bias CI excludes zero."),
+        "eligibility": (
+            "probability:eligibility",
+            "Project-equal eligibility calibration bias CI excludes zero.",
+        ),
+        "survival": ("probability:survival", "Project-equal survival calibration bias CI excludes zero."),
+        "reward": ("probability:reward", "Project-equal reward calibration bias CI excludes zero."),
+    }
+)
+ECONOMIC_ADVICE = MappingProxyType(
+    {
+        "net_reward": ("economic:net_reward", "Project-equal net_reward signed-error CI excludes zero."),
+        "hard_cost": ("economic:hard_cost", "Project-equal hard_cost signed-error CI excludes zero."),
+        "total_time": ("economic:total_time", "Project-equal total_time signed-error CI excludes zero."),
+    }
+)
+VALID_SCOPES = frozenset(
+    {"overall"}
+    | {f"label:{value}" for value in CALIBRATION_LABELS}
+    | {f"status:{value}" for value in CALIBRATION_STATUSES}
+    | {"wallet:1-2", "wallet:3-10", "wallet:11+"}
+)
+
 
 def _project_id(record: Any) -> str:
     if isinstance(record, Mapping):
@@ -58,17 +83,17 @@ def gate_state(sample_count: int, project_count: int, *, segmented: bool = False
 
 def segment_key(sample: CalibrationSample, segment_type: str) -> str | None:
     if segment_type == "label":
-        return sample.public_label if sample.public_label in CALIBRATION_LABELS else None
+        return f"label:{sample.public_label}" if sample.public_label in CALIBRATION_LABELS else None
     if segment_type == "status":
-        return sample.status if sample.status in CALIBRATION_STATUSES else None
+        return f"status:{sample.status}" if sample.status in CALIBRATION_STATUSES else None
     if segment_type == "wallet":
         if sample.wallet_count < 1:
             return None
         if sample.wallet_count <= 2:
-            return "1-2"
+            return "wallet:1-2"
         if sample.wallet_count <= 10:
-            return "3-10"
-        return "11+"
+            return "wallet:3-10"
+        return "wallet:11+"
     return None
 
 
@@ -113,17 +138,22 @@ def _base_suggestion(
 
 
 def build_suggestions(window_report: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    if window_report.get("gate") != "advisory":
+    scope = window_report.get("scope")
+    if scope not in VALID_SCOPES:
         return ()
+    segmented = scope != "overall"
 
     project_equal = window_report.get("project_equal", {})
     suggestions = []
     for dimension, evidence in project_equal.get("probability", {}).items():
+        advice = PROBABILITY_ADVICE.get(dimension)
+        if advice is None:
+            continue
         if (
             gate_state(
                 evidence["sample_count"],
                 evidence["project_count"],
-                segmented=window_report["scope"] != "overall",
+                segmented=segmented,
             )
             != "advisory"
         ):
@@ -139,19 +169,22 @@ def build_suggestions(window_report: Mapping[str, Any]) -> tuple[Mapping[str, An
             _base_suggestion(
                 window_report,
                 evidence,
-                target=f"probability:{dimension}",
+                target=advice[0],
                 direction=direction,
                 reason_code=reason,
-                explanation=f"Project-equal {dimension} calibration bias CI excludes zero.",
+                explanation=advice[1],
             )
         )
 
     for estimate, evidence in project_equal.get("economic", {}).items():
+        advice = ECONOMIC_ADVICE.get(estimate)
+        if advice is None:
+            continue
         if (
             gate_state(
                 evidence["sample_count"],
                 evidence["project_count"],
-                segmented=window_report["scope"] != "overall",
+                segmented=segmented,
             )
             != "advisory"
         ):
@@ -167,10 +200,10 @@ def build_suggestions(window_report: Mapping[str, Any]) -> tuple[Mapping[str, An
             _base_suggestion(
                 window_report,
                 evidence,
-                target=f"economic:{estimate}",
+                target=advice[0],
                 direction=direction,
                 reason_code=reason,
-                explanation=f"Project-equal {estimate} signed-error CI excludes zero.",
+                explanation=advice[1],
             )
         )
 
@@ -185,7 +218,7 @@ def build_suggestions(window_report: Mapping[str, Any]) -> tuple[Mapping[str, An
             gate_state(
                 evidence["sample_count"],
                 evidence["project_count"],
-                segmented=window_report["scope"] != "overall",
+                segmented=segmented,
             )
             != "advisory"
         ):

@@ -81,17 +81,17 @@ def test_segment_gate_boundaries(sample_count, project_count, expected):
 
 @pytest.mark.parametrize("wallet_count, expected", ((1, "1-2"), (2, "1-2"), (3, "3-10"), (10, "3-10"), (11, "11+")))
 def test_wallet_segments_are_fixed(wallet_count, expected):
-    assert segment_key(replace(sample(), wallet_count=wallet_count), "wallet") == expected
+    assert segment_key(replace(sample(), wallet_count=wallet_count), "wallet") == f"wallet:{expected}"
 
 
 @pytest.mark.parametrize("status", ("ACTIONABLE", "MONITOR", "INSUFFICIENT_EVIDENCE", "NOT_FIT", "BLOCKED"))
 def test_status_segments_are_fixed(status):
-    assert segment_key(replace(sample(), status=status), "status") == status
+    assert segment_key(replace(sample(), status=status), "status") == f"status:{status}"
 
 
 @pytest.mark.parametrize("label", ("FARM", "WATCH", "IGNORE"))
 def test_label_segments_are_fixed(label):
-    assert segment_key(replace(sample(), public_label=label), "label") == label
+    assert segment_key(replace(sample(), public_label=label), "label") == f"label:{label}"
 
 
 @pytest.mark.parametrize(
@@ -176,15 +176,25 @@ def test_suggestions_use_only_project_equal_significant_evidence_and_are_sorted(
 
 
 @pytest.mark.parametrize("gate", ("descriptive", "data_quality_only"))
-def test_non_advisory_reports_never_produce_suggestions(gate):
-    assert build_suggestions(advisory_report(gate)) == ()
+def test_caller_gate_cannot_override_insufficient_evidence_counts(gate):
+    report = advisory_report(gate)
+    for family in report["project_equal"].values():
+        for evidence in family.values():
+            evidence["sample_count"] = 99
+            evidence["project_count"] = 29
+    assert build_suggestions(report) == ()
 
 
 def test_segment_suggestions_require_the_segment_advisory_gate():
     report = advisory_report()
-    report["scope"] = "segment:wallet:1-2"
+    report["scope"] = "wallet:1-2"
     report["gate"] = "descriptive"
-    assert build_suggestions(report) == ()
+    for family in report["project_equal"].values():
+        for evidence in family.values():
+            evidence["sample_count"] = 30
+            evidence["project_count"] = 10
+
+    assert build_suggestions(report)
 
 
 def test_each_suggestion_must_pass_its_own_project_equal_gate():
@@ -192,3 +202,104 @@ def test_each_suggestion_must_pass_its_own_project_equal_gate():
     report["project_equal"]["probability"]["event"]["sample_count"] = 99
 
     assert all(item["target"] != "probability:event" for item in build_suggestions(report))
+
+
+@pytest.mark.parametrize("dimension", ("event", "eligibility", "survival", "reward"))
+def test_probability_advice_uses_the_fixed_dimension_allowlist(dimension):
+    report = advisory_report()
+    report["project_equal"]["probability"] = {
+        dimension: {"observed_gap": 0.1, "ci95": (0.01, 0.2), "sample_count": 100, "project_count": 30}
+    }
+
+    suggestion = next(item for item in build_suggestions(report) if item["target"].startswith("probability:"))
+
+    assert suggestion["target"] == f"probability:{dimension}"
+    assert dimension in suggestion["explanation"]
+
+
+@pytest.mark.parametrize("estimate", ("net_reward", "hard_cost", "total_time"))
+def test_economic_advice_uses_the_fixed_estimate_allowlist(estimate):
+    report = advisory_report()
+    report["project_equal"]["economic"] = {
+        estimate: {"observed_gap": 1.0, "ci95": (0.1, 2.0), "sample_count": 100, "project_count": 30}
+    }
+
+    suggestions = build_suggestions(report)
+
+    assert any(item["target"] == f"economic:{estimate}" and estimate in item["explanation"] for item in suggestions)
+
+
+@pytest.mark.parametrize(
+    ("family", "unknown"),
+    (("probability", "wallet:0xDEADBEEF"), ("economic", "project-secret-123")),
+)
+def test_arbitrary_dimensions_never_enter_advice_target_or_explanation(family, unknown):
+    report = advisory_report()
+    report["project_equal"][family][unknown] = {
+        "observed_gap": 99.0,
+        "ci95": (98.0, 100.0),
+        "sample_count": 100,
+        "project_count": 30,
+    }
+
+    suggestions = build_suggestions(report)
+
+    assert all(unknown not in item["target"] and unknown not in item["explanation"] for item in suggestions)
+
+
+@pytest.mark.parametrize(
+    "scope",
+    (
+        "label:UNKNOWN",
+        "status:FARM",
+        "wallet:2-9",
+        "project:secret-project-id",
+        "cohort:customer-42",
+        "0x0123456789abcdef",
+        "free text scope",
+        "segment:label:FARM",
+    ),
+)
+def test_arbitrary_or_noncanonical_scopes_never_produce_advice(scope):
+    report = advisory_report()
+    report["scope"] = scope
+
+    assert build_suggestions(report) == ()
+
+
+@pytest.mark.parametrize("scope", ("overall", "label:FARM", "status:ACTIONABLE", "wallet:3-10"))
+def test_canonical_scopes_are_accepted_and_preserved(scope):
+    report = advisory_report()
+    report["scope"] = scope
+    if scope != "overall":
+        for family in report["project_equal"].values():
+            for evidence in family.values():
+                evidence["sample_count"] = 30
+                evidence["project_count"] = 10
+
+    suggestions = build_suggestions(report)
+
+    assert suggestions
+    assert all(item["scope"] == scope for item in suggestions)
+
+
+def test_overall_gate_is_recomputed_from_counts_instead_of_report_gate():
+    report = advisory_report(gate="descriptive")
+    assert build_suggestions(report)
+
+    for family in report["project_equal"].values():
+        for evidence in family.values():
+            evidence["sample_count"] = 99
+            evidence["project_count"] = 30
+    report["gate"] = "advisory"
+
+    assert build_suggestions(report) == ()
+
+
+def test_advice_output_is_deeply_immutable():
+    suggestion = build_suggestions(advisory_report())[0]
+
+    with pytest.raises(TypeError):
+        suggestion["target"] = "private-id"
+    with pytest.raises(TypeError):
+        suggestion["evidence"]["observed_gap"] = 0
