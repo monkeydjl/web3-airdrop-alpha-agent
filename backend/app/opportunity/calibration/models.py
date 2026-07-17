@@ -1,6 +1,8 @@
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 
 
 @dataclass(frozen=True)
@@ -55,3 +57,13 @@ class OutcomeValues:
     actual_hard_cost_usd: float | None
     actual_time_hours: float | None
     claim_cost_usd: float | None
+
+
+@dataclass(frozen=True)
+class CalibrationDataset:
+    samples: tuple[CalibrationSample, ...]
+    quality: Mapping[str, int]
+    backend: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "quality", MappingProxyType(dict(self.quality)))
