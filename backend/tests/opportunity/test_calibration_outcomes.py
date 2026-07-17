@@ -172,6 +172,23 @@ def test_negative_numeric_reward_remains_unresolved():
 @pytest.mark.parametrize(
     "updates",
     [
+        {"outcome": "not_airdropped"},
+        {"eligibility_result": "ineligible"},
+        {"survival_result": "disqualified"},
+    ],
+)
+def test_negative_reward_takes_precedence_over_explicit_no_reward_conditions(updates):
+    values, concerns = map_outcomes(sample(reward_received_usd=-1.0, **updates))
+
+    assert values.reward is None
+    assert values.realized_net_usd is None
+    assert values.realized_class is None
+    assert concerns == ()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
         {"eligibility_result": "ineligible"},
         {"survival_result": "disqualified"},
         {"outcome": "not_airdropped"},

@@ -23,10 +23,11 @@ def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, .
     eligibility = {"eligible": 1, "ineligible": 0}.get(sample.eligibility_result)
     survival = {"passed": 1, "disqualified": 0}.get(sample.survival_result)
     positive_reward = sample.reward_received_usd is not None and sample.reward_received_usd > 0
+    negative_reward = sample.reward_received_usd is not None and sample.reward_received_usd < 0
     explicit_no_reward = sample.reward_received_usd == 0 or event == 0 or eligibility == 0 or survival == 0
 
     contradictory = positive_reward and (event == 0 or eligibility == 0 or survival == 0)
-    if contradictory:
+    if contradictory or negative_reward:
         reward = None
     elif positive_reward:
         reward = 1
@@ -51,7 +52,7 @@ def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, .
     ):
         realized_net_usd = sample.reward_received_usd - sample.actual_hard_cost_usd - sample.claim_cost_usd
 
-    if not contradictory:
+    if not contradictory and not negative_reward:
         if eligibility == 0 or survival == 0 or (realized_net_usd is not None and realized_net_usd < 0):
             realized_class = "NEGATIVE"
         elif eligibility == 1 and survival == 1 and realized_net_usd is not None:
