@@ -58,7 +58,17 @@ _INTERACTION_SELECT = """SELECT id, project_id, wallet_cohort_id, wallet_count,
        opportunity_profile_version, outcome_observed_at, outcome
 FROM interactions"""
 _ALLOWED_PRODUCTION_SELECTS = {_ASSESSMENT_SELECT, _INTERACTION_SELECT}
-_EXPECTED_STATEMENTS = (_ASSESSMENT_SELECT, _INTERACTION_SELECT) * 2
+_EXPECTED_STATEMENTS = (_ASSESSMENT_SELECT, _INTERACTION_SELECT) * 3
+_EXPECTED_QUALITY_DELTA = {
+    "invalid_project_id": 0,
+    "missing_linkage": 0,
+    "mismatched_project": 0,
+    "unsupported_version": 0,
+    "missing_or_invalid_cohort": 0,
+    "malformed_assessment_json": 0,
+    "invalid_timestamp": 0,
+    "duplicate_pair": 2,
+}
 _FORBIDDEN_REPORT_KEYS = {
     "activities",
     "assessment_id",
@@ -92,6 +102,11 @@ def _print_failure(exception_type: type[BaseException]) -> None:
     available = MAX_OUTPUT_LINE - len(prefix)
     name = exception_type.__name__[:available] or "Exception"
     print(f"{prefix}{name}")
+    print("RESULT: FAIL")
+
+
+def _print_verification_mismatch() -> None:
+    print("failure_type=VerificationMismatch")
     print("RESULT: FAIL")
 
 
@@ -241,21 +256,31 @@ def _report_keys(value: Any) -> set[str]:
     return set()
 
 
-def _assert_report_contract(dataset: Any, report: dict[str, Any]) -> None:
-    loader_quality = {
-        "invalid_project_id": 0,
-        "missing_linkage": 0,
-        "mismatched_project": 0,
-        "unsupported_version": 0,
-        "missing_or_invalid_cohort": 0,
-        "malformed_assessment_json": 0,
-        "invalid_timestamp": 0,
-        "duplicate_pair": 2,
+def _assert_report_contract(
+    dataset: Any,
+    report: dict[str, Any],
+    *,
+    baseline_quality: dict[str, int],
+    as_of: datetime,
+) -> None:
+    assert set(dataset.quality) == set(_EXPECTED_QUALITY_DELTA)
+    assert {
+        key: int(dataset.quality[key]) - baseline_quality[key] for key in _EXPECTED_QUALITY_DELTA
+    } == _EXPECTED_QUALITY_DELTA
+    assert report["metadata"] == {
+        "schema": "opportunity-calibration-v1",
+        "model_version": MODEL_VERSION,
+        "profile_version": PROFILE_VERSION,
+        "as_of": as_of.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "windows": [90, 180],
+        "bootstrap_seed": 20260717,
+        "bootstrap_replicates": 1000,
+        "database_backend": backend_name(),
+        "report_id": report["metadata"]["report_id"],
     }
-    assert dataset.quality["duplicate_pair"] == 2
     assert report["data_quality"] == {
         "linked_sample_count": 4,
-        "loader": {key: int(dataset.quality.get(key, 0)) for key in loader_quality},
+        "loader": {key: int(dataset.quality[key]) for key in _EXPECTED_QUALITY_DELTA},
         "maturity": {
             "90d": {"mature": 3, "immature": 1, "outcome_before_assessment": 0, "outcome_after_as_of": 0},
             "180d": {"mature": 3, "immature": 1, "outcome_before_assessment": 0, "outcome_after_as_of": 0},
@@ -290,17 +315,18 @@ def run_verification(
     conn = get_connection()
     try:
         conn.begin_serialized_write()
-        assessment_ids, cohort_ids = _insert_fixture(conn, as_of=as_of)
         recorded = _RecordingConnection(conn)
+        baseline = loader(recorded, model_version=MODEL_VERSION, profile_version=PROFILE_VERSION)
+        baseline_quality = {key: int(baseline.quality[key]) for key in _EXPECTED_QUALITY_DELTA}
+        assessment_ids, cohort_ids = _insert_fixture(conn, as_of=as_of)
         dataset = loader(recorded, model_version=MODEL_VERSION, profile_version=PROFILE_VERSION)
         report = build_calibration_report(dataset, as_of=as_of)
         dataset_again = loader(recorded, model_version=MODEL_VERSION, profile_version=PROFILE_VERSION)
         report_again = build_calibration_report(dataset_again, as_of=as_of)
         json_bytes = canonical_report_json(report)
         markdown = render_markdown(report)
-        _assert_report_contract(dataset, report)
-        _assert_report_contract(dataset_again, report_again)
-        assert report["metadata"]["database_backend"] == backend_name()
+        _assert_report_contract(dataset, report, baseline_quality=baseline_quality, as_of=as_of)
+        _assert_report_contract(dataset_again, report_again, baseline_quality=baseline_quality, as_of=as_of)
         private_values = PROJECT_IDS + assessment_ids + cohort_ids + tuple(PRIVACY_CANARIES.values())
         return {
             "backend": backend_name(),
@@ -331,13 +357,16 @@ def main(argv: list[str] | None = None) -> int:
     lines = [f"{key}={summary[key]}" for key in sorted(summary)]
     expected = dict(EXPECTED_SUMMARY, backend=summary.get("backend"))
     passed = summary.get("backend") in {"sqlite", "postgres"} and summary == expected
+    if not passed:
+        _print_verification_mismatch()
+        return 1
     lines.append(f"RESULT: {'PASS' if passed else 'FAIL'}")
     if any(len(line) > MAX_OUTPUT_LINE for line in lines):
         print("failure_type=OutputLineTooLong")
         print("RESULT: FAIL")
         return 1
     print("\n".join(lines))
-    return 0 if passed else 1
+    return 0
 
 
 if __name__ == "__main__":

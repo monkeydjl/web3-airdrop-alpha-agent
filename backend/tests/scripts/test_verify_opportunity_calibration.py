@@ -68,12 +68,83 @@ def _assert_sentinels_survive(assessment_id, interaction_id, interaction_note):
         conn.close()
 
 
+def _insert_preexisting_duplicate_pair():
+    conn = verifier.get_connection()
+    assessment_id = f"preexisting-supported-assessment-{uuid4()}"
+    project_id = f"preexisting-supported-project-{uuid4()}"
+    cohort_id = f"cohort-{uuid4()}"
+    assessment = verifier._assessment(assessment_id, project_id, verifier.AS_OF - verifier.timedelta(days=200))
+    conn.execute(
+        """INSERT INTO opportunity_assessments
+           (assessment_id, project_id, model_version, profile_version, assessment_json,
+            decision_status, public_label, overall_confidence, scored_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            assessment_id,
+            project_id,
+            verifier.MODEL_VERSION,
+            verifier.PROFILE_VERSION,
+            json.dumps(assessment),
+            "ACTIONABLE",
+            "FARM",
+            0.8,
+            assessment["scored_at"],
+            assessment["expires_at"],
+        ),
+    )
+    for outcome in ("airdropped", "not_airdropped"):
+        conn.execute(
+            """INSERT INTO interactions
+               (project_id, wallet_cohort_id, wallet_count, opportunity_assessment_id,
+                opportunity_model_version, opportunity_profile_version, outcome_observed_at, outcome)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                project_id,
+                cohort_id,
+                1,
+                assessment_id,
+                verifier.MODEL_VERSION,
+                verifier.PROFILE_VERSION,
+                verifier.AS_OF.isoformat(),
+                outcome,
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return assessment_id, project_id, cohort_id
+
+
 def test_network_free_fixture_report_is_stable_and_safe(tmp_path, monkeypatch):
     _configure_database(tmp_path, monkeypatch)
 
     summary = verifier.run_verification(verifier.AS_OF)
 
     assert summary == verifier.EXPECTED_SUMMARY
+
+
+def test_fixture_quality_is_measured_as_an_exact_delta_from_production_baseline(tmp_path, monkeypatch):
+    _configure_database(tmp_path, monkeypatch)
+    identifiers = _insert_preexisting_duplicate_pair()
+
+    assert verifier.run_verification(verifier.AS_OF) == verifier.EXPECTED_SUMMARY
+
+    conn = verifier.get_connection()
+    try:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM opportunity_assessments WHERE assessment_id = ?", (identifiers[0],)
+            ).fetchone()["count"]
+            == 1
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM interactions WHERE project_id = ? AND wallet_cohort_id = ?",
+                identifiers[1:],
+            ).fetchone()["count"]
+            == 2
+        )
+    finally:
+        conn.close()
 
 
 def test_fixture_transaction_preserves_preexisting_rows_on_success(tmp_path, monkeypatch):
@@ -152,6 +223,20 @@ def test_injected_writing_loader_is_rejected_and_rolled_back(tmp_path, monkeypat
     _assert_sentinels_survive(*sentinel)
 
 
+def test_recording_connection_rejects_empty_sql():
+    class Connection:
+        kind = "sqlite"
+
+        def execute(self, _sql, _params=None):
+            raise AssertionError("empty SQL reached the wrapped connection")
+
+    recording = verifier._RecordingConnection(Connection())
+
+    with pytest.raises(verifier.NonReadOnlyStatementError):
+        recording.execute(" ; ")
+    assert recording.statements == []
+
+
 def test_cli_is_sorted_bounded_and_has_pass_marker(tmp_path, monkeypatch, capsys):
     _configure_database(tmp_path, monkeypatch)
 
@@ -173,7 +258,7 @@ def test_cli_fails_when_any_required_boolean_is_false(monkeypatch, capsys, faile
     monkeypatch.setattr(verifier, "run_verification", lambda _as_of: summary)
 
     assert verifier.main([]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == "RESULT: FAIL"
+    assert capsys.readouterr().out.splitlines() == ["failure_type=VerificationMismatch", "RESULT: FAIL"]
 
 
 @pytest.mark.parametrize("count_key", ("window_90d_samples", "window_180d_samples"))
@@ -183,7 +268,34 @@ def test_cli_fails_when_an_expected_count_differs(monkeypatch, capsys, count_key
     monkeypatch.setattr(verifier, "run_verification", lambda _as_of: summary)
 
     assert verifier.main([]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == "RESULT: FAIL"
+    assert capsys.readouterr().out.splitlines() == ["failure_type=VerificationMismatch", "RESULT: FAIL"]
+
+
+@pytest.mark.parametrize(
+    ("metadata_key", "wrong_value"),
+    (
+        ("schema", "wrong-schema"),
+        ("model_version", "wrong-model"),
+        ("profile_version", "wrong-profile"),
+        ("as_of", "2026-10-14T00:00:00Z"),
+        ("windows", [90]),
+        ("bootstrap_seed", 1),
+        ("bootstrap_replicates", 999),
+    ),
+)
+def test_verifier_rejects_report_metadata_mismatch(tmp_path, monkeypatch, metadata_key, wrong_value):
+    _configure_database(tmp_path, monkeypatch)
+    original = verifier.build_calibration_report
+
+    def mismatched_report(*args, **kwargs):
+        report = original(*args, **kwargs)
+        report["metadata"][metadata_key] = wrong_value
+        return report
+
+    monkeypatch.setattr(verifier, "build_calibration_report", mismatched_report)
+
+    with pytest.raises(AssertionError):
+        verifier.run_verification(verifier.AS_OF)
 
 
 def test_cli_failure_reveals_only_exception_type(monkeypatch, capsys):
