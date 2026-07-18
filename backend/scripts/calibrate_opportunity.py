@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -26,6 +27,22 @@ PROFILE_VERSION = "low-cost-curated-multiwallet-v1"
 MAX_ERROR_MESSAGE = 160
 
 
+class CalibrationValidationError(ValueError):
+    """Raised when command-line values cannot be used safely."""
+
+
+def _sanitize_message(message: str) -> str:
+    message = " ".join(message.split())
+    message = re.sub(r"(?:sqlite|postgres(?:ql)?|mysql)://\S+", "[redacted-url]", message, flags=re.IGNORECASE)
+    message = re.sub(r"(--database-url\s+)(\S+)", r"\1[redacted]", message, flags=re.IGNORECASE)
+    return message[: MAX_ERROR_MESSAGE - 1] or "operation failed"
+
+
+class CalibrationArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.exit(2, f"{_sanitize_message(f'argument error: {message}')}\n")
+
+
 def parse_as_of(value: str) -> datetime:
     """Parse an ISO-8601 timestamp and return it normalized to UTC."""
     try:
@@ -38,7 +55,7 @@ def parse_as_of(value: str) -> datetime:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = CalibrationArgumentParser(description=__doc__)
     parser.add_argument("--as-of", required=True, type=parse_as_of)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--database-url")
@@ -47,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _validate_output_dir(output_dir: Path) -> Path:
     if output_dir.exists() and not output_dir.is_dir():
-        raise ValueError(f"output path is not a directory: {output_dir}")
+        raise CalibrationValidationError(f"output path is not a directory: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -62,21 +79,23 @@ def run_calibration(*, as_of: datetime, output_dir: Path, database_url: str | No
             settings.database_url = database_url
         init_db()
         connection = get_connection()
-        dataset = load_calibration_dataset(
-            connection,
-            model_version=MODEL_VERSION,
-            profile_version=PROFILE_VERSION,
-        )
-        report = build_calibration_report(dataset, as_of=as_of)
-        return write_report_pair(report, output_dir)
+        try:
+            dataset = load_calibration_dataset(
+                connection,
+                model_version=MODEL_VERSION,
+                profile_version=PROFILE_VERSION,
+            )
+            report = build_calibration_report(dataset, as_of=as_of)
+            return write_report_pair(report, output_dir)
+        finally:
+            if connection is not None:
+                connection.close()
     finally:
-        if connection is not None:
-            connection.close()
         settings.database_url = previous_database_url
 
 
 def _public_error(error: Exception, *, secret: str | None = None) -> str:
-    message = " ".join(str(error).split())
+    message = _sanitize_message(str(error))
     if secret:
         message = message.replace(secret, "[redacted]")
     return message[:MAX_ERROR_MESSAGE] or "operation failed"
@@ -105,9 +124,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 1
+    except CalibrationValidationError as error:
+        print(_sanitize_message(f"argument error: {_public_error(error)}"), file=sys.stderr)
+        return 2
     except Exception as error:
         supplied_url = locals().get("args").database_url if "args" in locals() else None
-        print(f"{type(error).__name__}: {_public_error(error, secret=supplied_url)}", file=sys.stderr)
+        print(
+            _sanitize_message(f"{type(error).__name__}: {_public_error(error, secret=supplied_url)}"), file=sys.stderr
+        )
         return 1
 
 
