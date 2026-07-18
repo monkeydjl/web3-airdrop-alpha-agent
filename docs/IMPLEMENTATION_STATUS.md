@@ -65,6 +65,7 @@
 | 鉴权 / 多租户 | ADR-008 | ⬜ | MVP 无鉴权 |
 | SQLite / PostgreSQL 双后端 | ADR-004 | ✅ | 默认 SQLite；设置 `DATABASE_URL` 后使用 PostgreSQL；`verify_postgres.py` 已验收；health 含 `db_backend`（不表示已完成生产部署） |
 | Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | ✅ | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；默认关闭、非权威；按项目 ID 确定性灰度并追加保存不可变快照 |
+| Opportunity outcome calibration | `app/opportunity/calibration/*` + `scripts/calibrate_opportunity.py` + `scripts/verify_opportunity_calibration.py` | ✅ | 90d/180d nested windows；SQLite network-free verifier；production loader/report SELECT-only；aggregate privacy；no-auto-apply；manual approval requires a new model/profile version |
 | 竞争度缓存 | ADR-010 | 🟡 | 规则在；缓存策略按阶段演进 |
 
 ---

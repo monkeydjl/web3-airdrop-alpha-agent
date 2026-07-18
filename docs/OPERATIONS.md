@@ -113,7 +113,43 @@ $env:DATABASE_URL='postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test
 python scripts/verify_postgres.py
 python scripts/verify_opportunity_shadow.py
 python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test' --workers 4 --rounds 2
+python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
 ```
+
+#### Opportunity outcome calibration
+
+Run the production calibration loader/report path with an explicit cutoff. The
+verifier is network-free and uses fixed synthetic rows; its fixture setup and
+cleanup are the only writes it performs. Production calibration reads are
+`SELECT`-only and never mutate assessments, interactions, project scores, or
+labels.
+
+```powershell
+cd backend
+python scripts/calibrate_opportunity.py --as-of 2026-10-15T00:00:00Z --output-dir reports/opportunity-calibration
+python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
+```
+
+Gate meanings: `pass` means the report is eligible for review; `insufficient_data`
+means the minimum sample/project gates are not met; `data_quality_only` means
+quality reporting is available but no recommendation gate is asserted. The
+90-day window is nested inside the 180-day window, and maturity requires the
+full window between scoring and observed outcome. Duplicate assessment/cohort
+pairs, immature rows, outcomes after `as-of`, outcomes before assessment, and
+contradictory outcomes are excluded or flagged by the loader/report quality
+fields rather than silently promoted.
+
+Use `project_equal` as the recommendation basis when projects have unequal
+numbers of wallet cohorts: it prevents one high-volume project from dominating
+the result. Keep `cohort_weighted` for operational volume context. Reports are
+aggregate-only: project, assessment, cohort, wallet, URLs, notes, and private
+reasons must not appear in JSON or Markdown output.
+
+Calibration is observational and has **no auto-apply** behavior. A passing gate
+does not change production weights, labels, or decisions. Manual adoption
+requires review and approval of a **new model/profile version**, followed by a
+separate expand-and-contract rollout and rollback plan; never edit an existing
+version in place.
 ---
 
 ## 4. 故障处理手册
