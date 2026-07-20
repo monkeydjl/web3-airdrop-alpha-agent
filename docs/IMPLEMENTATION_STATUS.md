@@ -104,7 +104,7 @@
 
 | 项 | 状态 |
 |----|------|
-| pytest（已验证基线） | ✅ 1,524 passed / 1 skipped，覆盖率 84.44% |
+| pytest（已验证基线） | ✅ 1,751 passed / 1 skipped，覆盖率 85.48% |
 | CI `.github/workflows/ci.yml` | ✅ Python 3.13；push 支持 master/main/feat/**/fix/**/docs/**，PR 支持 master/main |
 | seed `make seed` | ✅ |
 | Opportunity Shadow 汇总 | ✅ `eligible`/`sampled`/`attempted`/`saved`/`failed`/`skipped` 六字段 |

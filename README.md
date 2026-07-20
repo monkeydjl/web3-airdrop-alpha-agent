@@ -2,8 +2,8 @@
 
 多智能体驱动的 Web3 早期项目识别与空投参与决策系统
 
-[![Tests](https://img.shields.io/badge/tests-1%2C524%20passed%2C%201%20skipped-brightgreen)](backend/tests/)
-[![Coverage](https://img.shields.io/badge/coverage-84%25-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-1%2C751%20passed%2C%201%20skipped-brightgreen)](backend/tests/)
+[![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B%20%7C%20CI%203.13-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -213,8 +213,8 @@ Opportunity 旁路模型使用 `opportunity-v2.0` 和配置档案 `low-cost-cura
 
 ```
 总代码行数: ~5,000+ 行
-测试基线: 1,524 passed, 1 skipped
-测试覆盖率: 84%
+测试基线: 1,751 passed, 1 skipped
+测试覆盖率: 85%
 API 端点: 12 个
 Agent 数量: 6 个
 开发用时: ~32 小时
@@ -222,7 +222,7 @@ Agent 数量: 6 个
 
 ### 测试统计
 
-已验证基线为 **1,524 passed, 1 skipped**，总体覆盖率为 **84%**（由 84.44% 四舍五入）。
+已验证基线为 **1,751 passed, 1 skipped**，总体覆盖率为 **85%**（由 85.48% 四舍五入）。
 
 ## 🛠️ 技术栈
 

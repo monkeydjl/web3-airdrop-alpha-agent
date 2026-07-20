@@ -1,6 +1,6 @@
 # Opportunity Outcome Calibration Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build a deterministic, read-only CLI that evaluates mature `opportunity-v2.0` assessment outcomes and produces privacy-safe JSON and Markdown reports with human-review-only calibration suggestions.
 
@@ -30,6 +30,14 @@
 - The same database snapshot and CLI arguments must produce byte-identical JSON and Markdown.
 - PostgreSQL smoke commands run sequentially, never in parallel.
 - Do not push to a remote unless separately requested.
+
+## Completion Record
+
+- Completed on feature branch eat/opportunity-outcome-calibration on 2026-07-20.
+- Final strict backend suite: 1,751 passed, 1 skipped, 85.48% coverage.
+- Ruff check/format, frontend TypeScript, SQLite Shadow verifier, and SQLite Opportunity calibration verifier passed.
+- Live PostgreSQL verifiers were not run because Docker Desktop was unavailable.
+- Internal sdd report artifacts were removed from the repository.
 
 ## File Map
 
@@ -69,7 +77,7 @@
 - Produces: `maturity_state(sample, as_of, window_days) -> str`.
 - Produces: `map_outcomes(sample) -> tuple[OutcomeValues, tuple[str, ...]]`.
 
-- [ ] **Step 1: Write failing model and maturity tests**
+- [x] **Step 1: Write failing model and maturity tests**
 
 Create tests that import the desired interfaces and use this fixture shape:
 
@@ -106,7 +114,7 @@ def sample(**updates):
 
 Assert exact maturity boundaries: 89 days is `immature`, 90 days is `mature`, a future outcome is `outcome_after_as_of`, and an outcome before scoring is `outcome_before_assessment`.
 
-- [ ] **Step 2: Run maturity tests to verify import failure**
+- [x] **Step 2: Run maturity tests to verify import failure**
 
 Run from `backend`:
 
@@ -116,7 +124,7 @@ python -m pytest tests/opportunity/test_calibration_outcomes.py -k "maturity or 
 
 Expected: collection error because `app.opportunity.calibration` does not exist.
 
-- [ ] **Step 3: Implement immutable models and maturity**
+- [x] **Step 3: Implement immutable models and maturity**
 
 Use frozen dataclasses with explicit nullable fields. `RangeValue.__post_init__`
 must reject non-finite values and require `low <= base <= high`.
@@ -134,7 +142,7 @@ def maturity_state(sample, *, as_of, window_days):
     return "mature"
 ```
 
-- [ ] **Step 4: Write failing dimension mapping tests**
+- [x] **Step 4: Write failing dimension mapping tests**
 
 Cover all exact mappings from the design:
 
@@ -153,18 +161,18 @@ realized net, and realized class. Economic completeness must require reward,
 actual hard cost, and claim cost. Realized classes must be POSITIVE, NEGATIVE,
 and NEUTRAL exactly as specified.
 
-- [ ] **Step 5: Run mapping tests to verify failure**
+- [x] **Step 5: Run mapping tests to verify failure**
 
 Run: `python -m pytest tests/opportunity/test_calibration_outcomes.py -v`
 
 Expected: failures because `map_outcomes` is absent.
 
-- [ ] **Step 6: Implement mapping and exports**
+- [x] **Step 6: Implement mapping and exports**
 
 Keep mapping pure and never use API-computed `realized_net_usd`. Export public
 interfaces from `calibration/__init__.py`.
 
-- [ ] **Step 7: Run tests, Ruff, and commit**
+- [x] **Step 7: Run tests, Ruff, and commit**
 
 Run:
 
@@ -198,7 +206,7 @@ git commit -m "feat: add opportunity calibration outcomes"
 - Produces: `CalibrationDataset(samples: tuple[CalibrationSample, ...], quality: Mapping[str, int], backend: str)`.
 - Produces: `load_calibration_dataset(conn, *, model_version, profile_version) -> CalibrationDataset`.
 
-- [ ] **Step 1: Write failing successful-linkage test**
+- [x] **Step 1: Write failing successful-linkage test**
 
 Build an in-memory SQLite database through `init_db(conn)`, insert one complete
 assessment JSON and one interaction explicitly linked to it, then assert the
@@ -206,13 +214,13 @@ loader returns one sample with parsed ranges and raw nullable outcome values.
 Use `OpportunityAssessment.model_dump_json()` for valid fixture JSON rather
 than hand-writing production snapshots.
 
-- [ ] **Step 2: Run loader test to verify failure**
+- [x] **Step 2: Run loader test to verify failure**
 
 Run: `python -m pytest tests/opportunity/test_calibration_loader.py::test_loader_builds_explicit_assessment_cohort_sample -v`
 
 Expected: import failure for `load_calibration_dataset`.
 
-- [ ] **Step 3: Implement SELECT-only loading**
+- [x] **Step 3: Implement SELECT-only loading**
 
 Issue exactly these categories of query:
 
@@ -232,7 +240,7 @@ FROM interactions
 Join in Python so missing and mismatched links can be counted. Parse assessment
 JSON with `OpportunityAssessment.model_validate_json`. Do not return raw rows.
 
-- [ ] **Step 4: Write failing quality and duplicate tests**
+- [x] **Step 4: Write failing quality and duplicate tests**
 
 Create independent rows for each required quality reason. Assert exact counts
 for missing linkage, mismatched project, unsupported version, missing/invalid
@@ -242,19 +250,19 @@ For a duplicate pair, assert neither row appears in `samples`.
 Add a recording connection wrapper that captures SQL and assert every executed
 statement begins with `SELECT` after leading whitespace.
 
-- [ ] **Step 5: Run quality tests to verify failure**
+- [x] **Step 5: Run quality tests to verify failure**
 
 Run: `python -m pytest tests/opportunity/test_calibration_loader.py -v`
 
 Expected: failures for missing exclusion counters and read-only guarantees.
 
-- [ ] **Step 6: Implement deterministic exclusions**
+- [x] **Step 6: Implement deterministic exclusions**
 
 Sort valid samples by `(project_id, assessment_id, cohort_id)` before returning.
 Quality dictionaries must contain all documented keys even when values are
 zero. Never store excluded IDs in quality output.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run:
 
@@ -286,7 +294,7 @@ git commit -m "feat: load calibration samples read only"
 - Produces: `sample_weights(observations, view) -> tuple[float, ...]` for `cohort_weighted` and `project_equal`.
 - Produces: `probability_metrics(observations, *, view) -> Mapping[str, Any]`.
 
-- [ ] **Step 1: Write failing hand-calculated probability tests**
+- [x] **Step 1: Write failing hand-calculated probability tests**
 
 Use observations `(0.1, 0)`, `(0.7, 1)`, `(0.8, 1)`, `(0.4, 0)` and assert:
 
@@ -299,31 +307,31 @@ expected_mean_prediction = 0.5
 Assert fixed bin boundaries, especially `0.1` entering the second bin and
 `1.0` entering the last bin. Assert empty observations return null scores.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `python -m pytest tests/opportunity/test_calibration_metrics.py -k probability -v`
 
 Expected: import failure for `probability_metrics`.
 
-- [ ] **Step 3: Implement weighted probability formulas**
+- [x] **Step 3: Implement weighted probability formulas**
 
 Use weighted means for Brier, observed rate, prediction mean, ECE, and
 sharpness. Climatology Brier uses the weighted observed rate as every
 prediction. Skill is `1 - model_brier / climatology_brier`, or null when the
 climatology score is zero.
 
-- [ ] **Step 4: Write failing project-equal test**
+- [x] **Step 4: Write failing project-equal test**
 
 Give project A nine identical cohorts and project B one cohort. Assert cohort
 weighting is 9:1 while project-equal total weight is 1:1 and each A cohort has
 weight `1/9`.
 
-- [ ] **Step 5: Implement weights and observation builders**
+- [x] **Step 5: Implement weights and observation builders**
 
 Add pure builders that read only the base probability and mapped binary outcome
 for each dimension. Missing prediction or outcome excludes only that dimension.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `python -m pytest tests/opportunity/test_calibration_metrics.py tests/opportunity/test_calibration_outcomes.py -v`
 
@@ -349,32 +357,32 @@ git commit -m "feat: calculate probability calibration metrics"
 - Produces: `economic_metrics(observations, *, view) -> Mapping[str, Any]`.
 - Produces: `decision_metrics(samples, outcomes, *, view) -> Mapping[str, Any]`.
 
-- [ ] **Step 1: Write failing economic tests**
+- [x] **Step 1: Write failing economic tests**
 
 Use predictions `[10, 20, 30]` and `[0, 10, 20]` against actuals `25` and `-5`.
 Assert MAE `10`, signed errors `5` and `-15`, RMSE
 `sqrt((25 + 225) / 2)`, interval coverage `0.5`, and mean width `20`.
 Assert inclusive boundaries count as covered.
 
-- [ ] **Step 2: Implement weighted economic metrics**
+- [x] **Step 2: Implement weighted economic metrics**
 
 Median uses deterministic sorted values; weighted views expand no samples.
 Implement a weighted median helper. Reject non-finite inputs before metrics.
 
-- [ ] **Step 3: Write failing decision tests**
+- [x] **Step 3: Write failing decision tests**
 
 Build one sample for each predicted label and realized class. Assert the full
 3x3 matrix always contains all cells. Add FARM precision/recall, IGNORE
 precision/recall, utility by label, downside rates, and adjacent mean-net
 separation tests. A missing denominator returns null, not zero.
 
-- [ ] **Step 4: Implement decision metrics without redefining WATCH**
+- [x] **Step 4: Implement decision metrics without redefining WATCH**
 
 Use only economically complete, non-contradictory samples. Do not emit a single
 accuracy score. Keep confusion matrix ordering FARM/WATCH/IGNORE and
 POSITIVE/NEUTRAL/NEGATIVE.
 
-- [ ] **Step 5: Run all metric tests and commit**
+- [x] **Step 5: Run all metric tests and commit**
 
 Run all `test_calibration_*` metric/outcome files, then Ruff gates.
 
@@ -401,21 +409,21 @@ git commit -m "feat: measure opportunity economics and decisions"
 - Produces: `segment_key(sample, segment_type) -> str`.
 - Produces: `build_suggestions(window_report) -> tuple[Mapping[str, Any], ...]`.
 
-- [ ] **Step 1: Write failing deterministic bootstrap tests**
+- [x] **Step 1: Write failing deterministic bootstrap tests**
 
 Use three projects with multiple cohorts. Run the bootstrap twice with seed
 `20260717` and assert identical intervals. Assert all cohorts from a selected
 project move together by using a statistic that exposes split clusters.
 Fewer than two projects returns null.
 
-- [ ] **Step 2: Implement project-cluster bootstrap**
+- [x] **Step 2: Implement project-cluster bootstrap**
 
 Use `random.Random(seed)`. Resample the sorted unique project list with
 replacement and concatenate every record belonging to each selected project.
 Use nearest-rank percentile indices for 2.5% and 97.5%, documented in code by
 clear function names rather than prose comments.
 
-- [ ] **Step 3: Write failing gate and segment tests**
+- [x] **Step 3: Write failing gate and segment tests**
 
 Assert exact overall gates:
 
@@ -430,12 +438,12 @@ assert gate_state(100, 30) == "advisory"
 For segmented gates, require 30 samples and 10 projects. Assert wallet bands
 `1-2`, `3-10`, `11+` and fixed status/label values.
 
-- [ ] **Step 4: Implement gates and fixed segments**
+- [x] **Step 4: Implement gates and fixed segments**
 
 Unknown status or label is a data-quality exclusion, not a dynamic segment.
 Never segment by an identifier or free-text value.
 
-- [ ] **Step 5: Write failing suggestion tests**
+- [x] **Step 5: Write failing suggestion tests**
 
 Create advisory reports where:
 
@@ -449,12 +457,12 @@ Assert every suggestion includes bounded reason code, counts, versions,
 window, evidence, and `auto_apply is False`. Assert descriptive and
 data-quality gates produce no suggestions.
 
-- [ ] **Step 6: Implement deterministic suggestions**
+- [x] **Step 6: Implement deterministic suggestions**
 
 Suggestions describe observed gap and direction. Do not generate replacement
 decision thresholds. Sort by `(scope, target, reason_code)`.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run advice tests plus all calibration unit tests and Ruff gates.
 
@@ -480,47 +488,47 @@ git commit -m "feat: generate guarded calibration advice"
 - Produces: `render_markdown(report) -> str`.
 - Produces: `write_report_pair(report, output_dir) -> tuple[Path, Path]`.
 
-- [ ] **Step 1: Write failing 90/180 window report test**
+- [x] **Step 1: Write failing 90/180 window report test**
 
 Use samples exactly 89, 90, 179, and 180 days old. Assert 90-day counts include
 90/179/180 and 180-day counts include only 180. Assert maturity and unresolved
 counts are present even when no dimension reaches a scoring gate.
 
-- [ ] **Step 2: Implement window assembly**
+- [x] **Step 2: Implement window assembly**
 
 For each window, map outcomes once, build all metrics in both views, build fixed
 segments, calculate intervals, apply gates, then generate suggestions.
 Report metadata uses schema `opportunity-calibration-v1`, fixed windows
 `[90, 180]`, seed `20260717`, and replicates `1000`.
 
-- [ ] **Step 3: Write failing determinism and privacy tests**
+- [x] **Step 3: Write failing determinism and privacy tests**
 
 Build the report twice from reversed sample input order. Assert byte-identical
 JSON and Markdown. Recursively inspect keys and values and assert none contains
 known project, assessment, cohort, user, URL, note, or reason text fixture
 values. Assert no NaN or Infinity appears.
 
-- [ ] **Step 4: Implement canonical report ID and renderers**
+- [x] **Step 4: Implement canonical report ID and renderers**
 
 Compute the hash from canonical JSON with `report_id` omitted, then insert
 `report_id` and serialize the final report with sorted keys and a newline.
 Markdown consumes only the finalized report dictionary and performs no metric
 calculations.
 
-- [ ] **Step 5: Write failing atomic output tests**
+- [x] **Step 5: Write failing atomic output tests**
 
 Assert successful output writes matching `.json` and `.md` names. Monkeypatch
 Markdown rendering and `Path.replace` failures separately; assert no partial
 final pair and no leaked temporary files.
 
-- [ ] **Step 6: Implement atomic pair output**
+- [x] **Step 6: Implement atomic pair output**
 
 Render both representations before creating final files. Write temporary files
 in the destination directory, flush and close, then replace final paths. If the
 second replace fails, restore or remove the first new final so a mixed pair is
 not published.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run report tests plus all calibration unit tests and Ruff gates.
 
@@ -545,13 +553,13 @@ git commit -m "feat: render opportunity calibration reports"
 - Produces: `run_calibration(*, as_of, output_dir, database_url=None) -> tuple[Path, Path]`.
 - Produces: `main(argv: Sequence[str] | None = None) -> int`.
 
-- [ ] **Step 1: Write failing argument tests**
+- [x] **Step 1: Write failing argument tests**
 
 Assert missing `--as-of`, naive timestamps, invalid timestamps, and an output
 path that is a file return non-zero. Assert `Z` and explicit offsets normalize
 to UTC. Ensure captured output never contains a supplied database URL.
 
-- [ ] **Step 2: Implement CLI parsing**
+- [x] **Step 2: Implement CLI parsing**
 
 Use `argparse`. Required invocation:
 
@@ -562,19 +570,19 @@ python scripts/calibrate_opportunity.py --as-of 2026-10-15T00:00:00Z --output-di
 Optional `--database-url` temporarily overrides `settings.database_url` only
 for the current process call and is restored in `finally`.
 
-- [ ] **Step 3: Write failing successful CLI test**
+- [x] **Step 3: Write failing successful CLI test**
 
 Populate a temporary SQLite DB, invoke `main([...])`, assert exit `0`, exactly
 two final files, stable rerun bytes, and output containing report paths plus
 gate/sample summary but no database URL or row identifier.
 
-- [ ] **Step 4: Implement orchestration and bounded errors**
+- [x] **Step 4: Implement orchestration and bounded errors**
 
 Initialize existing schema, open one connection, load, close in `finally`,
 build report, and write pair. Print only exception type and a bounded public
 message on failure; do not print SQL parameters, URL, traceback, or row data.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run CLI tests, all calibration tests, and Ruff gates.
 
@@ -599,7 +607,7 @@ git commit -m "feat: add opportunity calibration CLI"
 - Produces: `run_verification(as_of: datetime) -> Mapping[str, Any]`.
 - Preserves: no writes outside deterministic verifier fixture setup/cleanup; calibration production functions remain SELECT-only.
 
-- [ ] **Step 1: Write failing verifier test**
+- [x] **Step 1: Write failing verifier test**
 
 Point settings to a temporary SQLite DB. The verifier creates synthetic
 projects, assessments, and interactions covering mature probability, economics,
@@ -617,18 +625,18 @@ decision, duplicate, immature, and contradictory cases. Assert summary:
 }
 ```
 
-- [ ] **Step 2: Implement network-free verifier**
+- [x] **Step 2: Implement network-free verifier**
 
 Use fixed IDs and fixed UTC timestamps. Fixture writes occur only in the
 verifier; call the same production loader/report functions used by the CLI.
 Clean fixture rows in `finally`.
 
-- [ ] **Step 3: Add verifier CLI output test**
+- [x] **Step 3: Add verifier CLI output test**
 
 Assert sorted `key=value` output and final `RESULT: PASS`. On failure print only
 `failure_type=<ClassName>` and `RESULT: FAIL`.
 
-- [ ] **Step 4: Update operations documentation**
+- [x] **Step 4: Update operations documentation**
 
 Document:
 
@@ -652,7 +660,7 @@ python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdro
 python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run verifier tests, SQLite verifier, docs diff check, and all calibration tests.
 
@@ -674,7 +682,7 @@ git commit -m "docs: operationalize opportunity calibration"
 - Consumes all prior deliverables.
 - Produces fresh evidence for correctness, determinism, privacy, both database backends, and unchanged application behavior.
 
-- [ ] **Step 1: Run focused calibration suite**
+- [x] **Step 1: Run focused calibration suite**
 
 Run from `backend`:
 
@@ -684,7 +692,7 @@ python -m pytest tests/opportunity/test_calibration_outcomes.py tests/opportunit
 
 Expected: all tests pass without warnings.
 
-- [ ] **Step 2: Run unchanged Opportunity and interaction regressions**
+- [x] **Step 2: Run unchanged Opportunity and interaction regressions**
 
 Run:
 
@@ -694,7 +702,7 @@ python -m pytest tests/opportunity tests/test_interactions.py tests/api/test_opp
 
 Expected: all pass; no assessment, interaction, or Shadow regression.
 
-- [ ] **Step 3: Run Ruff and strict full backend suite**
+- [x] **Step 3: Run Ruff and strict full backend suite**
 
 Run:
 
@@ -707,13 +715,13 @@ python -m pytest tests -q --cov=app --cov-report=term-missing --cov-fail-under=8
 Expected: Ruff passes, all files are formatted, all tests pass, and coverage is
 at least 80%.
 
-- [ ] **Step 4: Run frontend type checking**
+- [x] **Step 4: Run frontend type checking**
 
 Run `npx tsc --noEmit` from `frontend-next`.
 
 Expected: exit code `0` with no errors.
 
-- [ ] **Step 5: Run SQLite calibration smoke twice**
+- [x] **Step 5: Run SQLite calibration smoke twice**
 
 Run from `backend` with `DATABASE_URL` explicitly removed from the child
 environment:
@@ -726,13 +734,13 @@ python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
 Expected: both report `backend=sqlite`, identical report IDs, and
 `RESULT: PASS`.
 
-- [ ] **Step 6: Run PostgreSQL verifiers sequentially**
+- [x] **Step 6: Run PostgreSQL verifiers sequentially**
 
 Run the four commands documented in Task 8 one at a time. Expected results in
 order: `RESULT: OK`, Shadow `RESULT: PASS`, concurrency `RESULT: PASS`, and
 calibration `backend=postgres` plus `RESULT: PASS`.
 
-- [ ] **Step 7: Inspect privacy, writes, and final diff**
+- [x] **Step 7: Inspect privacy, writes, and final diff**
 
 Run targeted searches proving report serializers do not emit internal IDs and
 loader production SQL contains no INSERT/UPDATE/DELETE. Then run:
@@ -746,7 +754,7 @@ git log --oneline -15
 Expected: only intended files, no generated reports, no secrets, and the
 pre-existing local memory modification remains unstaged.
 
-- [ ] **Step 8: Request whole-branch review**
+- [x] **Step 8: Request whole-branch review**
 
 Review sampling linkage, outcome mappings, maturity boundaries, project-equal
 weights, formulas, bootstrap clustering, gates, suggestion governance,
