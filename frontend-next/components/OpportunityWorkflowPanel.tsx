@@ -536,13 +536,6 @@ const SURVIVAL_OPTS: { id: SurvivalResult | ''; label: string }[] = [
   { id: 'disqualified', label: '被淘汰' },
 ];
 
-const DEFAULT_TRANSITIONS: Record<InteractionStatus, InteractionStatus[]> = {
-  planned: ['active', 'abandoned'],
-  active: ['done', 'abandoned'],
-  done: [],
-  abandoned: [],
-};
-
 function isInteractionStatus(value: string): value is InteractionStatus {
   return value === 'planned' || value === 'active' || value === 'done' || value === 'abandoned';
 }
@@ -575,6 +568,7 @@ function parseOptionalInt(raw: string): number | null {
   return Math.trunc(n);
 }
 
+/** Only projection.validation.allowed_transitions[status]; missing → empty (never invent transitions). */
 function allowedTargets(
   current: ValidationCurrent | null,
   allowed: Record<string, string[]>,
@@ -582,7 +576,7 @@ function allowedTargets(
   if (!current || !isInteractionStatus(String(current.status))) return [];
   const status = current.status as InteractionStatus;
   const fromApi = allowed[status];
-  const raw = Array.isArray(fromApi) ? fromApi : DEFAULT_TRANSITIONS[status];
+  const raw = Array.isArray(fromApi) ? fromApi : [];
   return raw.filter(isInteractionStatus);
 }
 
@@ -866,14 +860,17 @@ function ValidationPanel({
   projectId,
   projection,
   busy,
-  onStart,
+  walletCount,
+  onWalletCountChange,
   onTransition,
   onSaveOutcome,
 }: {
   projectId: string;
   projection: OpportunityWorkflowProjection;
   busy: boolean;
-  onStart: (walletCount: 1 | 2) => void;
+  /** Controlled wallet_count for the single primary "开始验证" CTA (no second start button here). */
+  walletCount: 1 | 2;
+  onWalletCountChange: (count: 1 | 2) => void;
   onTransition: (status: InteractionStatus) => void;
   onSaveOutcome: (payload: Record<string, unknown>) => void;
 }) {
@@ -887,7 +884,6 @@ function ValidationPanel({
     !open &&
     Boolean(opportunity?.assessment_id);
 
-  const [walletCount, setWalletCount] = useState<1 | 2>(1);
   const [hardCost, setHardCost] = useState('');
   const [timeMinutes, setTimeMinutes] = useState('');
   const [eligibility, setEligibility] = useState<EligibilityResult | ''>('');
@@ -977,27 +973,22 @@ function ValidationPanel({
       )}
 
       {canStart ? (
-        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-line/70 px-3 py-3">
+        <div className="rounded-xl border border-line/70 px-3 py-3">
           <label className="text-xs text-ink-muted">
             验证钱包数
             <select
               className="select mt-1 w-28"
               value={walletCount}
-              onChange={(e) => setWalletCount(Number(e.target.value) === 2 ? 2 : 1)}
+              onChange={(e) => onWalletCountChange(Number(e.target.value) === 2 ? 2 : 1)}
               disabled={busy}
             >
               <option value={1}>1</option>
               <option value={2}>2</option>
             </select>
           </label>
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={busy}
-            onClick={() => onStart(walletCount)}
-          >
-            开始验证（planned）
-          </button>
+          <p className="mt-2 text-xs text-ink-muted">
+            选择 1 或 2 个钱包后，使用上方「下一步」中的「开始验证」创建 planned 交互（此处无第二入口）。
+          </p>
         </div>
       ) : null}
 
@@ -1134,12 +1125,16 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
   const headingId = useId();
   const statusId = useId();
   const validationRef = useRef<HTMLDivElement | null>(null);
+  /** Sync guard: blocks concurrent/double-click POST before React re-renders. */
+  const startInFlightRef = useRef(false);
 
   const [data, setData] = useState<OpportunityWorkflowProjection | null>(null);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  /** Default 1; controlled by ValidationPanel select; primary CTA posts this value. */
+  const [walletCount, setWalletCount] = useState<1 | 2>(1);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -1182,7 +1177,8 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
   }, [projectId, load]);
 
   const startValidation = useCallback(
-    async (walletCount: 1 | 2) => {
+    async (count: 1 | 2) => {
+      if (startInFlightRef.current) return;
       if (!data?.opportunity?.assessment_id) {
         setError('缺少 assessment_id，无法开始验证');
         return;
@@ -1191,6 +1187,11 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
         setError('仅 ACTIONABLE 状态可开始验证');
         return;
       }
+      if (hasOpenValidation(data.validation.current)) {
+        setError('已有进行中的验证，无法重复创建');
+        return;
+      }
+      startInFlightRef.current = true;
       setMutating(true);
       setError('');
       setMsg('');
@@ -1200,7 +1201,7 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
           body: JSON.stringify({
             project_id: projectId,
             status: 'planned' as const,
-            wallet_count: walletCount,
+            wallet_count: count,
             opportunity_assessment_id: data.opportunity.assessment_id,
             opportunity_model_version: FIXED_MODEL,
             opportunity_profile_version: FIXED_PROFILE,
@@ -1211,6 +1212,7 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : '创建验证失败');
       } finally {
+        startInFlightRef.current = false;
         setMutating(false);
         setTimeout(() => setMsg(''), 3000);
       }
@@ -1317,7 +1319,8 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
         return {
           label: next.label || '开始验证',
           guidanceOnly: false,
-          onClick: () => void startValidation(1),
+          // Sole start entry: uses current walletCount (1|2), never hardcoded.
+          onClick: () => void startValidation(walletCount),
         };
       }
     }
@@ -1326,7 +1329,7 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
       guidanceOnly: true,
       onClick: undefined,
     };
-  }, [data, runEvaluate, startValidation]);
+  }, [data, runEvaluate, startValidation, walletCount]);
 
   const busy = loading || mutating;
 
@@ -1436,7 +1439,8 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
                 projectId={projectId}
                 projection={data}
                 busy={busy}
-                onStart={(wc) => void startValidation(wc)}
+                walletCount={walletCount}
+                onWalletCountChange={setWalletCount}
                 onTransition={(s) => void patchLifecycle(s)}
                 onSaveOutcome={(p) => void saveOutcome(p)}
               />
