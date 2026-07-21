@@ -3,6 +3,7 @@
 import { AiBriefPanel } from '@/components/AiBriefPanel';
 import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
+import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
 import { ParticipationTasks } from '@/components/ParticipationTasks';
 import {
   ConfidenceBar,
@@ -286,6 +287,9 @@ export default function ProjectPage() {
 
       {/* AI 解读：把冷冰冰的因子讲成人话 */}
       <AiBriefPanel projectId={project.id} autoLoad />
+
+      {/* 机会行动流：资格校验 / 钱包分配 / 参与执行 */}
+      <OpportunityWorkflowPanel projectId={project.id} />
 
       {/* 可参与任务：官方活动 / 测试网 / Discord 等 */}
       <ParticipationTasks projectId={project.id} />
