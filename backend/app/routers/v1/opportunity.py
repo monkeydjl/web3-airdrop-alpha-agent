@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -10,9 +11,11 @@ from app.opportunity.models import EvidenceRecord, validate_source_url
 from app.opportunity.profile import DEFAULT_PROFILE
 from app.opportunity.repository import OpportunityRepository
 from app.opportunity.service import OpportunityService
+from app.opportunity.workflow_service import OpportunityWorkflowService
 from app.repository import ProjectRepository
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 _OPAQUE_SNAPSHOT_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 
 
@@ -79,6 +82,14 @@ def get_opportunity_service():
 
 def get_current_time() -> datetime:
     return datetime.now(UTC)
+
+
+def get_opportunity_workflow_service():
+    service = OpportunityWorkflowService()
+    try:
+        yield service
+    finally:
+        service.close()
 
 
 def _require_project(project_id: str, repository: ProjectRepository) -> None:
@@ -156,3 +167,44 @@ def get_assessment(
             "review_due": review_due,
         },
     }
+
+
+@router.get("/projects/{project_id}/opportunity/workflow")
+def get_opportunity_workflow(
+    project_id: str,
+    service: OpportunityWorkflowService = Depends(get_opportunity_workflow_service),
+    now: datetime = Depends(get_current_time),
+):
+    try:
+        projection = service.get_project_workflow(project_id, now)
+    except LookupError:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PROJECT_NOT_FOUND", "message": "Project not found"},
+        ) from None
+    except Exception as exc:
+        logger.error(
+            "opportunity.workflow.projection_error project_id=%s error_type=%s",
+            project_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "OPPORTUNITY_WORKFLOW_PROJECTION_ERROR",
+                "message": "Failed to build opportunity workflow projection",
+            },
+        ) from None
+
+    data = projection.model_dump(mode="json")
+    opportunity = data.get("opportunity") or {}
+    workflow = data.get("workflow") or {}
+    next_action = workflow.get("next_action") or {}
+    logger.info(
+        "opportunity.workflow.projected project_id=%s assessment_id=%s state=%s cta_key=%s",
+        project_id,
+        opportunity.get("assessment_id"),
+        workflow.get("state"),
+        next_action.get("key"),
+    )
+    return {"ok": True, "data": data}

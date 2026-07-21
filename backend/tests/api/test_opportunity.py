@@ -1,17 +1,22 @@
+import json
+import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.db import init_db
+from app.db import DbConnection, init_db
 from app.main import create_app
 from app.opportunity.models import (
     ConfidenceSet,
     DecisionStatus,
+    EvidenceRecord,
     OpportunityAssessment,
     RiskSet,
+    validate_source_url,
 )
 from app.opportunity.repository import OpportunityRepository
 from app.opportunity.service import OpportunityService
@@ -19,6 +24,17 @@ from app.repository import ProjectRepository
 from app.routers.v1 import opportunity
 
 NOW = datetime(2026, 7, 15, 12, tzinfo=UTC)
+WORKFLOW_PATH = "/api/v1/projects/{project_id}/opportunity/workflow"
+FORBIDDEN_RESPONSE_MARKERS = (
+    "raw_snapshot_ref",
+    "wallet_cohort_id",
+    "private key",
+    "private_key",
+    "seed phrase",
+    "seed_phrase",
+    "0xdeadbeefwallet",
+    "mnemonic",
+)
 
 
 @pytest.fixture
@@ -28,11 +44,11 @@ def conn():
     init_db(connection)
     connection.executemany(
         """INSERT INTO projects
-               (id, name, sector, stage, score, label, confidence, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, name, sector, stage, score, label, confidence, source, url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         [
-            ("p1", "Alpha", "DeFi", "testnet", 90, "FARM", 0.95, "seed"),
-            ("p2", "Beta", "L2", "testnet", 70, "WATCH", 0.70, "seed"),
+            ("p1", "Alpha", "DeFi", "testnet", 90, "FARM", 0.95, "seed", "https://alpha.example"),
+            ("p2", "Beta", "L2", "testnet", 70, "WATCH", 0.70, "seed", "https://beta.example"),
         ],
     )
     connection.commit()
@@ -54,8 +70,104 @@ def client(conn):
     app.dependency_overrides[opportunity.get_opportunity_repository] = lambda: opportunity_repo
     app.dependency_overrides[opportunity.get_opportunity_service] = lambda: service
     app.dependency_overrides[opportunity.get_current_time] = lambda: NOW
+    try:
+        from app.opportunity.workflow_service import OpportunityWorkflowService
+
+        workflow_service = OpportunityWorkflowService(conn)
+        app.dependency_overrides[opportunity.get_opportunity_workflow_service] = lambda: workflow_service
+    except (ImportError, AttributeError):
+        # RED phase: service/route not wired yet.
+        pass
     with TestClient(app) as test_client:
         yield test_client
+
+
+def _table_names(connection) -> set[str]:
+    return {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
+    }
+
+
+def _row_counts(connection) -> dict[str, int]:
+    return {
+        "projects": connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
+        "opportunity_assessments": connection.execute(
+            "SELECT COUNT(*) FROM opportunity_assessments"
+        ).fetchone()[0],
+        "opportunity_evidence": connection.execute(
+            "SELECT COUNT(*) FROM opportunity_evidence"
+        ).fetchone()[0],
+        "interactions": connection.execute("SELECT COUNT(*) FROM interactions").fetchone()[0],
+    }
+
+
+def _insert_interaction(connection, **overrides):
+    payload = {
+        "project_id": "p1",
+        "status": "active",
+        "opportunity_assessment_id": None,
+        "opportunity_model_version": "opportunity-v2.0",
+        "opportunity_profile_version": "low-cost-curated-multiwallet-v1",
+        "wallet_cohort_id": "cohort-private-xyz",
+        "note": "secret note about seed phrase and 0xdeadbeefwallet",
+        "wallet_count": 2,
+        "created_at": "2026-07-15T10:00:00+00:00",
+    }
+    payload.update(overrides)
+    connection.execute(
+        """INSERT INTO interactions (
+               project_id, status, opportunity_assessment_id,
+               opportunity_model_version, opportunity_profile_version,
+               wallet_cohort_id, note, wallet_count, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            payload["project_id"],
+            payload["status"],
+            payload["opportunity_assessment_id"],
+            payload["opportunity_model_version"],
+            payload["opportunity_profile_version"],
+            payload["wallet_cohort_id"],
+            payload["note"],
+            payload["wallet_count"],
+            payload["created_at"],
+        ),
+    )
+    connection.commit()
+    return connection.execute("SELECT id FROM interactions ORDER BY id DESC LIMIT 1").fetchone()[0]
+
+
+def _assert_workflow_privacy(payload: dict) -> None:
+    serialized = json.dumps(payload, ensure_ascii=False).lower()
+    for marker in FORBIDDEN_RESPONSE_MARKERS:
+        assert marker.lower() not in serialized
+    assert "raw_snapshot_ref" not in serialized
+    assert set(payload.keys()) == {
+        "workflow_version",
+        "project_id",
+        "legacy",
+        "opportunity",
+        "workflow",
+        "evidence",
+        "validation",
+        "review_at",
+        "expires_at",
+    }
+    current = payload["validation"]["current"]
+    if current is not None:
+        assert "wallet_cohort_id" not in current
+        assert "note" not in current
+    for item in payload["evidence"]["items"]:
+        validate_source_url(item["source_url"])
+        assert "raw_snapshot_ref" not in item
+    for plan_item in payload["workflow"]["action_plan"]:
+        url = plan_item.get("external_url")
+        if url is not None:
+            parsed = urlsplit(url)
+            assert parsed.scheme in {"http", "https"}
+            assert parsed.netloc
 
 
 def _evidence(**overrides):
@@ -475,7 +587,7 @@ def test_health_registers_shadow_capability_without_claiming_replacement(client)
     assert "replace" not in str(body).lower()
 
 
-def test_openapi_registers_exactly_four_opportunity_operations(client):
+def test_openapi_registers_exactly_five_opportunity_operations(client):
     paths = client.get("/openapi.json").json()["paths"]
     operations = {
         (path, method)
@@ -490,4 +602,380 @@ def test_openapi_registers_exactly_four_opportunity_operations(client):
         ("/api/v1/projects/{project_id}/opportunity/evidence", "get"),
         ("/api/v1/projects/{project_id}/opportunity/evaluate", "post"),
         ("/api/v1/projects/{project_id}/opportunity", "get"),
+        ("/api/v1/projects/{project_id}/opportunity/workflow", "get"),
     }
+
+
+def test_workflow_missing_project_returns_structured_404(client):
+    response = client.get(WORKFLOW_PATH.format(project_id="missing"))
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "ok": False,
+        "error": {"code": "PROJECT_NOT_FOUND", "message": "Project not found"},
+    }
+
+
+def test_workflow_without_assessment_is_needs_evaluation(client, conn, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("evaluation/LLM must not be called for workflow reads")
+
+    monkeypatch.setattr(OpportunityService, "evaluate", boom)
+    monkeypatch.setattr(OpportunityService, "evaluate_row", boom)
+
+    tables_before = _table_names(conn)
+    counts_before = _row_counts(conn)
+
+    first = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    second = client.get(WORKFLOW_PATH.format(project_id="p1"))
+
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["workflow"]["state"] == "NEEDS_EVALUATION"
+    assert data["opportunity"] is None
+    assert data["workflow"]["next_action"]["key"] == "evaluate"
+    _assert_workflow_privacy(data)
+    assert first.json() == second.json()
+    assert _row_counts(conn) == counts_before
+    assert _table_names(conn) == tables_before
+    assert "opportunity_workflow" not in tables_before
+
+
+def test_workflow_uses_latest_assessment_ordering(client, conn):
+    repo = OpportunityRepository(conn)
+    older = repo.save_assessment(
+        _assessment(
+            assessment_id="assess-old",
+            scored_at=NOW - timedelta(hours=5),
+            recommended_action="older",
+            status=DecisionStatus.MONITOR,
+            public_label="WATCH",
+        )
+    )
+    # Same scored_at: later created_at and higher assessment_id DESC should win.
+    repo.save_assessment(
+        _assessment(
+            assessment_id="assess-aaa",
+            scored_at=NOW - timedelta(hours=1),
+            recommended_action="mid",
+            status=DecisionStatus.MONITOR,
+            public_label="WATCH",
+        )
+    )
+    latest = repo.save_assessment(
+        _assessment(
+            assessment_id="assess-zzz",
+            scored_at=NOW - timedelta(hours=1),
+            recommended_action="latest shadow",
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+        )
+    )
+    assert older.assessment_id != latest.assessment_id
+
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["opportunity"]["assessment_id"] == "assess-zzz"
+    assert data["opportunity"]["recommended_action"] == "latest shadow"
+    assert data["workflow"]["state"] == "ACTIONABLE"
+    _assert_workflow_privacy(data)
+
+
+def test_workflow_review_and_expiry_precedence_uses_current_time(
+    client, conn, monkeypatch
+):
+    OpportunityRepository(conn).save_assessment(
+        _assessment(
+            assessment_id="assess-review",
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+            recommended_action="start validation",
+            review_at=NOW + timedelta(minutes=10),
+            expires_at=NOW + timedelta(hours=2),
+        )
+    )
+
+    fresh = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert fresh.status_code == 200
+    assert fresh.json()["data"]["workflow"]["state"] == "ACTIONABLE"
+
+    monkeypatch.setitem(
+        client.app.dependency_overrides,
+        opportunity.get_current_time,
+        lambda: NOW + timedelta(minutes=15),
+    )
+    review_due = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert review_due.status_code == 200
+    assert review_due.json()["data"]["workflow"]["state"] == "REVIEW_REQUIRED"
+    assert review_due.json()["data"]["workflow"]["next_action"]["key"] == "re_evaluate"
+
+    monkeypatch.setitem(
+        client.app.dependency_overrides,
+        opportunity.get_current_time,
+        lambda: NOW + timedelta(hours=3),
+    )
+    expired = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert expired.status_code == 200
+    assert expired.json()["data"]["workflow"]["state"] == "REVIEW_REQUIRED"
+
+
+def test_workflow_includes_invalidated_evidence_and_safe_urls(client, conn):
+    client.post(
+        "/api/v1/projects/p1/opportunity/evidence",
+        json=_evidence(
+            verification_status="invalidated",
+            value=False,
+            observed_at="2026-07-14T10:00:00Z",
+            raw_snapshot_ref="snap-private-1",
+        ),
+    )
+    client.post(
+        "/api/v1/projects/p1/opportunity/evidence",
+        json=_evidence(
+            verification_status="verified",
+            value=True,
+            observed_at="2026-07-15T10:00:00Z",
+            source_url="https://project.example/rules?utm_source=docs",
+            raw_snapshot_ref="snap-private-2",
+        ),
+    )
+    OpportunityRepository(conn).save_assessment(
+        _assessment(assessment_id="assess-ev", status=DecisionStatus.MONITOR, public_label="WATCH")
+    )
+
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    statuses = [item["verification_status"] for item in data["evidence"]["items"]]
+    assert "invalidated" in statuses
+    assert "verified" in statuses
+    assert statuses[0] == "verified"  # observed_at DESC
+    _assert_workflow_privacy(data)
+
+
+def test_workflow_selects_interactions_for_current_assessment_only(client, conn):
+    repo = OpportunityRepository(conn)
+    current = repo.save_assessment(
+        _assessment(
+            assessment_id="assess-current",
+            scored_at=NOW - timedelta(hours=1),
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+            recommended_action="validate",
+        )
+    )
+    repo.save_assessment(
+        _assessment(
+            assessment_id="assess-old",
+            scored_at=NOW - timedelta(hours=5),
+            status=DecisionStatus.MONITOR,
+            public_label="WATCH",
+            recommended_action="old",
+        )
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id="assess-old",
+        status="done",
+        created_at="2026-07-15T11:00:00+00:00",
+        note="old assessment private note",
+        wallet_cohort_id="old-cohort",
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id=current.assessment_id,
+        status="active",
+        created_at="2026-07-15T09:00:00+00:00",
+        note="current assessment private note",
+        wallet_cohort_id="current-cohort",
+        wallet_count=1,
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id=current.assessment_id,
+        status="planned",
+        created_at="2026-07-15T12:00:00+00:00",
+        note="newer open interaction",
+        wallet_cohort_id="current-cohort-2",
+        wallet_count=2,
+    )
+
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["opportunity"]["assessment_id"] == "assess-current"
+    assert data["validation"]["history_summary"]["total"] == 2
+    assert data["validation"]["history_summary"]["by_status"]["planned"] == 1
+    assert data["validation"]["history_summary"]["by_status"]["active"] == 1
+    assert data["validation"]["history_summary"]["by_status"].get("done", 0) == 0
+    assert data["validation"]["current"]["status"] == "planned"
+    assert data["validation"]["current"]["wallet_count"] == 2
+    assert data["workflow"]["next_action"]["key"] == "continue_validation"
+    _assert_workflow_privacy(data)
+
+
+def test_workflow_malformed_persisted_data_returns_structured_500(client, conn, caplog):
+    conn.execute(
+        """INSERT INTO opportunity_assessments (
+               assessment_id, project_id, model_version, profile_version,
+               assessment_json, decision_status, public_label,
+               overall_confidence, scored_at, expires_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "assess-bad",
+            "p1",
+            "opportunity-v2.0",
+            "low-cost-curated-multiwallet-v1",
+            "{not-valid-json",
+            "ACTIONABLE",
+            "FARM",
+            0.5,
+            "2026-07-15T10:00:00+00:00",
+            "2026-07-16T10:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    with caplog.at_level(logging.ERROR):
+        response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "code": "OPPORTUNITY_WORKFLOW_PROJECTION_ERROR",
+            "message": "Failed to build opportunity workflow projection",
+        },
+    }
+    joined = " ".join(record.getMessage() for record in caplog.records).lower()
+    assert "p1" in joined
+    assert "projection" in joined or "error" in joined
+    assert "not-valid-json" not in joined
+    assert "cohort" not in joined
+    assert "seed phrase" not in joined
+    assert "token=" not in joined
+
+
+def test_workflow_success_logs_are_privacy_safe(client, conn, caplog):
+    OpportunityRepository(conn).save_assessment(
+        _assessment(
+            assessment_id="assess-log",
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+            recommended_action="start validation",
+        )
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id="assess-log",
+        note="do not log this note or cohort-secret-value",
+        wallet_cohort_id="cohort-secret-value",
+    )
+    client.post(
+        "/api/v1/projects/p1/opportunity/evidence",
+        json=_evidence(
+            value=True,
+            source_url="https://project.example/rules?utm_source=safe",
+            raw_snapshot_ref="snap-do-not-log",
+        ),
+    )
+
+    with caplog.at_level(logging.INFO):
+        response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+
+    assert response.status_code == 200, response.text
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    lowered = messages.lower()
+    assert "p1" in lowered
+    assert "assess-log" in lowered
+    assert "actionable" in lowered
+    assert "start_validation" in lowered or "continue_validation" in lowered
+    assert "cohort-secret-value" not in lowered
+    assert "do not log this note" not in lowered
+    assert "snap-do-not-log" not in lowered
+    assert "utm_source" not in lowered
+
+
+def test_workflow_get_is_read_only_and_idempotent(client, conn, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("evaluate must not be called")
+
+    monkeypatch.setattr(OpportunityService, "evaluate", boom)
+
+    OpportunityRepository(conn).save_assessment(
+        _assessment(assessment_id="assess-idemp", status=DecisionStatus.MONITOR, public_label="WATCH")
+    )
+    client.post("/api/v1/projects/p1/opportunity/evidence", json=_evidence())
+    _insert_interaction(conn, opportunity_assessment_id="assess-idemp")
+
+    tables_before = _table_names(conn)
+    counts_before = _row_counts(conn)
+
+    first = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    second = client.get(WORKFLOW_PATH.format(project_id="p1"))
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert _row_counts(conn) == counts_before
+    assert _table_names(conn) == tables_before
+    _assert_workflow_privacy(first.json()["data"])
+
+
+def test_workflow_service_db_adapter_contract_matches_across_connection_wrappers(conn):
+    from app.opportunity.workflow_service import OpportunityWorkflowService
+
+    repo = OpportunityRepository(conn)
+    assessment = repo.save_assessment(
+        _assessment(
+            assessment_id="assess-adapter",
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+            recommended_action="validate now",
+            factor_snapshot={"critical_unknowns": ["hard_cost_usd"]},
+        )
+    )
+    repo.add_evidence(
+        EvidenceRecord(
+            **{
+                **_evidence(),
+                "project_id": "p1",
+                "evidence_id": "ev-adapter-1",
+                "verification_status": "invalidated",
+            }
+        )
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id=assessment.assessment_id,
+        status="active",
+        created_at="2026-07-15T08:00:00+00:00",
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id="other-assessment",
+        status="done",
+        created_at="2026-07-15T09:00:00+00:00",
+    )
+
+    tables_before = _table_names(conn)
+    raw_service = OpportunityWorkflowService(conn)
+    wrapped_service = OpportunityWorkflowService(DbConnection(conn, kind="sqlite"))
+
+    raw_projection = raw_service.get_project_workflow("p1", NOW)
+    wrapped_projection = wrapped_service.get_project_workflow("p1", NOW)
+
+    raw_dump = raw_projection.model_dump(mode="json")
+    wrapped_dump = wrapped_projection.model_dump(mode="json")
+    assert raw_dump == wrapped_dump
+    assert raw_dump["opportunity"]["assessment_id"] == "assess-adapter"
+    assert raw_dump["validation"]["history_summary"]["total"] == 1
+    assert raw_dump["validation"]["current"]["status"] == "active"
+    assert raw_dump["evidence"]["items"][0]["verification_status"] == "invalidated"
+    assert raw_dump["workflow"]["state"] == "ACTIONABLE"
+    assert "raw_snapshot_ref" not in json.dumps(raw_dump)
+    assert _table_names(conn) == tables_before
+    raw_service.close()
+    wrapped_service.close()
