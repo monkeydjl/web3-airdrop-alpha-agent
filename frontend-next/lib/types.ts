@@ -77,3 +77,243 @@ export interface HealthData {
   auth_required?: boolean;
   feedback_enabled?: boolean;
 }
+
+/** Interaction lifecycle statuses — exact match to backend StatusType. */
+export type InteractionStatus = 'planned' | 'active' | 'done' | 'abandoned';
+
+/** Workflow projection states — exact match to backend WorkflowState. */
+export type WorkflowState =
+  | 'NEEDS_EVALUATION'
+  | 'REVIEW_REQUIRED'
+  | 'ACTIONABLE'
+  | 'MONITOR'
+  | 'INSUFFICIENT_EVIDENCE'
+  | 'BLOCKED'
+  | 'NOT_FIT';
+
+export type DecisionStatus =
+  | 'ACTIONABLE'
+  | 'MONITOR'
+  | 'INSUFFICIENT_EVIDENCE'
+  | 'NOT_FIT'
+  | 'BLOCKED';
+
+export type ActionPhase = 'review' | 'evidence' | 'validation' | 'maintenance' | 'outcome';
+
+export type EligibilityResult = 'unknown' | 'eligible' | 'ineligible';
+export type SurvivalResult = 'unknown' | 'passed' | 'disqualified';
+
+export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type SourceGrade = 'A' | 'B' | 'C' | 'D' | 'U';
+export type EvidenceFreshness = 'CURRENT' | 'EXPIRED';
+
+export type OpportunityModelVersion = 'opportunity-v2.0';
+export type OpportunityProfileVersion = 'low-cost-curated-multiwallet-v1';
+export type LegacyModelVersion = 'score-v1.4';
+export type WorkflowVersion = 'opportunity-action-workflow-v1';
+
+export interface ProbabilityRange {
+  low: number;
+  base: number;
+  high: number;
+}
+
+export interface MoneyRange {
+  low: number;
+  base: number;
+  high: number;
+}
+
+export interface SignedMoneyRange {
+  low: number;
+  base: number;
+  high: number;
+}
+
+export interface ConfidenceSet {
+  event: number;
+  eligibility: number;
+  reward: number;
+  cost: number;
+  risk: number;
+  quality: number;
+  overall: number;
+}
+
+export interface RiskSet {
+  capital_security: RiskLevel | null;
+  eligibility: RiskLevel | null;
+  project_failure: RiskLevel | null;
+  reward_dilution: RiskLevel | null;
+  liquidity: RiskLevel | null;
+}
+
+export interface EconomicsResult {
+  gross_reward: MoneyRange;
+  net_reward: SignedMoneyRange;
+  reward_to_cost_ratio: number;
+  decision_value: number;
+  capital_efficiency: number;
+  time_efficiency: number;
+}
+
+export interface LegacyDecisionProjection {
+  model_version: LegacyModelVersion;
+  score: number | null;
+  label: string | null;
+  reason: string[];
+  authoritative: true;
+}
+
+export interface OpportunitySummaryProjection {
+  shadow: true;
+  assessment_id: string | null;
+  model_version: OpportunityModelVersion;
+  profile_version: OpportunityProfileVersion;
+  status: DecisionStatus;
+  public_label: Label;
+  recommended_action: string;
+  blocker_codes: string[];
+  watch_reason_codes: string[];
+  ignore_reason_codes: string[];
+  requires_remediation: boolean;
+  confidence: ConfidenceSet;
+  event_probability: ProbabilityRange | null;
+  eligibility_probability: ProbabilityRange | null;
+  survival_probability: ProbabilityRange | null;
+  reward_probability: ProbabilityRange | null;
+  conditional_reward_usd: MoneyRange | null;
+  hard_cost_usd: MoneyRange | null;
+  economics: EconomicsResult | null;
+  risks: RiskSet;
+  /** ISO-8601 datetime string from API JSON. */
+  scored_at: string;
+  review_at: string;
+  expires_at: string;
+}
+
+export interface NextActionProjection {
+  key: string;
+  label: string;
+  can_start_validation: boolean;
+}
+
+export interface ActionPlanItem {
+  id: string;
+  sequence: number;
+  kind: string;
+  phase: ActionPhase;
+  title: string;
+  description: string;
+  required: boolean;
+  source: string;
+  priority: number;
+  task_id: string | null;
+  external_url: string | null;
+}
+
+export interface BlockerProjection {
+  code: string;
+  severity: string;
+  message: string;
+}
+
+export interface UpgradeConditionProjection {
+  code: string;
+  message: string;
+}
+
+export interface WorkflowSection {
+  state: WorkflowState;
+  next_action: NextActionProjection;
+  action_plan: ActionPlanItem[];
+  blockers: BlockerProjection[];
+  upgrade_conditions: UpgradeConditionProjection[];
+}
+
+export interface EvidenceItemProjection {
+  evidence_id: string | null;
+  factor_key: string;
+  value: unknown;
+  value_type: string;
+  observation_type: string;
+  source_url: string;
+  source_type: string;
+  source_grade: SourceGrade;
+  verification_status: string;
+  observed_at: string;
+  effective_at: string | null;
+  expires_at: string | null;
+  freshness: EvidenceFreshness;
+  age_days: number;
+}
+
+export interface EvidenceSection {
+  items: EvidenceItemProjection[];
+  missing_factor_keys: string[];
+  counts_by_grade: Record<SourceGrade, number> | Record<string, number>;
+}
+
+/** Seven user-editable outcome fields + auto timestamp — backend _OUTCOME_FIELDS. */
+export interface ValidationOutcomeFields {
+  actual_hard_cost_usd: number | null;
+  actual_time_minutes: number | null;
+  eligibility_result: EligibilityResult | null;
+  survival_result: SurvivalResult | null;
+  disqualification_reason: string | null;
+  reward_received_usd: number | null;
+  claim_cost_usd: number | null;
+  outcome_observed_at: string | null;
+}
+
+/** Safe validation.current projection — never includes wallet_cohort_id or addresses. */
+export interface ValidationCurrent extends ValidationOutcomeFields {
+  id?: number | string;
+  project_id?: string;
+  status: InteractionStatus | string;
+  created_at?: string | null;
+  wallet_count?: number | null;
+  opportunity_assessment_id?: string | null;
+  opportunity_model_version?: OpportunityModelVersion | string | null;
+  opportunity_profile_version?: OpportunityProfileVersion | string | null;
+}
+
+export interface ValidationHistorySummary {
+  total: number;
+  by_status: Record<string, number>;
+}
+
+export interface ValidationSection {
+  current: ValidationCurrent | null;
+  history_summary: ValidationHistorySummary;
+  allowed_transitions: Record<string, string[]>;
+  can_start_validation: boolean;
+}
+
+/** Exact nested JSON shape from GET /projects/{id}/opportunity/workflow. */
+export interface OpportunityWorkflowProjection {
+  workflow_version: WorkflowVersion;
+  project_id: string;
+  legacy: LegacyDecisionProjection;
+  opportunity: OpportunitySummaryProjection | null;
+  workflow: WorkflowSection;
+  evidence: EvidenceSection;
+  validation: ValidationSection;
+  review_at: string | null;
+  expires_at: string | null;
+}
+
+export interface InteractionCreatePayload {
+  project_id: string;
+  status: InteractionStatus;
+  wallet_count: 1 | 2;
+  opportunity_assessment_id: string;
+  opportunity_model_version: OpportunityModelVersion;
+  opportunity_profile_version: OpportunityProfileVersion;
+}
+
+export interface InteractionLifecyclePatch {
+  status: InteractionStatus;
+}
+
+export interface InteractionOutcomePatch extends Partial<ValidationOutcomeFields> {}
