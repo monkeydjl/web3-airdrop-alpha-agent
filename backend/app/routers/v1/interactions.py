@@ -37,6 +37,13 @@ OpportunityModelVersion = Literal["opportunity-v2.0"]
 OpportunityProfileVersion = Literal["low-cost-curated-multiwallet-v1"]
 SUPPORTED_MODEL_VERSION = "opportunity-v2.0"
 SUPPORTED_PROFILE_VERSION = "low-cost-curated-multiwallet-v1"
+# planned -> active|abandoned; active -> done|abandoned; done/abandoned are terminal.
+_ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "planned": frozenset({"active", "abandoned"}),
+    "active": frozenset({"done", "abandoned"}),
+    "done": frozenset(),
+    "abandoned": frozenset(),
+}
 _LINKAGE_FIELDS = {
     "opportunity_assessment_id",
     "opportunity_model_version",
@@ -350,6 +357,24 @@ def _canonical_assessment_linkage(
     )
 
 
+def _validate_status_transition(current_status: str | None, new_status: str) -> None:
+    """Enforce interaction lifecycle; same-status patches are no-ops."""
+    if current_status == new_status:
+        return
+    allowed = _ALLOWED_STATUS_TRANSITIONS.get(current_status or "", frozenset())
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_STATUS_TRANSITION",
+                "message": (
+                    f"Cannot transition interaction status from "
+                    f"{current_status!r} to {new_status!r}"
+                ),
+            },
+        )
+
+
 @router.post("/interactions")
 async def create_interaction(body: InteractionCreate):
     """Create a participation log for a project."""
@@ -585,6 +610,8 @@ async def update_interaction(
                 detail={"code": "NOT_FOUND", "message": "Interaction not found"},
             )
         current = dict_from_row(existing)
+        if "status" in fields:
+            _validate_status_transition(current.get("status"), fields["status"])
         final_survival = fields.get("survival_result", current.get("survival_result"))
         final_reason = fields.get("disqualification_reason", current.get("disqualification_reason"))
         if final_survival == "disqualified" and not (final_reason and final_reason.strip()):

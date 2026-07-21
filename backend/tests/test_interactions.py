@@ -1540,3 +1540,321 @@ def test_init_db_adds_outcome_columns_to_existing_interactions_table(tmp_path):
         "opportunity_profile_version",
         "outcome_observed_at",
     } <= columns
+
+
+_COHORT_UUID4 = re.compile(
+    r"^cohort-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+_SENSITIVE_RESPONSE_KEYS = frozenset(
+    {
+        "wallet_address",
+        "private_key",
+        "secret",
+        "mnemonic",
+        "seed_phrase",
+        "device_id",
+        "kyc_id",
+    }
+)
+
+
+def _seed_supported_assessment(assessment_id: str = "assessment-lifecycle") -> str:
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO opportunity_assessments (
+                   assessment_id, project_id, model_version, profile_version,
+                   assessment_json, decision_status, public_label,
+                   overall_confidence, scored_at, expires_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                assessment_id,
+                "proj-1",
+                "opportunity-v2.0",
+                "low-cost-curated-multiwallet-v1",
+                "{}",
+                "actionable",
+                "FARM",
+                0.9,
+                "2026-07-15T10:00:00Z",
+                "2026-07-16T10:00:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return assessment_id
+
+
+def _assert_no_sensitive_response_material(payload: object) -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            assert key not in _SENSITIVE_RESPONSE_KEYS
+            assert "wallet_address" not in key.lower()
+            assert "private_key" not in key.lower()
+            _assert_no_sensitive_response_material(value)
+        return
+    if isinstance(payload, list):
+        for item in payload:
+            _assert_no_sensitive_response_material(item)
+        return
+    if isinstance(payload, str):
+        assert re.search(r"(?<![0-9a-z])0x[0-9a-f]{40}(?![0-9a-z])", payload, re.IGNORECASE) is None
+        assert re.fullmatch(r"[0-9a-f]{64}", payload, re.IGNORECASE) is None
+
+
+def test_planned_interaction_accepts_supported_assessment_linkage(client: TestClient):
+    assessment_id = _seed_supported_assessment("assessment-planned-ok")
+
+    response = client.post(
+        "/api/v1/interactions",
+        json={
+            "project_id": "proj-1",
+            "status": "planned",
+            "opportunity_assessment_id": assessment_id,
+            "opportunity_model_version": "opportunity-v2.0",
+            "opportunity_profile_version": "low-cost-curated-multiwallet-v1",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "planned"
+    assert data["opportunity_assessment_id"] == assessment_id
+    assert data["opportunity_model_version"] == "opportunity-v2.0"
+    assert data["opportunity_profile_version"] == "low-cost-curated-multiwallet-v1"
+    assert _COHORT_UUID4.fullmatch(data["wallet_cohort_id"])
+    _assert_no_sensitive_response_material(response.json())
+
+
+@pytest.mark.parametrize(
+    ("assessment_project", "model_version", "profile_version"),
+    [
+        ("other-project", "opportunity-v2.0", "low-cost-curated-multiwallet-v1"),
+        ("proj-1", "opportunity-v3.0", "low-cost-curated-multiwallet-v1"),
+        ("proj-1", "opportunity-v2.0", "other-profile"),
+    ],
+)
+def test_planned_interaction_rejects_project_model_or_profile_mismatch(
+    client: TestClient,
+    assessment_project: str,
+    model_version: str,
+    profile_version: str,
+):
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO opportunity_assessments (
+                   assessment_id, project_id, model_version, profile_version,
+                   assessment_json, decision_status, public_label,
+                   overall_confidence, scored_at, expires_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "assessment-planned-mismatch",
+                assessment_project,
+                model_version,
+                profile_version,
+                "{}",
+                "watch",
+                "WATCH",
+                0.5,
+                "2026-07-15T10:00:00Z",
+                "2026-07-16T10:00:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = client.post(
+        "/api/v1/interactions",
+        json={
+            "project_id": "proj-1",
+            "status": "planned",
+            "opportunity_assessment_id": "assessment-planned-mismatch",
+            "opportunity_model_version": "opportunity-v2.0",
+            "opportunity_profile_version": "low-cost-curated-multiwallet-v1",
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("from_status", "to_status"),
+    [
+        ("planned", "active"),
+        ("planned", "abandoned"),
+        ("active", "done"),
+        ("active", "abandoned"),
+    ],
+)
+def test_allowed_lifecycle_transitions_succeed(
+    client: TestClient,
+    from_status: str,
+    to_status: str,
+):
+    created = client.post(
+        "/api/v1/interactions",
+        json={"project_id": "proj-1", "status": from_status},
+    )
+    assert created.status_code == 200, created.text
+    interaction_id = created.json()["data"]["id"]
+
+    response = client.patch(
+        f"/api/v1/interactions/{interaction_id}",
+        json={"status": to_status},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == to_status
+    _assert_no_sensitive_response_material(response.json())
+
+
+@pytest.mark.parametrize(
+    ("from_status", "to_status"),
+    [
+        ("planned", "done"),
+        ("active", "planned"),
+        ("done", "planned"),
+        ("done", "active"),
+        ("done", "abandoned"),
+        ("abandoned", "planned"),
+        ("abandoned", "active"),
+        ("abandoned", "done"),
+    ],
+)
+def test_disallowed_lifecycle_transitions_are_rejected(
+    client: TestClient,
+    from_status: str,
+    to_status: str,
+):
+    created = client.post(
+        "/api/v1/interactions",
+        json={"project_id": "proj-1", "status": from_status},
+    )
+    assert created.status_code == 200, created.text
+    interaction_id = created.json()["data"]["id"]
+    assert created.json()["data"]["status"] == from_status
+
+    response = client.patch(
+        f"/api/v1/interactions/{interaction_id}",
+        json={"status": to_status},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_terminal_statuses_reject_every_outbound_transition(client: TestClient):
+    for terminal in ("done", "abandoned"):
+        created = client.post(
+            "/api/v1/interactions",
+            json={"project_id": "proj-1", "status": terminal},
+        )
+        assert created.status_code == 200, created.text
+        interaction_id = created.json()["data"]["id"]
+
+        for target in ("planned", "active", "done", "abandoned"):
+            if target == terminal:
+                continue
+            response = client.patch(
+                f"/api/v1/interactions/{interaction_id}",
+                json={"status": target},
+            )
+            assert response.status_code == 422, (terminal, target, response.text)
+
+
+def test_outcome_fields_round_trip_through_create_and_patch(client: TestClient):
+    assessment_id = _seed_supported_assessment("assessment-outcome-roundtrip")
+    create_payload = {
+        "project_id": "proj-1",
+        "status": "planned",
+        "wallet_count": 2,
+        "actual_hard_cost_usd": 3.25,
+        "actual_time_minutes": 45,
+        "eligibility_result": "eligible",
+        "survival_result": "passed",
+        "reward_received_usd": 10.5,
+        "claim_cost_usd": 0.75,
+        "outcome_observed_at": "2026-07-15T12:30:00Z",
+        "opportunity_assessment_id": assessment_id,
+        "opportunity_model_version": "opportunity-v2.0",
+        "opportunity_profile_version": "low-cost-curated-multiwallet-v1",
+    }
+    created = client.post("/api/v1/interactions", json=create_payload)
+    assert created.status_code == 200, created.text
+    data = created.json()["data"]
+    for key, value in create_payload.items():
+        if key == "outcome_observed_at":
+            assert datetime.fromisoformat(data[key]).astimezone(UTC) == datetime(
+                2026, 7, 15, 12, 30, tzinfo=UTC
+            )
+        else:
+            assert data[key] == value
+    assert _COHORT_UUID4.fullmatch(data["wallet_cohort_id"])
+    assert abs(data["realized_net_usd"] - (10.5 - 3.25 - 0.75)) < 1e-9
+    _assert_no_sensitive_response_material(created.json())
+
+    patch_payload = {
+        "status": "active",
+        "actual_hard_cost_usd": 5.0,
+        "actual_time_minutes": 90,
+        "eligibility_result": "ineligible",
+        "survival_result": "disqualified",
+        "disqualification_reason": "Sybil cluster",
+        "reward_received_usd": 0,
+        "claim_cost_usd": 0,
+        "outcome_observed_at": "2026-07-16T09:00:00Z",
+    }
+    patched = client.patch(f"/api/v1/interactions/{data['id']}", json=patch_payload)
+    assert patched.status_code == 200, patched.text
+    outcome = patched.json()["data"]
+    for key, value in patch_payload.items():
+        if key == "outcome_observed_at":
+            assert datetime.fromisoformat(outcome[key]).astimezone(UTC) == datetime(
+                2026, 7, 16, 9, 0, tzinfo=UTC
+            )
+        else:
+            assert outcome[key] == value
+    assert outcome["opportunity_assessment_id"] == assessment_id
+    assert abs(outcome["realized_net_usd"] - (0 - 5.0 - 0)) < 1e-9
+    _assert_no_sensitive_response_material(patched.json())
+
+
+@pytest.mark.parametrize(
+    "wallet_shaped",
+    [
+        "0x1234567890abcdef1234567890abcdef12345678",
+        "wallet-local-1",
+        "my-wallet",
+    ],
+)
+def test_wallet_shaped_cohort_values_are_rejected(client: TestClient, wallet_shaped: str):
+    """Reject cohort identifiers that look like wallets or non-cohort labels.
+
+    UUID-shaped invalids are covered by test_interaction_rejects_non_uuid_cohort_ids.
+    """
+    response = client.post(
+        "/api/v1/interactions",
+        json={"project_id": "proj-1", "wallet_cohort_id": wallet_shaped},
+    )
+    assert response.status_code == 422
+
+
+def test_interaction_responses_never_expose_wallet_or_secret_fields(client: TestClient):
+    assessment_id = _seed_supported_assessment("assessment-privacy")
+    created = client.post(
+        "/api/v1/interactions",
+        json={
+            "project_id": "proj-1",
+            "status": "planned",
+            "opportunity_assessment_id": assessment_id,
+            "note": "Tracked via local cohort only",
+            "activities": "bridge and swap checklist",
+        },
+    )
+    assert created.status_code == 200, created.text
+    listed = client.get("/api/v1/projects/proj-1/interactions")
+    assert listed.status_code == 200, listed.text
+    _assert_no_sensitive_response_material(created.json())
+    _assert_no_sensitive_response_material(listed.json())
+    assert "wallet_address" not in created.text.lower()
+    assert "private_key" not in created.text.lower()
+    assert "mnemonic" not in created.text.lower()
