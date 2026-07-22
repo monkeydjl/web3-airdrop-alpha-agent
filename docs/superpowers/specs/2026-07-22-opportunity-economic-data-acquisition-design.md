@@ -14,7 +14,7 @@
 
 ### 1.1 目标
 
-复用现有 DefiLlama、CoinGecko、CryptoRank collector 的既有采集与持久化路径，在 **CollectorResult / RawDiscovery 已成功写入之后**，由 **EconomicSnapshotWriter** 对每个 **schema-valid** 且命中 **raw_data 白名单** 的行，追加写入不可变经济快照；在内存中构造 **frozen NormalizedObservation**；在存在 `raw_projects(source_id, dedup_key).project_id` **精确绑定** 时生成 **immutable EvidenceRecord**；由新的 **economic resolver** 产出只读经济代理投影。
+复用现有 DefiLlama、CoinGecko、CryptoRank collector 的既有采集与持久化路径，在 **CollectorResult / RawDiscovery 已成功写入之后**，由 **EconomicSnapshotWriter** 对每个 **schema-valid** 且命中 **raw_data 白名单** 的行，追加写入不可变经济快照；在内存中构造 **frozen NormalizedObservation**；仅当 **linked** 双条件同时满足时生成 **immutable EvidenceRecord**：(1) `raw_projects(source_id, dedup_key)` 精确返回非空 `project_id`；(2) `projects` 表已存在同 id 的权威项目行。任一不满足均为 **unlinked**，不生成 Evidence；由新的 **economic resolver** 产出只读经济代理投影。
 
 每日调度与手动 trigger **必须**复用现有 scheduler / collections trigger；**禁止**为本闭环单独再发一遍外部 HTTP 请求。legacy `projects.score` / `label`、Opportunity `decide`、calibration、action workflow 状态机 **字节级行为保持不变**（在相关 flag 关闭时验收为字节级不变；flag 开启时仍不得改动上述模块的判定门槛与状态迁移）。
 
@@ -71,7 +71,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 [EconomicSnapshotWriter → opportunity_economic_snapshots INSERT]
         ↓  内存 only
 [frozen NormalizedObservation]
-        ↓  仅当 raw_projects(source_id, dedup_key) 精确 project_id 绑定
+        ↓  仅当 linked：raw_projects 精确非空 project_id 且 projects 同 id 权威行存在
 [immutable EvidenceRecord]
         ↓
 [economic resolver → 只读经济代理投影]
@@ -101,7 +101,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 | `schema_version` | 固定常量 **`opportunity-economic-snapshot-v1`**（见 §5.0）；参与全部 hash |
 | `run_id` | daily = 含 UTC 日期的稳定 run 标识；manual = UUID |
 | `source_id` | 与现有 collector / RawDiscovery 一致 |
-| `dedup_key` | **原样保存** `RawDiscovery.dedup_key`；用于 `raw_projects(source_id, dedup_key).project_id` 精确绑定与 post-link **replay** |
+| `dedup_key` | **原样保存** `RawDiscovery.dedup_key`；用于 `raw_projects(source_id, dedup_key)` 精确映射与 post-link **replay** |
 | `provider_entity_id` | **明确取** `RawDiscovery.raw_id`；禁止改用展示名 / symbol / name |
 | `payload_sha256` | 对键排序后的 canonical 白名单 payload JSON 的 SHA-256（§5.0） |
 | `payload_json` | 仅白名单 raw_data 经 normalizer 后的 canonical 表示 |
@@ -164,7 +164,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 
 → 按 §5.0 framing 得 `evidence_id`。
 
-- 无 `project_id` 绑定时 **不生成** Evidence，**保留** snapshot（绑定键为 snapshot 上保存的 `source_id` + `dedup_key`）。
+- 未满足 linked 双条件时 **不生成** Evidence，**保留** snapshot（绑定键为 snapshot 上保存的 `source_id` + `dedup_key`）。linked 要求：(1) `raw_projects(source_id, dedup_key)` 精确返回非空 `project_id`；(2) `projects` 表已存在同 id 的权威项目行。
 
 ### 5.3 经济证据幂等写入（不改通用 `add_evidence`）
 
@@ -179,7 +179,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 | 场景 | 行为 |
 |------|------|
 | 同 run 采集失败重试 | 不重复外部请求原则由上层 scheduler 保证；Writer 对已成功 snapshot 幂等 insert-if-absent |
-| project pipeline 事后建立 `project_id` | **post-link replay**：用 snapshot 上的 `source_id`+`dedup_key` 查 `raw_projects` 精确 `project_id`，再 Observation→Evidence；不重新请求 provider |
+| 现有采集持久化已写确定性 `raw_projects.project_id`；分析 pipeline 的 `ProjectRepository.save` 提交 `projects` 权威行后 | **post-link replay**：用 snapshot 上的 `source_id`+`dedup_key` 查 `raw_projects` 精确非空 `project_id`，并验证 `projects` 同 id 权威行存在，再 Observation→Evidence；不重新请求 provider |
 | flag 关闭 | 停止 Writer / Evidence emit / resolver 挂载；历史表保留；legacy/workflow 字节级不变 |
 | payload 字段缺失 | 该 factor 不写 0；不生成该 factor 的 Evidence |
 | 无 `dedup_key` | schema-invalid；无 snapshot |
@@ -188,10 +188,10 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 
 ## 6. 身份绑定（唯一允许路径）
 
-- **只接受** `raw_projects(source_id, dedup_key).project_id` 的 **精确绑定**；`dedup_key` 来自 snapshot 列原样值。
-- 无绑定：snapshot 保留；**不入** Evidence；待 project pipeline 建立 `project_id` 后 **replay**。
+- **linked** 须同时满足双条件：(1) `raw_projects(source_id, dedup_key)` 精确返回非空 `project_id`（`dedup_key` 来自 snapshot 列原样值）；(2) `projects` 表已存在同 id 的权威项目行。任一不满足均为 **unlinked**，不生成 Evidence。
+- unlinked：snapshot 保留；**不入** Evidence。现有采集持久化已写确定性 `raw_projects.project_id`；分析 pipeline 的 `ProjectRepository.save` 提交 `projects` 权威行后触发 **post-link replay**。
 - **严禁** symbol / name / slug fuzzy match、编辑距离、别名表猜测。
-- 代码路径 **不得** 实现「尝试 fuzzy 再拒绝」分支；禁止 fuzzy 由 **测试** 证明（仅精确查询存在/不存在）。
+- 代码路径 **不得** 实现「尝试 fuzzy 再拒绝」分支；禁止 fuzzy 由 **测试** 证明（仅精确查询存在/不存在；`projects` 权威行存在/不存在）。
 - 身份解析指标：`opportunity_economic_identity_resolution_total{source,result}`，`result` **仅** `linked` \| `unlinked`（§13）。
 
 ---
@@ -203,7 +203,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 | 字段 | 允许值 | MVP 取值规则 |
 |------|--------|----------------|
 | `source_grade` | 仅 `A` / `B` / `C` / `D` / `U` | MVP 固定 **`C`** |
-| `verification_status` | 仅 `verified` / `partially_verified` / `unverified` / `conflicted` / `invalidated` | **仅当** schema 通过 **且** 精确 `project_id` 绑定时生成 **`verified`** Evidence；否则不生成 |
+| `verification_status` | 仅 `verified` / `partially_verified` / `unverified` / `conflicted` / `invalidated` | **仅当** schema 通过 **且** linked 双条件同时满足时生成 **`verified`** Evidence；否则不生成 |
 | `source_type` | 本闭环使用 | DefiLlama：`public_aggregator`；CoinGecko / CryptoRank：`public_market_data` |
 | `independence_group` | 字符串 | DefiLlama：`defillama-protocols`；CoinGecko 与 CryptoRank：**同为** `market-aggregators`（**不得**计为两个独立证明） |
 | `raw_snapshot_ref` | opaque | `econ-snapshot:<snapshot_id>`；workflow **不公开** |
@@ -253,7 +253,7 @@ DefiLlama `change_7d`：fixture 合同必须先声明并断言 unit 与归一结
 2. 任一步失败 → 只记 `collection_logs` / `data_sources` / metrics（`schema_invalid` 等）；**跳过**该行，不写 snapshot。
 3. 成功 → 构造键排序 canonical payload → `payload_sha256` → `snapshot_id` → **insert-if-absent**；写入列含 **原样 `dedup_key`**。
 4. 构造内存 **frozen NormalizedObservation**：携带 `snapshot_id`、`source_id`、`dedup_key`、`provider_entity_id`、规范化 factor map（含 `value_type`）、`collected_at`、`source_url`（已消毒）。
-5. 若 `OPPORTUNITY_ECONOMIC_EVIDENCE_EMIT_ENABLED` 为 true：用 `(source_id, dedup_key)` 精确查 `project_id`；有则经 §5.3 方法生成 Evidence；无则 `identity_resolution=unlinked` 并结束该行。
+5. 若 `OPPORTUNITY_ECONOMIC_EVIDENCE_EMIT_ENABLED` 为 true：先按 `(source_id, dedup_key)` 精确取 `raw_projects` 的 `project_id`，再验证 `projects` 表已存在同 id 的权威行；双条件均满足才经 §5.3 方法 emit Evidence；否则 `identity_resolution=unlinked` 并结束该行。
 
 ### 8.2 NormalizedObservation
 
@@ -415,8 +415,8 @@ Hash：一律 §5.0 framing；`schema_version` 恒为 `opportunity-economic-snap
 
 1. **跨日同 payload 两快照**：相邻 UTC 日、相同白名单 payload → 两个不同 `snapshot_id`，两行历史。
 2. **同 run 幂等**：同一 `run_id` 重复 Writer → snapshot 行数不增；metrics `duplicate`。
-3. **post-link replay**：先 unlinked snapshot（有 `dedup_key` 无 `project_id`），后写入精确 `raw_projects` 行，replay 后 Evidence 出现且 `evidence_id` 稳定。
-4. **无 fuzzy match**：仅有 symbol 相同、无 `raw_projects(source_id,dedup_key)` 精确行 → 零 Evidence；`identity_resolution=unlinked`；代码路径无 fuzzy 分支（静态/测试证明）。
+3. **post-link replay**：先有 `raw_projects` 映射及非空 `project_id`、但无 `projects` 行 → 零 Evidence；再插入/保存同 id 的 `projects` 权威行 → replay 产生稳定 `evidence_id`。
+4. **无 fuzzy match**：即使 symbol 相同，或仅有 `raw_projects` 的 `project_id` 但无 `projects` 同 id 行 → 零 Evidence；`identity_resolution=unlinked`；代码路径无 fuzzy 分支（静态/测试证明）。
 5. **昨日今日不冲突**：同 project 连续两日不同 price → resolver 取最新未过期，**不** conflict。
 6. **proxy 不进 direct economics**：仅有闭环 Evidence 时 `_DIRECT_ECONOMICS_FACTORS` 完整性仍为假；`economics_data_mode` 不得为 `DIRECT_AVAILABLE`。
 7. **人工 direct FARM 不降级**：既有 direct Evidence 场景下 decide/FARM 路径与 flag 全 false 时一致。
@@ -474,7 +474,7 @@ Hash：一律 §5.0 framing；`schema_version` 恒为 `opportunity-economic-snap
 - [ ] `schema_version=opportunity-economic-snapshot-v1`；hash 使用 §5.0 framing；跨日/同 run 幂等正确。
 - [ ] snapshot → 内存 Observation → Evidence → 只读投影链路完整；经济 Evidence 专用 insert-if-absent；同 id 内容冲突失败。
 - [ ] 三 provider 能力、§2.1 映射与 factor/`value_type` 表与本文一致；专用 normalizer；无钱包/积分/解锁/空投。
-- [ ] 身份仅精确 `project_id`；禁止 fuzzy；identity result 仅 `linked`|`unlinked`。
+- [ ] 身份同时要求 `raw_projects` 精确映射和 `projects` 权威行存在；禁止 fuzzy；identity result 仅 `linked`|`unlinked`。
 - [ ] CG 与 CR 同属 `market-aggregators`。
 - [ ] proxy 永不进入 direct economics；不改 decide/calibration/workflow 状态机；不改通用 `add_evidence` 冲突语义。
 - [ ] 零新 API、零前端；`raw_snapshot_ref` 不公开。
