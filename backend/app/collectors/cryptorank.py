@@ -121,7 +121,9 @@ class CryptoRankCollector(DataCollector):
         if not name:
             return None
 
-        rank = item.get("rank") or 0
+        # Economic raw rank preserves provider value; legacy int used for filter/score.
+        rank_raw = item.get("rank")
+        rank = rank_raw if rank_raw is not None else 0
         try:
             rank_i = int(rank)
         except (TypeError, ValueError):
@@ -145,11 +147,26 @@ class CryptoRankCollector(DataCollector):
         if not isinstance(usd, dict):
             usd = {}
 
-        market_cap = usd.get("marketCap") or 0
+        # Economic raw: preserve provider None; never coerce missing → 0.
+        market_cap_raw = usd.get("marketCap")
+        if "volume24h" in usd:
+            volume_24h_raw = usd.get("volume24h")
+        elif "volume24hBase" in item:
+            volume_24h_raw = item.get("volume24hBase")
+        else:
+            volume_24h_raw = None
+        price_raw = usd.get("price")
+        change_24h_raw = usd.get("percentChange24h")
+        change_7d_raw = usd.get("percentChange7d")
+        circulating_supply_raw = item.get("circulatingSupply")
+        total_supply_raw = item.get("totalSupply")
+
+        # Legacy locals for filter / signal / discovery score.
+        market_cap = market_cap_raw if market_cap_raw is not None else 0
+        # Historic `or` chain: prefer USD volume24h, else volume24hBase, else 0.
         volume_24h = usd.get("volume24h") or item.get("volume24hBase") or 0
-        price = usd.get("price") or 0
-        change_24h = usd.get("percentChange24h") or 0
-        change_7d = usd.get("percentChange7d") or 0
+        change_24h = change_24h_raw if change_24h_raw is not None else 0
+        change_7d = change_7d_raw if change_7d_raw is not None else 0
         # Prefer some momentum or mid-tier rank; drop dead flat mega-volume names
         try:
             ch7 = float(change_7d or 0)
@@ -167,14 +184,14 @@ class CryptoRankCollector(DataCollector):
             "symbol": symbol,
             "category": category,
             "type": item.get("type"),
-            "rank": rank_i,
-            "market_cap": market_cap,
-            "volume_24h": volume_24h,
-            "price": price,
-            "percent_change_24h": change_24h,
-            "percent_change_7d": change_7d,
-            "circulating_supply": item.get("circulatingSupply"),
-            "total_supply": item.get("totalSupply"),
+            "rank": rank_raw,
+            "market_cap": market_cap_raw,
+            "volume_24h": volume_24h_raw,
+            "price": price_raw,
+            "percent_change_24h": change_24h_raw,
+            "percent_change_7d": change_7d_raw,
+            "circulating_supply": circulating_supply_raw,
+            "total_supply": total_supply_raw,
             "last_updated": item.get("lastUpdated"),
         }
 

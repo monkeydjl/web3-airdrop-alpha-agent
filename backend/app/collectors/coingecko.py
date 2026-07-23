@@ -117,24 +117,32 @@ class CoinGeckoCollector(DataCollector):
         display_name = name or symbol or coin_id
 
         url = coin.get("image")  # 无官网，用图标占位
-        market_cap = coin.get("market_cap") or 0
-        current_price = coin.get("current_price") or 0
+
+        # Economic raw: preserve provider None; never coerce missing → 0.
+        market_cap_raw = coin.get("market_cap")
+        current_price_raw = coin.get("current_price")
+        price_change_percentage_24h_raw = coin.get("price_change_percentage_24h")
+        total_volume_raw = coin.get("total_volume")
+        circulating_supply_raw = coin.get("circulating_supply")
+        market_cap_rank_raw = coin.get("market_cap_rank")
+
+        # Legacy locals for signal strength / signal_data — missing → 0.
+        market_cap = market_cap_raw if market_cap_raw is not None else 0
+        current_price = current_price_raw if current_price_raw is not None else 0
+        market_cap_rank = market_cap_rank_raw if market_cap_rank_raw is not None else 0
+        # Non-economic field shape unchanged.
         price_change_24h = coin.get("price_change_24h") or 0
-        price_change_percentage_24h = coin.get("price_change_percentage_24h") or 0
-        total_volume = coin.get("total_volume") or 0
-        circulating_supply = coin.get("circulating_supply") or 0
-        market_cap_rank = coin.get("market_cap_rank") or 0
 
         raw_data = {
             "coin_id": coin_id,
             "symbol": symbol,
-            "market_cap": market_cap,
-            "current_price": current_price,
+            "market_cap": market_cap_raw,
+            "current_price": current_price_raw,
             "price_change_24h": price_change_24h,
-            "price_change_percentage_24h": price_change_percentage_24h,
-            "total_volume": total_volume,
-            "circulating_supply": circulating_supply,
-            "market_cap_rank": market_cap_rank,
+            "price_change_percentage_24h": price_change_percentage_24h_raw,
+            "total_volume": total_volume_raw,
+            "circulating_supply": circulating_supply_raw,
+            "market_cap_rank": market_cap_rank_raw,
             "last_updated": coin.get("last_updated"),
         }
 
