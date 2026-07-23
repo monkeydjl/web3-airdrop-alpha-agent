@@ -127,6 +127,49 @@ class EconomicSnapshotRepository:
             return None
         return _row_to_snapshot(row)
 
+    def find_linked_project_id(self, source_id: str, dedup_key: str) -> str | None:
+        """Return project_id only when exact raw identity is linked and projects.id exists.
+
+        Conditions (all required; no symbol/name/slug/fuzzy):
+        1. ``raw_projects`` row matches exact ``(source_id, dedup_key)``
+        2. that row's ``project_id`` is non-empty
+        3. ``projects.id`` exists for that ``project_id``
+        """
+        row = self._db.execute(
+            """
+            SELECT rp.project_id AS project_id
+            FROM raw_projects rp
+            INNER JOIN projects p ON p.id = rp.project_id
+            WHERE rp.source_id = ?
+              AND rp.dedup_key = ?
+              AND rp.project_id IS NOT NULL
+              AND TRIM(rp.project_id) != ''
+            LIMIT 1
+            """,
+            (source_id, dedup_key),
+        ).fetchone()
+        if row is None:
+            return None
+        project_id = row["project_id"]
+        if project_id is None:
+            return None
+        text = str(project_id).strip()
+        return text if text else None
+
+    def list_by_identity(
+        self, source_id: str, dedup_key: str
+    ) -> tuple[EconomicSnapshotRow, ...]:
+        """Return all snapshots for exact ``(source_id, dedup_key)`` identity only."""
+        rows = self._db.execute(
+            "SELECT "
+            + ", ".join(_SNAPSHOT_COLUMNS)
+            + " FROM opportunity_economic_snapshots"
+            + " WHERE source_id = ? AND dedup_key = ?"
+            + " ORDER BY collected_at ASC, snapshot_id ASC",
+            (source_id, dedup_key),
+        ).fetchall()
+        return tuple(_row_to_snapshot(row) for row in rows)
+
     def insert_if_absent(self, snapshot: EconomicSnapshotRow) -> tuple[EconomicSnapshotRow, bool]:
         params = (
             snapshot.snapshot_id,

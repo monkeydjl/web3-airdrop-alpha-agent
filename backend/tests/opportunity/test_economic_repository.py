@@ -520,3 +520,129 @@ def test_pg_insert_if_absent_content_conflict_via_sqlstate_23505_rolls_back() ->
     finally:
         repo.close()
         conn.close()
+
+
+# ── Task 5: dual-condition identity + list_by_identity ────────────
+
+
+def _seed_project(conn: Any, project_id: str, name: str = "Example") -> None:
+    conn.execute(
+        "INSERT INTO projects (id, name, source) VALUES (?, ?, ?)",
+        (project_id, name, "test"),
+    )
+    conn.commit()
+
+
+def _seed_raw(
+    conn: Any,
+    *,
+    raw_id: str,
+    source_id: str,
+    dedup_key: str,
+    project_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO raw_projects (
+            raw_id, source_id, dedup_key, raw_data, discovered_at, discovery_score, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            raw_id,
+            source_id,
+            dedup_key,
+            "{}",
+            "2026-07-22 12:00:00+00:00",
+            0.5,
+            project_id,
+        ),
+    )
+    conn.commit()
+
+
+def test_find_linked_project_id_dual_condition_and_list_by_identity() -> None:
+    raw, conn, repo = _sqlite_repo()
+    try:
+        # Combo 1: no raw row → None
+        assert repo.find_linked_project_id("defillama", "protocol:missing") is None
+
+        # Combo 2: raw exists, project_id empty/null → None
+        _seed_raw(
+            conn,
+            raw_id="raw-empty",
+            source_id="defillama",
+            dedup_key="protocol:empty-link",
+            project_id=None,
+        )
+        assert repo.find_linked_project_id("defillama", "protocol:empty-link") is None
+
+        # Combo 3: project_id non-empty but projects.id missing → None
+        _seed_raw(
+            conn,
+            raw_id="raw-orphan",
+            source_id="defillama",
+            dedup_key="protocol:orphan",
+            project_id="nonexistent-project",
+        )
+        assert repo.find_linked_project_id("defillama", "protocol:orphan") is None
+
+        # Combo 4: both conditions satisfied → exact project_id
+        _seed_project(conn, "proj-linked")
+        _seed_raw(
+            conn,
+            raw_id="raw-linked",
+            source_id="defillama",
+            dedup_key="protocol:example",
+            project_id="proj-linked",
+        )
+        assert repo.find_linked_project_id("defillama", "protocol:example") == "proj-linked"
+
+        # Same symbol/entity name but different dedup_key → no fuzzy link
+        _seed_raw(
+            conn,
+            raw_id="raw-other-dedup",
+            source_id="defillama",
+            dedup_key="protocol:example-other",
+            project_id="proj-linked",
+        )
+        assert repo.find_linked_project_id("defillama", "protocol:example-other") == "proj-linked"
+        assert repo.find_linked_project_id("defillama", "protocol:not-that-key") is None
+
+        # list_by_identity isolates by (source_id, dedup_key)
+        snap_a = _make_snapshot(dedup_key="protocol:example", provider_entity_id="ent-a")
+        snap_b = _make_snapshot(
+            dedup_key="protocol:example-other",
+            provider_entity_id="ent-b",
+            run_id="daily:2026-07-22:defillama-b",
+        )
+        snap_c = _make_snapshot(
+            source_id="coingecko",
+            dedup_key="protocol:example",
+            provider_entity_id="ent-c",
+            run_id="daily:2026-07-22:coingecko",
+            payload={"market_cap": 1, "current_price": 2, "total_volume": 3},
+        )
+        repo.insert_if_absent(snap_a)
+        repo.insert_if_absent(snap_b)
+        repo.insert_if_absent(snap_c)
+
+        listed = repo.list_by_identity("defillama", "protocol:example")
+        assert isinstance(listed, tuple)
+        assert len(listed) == 1
+        assert listed[0].snapshot_id == snap_a.snapshot_id
+        assert listed[0].dedup_key == "protocol:example"
+
+        listed_other = repo.list_by_identity("defillama", "protocol:example-other")
+        assert len(listed_other) == 1
+        assert listed_other[0].snapshot_id == snap_b.snapshot_id
+
+        # No cross-source leakage for same dedup_key string
+        listed_cg = repo.list_by_identity("coingecko", "protocol:example")
+        assert len(listed_cg) == 1
+        assert listed_cg[0].snapshot_id == snap_c.snapshot_id
+
+        empty = repo.list_by_identity("defillama", "protocol:never")
+        assert empty == ()
+    finally:
+        repo.close()
+        conn.close()
