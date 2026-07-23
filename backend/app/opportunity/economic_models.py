@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite
 from types import MappingProxyType
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 SCHEMA_VERSION: Final[str] = "opportunity-economic-snapshot-v1"
 ValueType = Literal["bool", "number", "string", "json"]
+EconomicsDataMode = Literal["PROXY_ONLY", "DIRECT_AVAILABLE", "UNKNOWN"]
 
 _SOURCE_GRADE = Literal["A", "B", "C", "D", "U"]
 _VERIFICATION_STATUS = Literal[
@@ -222,3 +224,29 @@ class NormalizedObservation(BaseModel):
         if not isinstance(self.factors, tuple):
             raise ValueError("factors must be a tuple")
         return self
+
+
+# ── Task 6: internal economic proxy projection DTOs ──────────────
+
+
+@dataclass(frozen=True)
+class ResolvedEconomicFactor:
+    factor_key: str
+    value: Any | None
+    value_type: Literal["bool", "number", "string", "json"]
+    evidence_id: str | None
+    conflicted: bool
+
+    def __post_init__(self) -> None:
+        if self.value is not None:
+            object.__setattr__(self, "value", _freeze_json(self.value))
+
+
+@dataclass(frozen=True)
+class EconomicProxyProjection:
+    factors: Mapping[str, ResolvedEconomicFactor]
+    economics_data_mode: EconomicsDataMode
+
+    def __post_init__(self) -> None:
+        frozen = MappingProxyType(dict(self.factors))
+        object.__setattr__(self, "factors", frozen)

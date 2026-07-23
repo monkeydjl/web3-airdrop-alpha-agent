@@ -61,9 +61,8 @@ def _sqlite_repo():
 
 
 def test_get_returns_none_for_missing_snapshot() -> None:
-    from app.opportunity.economic_repository import EconomicSnapshotRepository
 
-    raw, conn, repo = _sqlite_repo()
+    _raw, conn, repo = _sqlite_repo()
     try:
         assert repo.get("missing-id") is None
     finally:
@@ -264,7 +263,7 @@ def test_dedup_key_leading_trailing_spaces_preserved() -> None:
 
 
 def test_external_connection_not_closed_by_repository_close() -> None:
-    raw, conn, repo = _sqlite_repo()
+    _raw, conn, repo = _sqlite_repo()
     try:
         snapshot = _make_snapshot()
         repo.insert_if_absent(snapshot)
@@ -307,7 +306,7 @@ def test_repository_context_manager_closes_only_owned_connection(
 def test_insert_if_absent_conflict_on_payload_json_field() -> None:
     from app.opportunity.economic_repository import EconomicSnapshotContentConflict
 
-    raw, conn, repo = _sqlite_repo()
+    _raw, conn, repo = _sqlite_repo()
     try:
         original = _make_snapshot()
         repo.insert_if_absent(original)
@@ -336,7 +335,7 @@ def test_insert_if_absent_conflict_on_payload_json_field() -> None:
 # --- PostgreSQL-shaped integrity path (psycopg3 sqlstate=23505; no live network/DB) ---
 
 
-class _PgUniqueViolation(Exception):
+class _PgUniqueViolation(Exception):  # noqa: N818 — psycopg stand-in name
     """Minimal stand-in for psycopg.errors.UniqueViolation (sqlstate only)."""
 
     def __init__(self, message: str = "duplicate key value violates unique constraint") -> None:
@@ -344,7 +343,7 @@ class _PgUniqueViolation(Exception):
         self.sqlstate = "23505"
 
 
-class _PgCheckViolation(Exception):
+class _PgCheckViolation(Exception):  # noqa: N818 — psycopg stand-in name
     """Unrelated check violation must not be treated as unique-integrity conflict."""
 
     def __init__(self, message: str = "check constraint violated") -> None:
@@ -427,13 +426,13 @@ def test_is_integrity_error_prefers_sqlstate_23505_not_check_violations() -> Non
 
     assert _is_integrity_error(_PgUniqueViolation()) is True
 
-    class _LegacyPgcode(Exception):
+    class _LegacyPgcode(Exception):  # noqa: N818 — pgcode attribute probe
         pgcode = "23505"
 
     assert _is_integrity_error(_LegacyPgcode()) is True
     assert _is_integrity_error(_PgCheckViolation()) is False
 
-    class _NamedOnly(Exception):
+    class _NamedOnly(Exception):  # noqa: N818 — class-name integrity probe
         pass
 
     class UniqueViolation(_NamedOnly):
@@ -561,7 +560,7 @@ def _seed_raw(
 
 
 def test_find_linked_project_id_dual_condition_and_list_by_identity() -> None:
-    raw, conn, repo = _sqlite_repo()
+    _raw, conn, repo = _sqlite_repo()
     try:
         # Combo 1: no raw row → None
         assert repo.find_linked_project_id("defillama", "protocol:missing") is None
@@ -643,6 +642,100 @@ def test_find_linked_project_id_dual_condition_and_list_by_identity() -> None:
 
         empty = repo.list_by_identity("defillama", "protocol:never")
         assert empty == ()
+    finally:
+        repo.close()
+        conn.close()
+
+
+# ── Task 6: source_ids_by_snapshot_id batch lookup ────────────
+
+
+def test_source_ids_by_snapshot_id_empty_returns_empty_zero_query() -> None:
+    _raw, conn, repo = _sqlite_repo()
+    try:
+        execute_calls: list[str] = []
+        original_execute = conn.execute
+
+        def _counting_execute(sql: str, params: tuple[Any, ...] = ()) -> Any:
+            execute_calls.append(sql)
+            return original_execute(sql, params)
+
+        conn.execute = _counting_execute  # type: ignore[method-assign]
+        result = repo.source_ids_by_snapshot_id([])
+        assert result == {}
+        assert execute_calls == []
+        result_empty_set = repo.source_ids_by_snapshot_id(set())
+        assert result_empty_set == {}
+        assert execute_calls == []
+    finally:
+        repo.close()
+        conn.close()
+
+
+def test_source_ids_by_snapshot_id_batch_maps_present_omits_unknown() -> None:
+    _raw, conn, repo = _sqlite_repo()
+    try:
+        snap_dl = _make_snapshot(
+            source_id="defillama",
+            dedup_key="protocol:batch-a",
+            provider_entity_id="ent-batch-a",
+        )
+        snap_cg = _make_snapshot(
+            source_id="coingecko",
+            dedup_key="coin:batch-b",
+            provider_entity_id="ent-batch-b",
+            run_id="daily:2026-07-22:coingecko",
+            payload={"market_cap": 1, "current_price": 2, "total_volume": 3},
+        )
+        repo.insert_if_absent(snap_dl)
+        repo.insert_if_absent(snap_cg)
+
+        execute_calls: list[str] = []
+        original_execute = conn.execute
+
+        def _counting_execute(sql: str, params: tuple[Any, ...] = ()) -> Any:
+            execute_calls.append(sql)
+            return original_execute(sql, params)
+
+        conn.execute = _counting_execute  # type: ignore[method-assign]
+
+        ids = [snap_dl.snapshot_id, "missing-snapshot-id", snap_cg.snapshot_id]
+        result = repo.source_ids_by_snapshot_id(ids)
+
+        assert len(execute_calls) == 1
+        sql = " ".join(execute_calls[0].split()).lower()
+        assert "from opportunity_economic_snapshots" in sql
+        assert "snapshot_id" in sql
+        assert "source_id" in sql
+        assert " in (" in sql
+
+        assert result == {
+            snap_dl.snapshot_id: "defillama",
+            snap_cg.snapshot_id: "coingecko",
+        }
+        assert "missing-snapshot-id" not in result
+    finally:
+        repo.close()
+        conn.close()
+
+
+def test_source_ids_by_snapshot_id_single_id_one_query() -> None:
+    _raw, conn, repo = _sqlite_repo()
+    try:
+        snap = _make_snapshot(provider_entity_id="ent-single-batch")
+        repo.insert_if_absent(snap)
+
+        execute_calls: list[str] = []
+        original_execute = conn.execute
+
+        def _counting_execute(sql: str, params: tuple[Any, ...] = ()) -> Any:
+            execute_calls.append(sql)
+            return original_execute(sql, params)
+
+        conn.execute = _counting_execute  # type: ignore[method-assign]
+        result = repo.source_ids_by_snapshot_id([snap.snapshot_id])
+        assert len(execute_calls) == 1
+        assert result == {snap.snapshot_id: "defillama"}
     finally:
         repo.close()
         conn.close()

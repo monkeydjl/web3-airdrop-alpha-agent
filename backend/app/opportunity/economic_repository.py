@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from typing import Any
 
 from app.db import _as_db_connection
@@ -26,20 +27,22 @@ _SNAPSHOT_COLUMNS = (
     "collected_at",
 )
 
+# Fixed column list only (mirrors _SNAPSHOT_COLUMNS); no user input in SQL text.
 _SELECT_BY_ID = (
-    "SELECT "
-    + ", ".join(_SNAPSHOT_COLUMNS)
-    + " FROM opportunity_economic_snapshots WHERE snapshot_id = ?"
+    "SELECT snapshot_id, schema_version, run_id, source_id, dedup_key, "
+    "provider_entity_id, payload_sha256, payload_json, source_url, collected_at "
+    "FROM opportunity_economic_snapshots WHERE snapshot_id = ?"
 )
 
 _INSERT = (
     "INSERT INTO opportunity_economic_snapshots ("
-    + ", ".join(_SNAPSHOT_COLUMNS)
-    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "snapshot_id, schema_version, run_id, source_id, dedup_key, "
+    "provider_entity_id, payload_sha256, payload_json, source_url, collected_at"
+    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
-class EconomicSnapshotContentConflict(RuntimeError):
+class EconomicSnapshotContentConflict(RuntimeError):  # noqa: N818 — frozen public API name
     """Raised when snapshot_id exists with non-equivalent frozen content."""
 
 
@@ -89,10 +92,7 @@ def _row_to_snapshot(row: Any) -> EconomicSnapshotRow:
     payload_raw = row["payload_json"]
     if isinstance(payload_raw, (bytes, bytearray)):
         payload_raw = payload_raw.decode("utf-8")
-    if isinstance(payload_raw, str):
-        payload = json.loads(payload_raw)
-    else:
-        payload = payload_raw
+    payload = json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
     return EconomicSnapshotRow(
         snapshot_id=row["snapshot_id"],
         schema_version=row["schema_version"],
@@ -126,6 +126,20 @@ class EconomicSnapshotRepository:
         if row is None:
             return None
         return _row_to_snapshot(row)
+
+    def source_ids_by_snapshot_id(self, snapshot_ids: Collection[str]) -> dict[str, str]:
+        """Batch-read snapshot_id → source_id. Empty input: no query."""
+        ids = list(snapshot_ids)
+        if not ids:
+            return {}
+        # Placeholders are only "?" markers; ids bind via parameters (no user SQL).
+        placeholders = ", ".join("?" for _ in ids)
+        sql = (
+            "SELECT snapshot_id, source_id FROM opportunity_economic_snapshots WHERE "  # noqa: S608
+            f"snapshot_id IN ({placeholders})"
+        )
+        rows = self._db.execute(sql, tuple(ids)).fetchall()
+        return {row["snapshot_id"]: row["source_id"] for row in rows}
 
     def find_linked_project_id(self, source_id: str, dedup_key: str) -> str | None:
         """Return project_id only when exact raw identity is linked and projects.id exists.
@@ -161,11 +175,11 @@ class EconomicSnapshotRepository:
     ) -> tuple[EconomicSnapshotRow, ...]:
         """Return all snapshots for exact ``(source_id, dedup_key)`` identity only."""
         rows = self._db.execute(
-            "SELECT "
-            + ", ".join(_SNAPSHOT_COLUMNS)
-            + " FROM opportunity_economic_snapshots"
-            + " WHERE source_id = ? AND dedup_key = ?"
-            + " ORDER BY collected_at ASC, snapshot_id ASC",
+            "SELECT snapshot_id, schema_version, run_id, source_id, dedup_key, "
+            "provider_entity_id, payload_sha256, payload_json, source_url, collected_at "
+            "FROM opportunity_economic_snapshots "
+            "WHERE source_id = ? AND dedup_key = ? "
+            "ORDER BY collected_at ASC, snapshot_id ASC",
             (source_id, dedup_key),
         ).fetchall()
         return tuple(_row_to_snapshot(row) for row in rows)
