@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from app import db as db_module
-from app.db import DbConnection, init_db
+from app.db import DbConnection, _sqlite_ddl, init_db
 
 
 class _PostgresCursor:
@@ -158,3 +158,118 @@ def test_migration_failure_rolls_back_before_owned_connection_closes(
 
     assert ("commit",) not in events
     assert events[-2:] == [("rollback",), ("close",)]
+
+
+# ── Task 2: opportunity_economic_snapshots DDL ───────────────────
+
+_EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS: tuple[str, ...] = (
+    "snapshot_id",
+    "schema_version",
+    "run_id",
+    "source_id",
+    "dedup_key",
+    "provider_entity_id",
+    "payload_sha256",
+    "payload_json",
+    "source_url",
+    "collected_at",
+)
+
+_EXPECTED_ECONOMIC_SNAPSHOT_INDEXES: dict[str, str] = {
+    "idx_opportunity_economic_snapshots_run_source": "(run_id, source_id)",
+    "idx_opportunity_economic_snapshots_identity": "(source_id, dedup_key)",
+    "idx_opportunity_economic_snapshots_collected": "(collected_at DESC)",
+}
+
+
+def _compact_sql(sql: str) -> str:
+    return " ".join(sql.split()).lower().replace(" ", "")
+
+
+def test_sqlite_init_db_creates_idempotent_opportunity_economic_snapshots_schema() -> None:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = DbConnection(raw, kind="sqlite")
+    try:
+        init_db(conn)
+        init_db(conn)
+
+        tables = {
+            row[0]
+            for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert "opportunity_economic_snapshots" in tables
+
+        columns = list(raw.execute("PRAGMA table_info(opportunity_economic_snapshots)"))
+        column_names = [row["name"] for row in columns]
+        assert column_names == list(_EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS)
+        for row in columns:
+            if row["name"] == "snapshot_id":
+                assert row["pk"] == 1
+            else:
+                assert row["notnull"] == 1
+            if row["name"] == "collected_at":
+                assert row["type"].upper() == "TIMESTAMP"
+
+        table_sql = raw.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='opportunity_economic_snapshots'"
+        ).fetchone()[0]
+        assert "check(length(trim(dedup_key))>0)" in _compact_sql(table_sql)
+
+        index_names = {
+            row[0]
+            for row in raw.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
+            )
+            if row[0]
+        }
+        source_ddl = _sqlite_ddl()
+        for index_name, columns_sql in _EXPECTED_ECONOMIC_SNAPSHOT_INDEXES.items():
+            assert index_name in index_names
+            expected_create = (
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON opportunity_economic_snapshots{columns_sql}"
+            )
+            assert _compact_sql(expected_create) in _compact_sql(source_ddl)
+    finally:
+        conn.close()
+
+
+def test_postgres_init_db_emits_opportunity_economic_snapshots_ddl_parity() -> None:
+    events: list[tuple[Any, ...]] = []
+    connection = _RecordingPostgresConnection(events)
+
+    init_db(connection)
+
+    assert isinstance(events, list)
+    assert all(isinstance(event, tuple) for event in events)
+    sqls = [event[1] for event in events if event[0] == "execute"]
+    all_sql = " ".join(" ".join(str(sql).split()) for sql in sqls)
+
+    assert "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in all_sql
+    # Scope column/type/NOT NULL parity to the economic table CREATE only
+    # (other tables already emit TIMESTAMPTZ / shared column names).
+    economic_create = next(
+        sql
+        for sql in sqls
+        if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in str(sql)
+    )
+    economic_compact = _compact_sql(str(economic_create))
+    for column in _EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS:
+        assert column in str(economic_create)
+    for column in _EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS:
+        if column == "snapshot_id":
+            continue
+        # Non-PK columns must be NOT NULL inside this table's CREATE.
+        assert (
+            f"{column}textnotnull" in economic_compact
+            or f"{column}timestamptznotnull" in economic_compact
+        )
+    assert "check(length(trim(dedup_key))>0)" in economic_compact
+    assert "collected_attimestamptznotnull" in economic_compact
+    for index_name, columns_sql in _EXPECTED_ECONOMIC_SNAPSHOT_INDEXES.items():
+        assert f"CREATE INDEX IF NOT EXISTS {index_name}" in all_sql
+        assert _compact_sql(columns_sql) in _compact_sql(all_sql)
+    assert sqls == [event[1] for event in events if event[0] == "execute"]

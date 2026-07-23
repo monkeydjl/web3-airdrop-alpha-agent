@@ -1,0 +1,159 @@
+"""Append-only repository for opportunity economic snapshots.
+
+Task 2: dual-backend get / insert-if-absent only. No UPDATE, no network,
+no Evidence emit, no identity resolution.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+from app.db import _as_db_connection
+from app.opportunity.economic_models import EconomicSnapshotRow, canonical_json_bytes
+
+_SNAPSHOT_COLUMNS = (
+    "snapshot_id",
+    "schema_version",
+    "run_id",
+    "source_id",
+    "dedup_key",
+    "provider_entity_id",
+    "payload_sha256",
+    "payload_json",
+    "source_url",
+    "collected_at",
+)
+
+_SELECT_BY_ID = (
+    "SELECT "
+    + ", ".join(_SNAPSHOT_COLUMNS)
+    + " FROM opportunity_economic_snapshots WHERE snapshot_id = ?"
+)
+
+_INSERT = (
+    "INSERT INTO opportunity_economic_snapshots ("
+    + ", ".join(_SNAPSHOT_COLUMNS)
+    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+class EconomicSnapshotContentConflict(RuntimeError):
+    """Raised when snapshot_id exists with non-equivalent frozen content."""
+
+
+def _is_integrity_error(exc: BaseException) -> bool:
+    """True for unique/PK collisions only (not check/FK violations).
+
+    Prefer psycopg3 ``sqlstate``; retain ``pgcode`` and documented class-name
+    fallbacks for compatible drivers/wrappers.
+    """
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    # psycopg3 UniqueViolation exposes sqlstate; older adapters used pgcode.
+    for attr in ("sqlstate", "pgcode"):
+        if getattr(exc, attr, None) == "23505":
+            return True
+    name = type(exc).__name__
+    return name in {"IntegrityError", "UniqueViolation"}
+
+
+def _payload_text(payload_json: Any) -> str:
+    return canonical_json_bytes(payload_json).decode("utf-8")
+
+
+def _ten_fields_equal(existing: EconomicSnapshotRow, incoming: EconomicSnapshotRow) -> bool:
+    """Duplicate equivalence for insert-if-absent (no UPDATE semantics).
+
+    Compares every frozen contract field except ``collected_at``. Timestamp drift
+    alone is retry metadata: return the existing immutable row unchanged. Any
+    other field difference remains a content conflict. Canonical ``payload_json``
+    equivalence is unchanged.
+    """
+    return (
+        existing.snapshot_id == incoming.snapshot_id
+        and existing.schema_version == incoming.schema_version
+        and existing.run_id == incoming.run_id
+        and existing.source_id == incoming.source_id
+        and existing.dedup_key == incoming.dedup_key
+        and existing.provider_entity_id == incoming.provider_entity_id
+        and existing.payload_sha256 == incoming.payload_sha256
+        and existing.source_url == incoming.source_url
+        and canonical_json_bytes(existing.payload_json)
+        == canonical_json_bytes(incoming.payload_json)
+    )
+
+
+def _row_to_snapshot(row: Any) -> EconomicSnapshotRow:
+    payload_raw = row["payload_json"]
+    if isinstance(payload_raw, (bytes, bytearray)):
+        payload_raw = payload_raw.decode("utf-8")
+    if isinstance(payload_raw, str):
+        payload = json.loads(payload_raw)
+    else:
+        payload = payload_raw
+    return EconomicSnapshotRow(
+        snapshot_id=row["snapshot_id"],
+        schema_version=row["schema_version"],
+        run_id=row["run_id"],
+        source_id=row["source_id"],
+        dedup_key=row["dedup_key"],
+        provider_entity_id=row["provider_entity_id"],
+        payload_sha256=row["payload_sha256"],
+        payload_json=payload,
+        source_url=row["source_url"],
+        collected_at=row["collected_at"],
+    )
+
+
+class EconomicSnapshotRepository:
+    def __init__(self, conn: Any = None) -> None:
+        self._db, self._owns_connection = _as_db_connection(conn)
+
+    def close(self) -> None:
+        if self._owns_connection:
+            self._db.close()
+
+    def __enter__(self) -> EconomicSnapshotRepository:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+    def get(self, snapshot_id: str) -> EconomicSnapshotRow | None:
+        row = self._db.execute(_SELECT_BY_ID, (snapshot_id,)).fetchone()
+        if row is None:
+            return None
+        return _row_to_snapshot(row)
+
+    def insert_if_absent(self, snapshot: EconomicSnapshotRow) -> tuple[EconomicSnapshotRow, bool]:
+        params = (
+            snapshot.snapshot_id,
+            snapshot.schema_version,
+            snapshot.run_id,
+            snapshot.source_id,
+            snapshot.dedup_key,
+            snapshot.provider_entity_id,
+            snapshot.payload_sha256,
+            _payload_text(snapshot.payload_json),
+            snapshot.source_url,
+            snapshot.collected_at,
+        )
+        try:
+            self._db.execute(_INSERT, params)
+            self._db.commit()
+        except Exception as exc:
+            self._db.rollback()
+            if not _is_integrity_error(exc):
+                raise
+            existing = self.get(snapshot.snapshot_id)
+            if existing is None:
+                raise
+            if _ten_fields_equal(existing, snapshot):
+                return existing, False
+            raise EconomicSnapshotContentConflict(
+                f"opportunity_economic_snapshots content conflict for "
+                f"snapshot_id={snapshot.snapshot_id!r}"
+            ) from exc
+        return snapshot, True
