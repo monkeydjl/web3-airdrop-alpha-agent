@@ -36,7 +36,7 @@ from app.collectors.rootdata import RootDataCollector
 from app.collectors.scheduler import CollectionScheduler
 from app.collectors.twitter import TwitterKeywordCollector, TwitterKolCollector
 from app.config import settings
-from app.db import init_db
+from app.db import get_connection, init_db
 from app.metrics import MetricsExporter
 from app.pipeline_run import execute_analysis_pipeline
 
@@ -69,57 +69,131 @@ def create_app(db_override=None) -> FastAPI:
         if db_override is None:
             init_db()
 
-        if settings.app_env != "testing":
-            registry = CollectorRegistry()
-            registry.register(DefiLlamaCollector())
-            registry.register(GitHubCollector())
-            registry.register(CoinGeckoCollector())
-            registry.register(CryptoRankCollector())
-            registry.register(RootDataCollector())
-            registry.register(TwitterKolCollector())
-            registry.register(TwitterKeywordCollector())
-            registry.register(EtherscanCollector())
-            registry.register(GalxeCollector())
-            registry.register(Layer3Collector())
-
-            repo = CollectionRepository()
-
-            async def on_collection(source_id: str, result: CollectorResult) -> None:
-                repo.persist_collection_result(
-                    result,
-                    source_type="api",
-                    source_name=source_id,
-                )
-                if settings.collection_auto_run_enabled and result.status in (
-                    "success",
-                    "partial",
-                ):
-                    try:
-                        await execute_analysis_pipeline(trigger="collection_auto")
-                    except Exception as exc:
-                        logger.error(
-                            "app.collection_auto_run_failed",
-                            source_id=source_id,
-                            error=str(exc),
-                        )
-
-            collection_scheduler = CollectionScheduler(
-                registry,
-                on_collection=on_collection,
-            )
-            collection_scheduler.start()
-            analysis_scheduler = AnalysisScheduler()
-            analysis_scheduler.start()
-
-            application.state.collector_registry = registry
-            application.state.collection_scheduler = collection_scheduler
-            application.state.analysis_scheduler = analysis_scheduler
+        # Connection ownership: borrowed override never closed; else app-owned once.
+        # Close-protecting try/finally is active from the moment ownership is acquired
+        # so pre-yield startup failures still close an app-owned connection exactly once.
+        if db_override is not None:
+            app_conn = db_override
+            app_owns_conn = False
         else:
-            application.state.collector_registry = None
-            application.state.collection_scheduler = None
-            application.state.analysis_scheduler = None
+            app_conn = get_connection()
+            app_owns_conn = True
 
         try:
+            if settings.app_env != "testing":
+                registry = CollectorRegistry()
+                registry.register(DefiLlamaCollector())
+                registry.register(GitHubCollector())
+                registry.register(CoinGeckoCollector())
+                registry.register(CryptoRankCollector())
+                registry.register(RootDataCollector())
+                registry.register(TwitterKolCollector())
+                registry.register(TwitterKeywordCollector())
+                registry.register(EtherscanCollector())
+                registry.register(GalxeCollector())
+                registry.register(Layer3Collector())
+
+                repo = CollectionRepository(app_conn)
+
+                economic_writer = None
+                economic_emitter = None
+                try:
+                    from app.opportunity.economic_evidence import EconomicEvidenceEmitter
+                    from app.opportunity.economic_repository import EconomicSnapshotRepository
+                    from app.opportunity.economic_writer import EconomicSnapshotWriter
+                    from app.opportunity.repository import OpportunityRepository
+
+                    snap_repo = EconomicSnapshotRepository(app_conn)
+                    opp_repo = OpportunityRepository(app_conn)
+                    economic_writer = EconomicSnapshotWriter(snap_repo)
+                    economic_emitter = EconomicEvidenceEmitter(
+                        app_conn, snap_repo, opp_repo
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "app.economic_stack_construction_failed",
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+
+                async def on_collection(source_id: str, result: CollectorResult) -> None:
+                    try:
+                        repo.persist_collection_result(
+                            result,
+                            source_type="api",
+                            source_name=source_id,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "app.collection_persist_failed",
+                            source_id=source_id,
+                            error_type=type(exc).__name__,
+                            error=str(exc)[:200],
+                        )
+                        # Persist failure → zero economic work. Re-raise so optional
+                        # analysis is not reached for this callback (same hard-fail as
+                        # pre-Task-7 uncaught persist errors).
+                        raise
+
+                    if economic_writer is not None and economic_emitter is not None:
+                        try:
+                            from app.opportunity.economic_integration import (
+                                daily_run_id,
+                                process_persisted_collection,
+                            )
+
+                            # CollectorResult.finished_at is optional on the type;
+                            # production collectors set it. Fall back to UTC now so
+                            # daily_run_id never receives None (contract requires datetime).
+                            finished = result.finished_at
+                            if finished is None:
+                                from datetime import UTC, datetime
+
+                                finished = datetime.now(UTC)
+                            process_persisted_collection(
+                                result,
+                                run_id=daily_run_id(result.source_id, finished),
+                                writer=economic_writer,
+                                emitter=economic_emitter,
+                                settings_obj=settings,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "app.collection_economic_failed",
+                                source_id=source_id,
+                                error_type=type(exc).__name__,
+                                error=str(exc)[:200],
+                            )
+
+                    if settings.collection_auto_run_enabled and result.status in (
+                        "success",
+                        "partial",
+                    ):
+                        try:
+                            await execute_analysis_pipeline(trigger="collection_auto")
+                        except Exception as exc:
+                            logger.error(
+                                "app.collection_auto_run_failed",
+                                source_id=source_id,
+                                error=str(exc),
+                            )
+
+                collection_scheduler = CollectionScheduler(
+                    registry,
+                    on_collection=on_collection,
+                )
+                collection_scheduler.start()
+                analysis_scheduler = AnalysisScheduler()
+                analysis_scheduler.start()
+
+                application.state.collector_registry = registry
+                application.state.collection_scheduler = collection_scheduler
+                application.state.analysis_scheduler = analysis_scheduler
+            else:
+                application.state.collector_registry = None
+                application.state.collection_scheduler = None
+                application.state.analysis_scheduler = None
+
             yield
         finally:
             logger.info("app.shutdown")
@@ -134,6 +208,15 @@ def create_app(db_override=None) -> FastAPI:
                             component=attr,
                             error=str(exc),
                         )
+            if app_owns_conn:
+                try:
+                    app_conn.close()
+                except Exception as exc:
+                    logger.error(
+                        "app.shutdown.conn_close_error",
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
 
     app = FastAPI(
         title="Web3 Airdrop Alpha Agent System",

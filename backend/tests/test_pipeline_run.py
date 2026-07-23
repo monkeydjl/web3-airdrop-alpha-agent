@@ -7,7 +7,7 @@ import sqlite3
 from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, call
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 from pydantic import ValidationError
@@ -648,6 +648,226 @@ async def test_empty_run_logs_zero_shadow_completion(monkeypatch):
             "skipped": 0,
         },
     ) in events
+
+
+# ── Task 7: pipeline ProjectRepository economic_replay_enabled wiring ──
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_wires_economic_replay_enabled_from_settings(
+    monkeypatch, repo_conn
+):
+    """Production constructs ProjectRepository(economic_replay_enabled=settings field)."""
+    import inspect
+
+    import app.agents.orchestrator_simple as orch_mod
+
+    captured: list[dict] = []
+
+    class TrackingProjectRepository(ProjectRepository):
+        def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
+            captured.append(
+                {"conn": conn, "economic_replay_enabled": economic_replay_enabled}
+            )
+            super().__init__(
+                conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled
+            )
+
+        def save_batch_with_rows(self, states):
+            return [{"id": s.project.id, "score": s.score} for s in states]
+
+    monkeypatch.setattr(orch_mod, "ProjectRepository", TrackingProjectRepository)
+    monkeypatch.setattr(
+        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True
+    )
+
+    project = RawProject(id="proj-wire-1", name="Wire Test")
+    state = PipelineState(
+        project=project,
+        context=AgentContext(run_id="run-wire"),
+        score=80,
+        label="FARM",
+        confidence=1.0,
+    )
+    orchestrator = SimpleOrchestrator()
+
+    async def return_state(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(orchestrator, "_run_single_project", return_state)
+    await orchestrator.run_pipeline(
+        [project], AgentContext(run_id="run-wire"), save_to_db=True
+    )
+
+    assert captured, "ProjectRepository must be constructed"
+    assert captured[0]["economic_replay_enabled"] is True
+    src = inspect.getsource(ProjectRepository.__init__)
+    assert "get_settings" not in src
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_replay_flag_off_matches_baseline(monkeypatch, repo_conn):
+    """Flag-off serialized pipeline dict equals frozen baseline shape."""
+    import app.agents.orchestrator_simple as orch_mod
+
+    monkeypatch.setattr(
+        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", False
+    )
+
+    class LocalRepo(ProjectRepository):
+        def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
+            assert economic_replay_enabled is False
+            super().__init__(conn=conn or repo_conn, economic_replay_enabled=False)
+
+        def save_batch_with_rows(self, states):
+            return [
+                {"id": s.project.id, "score": s.score, "name": s.project.name}
+                for s in states
+            ]
+
+    monkeypatch.setattr(orch_mod, "ProjectRepository", LocalRepo)
+
+    project = RawProject(id="proj-base-1", name="Baseline")
+    state = PipelineState(
+        project=project,
+        context=AgentContext(run_id="run-base"),
+        score=70,
+        label="WATCH",
+        confidence=0.8,
+    )
+    orchestrator = SimpleOrchestrator()
+
+    async def return_state(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(orchestrator, "_run_single_project", return_state)
+    response = await orchestrator.run_pipeline(
+        [project], AgentContext(run_id="run-base"), save_to_db=True
+    )
+    payload = response.model_dump()
+    # Frozen serialized baseline equality (dynamic run_id / elapsed_ms taken from payload)
+    frozen_baseline = {
+        "run_id": payload["run_id"],
+        "status": "completed",
+        "project_count": 1,
+        "top_score": 70,
+        "elapsed_ms": payload["elapsed_ms"],
+        "errors": [],
+        "validation_errors": None,
+    }
+    assert payload == frozen_baseline
+    assert "economic" not in payload
+    assert "evidence" not in payload
+
+
+@pytest.mark.asyncio
+async def test_post_link_offline_replay_uses_existing_snapshots_no_http(
+    monkeypatch, repo_conn
+) -> None:
+    """After authoritative project save, evidence comes from existing snapshots without HTTP."""
+    import app.agents.orchestrator_simple as orch_mod
+    from app.opportunity.economic_models import (
+        SCHEMA_VERSION,
+        EconomicSnapshotRow,
+        build_snapshot_id,
+        payload_sha256,
+    )
+    from app.opportunity.economic_repository import EconomicSnapshotRepository
+    from app.opportunity.repository import OpportunityRepository
+    from app.utils.normalize import create_dedup_key, generate_deterministic_id
+
+    name = "ReplayTarget"
+    sector = "L2"
+    dedup = create_dedup_key(name, sector).to_string()
+    project_id = generate_deterministic_id(create_dedup_key(name, sector))
+    payload = {
+        "tvl": 2_000_000,
+        "change_7d": 0.1,
+        "change_7d_unit": "ratio",
+        "chains": ["Ethereum"],
+        "no_token_yet": False,
+    }
+    digest = payload_sha256(payload)
+    run_id = "daily:2026-07-22:defillama"
+    snap_id = build_snapshot_id(
+        run_id=run_id,
+        source_id="defillama",
+        provider_entity_id="raw-replay-1",
+        payload_sha256_hex=digest,
+    )
+    repo_conn.execute(
+        """
+        INSERT INTO raw_projects (
+            raw_id, source_id, dedup_key, raw_data, discovered_at,
+            processed, discovery_score, project_id
+        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+        """,
+        (
+            "raw-replay-1",
+            "defillama",
+            dedup,
+            json.dumps({"name": name, "sector": sector}),
+            datetime.now(UTC).isoformat(),
+            0.7,
+            project_id,
+        ),
+    )
+    snap_repo = EconomicSnapshotRepository(repo_conn)
+    snap_repo.insert_if_absent(
+        EconomicSnapshotRow(
+            snapshot_id=snap_id,
+            schema_version=SCHEMA_VERSION,
+            run_id=run_id,
+            source_id="defillama",
+            dedup_key=dedup,
+            provider_entity_id="raw-replay-1",
+            payload_sha256=digest,
+            payload_json=payload,
+            source_url="https://api.llama.fi/protocol/example",
+            collected_at=datetime(2026, 7, 22, 12, 0, tzinfo=UTC),
+        )
+    )
+    repo_conn.commit()
+
+    monkeypatch.setattr(
+        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True
+    )
+
+    class WiredRepo(ProjectRepository):
+        def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
+            super().__init__(
+                conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled
+            )
+
+    monkeypatch.setattr(orch_mod, "ProjectRepository", WiredRepo)
+
+    project = RawProject(id=project_id, name=name, sector=sector)
+    state = PipelineState(
+        project=project,
+        context=AgentContext(run_id="run-replay"),
+        score=85,
+        label="FARM",
+        confidence=0.95,
+    )
+    orchestrator = SimpleOrchestrator()
+
+    async def return_state(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(orchestrator, "_run_single_project", return_state)
+
+    with (
+        patch("httpx.Client") as http_c,
+        patch("httpx.AsyncClient") as http_a,
+    ):
+        await orchestrator.run_pipeline(
+            [project], AgentContext(run_id="run-replay"), save_to_db=True
+        )
+    http_c.assert_not_called()
+    http_a.assert_not_called()
+
+    evidence = OpportunityRepository(repo_conn).list_evidence(project_id)
+    assert len(evidence) >= 1
 
 
 class TestMarkSuccessfulRawProjects:
