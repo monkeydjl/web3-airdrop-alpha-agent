@@ -112,6 +112,170 @@ COLLECTION_DUPLICATES = Counter(
     ["source_id"],
 )
 
+# ── Opportunity Economic metrics (closed vocabularies) ─────────────
+OPPORTUNITY_ECONOMIC_SOURCES = frozenset({"defillama", "coingecko", "cryptorank"})
+OPPORTUNITY_ECONOMIC_SNAPSHOT_RESULTS = frozenset(
+    {"inserted", "duplicate", "schema_invalid", "skipped_flag_off"}
+)
+OPPORTUNITY_ECONOMIC_OBSERVATION_RESULTS = frozenset({"built", "skipped_no_snapshot"})
+OPPORTUNITY_ECONOMIC_EVIDENCE_RESULTS = frozenset(
+    {"emitted", "skipped_no_project", "duplicate", "skipped_flag_off", "content_conflict"}
+)
+OPPORTUNITY_ECONOMIC_IDENTITY_RESULTS = frozenset({"linked", "unlinked"})
+
+OPPORTUNITY_ECONOMIC_SNAPSHOTS = Counter(
+    "opportunity_economic_snapshots_total",
+    "Opportunity economic snapshots by source and result.",
+    ["source", "result"],
+)
+
+OPPORTUNITY_ECONOMIC_OBSERVATIONS = Counter(
+    "opportunity_economic_observations_total",
+    "Opportunity economic in-memory observations by source and result.",
+    ["source", "result"],
+)
+
+OPPORTUNITY_ECONOMIC_EVIDENCE = Counter(
+    "opportunity_economic_evidence_total",
+    "Opportunity economic evidence emits by source and result.",
+    ["source", "result"],
+)
+
+OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION = Counter(
+    "opportunity_economic_identity_resolution_total",
+    "Opportunity economic identity resolution by source and result.",
+    ["source", "result"],
+)
+
+OPPORTUNITY_ECONOMIC_RUN_DURATION = Histogram(
+    "opportunity_economic_run_duration_seconds",
+    "Opportunity economic writer/process duration by source.",
+    ["source"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+)
+
+OPPORTUNITY_ECONOMIC_LAST_SUCCESS = Gauge(
+    "opportunity_economic_last_success_unixtime",
+    "Unix time of last opportunity-economic process that built ≥1 observation.",
+    ["source"],
+)
+
+
+def _require_economic_source(source: str) -> str:
+    if source not in OPPORTUNITY_ECONOMIC_SOURCES:
+        raise ValueError(f"illegal opportunity economic source: {source!r}")
+    return source
+
+
+def _require_closed_result(result: str, allowed: frozenset[str], *, kind: str) -> str:
+    if result not in allowed:
+        raise ValueError(f"illegal opportunity economic {kind} result: {result!r}")
+    return result
+
+
+def record_opportunity_economic_snapshot(*, source: str, result: str) -> None:
+    """Inc snapshots counter after validating closed source/result vocabularies."""
+    _require_economic_source(source)
+    _require_closed_result(result, OPPORTUNITY_ECONOMIC_SNAPSHOT_RESULTS, kind="snapshot")
+    OPPORTUNITY_ECONOMIC_SNAPSHOTS.labels(source=source, result=result).inc()
+
+
+def record_opportunity_economic_observation(*, source: str, result: str) -> None:
+    """Inc observations counter after validating closed source/result vocabularies."""
+    _require_economic_source(source)
+    _require_closed_result(result, OPPORTUNITY_ECONOMIC_OBSERVATION_RESULTS, kind="observation")
+    OPPORTUNITY_ECONOMIC_OBSERVATIONS.labels(source=source, result=result).inc()
+
+
+def record_opportunity_economic_evidence(*, source: str, result: str) -> None:
+    """Inc evidence counter after validating closed source/result vocabularies (Task 5+)."""
+    _require_economic_source(source)
+    _require_closed_result(result, OPPORTUNITY_ECONOMIC_EVIDENCE_RESULTS, kind="evidence")
+    OPPORTUNITY_ECONOMIC_EVIDENCE.labels(source=source, result=result).inc()
+
+
+def record_opportunity_economic_identity(*, source: str, result: str) -> None:
+    """Inc identity counter after validating closed source/result vocabularies (Task 5+)."""
+    _require_economic_source(source)
+    _require_closed_result(result, OPPORTUNITY_ECONOMIC_IDENTITY_RESULTS, kind="identity")
+    OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION.labels(source=source, result=result).inc()
+
+
+def observe_opportunity_economic_duration(*, source: str, duration_seconds: float) -> None:
+    """Observe writer process duration after validating source vocabulary."""
+    _require_economic_source(source)
+    OPPORTUNITY_ECONOMIC_RUN_DURATION.labels(source=source).observe(duration_seconds)
+
+
+def set_opportunity_economic_last_success(*, source: str, unixtime: float) -> None:
+    """Set last-success gauge after validating source vocabulary."""
+    _require_economic_source(source)
+    OPPORTUNITY_ECONOMIC_LAST_SUCCESS.labels(source=source).set(unixtime)
+
+
+def metric_sample_value(metric, **label_kwargs) -> float:
+    """Read a Prometheus sample value by full label match.
+
+    Inspects ``metric.collect()`` samples (Counter/Histogram/Gauge). Missing
+    samples return ``0.0``. Prefer ``*_total`` (Counter), then Gauge name,
+    then Histogram ``*_count`` / ``*_sum``. Skips ``*_created`` timestamps.
+
+    Tests must use this (and :func:`metric_label_sets`) for value/delta
+    assertions — bare ``Counter.labels()`` is invalid verification.
+    """
+    wanted = {str(k): str(v) for k, v in label_kwargs.items()}
+    candidates: list[tuple[int, float]] = []
+    for family in metric.collect():
+        for sample in family.samples:
+            name = sample.name
+            if name.endswith("_created"):
+                continue
+            labels = {str(k): str(v) for k, v in sample.labels.items()}
+            # Exact label match for non-histogram-bucket samples; buckets need le.
+            if name.endswith("_bucket"):
+                if "le" not in wanted:
+                    continue
+                if labels != wanted:
+                    continue
+            else:
+                # Ignore extra 'le' not requested; require all wanted keys equal.
+                if any(labels.get(k) != v for k, v in wanted.items()):
+                    continue
+                extra = set(labels) - set(wanted)
+                if extra:
+                    continue
+            priority = 3
+            if name.endswith("_total"):
+                priority = 0
+            elif not name.endswith(("_count", "_sum", "_bucket")):
+                priority = 1  # gauge
+            elif name.endswith("_count"):
+                priority = 2
+            elif name.endswith("_sum"):
+                priority = 3
+            candidates.append((priority, float(sample.value)))
+    if not candidates:
+        return 0.0
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def metric_label_sets(metric) -> frozenset[frozenset[tuple[str, str]]]:
+    """Return closed label sets from metric samples (excluding ``*_created``).
+
+    Each sample contributes ``frozenset`` of ``(label, value)`` pairs; the outer
+    container is also a ``frozenset``. Bare ``Counter.labels()`` existence is
+    not a substitute for this inspection.
+    """
+    sets: set[frozenset[tuple[str, str]]] = set()
+    for family in metric.collect():
+        for sample in family.samples:
+            if sample.name.endswith("_created"):
+                continue
+            sets.add(frozenset((str(k), str(v)) for k, v in sample.labels.items()))
+    return frozenset(sets)
+
+
 # ── LLM metrics ─────────────────────────────────────────────────────
 LLM_REQUESTS = Counter(
     "airdrop_llm_requests_total",
