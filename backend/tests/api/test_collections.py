@@ -9,6 +9,13 @@ from httpx import Response
 
 from app.config import settings
 from app.db import init_db
+from app.inflight import (
+    QUEUE_DRAIN_KEY,
+    active_runs,
+    claim_run,
+    collect_key,
+    reset_active_runs,
+)
 from app.main import create_app
 
 
@@ -152,3 +159,69 @@ class TestRunAutoPath:
         data = response.json()["data"]
         assert data.get("auto_run") is not None
         assert data["auto_run"]["project_count"] >= 1
+
+
+class TestTriggerInFlightGuard:
+    """重复触发防护（API-4）。守卫理由见 app/inflight.py。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        reset_active_runs()
+        yield
+        reset_active_runs()
+
+    def test_reentrant_trigger_of_same_source_returns_409(self, client: TestClient) -> None:
+        """同源采集在飞时重复 POST 返回 409，且不发第二次出站请求。"""
+        with claim_run(collect_key("defillama")) as acquired:
+            assert acquired
+            response = client.post("/api/v1/collections/defillama/trigger")
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "COLLECTION_IN_PROGRESS"
+
+    def test_other_sources_are_not_blocked(self, client: TestClient) -> None:
+        """守卫按 source_id 分键：一个源在飞不该挡住别的源。"""
+        with claim_run(collect_key("defillama")) as acquired:
+            assert acquired
+            # github 采集器未配置 token 时 disabled → 400；关键是不能是 409
+            response = client.post("/api/v1/collections/github/trigger")
+
+        assert response.status_code != 409
+
+    def test_guard_released_after_trigger_completes(self, client: TestClient) -> None:
+        """一次触发结束后守卫必须释放，否则该源永久不可再采。"""
+        with respx.mock:
+            respx.get("https://api.llama.fi/protocols").mock(return_value=Response(200, json=[]))
+            assert client.post("/api/v1/collections/defillama/trigger").status_code == 200
+
+        assert collect_key("defillama") not in active_runs()
+
+    @respx.mock
+    def test_auto_run_skipped_when_drain_in_flight(self, client: TestClient, monkeypatch) -> None:
+        """auto-run 撞上在飞排空时：采集仍成功，auto_run 标记为跳过而非报错。"""
+        monkeypatch.setattr(settings, "collection_auto_run_enabled", True)
+        protocols = [
+            {
+                "name": "SkipRun",
+                "slug": "skip-run",
+                "tvl": 8_000_000,
+                "change_7d": 0.3,
+                "category": "DeFi",
+                "chains": ["Ethereum"],
+                "url": "https://skiprun.example.com",
+            }
+        ]
+        respx.get("https://api.llama.fi/protocols").mock(return_value=Response(200, json=protocols))
+
+        # 模拟另一处（cron / 另一个采集源的回调）正在排空队列
+        with claim_run(QUEUE_DRAIN_KEY) as acquired:
+            assert acquired
+            response = client.post("/api/v1/collections/defillama/trigger")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["items_collected"] == 1
+        assert data["auto_run"] is None
+        assert data["auto_run_skipped"] == "queue_drain_in_progress"

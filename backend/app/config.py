@@ -21,6 +21,10 @@ _ROOT_DIR = _BACKEND_DIR.parent
 _ENV_FILES = tuple(str(p) for p in (_ROOT_DIR / ".env", _BACKEND_DIR / ".env") if p.is_file()) or (".env",)
 
 
+# SECURITY.md §4.2：生产环境 API_KEY 长度下限
+MIN_PRODUCTION_API_KEY_LENGTH = 32
+
+
 class Settings(BaseSettings):
     """应用全局配置单例。
 
@@ -52,6 +56,8 @@ class Settings(BaseSettings):
     # 设置后走 PostgreSQL（测试: docker-compose.postgres.yml → :5433）
     # 例: postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test
     database_url: str | None = None
+    # 同步路由在线程池并发执行，SQLite 写锁需要等待窗口而非立即报错
+    sqlite_busy_timeout_seconds: float = 10.0
 
     # ── API 鉴权 ──────────────────────────────────
     api_key: str = ""  # 空 = 无鉴权（MVP 模式）
@@ -82,6 +88,8 @@ class Settings(BaseSettings):
     weight_competition: float = 0.10
     weight_execution: float = 0.13  # GitHub/路线图/推进
     weight_transparency: float = 0.10  # 文档/白皮书/社媒
+    # 生效权重版本，随每条评分写入 projects.weight_version（WEIGHT_CALIBRATION §1.2）
+    weight_version: str = "v1.2"
 
     # ── 并发控制 (ADR-007) ───────────────────────
     max_concurrent_projects: int = 10
@@ -90,6 +98,10 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     cron_expression: str = "0 8 * * *"  # 分析调度：空队列 /run
     timezone: str = "UTC"
+    # APScheduler 默认 misfire_grace_time=1 秒：日更任务只要错过 1 秒就整天不跑。
+    # 一次分析运行本身可能占用数秒（500 条队列实测 2.8 秒），足以自造 misfire。
+    # 1 小时的补跑窗口对日更/时更任务都足够，且配 coalesce=True 只补跑一次。
+    scheduler_misfire_grace_seconds: int = 3600
     # 采集调度器（v2.0，ADR-012）
     collection_scheduler_enabled: bool = True
     # 采集成功后是否自动触发分析（handoff；默认关，由分析 cron / 手动 /run 消费）
@@ -191,6 +203,9 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_requests: int = 100
     rate_limit_window: int = 60
+    # 前置可信代理层数。0 = 直连（默认，忽略 X-Forwarded-For）。
+    # 只有确实经过 N 层受控代理时才设为 N——否则伪造该头即可绕过限流。
+    trusted_proxy_count: int = 0
 
     # ── 监控 ──────────────────────────────────────
     metrics_enabled: bool = True
@@ -209,8 +224,14 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        """是否为生产环境。"""
-        return self.app_env == "production"
+        """是否为生产环境。
+
+        必须归一化：原实现是精确比较 `== "production"`，于是 `Production`、
+        `PRODUCTION`、`prod`、`"production "` 全部绕过下面的生产安全自检——
+        而 docker-compose 里 `APP_ENV=${APP_ENV:-production}` 直接取自操作员
+        的 shell 变量，大小写完全不受控。
+        """
+        return (self.app_env or "").strip().lower() in {"production", "prod"}
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -260,6 +281,30 @@ class Settings(BaseSettings):
         )
         if abs(total - 1.0) > 0.001:
             raise ValueError(f"Weights sum to {total:.4f}, expected 1.0. Check your configuration.")
+
+        # 生产环境安全自检：不安全组合直接拒绝启动，避免默认放行式部署上线
+        if self.is_production:
+            errors: list[str] = []
+            # 按解析后的列表判断：原先只比较整串是否等于 "*"，于是 "*,*" 或
+            # "*,https://evil.com" 配 credentials=true 能通过校验（虽然
+            # main.py 会再兜一次底，但校验器给出的是虚假保证）
+            if "*" in self.cors_origins_list and self.cors_credentials:
+                errors.append("CORS_ORIGINS='*' 与 CORS_CREDENTIALS=true 不能同时用于生产环境")
+            api_key = (self.api_key or "").strip()
+            if not api_key:
+                errors.append("生产环境必须设置 API_KEY（当前为空 = 无鉴权）")
+            elif len(api_key) < MIN_PRODUCTION_API_KEY_LENGTH:
+                # SECURITY.md §4.2：API_KEY 长度 >= 32 字符、随机生成。
+                # 原实现只校验非空，一个字符也能过——且系统没有任何接入限流，
+                # 等于可以按线速爆破。
+                errors.append(
+                    f"生产环境 API_KEY 长度必须 >= {MIN_PRODUCTION_API_KEY_LENGTH}"
+                    f"（当前 {len(api_key)}，见 SECURITY.md §4.2）"
+                )
+            if self.host == "0.0.0.0" and not api_key:
+                errors.append("生产环境绑定 0.0.0.0 时必须设置 API_KEY")
+            if errors:
+                raise ValueError("不安全的生产配置: " + "; ".join(errors))
 
 
 # ── 全局配置单例 ──────────────────────────────────

@@ -8,14 +8,15 @@ Reference:
 - docs/DATA_QUALITY.md
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
-from app.db import get_connection
+from app.db import get_connection, insert_returning_id
 
 logger = structlog.get_logger(__name__)
 
@@ -41,11 +42,18 @@ class FeedbackRequest(BaseModel):
         }
     )
 
-    project_id: str = Field(..., description="项目 ID")
-    user_id: str | None = Field(None, description="用户匿名标识（可选）")
-    signal: str = Field(..., description="反馈信号: useful|useless|wrong_label|correct_outcome")
-    note: str | None = Field(None, description="用户备注")
-    outcome: str | None = Field(None, description="实际结果: airdropped|not_airdropped|pumped|dumped")
+    # 长度上限见 SECURITY.md §5.1：此前四个字段全部无界，实测 20MB 的 note
+    # 会原样落库，未鉴权即可重复调用 → 磁盘耗尽。取值域用 Literal 收紧，
+    # WEIGHT_CALIBRATION §3.1 本就规定了这两个枚举。
+    project_id: str = Field(..., min_length=1, max_length=64, description="项目 ID")
+    user_id: str | None = Field(None, max_length=64, description="用户匿名标识（可选）")
+    signal: Literal["useful", "useless", "wrong_label", "correct_outcome"] = Field(
+        ..., description="反馈信号"
+    )
+    note: str | None = Field(None, max_length=2000, description="用户备注")
+    outcome: Literal["airdropped", "not_airdropped", "pumped", "dumped"] | None = Field(
+        None, description="实际结果"
+    )
 
 
 class EventRequest(BaseModel):
@@ -61,10 +69,13 @@ class EventRequest(BaseModel):
         }
     )
 
-    project_id: str | None = Field(None, description="项目 ID（全局事件可为空）")
-    user_id: str | None = Field(None, description="用户匿名标识（可选）")
-    event_type: str = Field(..., description="事件类型: click|expand|feedback|view")
-    detail: str | None = Field(None, description="事件详情 JSON 字符串")
+    # 长度上限与 FeedbackRequest 同理（SECURITY.md §5.1）：/events 同为未鉴权
+    # 可写端点，detail 设计上存 JSON 字符串本就无界，缺上限则一次未鉴权重复
+    # 调用即可写入任意大 payload → 磁盘耗尽。detail 略宽于 note 因需容纳 JSON。
+    project_id: str | None = Field(None, max_length=64, description="项目 ID（全局事件可为空）")
+    user_id: str | None = Field(None, max_length=64, description="用户匿名标识（可选）")
+    event_type: str = Field(..., min_length=1, max_length=32, description="事件类型: click|expand|feedback|view")
+    detail: str | None = Field(None, max_length=4000, description="事件详情 JSON 字符串")
 
 
 class FeedbackResponse(BaseModel):
@@ -96,7 +107,7 @@ class ErrorResponse(BaseModel):
     summary="提交用户反馈",
     description="用户对项目评分结果提交反馈，用于后续权重校准。",
 )
-async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
+def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
     """提交用户反馈。"""
     if not settings.enable_feedback_system:
         raise HTTPException(
@@ -106,7 +117,8 @@ async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
 
     try:
         with get_connection() as conn:
-            cursor = conn.execute(
+            feedback_id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO feedback (project_id, user_id, signal, note, outcome)
                 VALUES (?, ?, ?, ?, ?)
@@ -114,7 +126,6 @@ async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
                 (request.project_id, request.user_id, request.signal, request.note, request.outcome),
             )
             conn.commit()
-            feedback_id = cursor.lastrowid
 
         logger.info(
             "feedback.submitted",
@@ -131,10 +142,10 @@ async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
             }
         )
     except Exception as e:
-        logger.error("feedback.failed", error=str(e))
+        logger.error("feedback.failed", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"code": "DB_ERROR", "message": f"Failed to save feedback: {e!s}"},
+            detail={"code": "DB_ERROR", "message": "Failed to save feedback"},
         ) from e
 
 
@@ -144,7 +155,7 @@ async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
     summary="查询项目反馈",
     description="获取指定项目的所有用户反馈统计。",
 )
-async def get_feedback(project_id: str) -> FeedbackResponse:
+def get_feedback(project_id: str) -> FeedbackResponse:
     """查询项目反馈。"""
     if not settings.enable_feedback_system:
         raise HTTPException(
@@ -176,10 +187,10 @@ async def get_feedback(project_id: str) -> FeedbackResponse:
             }
         )
     except Exception as e:
-        logger.error("feedback.query_failed", error=str(e))
+        logger.error("feedback.query_failed", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"code": "DB_ERROR", "message": f"Failed to query feedback: {e!s}"},
+            detail={"code": "DB_ERROR", "message": "Failed to query feedback"},
         ) from e
 
 
@@ -193,7 +204,7 @@ async def get_feedback(project_id: str) -> FeedbackResponse:
     summary="提交隐式事件",
     description="埋点用户隐式行为事件（如点击、展开）。",
 )
-async def submit_event(request: EventRequest) -> FeedbackResponse:
+def submit_event(request: EventRequest) -> FeedbackResponse:
     """提交隐式事件埋点。"""
     if not settings.enable_events_tracking:
         raise HTTPException(
@@ -203,7 +214,8 @@ async def submit_event(request: EventRequest) -> FeedbackResponse:
 
     try:
         with get_connection() as conn:
-            cursor = conn.execute(
+            event_id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO events (project_id, user_id, event_type, detail, timestamp)
                 VALUES (?, ?, ?, ?, ?)
@@ -213,11 +225,10 @@ async def submit_event(request: EventRequest) -> FeedbackResponse:
                     request.user_id,
                     request.event_type,
                     request.detail,
-                    datetime.now(),
+                    datetime.now(UTC),
                 ),
             )
             conn.commit()
-            event_id = cursor.lastrowid
 
         logger.info(
             "event.submitted",
@@ -233,8 +244,8 @@ async def submit_event(request: EventRequest) -> FeedbackResponse:
             }
         )
     except Exception as e:
-        logger.error("event.failed", error=str(e))
+        logger.error("event.failed", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"code": "DB_ERROR", "message": f"Failed to save event: {e!s}"},
+            detail={"code": "DB_ERROR", "message": "Failed to save event"},
         ) from e

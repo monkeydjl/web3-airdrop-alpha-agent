@@ -112,15 +112,13 @@ class ProjectsResponse(BaseModel):
         "- **分页**: page (页码), page_size (每页数量, 最大 500)\n"
         "- **筛选**: label (FARM/WATCH/IGNORE), sector, stage, min_score\n"
         "- **排序**: sort_by (score/name/created_at), sort_order (asc/desc)\n\n"
-        "## MVP 限制\n\n"
-        "当前版本返回空列表，V2 将连接数据库返回实际数据。\n\n"
         "## 示例\n\n"
         "```\n"
         "GET /api/v1/projects?label=FARM&min_score=70&sort_by=score&sort_order=desc\n"
         "```\n"
     ),
 )
-async def list_projects(
+def list_projects(
     page: int = Query(1, ge=1, description="页码（从1开始）"),
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     label: str | None = Query(None, description="按标签筛选 (FARM/WATCH/IGNORE)"),
@@ -130,7 +128,7 @@ async def list_projects(
     sort_by: SortBy = Query(SortBy.SCORE, description="排序字段"),
     sort_order: SortOrder = Query(SortOrder.DESC, description="排序顺序"),
 ) -> ProjectsResponse:
-    """查询项目列表（MVP: 返回空列表，V2 将连接数据库）.
+    """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
     Args:
         page: 页码
@@ -186,14 +184,19 @@ async def list_projects(
         ]
 
     except Exception as e:
+        # 此前这里吞掉所有异常返回 projects=[], total=0 且 200 OK：调用方
+        # 无法区分"真的没有项目"与"数据库挂了"，对前端是静默失败，且
+        # export_projects 复用本层数据时会把 DB 故障误当成空结果。真实错误
+        # 必须以 5xx 暴露，与同文件 get_project 的处理保持一致。异常原文只
+        # 进日志、响应给通用码（防 DSN/连接串泄露）。
         logger.error(
             "api.projects.list_failed",
             error=str(e),
             exc_info=True,
         )
-        # Return empty on error (graceful degradation)
-        projects = []
-        total = 0
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to list projects"}
+        ) from e
 
     return ProjectsResponse(
         ok=True,
@@ -227,16 +230,15 @@ async def list_projects(
     },
     summary="获取项目详情",
     description=(
-        "根据项目 ID 获取完整项目信息。\n\n"
-        "## MVP 限制\n\n"
-        "当前版本返回 404，V2 将连接数据库返回实际项目详情。\n\n"
+        "根据项目 ID 获取完整项目信息（含子评分、融资、信号明细）。\n\n"
+        "项目不存在返回 404。\n\n"
         "## 示例\n\n"
         "```\n"
         "GET /api/v1/projects/layerx-l2-001\n"
         "```\n"
     ),
 )
-async def get_project(
+def get_project(
     project_id: str = Path(..., description="项目 ID"),
 ) -> ProjectsResponse:
     """获取单个项目详情.
@@ -329,5 +331,5 @@ async def get_project(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to retrieve project: {e!s}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to retrieve project"}
         ) from e

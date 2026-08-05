@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.collector import CollectorAgent
+from app.inflight import QueueDrainInProgressError
 from app.openapi import ERROR_RESPONSE_EXAMPLES, RUN_REQUEST_EXAMPLES
 from app.pipeline_run import execute_analysis_pipeline
 
@@ -198,7 +199,7 @@ class ErrorResponse(BaseModel):
         "   - Risk Agent: 代币风险和解锁压力\n"
         "   - Tokenomics Agent: 代币经济学模型\n"
         "3. **综合评分**: Scorer Agent 加权计算最终分数\n"
-        "4. **三档分类**: FARM (≥70) / WATCH (≥50) / IGNORE (<50)\n\n"
+        "4. **三档分类**: FARM (≥65) / WATCH (≥50) / IGNORE (<50)\n\n"
         "## 限制\n\n"
         "- 每次最多 100 个项目\n"
         "- 每个项目名称必填，最长 200 字符\n"
@@ -247,16 +248,30 @@ async def run_pipeline(
         )
         return RunResponse(ok=True, data=data)
 
+    except QueueDrainInProgressError as e:
+        # 空 body 的 /run 排空共享队列，已有一次在飞时拒绝而不是并发跑第二次
+        # （会重复评分同批项目）。409 表示"稍后重试即可"，非服务端故障。
+        logger.info("api.run.rejected", reason="queue_drain_in_progress")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ANALYSIS_IN_PROGRESS",
+                "message": "An analysis run is already in progress",
+            },
+        ) from e
+
     except Exception as e:
         logger.error(
             "api.run.failed",
             error=str(e),
             exc_info=True,
         )
+        # 不回显异常原文：psycopg 的 OperationalError 带完整 DSN（含库密码），
+        # httpx 的异常带完整 URL（含 ?apikey=）。细节只进日志，不进响应体。
         raise HTTPException(
             status_code=500,
             detail={
                 "code": "PIPELINE_ERROR",
-                "message": f"Pipeline execution failed: {e!s}",
+                "message": "Pipeline execution failed",
             },
         ) from e

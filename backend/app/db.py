@@ -72,11 +72,15 @@ class DbConnection:
         if self.kind == "sqlite":
             self._raw.executescript(script)
             return
-        # PG: run statements one-by-one (no SQLite executescript)
-        for stmt in _split_sql_statements(script):
-            if stmt.strip():
-                cur = self._raw.cursor()
-                cur.execute(stmt)
+        # PG: run statements one-by-one (no SQLite executescript)。
+        # 复用单个游标并在结束时关闭，避免每条 DDL 泄漏一个游标（init_db 约 90 条）。
+        cur = self._raw.cursor()
+        try:
+            for stmt in _split_sql_statements(script):
+                if stmt.strip():
+                    cur.execute(stmt)
+        finally:
+            cur.close()
 
     def begin_serialized_write(self) -> None:
         """Start a write transaction before any state used for validation is read."""
@@ -105,21 +109,24 @@ class DbConnection:
     def _normalize(self, sql: str, params: Iterable[Any] | None) -> tuple[str, tuple[Any, ...] | None]:
         if self.kind == "postgres":
             # datetime('now', ?)  must become interval cast before `?` rewrite
+            # SQLite datetime('now') 语义为 UTC。Postgres NOW() 返回带时区的
+            # timestamptz，写入 naive TIMESTAMP 列时按会话时区截断，非 UTC 服务器
+            # 会产生偏移。统一改写为 UTC 墙钟以对齐两端行为。
             sql = re.sub(
                 r"datetime\s*\(\s*'now'\s*,\s*\?\s*\)",
-                "(NOW() + (%s)::interval)",
+                "((NOW() AT TIME ZONE 'UTC') + (%s)::interval)",
                 sql,
                 flags=re.IGNORECASE,
             )
             sql = re.sub(
                 r"datetime\s*\(\s*'now'\s*,\s*'([^']+)'\s*\)",
-                r"(NOW() + INTERVAL '\1')",
+                r"((NOW() AT TIME ZONE 'UTC') + INTERVAL '\1')",
                 sql,
                 flags=re.IGNORECASE,
             )
             sql = re.sub(
                 r"datetime\s*\(\s*'now'\s*\)",
-                "NOW()",
+                "(NOW() AT TIME ZONE 'UTC')",
                 sql,
                 flags=re.IGNORECASE,
             )
@@ -142,6 +149,10 @@ class DbConnection:
         )
 
 
+# 已确认存在的 SQLite 数据目录，避免每次建连重复 mkdir
+_ENSURED_SQLITE_DIRS: set[str] = set()
+
+
 def get_connection() -> DbConnection:
     """Return a DB connection (SQLite by default; PostgreSQL if DATABASE_URL set)."""
     if is_postgres():
@@ -151,9 +162,16 @@ def get_connection() -> DbConnection:
 
 def _connect_sqlite() -> DbConnection:
     db_path = Path(settings.db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    parent = db_path.parent
+    # mkdir 是 syscall，每次建连都做在热路径上是浪费；目录只需确认一次
+    if str(parent) not in _ENSURED_SQLITE_DIRS:
+        parent.mkdir(parents=True, exist_ok=True)
+        _ENSURED_SQLITE_DIRS.add(str(parent))
+    # 路由处理器现由线程池并发执行，SQLite 写锁竞争是真实存在的；
+    # 显式 busy_timeout 让并发写等待而不是直接抛 "database is locked"。
+    conn = sqlite3.connect(str(db_path), timeout=settings.sqlite_busy_timeout_seconds)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA busy_timeout={int(settings.sqlite_busy_timeout_seconds * 1000)}")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     return DbConnection(conn, kind="sqlite")
@@ -236,6 +254,7 @@ def _sqlite_ddl() -> str:
                 risk_json       TEXT,
                 tokenomics_json TEXT,
                 raw_signals     TEXT,
+                sub_scores      TEXT,
                 meta            TEXT,
                 source          TEXT,
                 raw_signals_hash TEXT,
@@ -478,6 +497,7 @@ def _postgres_ddl() -> str:
                 risk_json       TEXT,
                 tokenomics_json TEXT,
                 raw_signals     TEXT,
+                sub_scores      TEXT,
                 meta            TEXT,
                 source          TEXT,
                 raw_signals_hash TEXT,
@@ -730,6 +750,10 @@ def init_db(conn: Any = None) -> None:
         _add_column_if_not_exists(db, "projects", "discovered_at", "TIMESTAMP")
         _add_column_if_not_exists(db, "projects", "auto_discovered", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "projects", "signal_count", "INTEGER DEFAULT 0")
+        # 子分快照（WEIGHT_CALIBRATION §4.3 步骤 1：离线重加权需要"固定 Agent 子分"）。
+        # 不复用 raw_signals：那一列存的是采集到的**输入**信号（scripts/seed.py 与
+        # raw_signals_hash 均按此语义写入），子分是**输出**，两者形状不兼容。
+        _add_column_if_not_exists(db, "projects", "sub_scores", "TEXT")
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
 
@@ -786,3 +810,20 @@ def scalar(row: Any, default: Any = 0) -> Any:
         return row[0]
     except Exception:
         return default
+
+
+def insert_returning_id(conn: Any, sql: str, params: Iterable[Any], *, id_column: str = "id") -> Any:
+    """Execute an INSERT and return the new row's id on both SQLite and Postgres.
+
+    psycopg3 dropped ``cursor.lastrowid``; use ``RETURNING`` where available and
+    fall back to ``last_insert_rowid()`` on ancient SQLite runtimes.
+    """
+    kind = getattr(conn, "kind", "sqlite")
+    supports_returning = kind == "postgres" or sqlite3.sqlite_version_info >= (3, 35, 0)
+    if supports_returning:
+        cursor = conn.execute(sql.rstrip().rstrip(";") + f" RETURNING {id_column}", tuple(params))
+        return scalar(cursor.fetchone(), None)
+    cursor = conn.execute(sql, tuple(params))
+    if kind == "postgres":  # pragma: no cover - PG always supports RETURNING
+        return None
+    return scalar(conn.execute("SELECT last_insert_rowid()").fetchone(), None)

@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.db import get_connection
 from app.repository import ProjectRepository
 
 router = APIRouter(tags=["insights"])
@@ -76,26 +77,35 @@ def _safe_json(value: Any) -> dict:
     summary="聚合洞察数据",
     description="返回项目 label/sector 分布、最热叙事排行和高风险团队列表。",
 )
-async def get_insights() -> InsightsResponse:
+def get_insights() -> InsightsResponse:
     """获取聚合洞察数据。
 
     Returns:
         InsightsResponse 包含各类聚合指标
     """
-    repo = ProjectRepository()
-    projects, _ = repo.list_projects(page=1, page_size=10000, sort_by="score", sort_order="desc")
+    # 单条连接完成全部聚合：分组计数交给数据库，只把窄投影搬进 Python
+    conn = get_connection()
+    try:
+        repo = ProjectRepository(conn)
+        raw_label_counts = repo.aggregate_counts("label")
+        raw_sector_counts = repo.aggregate_counts("sector")
+        projects = repo.list_insight_rows()
+    finally:
+        conn.close()
 
-    label_counts = defaultdict(int)
-    sector_counts = defaultdict(int)
+    # 归一空值分桶，保持与旧的 Python 端聚合完全一致的输出
+    label_counts: defaultdict[str, int] = defaultdict(int)
+    for bucket, n in raw_label_counts.items():
+        label_counts[bucket or "UNRATED"] += n
+    sector_counts: defaultdict[str, int] = defaultdict(int)
+    for bucket, n in raw_sector_counts.items():
+        sector_counts[bucket or "Unknown"] += n
+
     sector_heat = defaultdict(list)
     risky_teams = []
 
     for project in projects:
-        label = project.get("label") or "UNRATED"
-        label_counts[label] += 1
-
         sector = project.get("sector") or "Unknown"
-        sector_counts[sector] += 1
 
         narrative = _safe_json(project.get("narrative_json"))
         heat_score = narrative.get("heat_score")

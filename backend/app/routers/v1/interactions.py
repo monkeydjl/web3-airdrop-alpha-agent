@@ -376,7 +376,7 @@ def _validate_status_transition(current_status: str | None, new_status: str) -> 
 
 
 @router.post("/interactions")
-async def create_interaction(body: InteractionCreate):
+def create_interaction(body: InteractionCreate):
     """Create a participation log for a project."""
     repo = ProjectRepository()
     project = repo.get_by_id(body.project_id)
@@ -474,7 +474,7 @@ async def create_interaction(body: InteractionCreate):
 
 
 @router.get("/interactions")
-async def list_interactions(
+def list_interactions(
     project_id: str | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -515,7 +515,7 @@ async def list_interactions(
 
 
 @router.get("/interactions/summary")
-async def interactions_summary():
+def interactions_summary():
     """Aggregate stats for calibration / ops."""
     conn = get_connection()
     try:
@@ -570,15 +570,15 @@ async def interactions_summary():
 
 
 @router.get("/projects/{project_id}/interactions")
-async def list_project_interactions(
+def list_project_interactions(
     project_id: str = Path(...),
     limit: int = Query(50, ge=1, le=200),
 ):
-    return await list_interactions(project_id=project_id, status=None, limit=limit)
+    return list_interactions(project_id=project_id, status=None, limit=limit)
 
 
 @router.patch("/interactions/{interaction_id}")
-async def update_interaction(
+def update_interaction(
     interaction_id: int = Path(...),
     body: InteractionUpdate = ...,
 ):
@@ -683,7 +683,7 @@ async def update_interaction(
 
 
 @router.delete("/interactions/{interaction_id}")
-async def delete_interaction(interaction_id: int = Path(...)):
+def delete_interaction(interaction_id: int = Path(...)):
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM interactions WHERE id = ?", (interaction_id,))

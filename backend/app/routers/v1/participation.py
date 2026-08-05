@@ -13,7 +13,7 @@ router = APIRouter(tags=["participation"])
 
 
 @router.get("/projects/{project_id}/participation-tasks")
-async def get_participation_tasks(
+def get_participation_tasks(
     project_id: str = Path(..., description="项目 ID"),
 ):
     """Return a prioritized checklist of things a user can do for this project."""

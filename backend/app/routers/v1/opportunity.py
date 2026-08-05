@@ -183,10 +183,13 @@ def get_opportunity_workflow(
             detail={"code": "PROJECT_NOT_FOUND", "message": "Project not found"},
         ) from None
     except Exception as exc:
+        # 记录异常类型与堆栈（exc_info 不进入 getMessage，故不泄露持久化明文），
+        # 但绝不把 str(exc) 拼进消息——它可能带有 assessment_json 等敏感原文。
         logger.error(
             "opportunity.workflow.projection_error project_id=%s error_type=%s",
             project_id,
             type(exc).__name__,
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500,

@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.inflight import QUEUE_DRAIN_KEY, claim_run, reset_active_runs
 from app.main import create_app
 
 
@@ -450,4 +451,36 @@ class TestEdgeCases:
 
         response = client.post("/api/v1/run", json=payload)
         # Should succeed (extra fields ignored by Pydantic)
+        assert response.status_code == 200
+
+
+class TestRunQueueDrainGuard:
+    """空 body 的 /run 排空共享队列，受在飞守卫保护（API-4）。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        reset_active_runs()
+        yield
+        reset_active_runs()
+
+    def test_empty_body_run_returns_409_when_drain_in_flight(self, client):
+        """已有排空在飞时返回 409（可重试），而不是 500（服务端故障）。"""
+        with claim_run(QUEUE_DRAIN_KEY) as acquired:
+            assert acquired
+            response = client.post("/api/v1/run", json={})
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "ANALYSIS_IN_PROGRESS"
+
+    def test_explicit_projects_still_run_during_drain(self, client, sample_project):
+        """显式传 projects 不共享队列，排空在飞时照样能跑。"""
+        with claim_run(QUEUE_DRAIN_KEY) as acquired:
+            assert acquired
+            response = client.post(
+                "/api/v1/run",
+                json={"projects": [sample_project], "enable_llm": False},
+            )
+
         assert response.status_code == 200

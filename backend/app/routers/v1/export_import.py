@@ -7,7 +7,11 @@
 - POST /api/v1/import/projects - 批量导入项目并评分
 """
 
+import asyncio
+import re
+import unicodedata
 from typing import Literal
+from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, File, HTTPException, Path, Query, UploadFile
@@ -32,6 +36,23 @@ from app.repository import ProjectRepository
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 
+# 上传上限，与端点文档中声明的 10MB 保持一致
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _content_disposition(filename: str) -> str:
+    """构造 RFC 6266 / RFC 5987 合规的 Content-Disposition。
+
+    Starlette 以 latin-1 编码响应头，任何非 ASCII 文件名（中文项目名、"详情"
+    等）直接内插都会抛 UnicodeEncodeError。这里提供 ASCII 回退名 + 百分号
+    编码的 filename*，两端都安全。
+    """
+    ascii_name = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r'[\\"\r\n]', "", ascii_name).strip() or "download"
+    quoted = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
+
 
 @router.get(
     "/export/projects",
@@ -45,7 +66,7 @@ logger = structlog.get_logger(__name__)
         "支持与 GET /projects 相同的筛选参数"
     ),
 )
-async def export_projects(
+def export_projects(
     format: Literal["excel", "csv"] = Query("excel", description="导出格式"),
     label: str | None = Query(None, description="按标签筛选"),
     sector: str | None = Query(None, description="按赛道筛选"),
@@ -114,7 +135,7 @@ async def export_projects(
         return Response(
             content=file_content if isinstance(file_content, bytes) else file_content.encode("utf-8"),
             media_type=media_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={"Content-Disposition": _content_disposition(filename)},
         )
 
     except HTTPException:
@@ -125,7 +146,7 @@ async def export_projects(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=f"导出失败: {e!s}") from e
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "导出失败"}) from e
 
 
 @router.get(
@@ -133,7 +154,7 @@ async def export_projects(
     summary="导出单个项目详情",
     description="导出单个项目的完整详情到 Excel（包含所有分析结果）",
 )
-async def export_project_detail(
+def export_project_detail(
     project_id: str = Path(..., description="项目 ID"),
 ):
     """导出单个项目详情."""
@@ -183,7 +204,7 @@ async def export_project_detail(
         return Response(
             content=file_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+            headers={"Content-Disposition": _content_disposition(filename)},
         )
 
     except HTTPException:
@@ -195,7 +216,7 @@ async def export_project_detail(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=f"导出失败: {e!s}") from e
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "导出失败"}) from e
 
 
 @router.get(
@@ -203,7 +224,7 @@ async def export_project_detail(
     summary="下载导入模板",
     description="下载 Excel 导入模板，包含示例数据和必填字段说明",
 )
-async def download_import_template():
+def download_import_template():
     """下载导入模板."""
     logger.info("api.export.template")
 
@@ -222,7 +243,7 @@ async def download_import_template():
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=f"模板生成失败: {e!s}") from e
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "模板生成失败"}) from e
 
 
 @router.post(
@@ -261,17 +282,34 @@ async def import_projects(
     )
 
     try:
-        # 读取文件内容
-        content = await file.read()
+        # 分块读取并强制 10MB 上限（此前无任何限制，超大上传会直接把整个文件读进内存打爆进程）
+        chunks: list[bytes] = []
+        total_bytes = 0
+        while True:
+            chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={
+                        "code": "FILE_TOO_LARGE",
+                        "message": f"文件超过大小限制（{MAX_UPLOAD_BYTES // (1024 * 1024)}MB）",
+                    },
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
 
-        # 根据文件类型导入
+        # 根据文件类型导入。解析（pandas/openpyxl）是重 CPU 同步操作，
+        # 放到线程池执行，避免阻塞事件循环拖垮其他并发请求。
         if (
             file.filename.endswith(".xlsx")
             or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ):
-            projects_data = import_projects_from_excel(content)
+            projects_data = await asyncio.to_thread(import_projects_from_excel, content)
         elif file.filename.endswith(".csv") or file.content_type == "text/csv":
-            projects_data = import_projects_from_csv(content.decode("utf-8"))
+            projects_data = await asyncio.to_thread(import_projects_from_csv, content.decode("utf-8"))
         else:
             raise HTTPException(status_code=400, detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件")
 
@@ -342,4 +380,4 @@ async def import_projects(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=f"导入失败: {e!s}") from e
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "导入失败"}) from e

@@ -32,10 +32,13 @@ async def project_ai_brief(
     try:
         brief = await generate_project_brief(dict(project))
     except Exception as e:
+        # 异常原文只进日志、不进响应体：generate_project_brief 会走 LLM(httpx，
+        # URL 可能带 ?api_key=...) 或 DB 路径(异常可能带连接串)，回显给调用方会
+        # 泄露密钥/DSN。与 run.py、opportunity.py 的策略保持一致。
         logger.error("ai_brief.failed", project_id=project_id, error=str(e), exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"code": "BRIEF_FAILED", "message": str(e)},
+            detail={"code": "BRIEF_FAILED", "message": "Failed to generate project brief"},
         ) from e
 
     return {

@@ -23,22 +23,19 @@ from fastapi.responses import JSONResponse, Response
 
 from app.analysis_scheduler import AnalysisScheduler
 from app.collectors.base import CollectorResult
-from app.collectors.coingecko import CoinGeckoCollector
-from app.collectors.cryptorank import CryptoRankCollector
-from app.collectors.defillama import DefiLlamaCollector
-from app.collectors.etherscan import EtherscanCollector
-from app.collectors.galxe import GalxeCollector
-from app.collectors.github import GitHubCollector
-from app.collectors.layer3 import Layer3Collector
+from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
-from app.collectors.registry import CollectorRegistry
-from app.collectors.rootdata import RootDataCollector
 from app.collectors.scheduler import CollectionScheduler
-from app.collectors.twitter import TwitterKeywordCollector, TwitterKolCollector
 from app.config import settings
 from app.db import init_db
+from app.inflight import QueueDrainInProgressError
 from app.metrics import MetricsExporter
 from app.pipeline_run import execute_analysis_pipeline
+from app.utils.redact import configure_logging
+
+# 进程启动即安装脱敏 processor（SECURITY.md §3.3）。放在模块层而非 lifespan：
+# 采集器与脚本可能在应用启动前就开始打日志。
+configure_logging()
 
 logger = structlog.get_logger(__name__)
 
@@ -70,17 +67,8 @@ def create_app(db_override=None) -> FastAPI:
             init_db()
 
         if settings.app_env != "testing":
-            registry = CollectorRegistry()
-            registry.register(DefiLlamaCollector())
-            registry.register(GitHubCollector())
-            registry.register(CoinGeckoCollector())
-            registry.register(CryptoRankCollector())
-            registry.register(RootDataCollector())
-            registry.register(TwitterKolCollector())
-            registry.register(TwitterKeywordCollector())
-            registry.register(EtherscanCollector())
-            registry.register(GalxeCollector())
-            registry.register(Layer3Collector())
+            # 与 API 路由共用同一批采集器实例，令牌桶限流才不会被逐请求重置
+            registry = get_default_registry()
 
             repo = CollectionRepository()
 
@@ -96,6 +84,15 @@ def create_app(db_override=None) -> FastAPI:
                 ):
                     try:
                         await execute_analysis_pipeline(trigger="collection_auto")
+                    except QueueDrainInProgressError:
+                        # 10 个采集源各有独立 job，两个源同时完成会各自触发一次
+                        # 排空。跳过不是故障：本批项目仍是 processed=0，在飞的
+                        # 那次运行或下一次 cron 自会取到。
+                        logger.info(
+                            "app.collection_auto_run_skipped",
+                            source_id=source_id,
+                            reason="queue_drain_in_progress",
+                        )
                     except Exception as exc:
                         logger.error(
                             "app.collection_auto_run_failed",
@@ -108,8 +105,13 @@ def create_app(db_override=None) -> FastAPI:
                 on_collection=on_collection,
             )
             collection_scheduler.start()
-            analysis_scheduler = AnalysisScheduler()
-            analysis_scheduler.start()
+            try:
+                analysis_scheduler = AnalysisScheduler()
+                analysis_scheduler.start()
+            except Exception:
+                # 第二个调度器启动失败时回收已启动的第一个，避免孤儿调度线程
+                collection_scheduler.shutdown(wait=False)
+                raise
 
             application.state.collector_registry = registry
             application.state.collection_scheduler = collection_scheduler
@@ -186,18 +188,20 @@ def create_app(db_override=None) -> FastAPI:
     )
 
     # ── 中间件 ──────────────────────────────────
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins_list,
-        allow_credentials=settings.cors_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # 注意：Starlette 后注册的中间件在最外层。
+    # CORS 必须最后注册（最外层），否则 API key/401 等响应不会携带 CORS 头，
+    # 且浏览器预检(OPTIONS)会先被鉴权拦截导致跨域整体失效。
 
     # API key auth (no-op when API_KEY empty)
     from app.auth import APIKeyMiddleware
 
     app.add_middleware(APIKeyMiddleware)
+
+    # 限流必须在鉴权**外层**（即后注册），否则爆破 API key 的请求先被鉴权拒绝、
+    # 根本走不到限流，配额也就拦不住爆破（SECURITY.md §4.2 / §10.4）
+    from app.rate_limit import RateLimitMiddleware
+
+    app.add_middleware(RateLimitMiddleware)
 
     # ── 请求日志中间件 ──────────────────────────
     @app.middleware("http")
@@ -217,6 +221,18 @@ def create_app(db_override=None) -> FastAPI:
             duration_ms=round(duration, 2),
         )
         return response
+
+    # 通配 origin 时禁用 credentials：CORS 规范禁止 "*" 与凭据同用，
+    # Starlette 在该组合下会回显任意 Origin，形成凭据跨站读取风险。
+    cors_origins = settings.cors_origins_list
+    cors_credentials = settings.cors_credentials and "*" not in cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── 初始化数据库 ────────────────────────────
     if db_override is None:
@@ -279,8 +295,12 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 健康检查 ────────────────────────────────
     @app.get(settings.health_check_path, tags=["system"])
-    async def health_check():
-        """健康检查端点。"""
+    def health_check(response: Response):
+        """健康检查端点。
+
+        降级时返回 503：k8s/负载均衡器的探针按**状态码**判活，恒返回 200 会让
+        流量继续打进一个连不上数据库的实例。响应体保持不变，仍带 ok/status。
+        """
         from app.db import backend_name, get_connection
 
         db_status = "unknown"
@@ -303,6 +323,8 @@ def create_app(db_override=None) -> FastAPI:
         except Exception as exc:
             logger.warning("health.quarantine_count_failed", error=str(exc))
 
+        if db_status != "ok":
+            response.status_code = 503
         return {
             "ok": db_status == "ok",
             "status": "healthy" if db_status == "ok" else "degraded",
@@ -319,7 +341,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── Prometheus metrics ─────────────────────
     @app.get(settings.metrics_path, tags=["system"])
-    async def metrics():
+    def metrics():
         """Prometheus metrics endpoint."""
         if not MetricsExporter.is_enabled():
             from fastapi.responses import JSONResponse

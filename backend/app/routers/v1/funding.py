@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Path, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import AgentContext, RawProject
-from app.agents.orchestrator_simple import SimpleOrchestrator
+from app.agents.orchestrator_simple import SimpleOrchestrator, global_sector_counts
 from app.repository import ProjectRepository
-from app.services.funding import compute_funding_quality
+from app.services.funding import _parse_date, compute_funding_quality
 from app.services.project_signals import (
     apply_signals_to_kwargs,
     funding_public_view,
@@ -23,13 +24,19 @@ router = APIRouter(tags=["funding"])
 
 
 class FundingUpdate(BaseModel):
-    funding_total_usd: float | None = Field(None, description="累计融资 USD")
-    funding_rounds: int | None = Field(None, ge=0, description="轮次数")
-    funding_last_date: str | None = Field(None, description="最近一轮日期 YYYY-MM-DD")
-    funding_investors: list[str] | None = Field(None, description="投资方列表")
-    funding_lead_investors: list[str] | None = Field(None, description="领投方")
+    # allow_inf_nan=False：此前 {"funding_total_usd": NaN} 会先把非法 JSON
+    # （字面量 NaN）提交进 projects.meta，再以 500 告诉调用方"写失败了"——
+    # 实际已经写进去了，且 Postgres 的 jsonb 会硬拒。interactions/opportunity
+    # 两个模型本来就设了这个开关，这里对齐。
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    funding_total_usd: float | None = Field(None, ge=0, description="累计融资 USD")
+    funding_rounds: int | None = Field(None, ge=0, le=100, description="轮次数")
+    funding_last_date: str | None = Field(None, max_length=32, description="最近一轮日期 YYYY-MM-DD")
+    funding_investors: list[str] | None = Field(None, max_length=200, description="投资方列表")
+    funding_lead_investors: list[str] | None = Field(None, max_length=50, description="领投方")
     recent_funding: bool | None = Field(None, description="是否视为近期融资")
-    note: str | None = Field(None, description="备注（存 meta）")
+    note: str | None = Field(None, max_length=2000, description="备注（存 meta）")
 
 
 def _row_to_raw_project(row: dict[str, Any]) -> RawProject:
@@ -46,7 +53,7 @@ def _row_to_raw_project(row: dict[str, Any]) -> RawProject:
 
 
 @router.get("/projects/{project_id}/funding")
-async def get_funding(project_id: str = Path(...)):
+def get_funding(project_id: str = Path(...)):
     repo = ProjectRepository()
     row = repo.get_by_id(project_id)
     if not row:
@@ -87,9 +94,18 @@ async def patch_funding(
     total = body.funding_total_usd if body.funding_total_usd is not None else existing.get("funding_total_usd")
     rounds = body.funding_rounds if body.funding_rounds is not None else int(existing.get("funding_rounds") or 0)
     last_date = body.funding_last_date if body.funding_last_date is not None else existing.get("funding_last_date")
-    recent_flag = body.recent_funding if body.recent_funding is not None else bool(existing.get("recent_funding"))
-    if total and float(total) > 0:
-        recent_flag = True
+    # recent_funding 会流进 airdrop_signal(+5 加成)与 team("recent funding" flag)，
+    # 且这两处都不看日期。此前只要 total>0 就无条件置 True——既覆盖了用户显式传入
+    # 的 recent_funding=False(用户明说"不算近期"也被改回)，又把 2021 年的老轮次标成
+    # 近期。改为：用户显式指定则一律尊重；未指定时才按 last_date 时效推断，已知且
+    # 距今 >365 天不算近期，日期未知则沿用"有融资额即视为近期"的保守默认。
+    if body.recent_funding is not None:
+        recent_flag = body.recent_funding
+    else:
+        recent_flag = bool(existing.get("recent_funding"))
+        if total and float(total) > 0:
+            dt = _parse_date(last_date)
+            recent_flag = dt is None or (datetime.now(UTC) - dt).days <= 365
 
     computed = compute_funding_quality(
         total_usd=float(total) if total is not None else None,
@@ -111,29 +127,13 @@ async def patch_funding(
         "recent_funding": bool(recent_flag or (computed["funding_quality"] or 0) > 0.2),
     }
 
-    updated = repo.update_meta_signals(project_id, signals)
+    # note 通过 meta_updates 在同一事务内随 signals 一起写入：此前 note 另开一条
+    # 连接、用读时刻的 meta 快照整体覆盖，与 signals 写非同一事务，并发下会丢写、
+    # 且第二次失败时 signals 已提交而 note 丢失。合并为单次原子写消除该窗口。
+    meta_updates = {"funding_note": body.note} if body.note is not None else None
+    updated = repo.update_meta_signals(project_id, signals, meta_updates=meta_updates)
     if not updated:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "project not found"})
-
-    if body.note is not None:
-        meta = parse_meta(updated.get("meta"))
-        meta["funding_note"] = body.note
-        # re-write note via signals merge path
-        conn_meta = json_dumps_meta(meta)
-        from datetime import UTC, datetime
-
-        from app.db import get_connection
-
-        conn = get_connection()
-        try:
-            conn.execute(
-                "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
-                (conn_meta, datetime.now(UTC), project_id),
-            )
-            conn.commit()
-            updated["meta"] = conn_meta
-        finally:
-            conn.close()
 
     score_result = None
     if rescore:
@@ -141,7 +141,9 @@ async def patch_funding(
             project = _row_to_raw_project(updated)
             orch = SimpleOrchestrator()
             ctx = AgentContext(run_id="funding-edit")
-            counts = orch._calculate_sector_counts([project])
+            # 单项目重算必须用全库赛道计数：只数这一个项目会得到 {sector: 1}
+            # → 竞争度满分 100，同一项目在批量评分里可能只有 40，凭空多出 6 分。
+            counts = global_sector_counts(fallback=[project])
             state = await orch._run_single_project(project, ctx, counts)
             repo.save(state)
             score_result = {
@@ -169,9 +171,3 @@ async def patch_funding(
             "score": score_result,
         },
     }
-
-
-def json_dumps_meta(meta: dict) -> str:
-    import json
-
-    return json.dumps(meta, ensure_ascii=False)

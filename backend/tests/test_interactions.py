@@ -442,7 +442,8 @@ def test_postgres_patch_locks_row_before_merged_validation(monkeypatch):
 
     monkeypatch.setattr(interactions, "get_connection", PostgresConnection)
 
-    result = asyncio.run(interactions.update_interaction(interaction_id=1, body=InteractionUpdate(note="locked")))
+    # 该处理器现为同步函数（FastAPI 自动交线程池执行），直接调用即可
+    result = interactions.update_interaction(interaction_id=1, body=InteractionUpdate(note="locked"))
 
     assert result["ok"] is True
     assert statements[0] == "begin"
