@@ -200,11 +200,15 @@ class RootDataCollector(DataCollector):
             funding.get("days_since_round") is not None and funding["days_since_round"] <= 365
         )
 
-        # RootData projects often pre-TGE — mild airdrop relevance
+        # RootData projects often pre-TGE — mild airdrop relevance.
+        # 仅在存在明确“未发币”信号时才判 no_token；不能把缺失字段（""/None）当作未发币，
+        # 否则免费档返回的残缺条目会把已发币项目误判为 pre-TGE 空投候选。
+        token_status = str(item.get("token_status") or "").lower()
+        tge_val = item.get("tge")
         no_token = bool(
             item.get("no_token")
-            or str(item.get("token_status") or "").lower() in ("no", "none", "unissued", "")
-            or item.get("tge") in (False, "false", 0, "0", None)
+            or token_status in ("no", "none", "unissued")
+            or tge_val in (False, "false", 0, "0")
         )
 
         investors = funding.get("funding_investors") or []

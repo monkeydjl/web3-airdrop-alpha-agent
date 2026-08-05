@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from math import floor
 from typing import Any
 
@@ -19,6 +20,7 @@ from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import run_orchestrator
 from app.collectors.persistence import CollectionRepository
 from app.config import settings
+from app.inflight import QUEUE_DRAIN_KEY, QueueDrainInProgressError, claim_run
 from app.metrics import (
     PIPELINE_DURATION,
     PIPELINE_RUNS,
@@ -130,13 +132,27 @@ def mark_successful_raw_projects(
     raw_projects: list[RawProject],
     states: list[Any],
     repo: CollectionRepository | None = None,
+    persisted_rows: list[dict[str, Any]] | None = None,
 ) -> int:
-    """Mark raw_projects processed only for successfully scored projects.
+    """Mark raw_projects processed only for projects that actually reached the DB.
 
-    Success = state.score is not None. Uses raw_ids when present, else project_id/dedup_key.
+    出队即"这条原始记录不用再处理了"，因此判据必须是**落库成功**而不是内存里
+    `state.score is not None`。此前只看内存分数：一旦持久化失败，项目既没写进
+    `projects`、又被移出队列，数据永久丢失且无从发现。
+
+    `persisted_rows` 为 None 时（调用方未落库，例如显式传入 projects 的路径）
+    退回旧判据，保持既有行为不变。
     """
     repo = repo or CollectionRepository()
-    success_ids = {s.project.id for s in states if getattr(s, "score", None) is not None}
+    if persisted_rows is None:
+        success_ids = {s.project.id for s in states if getattr(s, "score", None) is not None}
+    else:
+        persisted_ids = {str(row.get("id")) for row in persisted_rows if row.get("id") is not None}
+        success_ids = {
+            s.project.id
+            for s in states
+            if getattr(s, "score", None) is not None and s.project.id in persisted_ids
+        }
     marked = 0
     for raw_project in raw_projects:
         if raw_project.id not in success_ids:
@@ -154,13 +170,10 @@ def mark_successful_raw_projects(
                 )
         else:
             dedup = create_dedup_key(raw_project.name, raw_project.sector).to_string()
-            n = repo.mark_raw_project_processed(
+            marked += repo.mark_raw_project_processed(
                 project_id=raw_project.id,
                 dedup_key=dedup,
             )
-            if n == 0:
-                n = repo.mark_raw_project_processed(dedup_key=dedup, project_id=raw_project.id)
-            marked += n
     logger.info("pipeline.mark_processed", marked=marked, success_count=len(success_ids))
     return marked
 
@@ -176,7 +189,42 @@ async def execute_analysis_pipeline(
     """Run scoring pipeline from explicit projects or unprocessed raw_projects queue.
 
     Returns a dict suitable for RunResponse.data.
+
+    队列排空路径（未显式传 projects）受进程内在飞守卫保护，重入时抛
+    `QueueDrainInProgressError`；显式传入 projects 的路径不受限——它作用于调用方自带
+    的数据，不共享队列，并发无害。守卫理由见 `app/inflight.py`。
     """
+    if projects is not None and len(projects) > 0:
+        return await _run_pipeline(
+            projects=projects,
+            enable_llm=enable_llm,
+            trigger=trigger,
+            limit=limit,
+            save_to_db=save_to_db,
+        )
+
+    with claim_run(QUEUE_DRAIN_KEY) as acquired:
+        if not acquired:
+            logger.info("pipeline.queue_drain_rejected", trigger=trigger)
+            raise QueueDrainInProgressError("An analysis queue drain is already in progress")
+        return await _run_pipeline(
+            projects=None,
+            enable_llm=enable_llm,
+            trigger=trigger,
+            limit=limit,
+            save_to_db=save_to_db,
+        )
+
+
+async def _run_pipeline(
+    *,
+    projects: list[RawProject] | None,
+    enable_llm: bool,
+    trigger: str,
+    limit: int | None,
+    save_to_db: bool,
+) -> dict[str, Any]:
+    """执行一次评分运行（无守卫；调用方负责在飞控制）。"""
     _record_shadow_metric(
         set_opportunity_shadow_rollout,
         settings.opportunity_shadow_enabled,
@@ -199,7 +247,7 @@ async def execute_analysis_pipeline(
         )
 
     if not raw_projects:
-        run_id = f"api-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        run_id = f"api-run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"
         logger.info(
             "pipeline.opportunity_shadow_completed",
             run_id=run_id,
@@ -218,7 +266,7 @@ async def execute_analysis_pipeline(
             "opportunity_shadow": OPPORTUNITY_SHADOW_EMPTY_STATS.copy(),
         }
 
-    run_id = f"api-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    run_id = f"api-run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"
     response = await run_orchestrator(
         projects=raw_projects,
         run_id=run_id,
@@ -227,11 +275,18 @@ async def execute_analysis_pipeline(
     )
     marked = 0
     if from_repository:
-        marked = mark_successful_raw_projects(raw_projects, response.states)
+        # 只有真正写进 projects 的项目才允许出队（save_to_db=False 时不落库，
+        # 传 None 退回"评分成功即出队"的旧判据）
+        marked = mark_successful_raw_projects(
+            raw_projects,
+            response.states,
+            persisted_rows=response.persisted_project_rows if save_to_db else None,
+        )
 
     duration = time.perf_counter() - start_time
     PIPELINE_DURATION.observe(duration)
-    PROJECTS_SCORED.inc(len(response.states))
+    # 只计入真正评分成功的项目，避免把 score=None 的失败态也计数（与 scored_count 一致）
+    PROJECTS_SCORED.inc(sum(1 for s in response.states if s.score is not None))
     for state in response.states:
         if state.label:
             PROJECTS_BY_LABEL.labels(label=state.label).inc()
@@ -269,22 +324,67 @@ async def execute_analysis_pipeline(
         **opportunity_shadow,
     )
 
-    return {
+    result = {
         "run_id": response.run_id,
         "status": response.status,
         "project_count": response.project_count,
         "scored_count": len([s for s in response.states if s.score is not None]),
         "error_count": len(response.errors),
+        "persisted_count": len(response.persisted_project_rows),
         "top_score": response.top_score,
         "top_projects": top_projects,
         "marked_processed": marked,
         "opportunity_shadow": opportunity_shadow,
     }
+    record_pipeline_run(
+        run_id=response.run_id,
+        trigger=trigger,
+        duration_ms=int(duration * 1000),
+        summary=result,
+        errors=response.errors,
+    )
+    return result
+
+
+def record_pipeline_run(
+    *,
+    run_id: str,
+    trigger: str,
+    duration_ms: int,
+    summary: dict[str, Any],
+    errors: list[dict[str, Any]] | None = None,
+    error: str | None = None,
+) -> None:
+    """把每次运行落成一条持久记录。
+
+    此前 `LogRepository.log_run` 定义了却从无调用方，且调度器把异常吞成一行日志，
+    于是"整批数据静默丢失"这种故障在 DB 与 metrics 里都查不到。写库失败不得影响
+    主流程——运行本身已经结束了，记账失败只该记一行警告。
+    """
+    try:
+        from app.repository import LogRepository
+
+        LogRepository().log_run(
+            run_id=run_id,
+            agent_name="pipeline",
+            input_data={"trigger": trigger},
+            output_data={k: v for k, v in summary.items() if k != "top_projects"},
+            error=error or (json.dumps(errors, ensure_ascii=False) if errors else None),
+            duration_ms=duration_ms,
+        )
+    except Exception as exc:  # pragma: no cover - 记账失败不能拖垮运行
+        logger.warning("pipeline.run_record_failed", run_id=run_id, error=str(exc))
 
 
 def _build_top_projects(states) -> list[dict]:
     top_projects = []
-    for state in states[:10]:
+    # 按分数降序取前 10（原实现取输入前 10，与 API 文档“按分数排序”不符）
+    ranked = sorted(
+        states,
+        key=lambda s: (s.score if getattr(s, "score", None) is not None else float("-inf")),
+        reverse=True,
+    )
+    for state in ranked[:10]:
         project_result = {
             "id": state.project.id,
             "name": state.project.name,

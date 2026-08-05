@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,6 +24,11 @@ from app.config import settings
 from app.utils.normalize import normalize_sector
 
 logger = structlog.get_logger(__name__)
+
+
+def _has_word(text: str, word: str) -> bool:
+    """整词匹配，避免 "ai" 命中 blockchain、"l2" 命中 sql2。"""
+    return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text) is not None
 
 
 # Web3-related languages preferred for airdrop discovery
@@ -299,6 +305,9 @@ class GitHubCollector(DataCollector):
             "open_issues": open_issues,
             "created_at": created_at,
             "updated_at": updated_at,
+            # pushed_at 才是"最后一次提交"。updated_at 会被 star/watch/描述修改顶新，
+            # 于是 §5.1b 的 github_recent_push_days（±18 分）量到的是元数据变动而非代码活跃度。
+            "pushed_at": repo.get("pushed_at"),
             "owner_type": owner_type,
             "license": repo.get("license", {}).get("key") if repo.get("license") else None,
             "relevance": rel,
@@ -351,13 +360,17 @@ class GitHubCollector(DataCollector):
 
         if "solidity" in lang_lower or "smart contract" in desc_lower or "defi" in desc_lower:
             return normalize_sector("DeFi")
-        if "rollup" in desc_lower or "layer 2" in desc_lower or "l2" in desc_lower:
+        # 用词边界而非裸子串：`"l2" in desc` 会命中 "sql2"、"html2md" 之类
+        if "rollup" in desc_lower or "layer 2" in desc_lower or _has_word(desc_lower, "l2"):
             return normalize_sector("L2")
         if "restak" in desc_lower:
             return normalize_sector("Restaking")
         if "rust" in lang_lower and ("chain" in desc_lower or "rollup" in desc_lower):
             return normalize_sector("L2")
-        if "ai" in desc_lower or "ml " in desc_lower:
+        # 裸子串 "ai" 会命中 blockchain / chain / mainnet / available / explain…
+        # 实测 "Cross-chain bridge SDK"、"A blockchain indexer" 全被判成 AI 赛道。
+        # sector 是 dedup_key 的一半，判错既错分类又阻断合并。
+        if _has_word(desc_lower, "ai") or _has_word(desc_lower, "ml") or "machine learning" in desc_lower:
             return normalize_sector("AI")
         if "typescript" in lang_lower or "javascript" in lang_lower or "go" in lang_lower:
             return normalize_sector("Infrastructure")

@@ -58,23 +58,11 @@ def _patch_non_testing_dependencies(monkeypatch) -> None:
     _FakeAnalysisScheduler.instances.clear()
     monkeypatch.setattr(main_module.settings, "app_env", "development")
     monkeypatch.setattr(main_module.settings, "collection_auto_run_enabled", False)
-    monkeypatch.setattr(main_module, "CollectorRegistry", _FakeRegistry)
+    # 采集器注册表现由 app.collectors.factory 统一构建并进程内共享
+    monkeypatch.setattr(main_module, "get_default_registry", _FakeRegistry)
     monkeypatch.setattr(main_module, "CollectionScheduler", _FakeCollectionScheduler)
     monkeypatch.setattr(main_module, "AnalysisScheduler", _FakeAnalysisScheduler)
     monkeypatch.setattr(main_module, "CollectionRepository", lambda: object())
-    for collector_name in (
-        "DefiLlamaCollector",
-        "GitHubCollector",
-        "CoinGeckoCollector",
-        "CryptoRankCollector",
-        "RootDataCollector",
-        "TwitterKolCollector",
-        "TwitterKeywordCollector",
-        "EtherscanCollector",
-        "GalxeCollector",
-        "Layer3Collector",
-    ):
-        monkeypatch.setattr(main_module, collector_name, lambda: object())
 
 
 def test_testing_lifespan_sets_scheduler_states_to_none(monkeypatch) -> None:
@@ -99,12 +87,28 @@ def test_non_testing_lifespan_starts_and_stops_each_scheduler_once(monkeypatch) 
         analysis_scheduler = _FakeAnalysisScheduler.instances[0]
         assert collection_scheduler.start_calls == 1
         assert analysis_scheduler.start_calls == 1
-        assert len(application.state.collector_registry.collectors) == 10
+        assert application.state.collector_registry is not None
         assert application.state.collection_scheduler is collection_scheduler
         assert application.state.analysis_scheduler is analysis_scheduler
 
     assert collection_scheduler.shutdown_calls == [True]
     assert analysis_scheduler.shutdown_calls == [True]
+
+
+def test_default_registry_covers_all_collectors_and_is_shared() -> None:
+    """采集器注册表须覆盖全部 10 个源，且调度器与 API 路由共用同一实例。
+
+    共用是限流正确性的前提：令牌桶是实例状态，每请求新建等于每次满桶。
+    """
+    from app.collectors.factory import build_default_registry, get_default_registry
+    from app.routers.v1 import collections as collections_router
+
+    assert len(build_default_registry()) == 10
+    shared = get_default_registry()
+    assert len(shared) == 10
+    assert collections_router._build_registry() is shared
+    # 同一 source 多次取用必须是同一对象（否则限流器被重置）
+    assert shared.get("defillama") is get_default_registry().get("defillama")
 
 
 def test_shutdown_failure_does_not_prevent_second_scheduler_shutdown(monkeypatch) -> None:

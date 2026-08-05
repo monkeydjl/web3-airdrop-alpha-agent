@@ -77,7 +77,8 @@ class TestEtherscanCollector:
         assert len(result.items) == 1
         discovery = result.items[0]
         assert discovery.name.startswith("Contract 0x")
-        assert discovery.sector == "On-chain"
+        # 链上活动不是赛道；写死会隔断跨源合并
+        assert discovery.sector is None
         assert 0 <= discovery.discovery_score <= 0.28
 
     def test_known_stablecoins_filtered(self, etherscan_enabled) -> None:

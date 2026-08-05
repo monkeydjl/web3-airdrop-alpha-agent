@@ -20,7 +20,6 @@ import structlog
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
-from app.utils.normalize import normalize_sector
 
 logger = structlog.get_logger(__name__)
 
@@ -116,7 +115,10 @@ class CoinGeckoCollector(DataCollector):
         # 使用 symbol 作为项目名，因为 raw_projects 通常也用 symbol/name
         display_name = name or symbol or coin_id
 
-        url = coin.get("image")  # 无官网，用图标占位
+        # 不拿图标顶替官网：url 在合并里属于"最高可信已知值"类字段，coingecko
+        # 优先级(4)高于 github(5)，一张 PNG 会直接盖掉真实官网，并让
+        # scorer 的 `bool(p.url)` 证据检查在一个 logo 上判过。
+        url = coin.get("homepage") or None
         market_cap = coin.get("market_cap") or 0
         current_price = coin.get("current_price") or 0
         price_change_24h = coin.get("price_change_24h") or 0
@@ -160,7 +162,9 @@ class CoinGeckoCollector(DataCollector):
             raw_id=coin_id,
             name=display_name,
             url=url,
-            sector=normalize_sector("DeFi"),  # CoinGecko 币种不细分赛道，默认 DeFi
+            # CoinGecko 不细分赛道。原先默认 "DeFi" 是臆造：它让本源的 dedup_key
+            # 恒为 name::DeFi，与项目真实赛道的记录永不相撞。
+            sector=None,
             stage="mainnet",  # 已上市视为 mainnet
             raw_data=raw_data,
             raw_signals=signals,

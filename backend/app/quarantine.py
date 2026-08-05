@@ -5,6 +5,7 @@ Quarantined rows are excluded from analysis queue until released.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 import structlog
@@ -53,7 +54,11 @@ def quarantine_raw(
             logger.info("quarantine.set", raw_id=raw_id, reason=reason[:120])
         return ok
     except Exception as e:
-        # Column missing on very old schemas → processed-only fallback
+        # Column missing on very old schemas → processed-only fallback.
+        # 先回滚：Postgres 首条失败后事务进入 aborted 态，不回滚则 fallback 必抛
+        # InFailedSqlTransaction 从而掩盖真实异常。
+        with suppress(Exception):
+            conn.rollback()
         try:
             cur = conn.execute(
                 """
@@ -73,8 +78,8 @@ def quarantine_raw(
                 )
             return ok
         except Exception:
-            if owns:
-                pass
+            with suppress(Exception):
+                conn.rollback()
             raise
     finally:
         if owns:
@@ -103,6 +108,10 @@ def release_quarantine(raw_id: str, *, conn: Any | None = None) -> bool:
         if ok:
             logger.info("quarantine.released", raw_id=raw_id)
         return ok
+    except Exception:
+        with suppress(Exception):
+            conn.rollback()
+        raise
     finally:
         if owns:
             conn.close()

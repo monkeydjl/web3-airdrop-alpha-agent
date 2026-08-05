@@ -118,6 +118,24 @@ class TestFreshness:
     def test_freshness_none_when_no_sync(self, metrics):
         assert metrics.get_freshness("unknown") is None
 
+    def test_freshness_overall_spans_all_sources(self, metrics):
+        # Regression: get_freshness(None) previously queried a non-existent
+        # 'all_sources' row and always returned None, so the overall snapshot's
+        # freshness alert could never fire. None must now mean "across sources".
+        now = datetime.now(UTC)
+        _insert_source(metrics._get_conn(), "defillama", "success", (now - timedelta(minutes=30)).isoformat())
+        _insert_source(metrics._get_conn(), "github", "success", now.isoformat())
+
+        overall = metrics.get_freshness(None)
+        assert overall is not None
+        # Freshest successful sync wins (github at ~0 min, not defillama at ~30).
+        assert overall < 1.0
+
+    def test_freshness_overall_ignores_failed_syncs(self, metrics):
+        now = datetime.now(UTC)
+        _insert_source(metrics._get_conn(), "defillama", "error", now.isoformat())
+        assert metrics.get_freshness(None) is None
+
 
 class TestCoverageRate:
     def test_full_coverage(self, metrics):

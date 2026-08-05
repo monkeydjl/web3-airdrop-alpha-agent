@@ -81,25 +81,32 @@ class CollectionScheduler:
             if collector and collector.is_enabled():
                 self.scheduler.add_job(
                     self._run_collection,
-                    trigger=CronTrigger.from_crontab(cron),
+                    # 显式 timezone：预先构造的 CronTrigger 不会继承 scheduler.timezone，
+                    # 缺了它 10 个采集任务全部按容器时钟触发（见 analysis_scheduler 同一注释）
+                    trigger=CronTrigger.from_crontab(cron, timezone=settings.timezone),
                     id=f"collect_{source_id}",
                     name=f"Collect {source_id}",
                     replace_existing=True,
                     args=(source_id,),
+                    misfire_grace_time=settings.scheduler_misfire_grace_seconds,
+                    coalesce=True,
+                    max_instances=1,
                 )
                 self._logger.info(
                     "collection_scheduler.job_added",
                     source_id=source_id,
                     cron=cron,
+                    timezone=settings.timezone,
                 )
 
         self.scheduler.start()
         self._logger.info("collection_scheduler.started")
 
     def shutdown(self, wait: bool = True) -> None:
-        """停止调度器。"""
-        self.scheduler.shutdown(wait=wait)
-        self._logger.info("collection_scheduler.shutdown")
+        """停止调度器（未启动时为 no-op，避免 SchedulerNotRunningError）。"""
+        if self.scheduler.running:
+            self.scheduler.shutdown(wait=wait)
+            self._logger.info("collection_scheduler.shutdown")
 
     async def _run_collection(self, source_id: str) -> None:
         """执行单个采集任务。"""
@@ -122,9 +129,9 @@ class CollectionScheduler:
                 source_id=source_id,
                 status="error",
                 error_message=str(e),
-                started_at=started_at,
-                finished_at=datetime.now(UTC),
             )
+            result.started_at = started_at
+            result.finished_at = datetime.now(UTC)
             self._logger.error(
                 "collection_scheduler.run_failed",
                 source_id=source_id,
@@ -140,7 +147,6 @@ class CollectionScheduler:
         COLLECTION_RUNS.labels(source_id=source_id, status=result.status).inc()
         COLLECTION_DURATION.labels(source_id=source_id).observe(duration)
         COLLECTION_ITEMS.labels(source_id=source_id).inc(len(result.items))
-        COLLECTION_DUPLICATES.labels(source_id=source_id).inc(result.duplicate_count or 0)
 
         if self.on_collection:
             try:
@@ -151,6 +157,9 @@ class CollectionScheduler:
                     source_id=source_id,
                     error=str(e),
                 )
+
+        # 持久化回调会填充 items_duplicate，故在回调之后上报去重指标
+        COLLECTION_DUPLICATES.labels(source_id=source_id).inc(result.items_duplicate or 0)
 
         # Check quality metrics after each run
         try:

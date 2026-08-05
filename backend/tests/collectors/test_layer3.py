@@ -53,7 +53,8 @@ class TestLayer3Collector:
         assert len(result.items) == 1
         discovery = result.items[0]
         assert discovery.name == "NovaLayer"
-        assert discovery.sector == "Quest"
+        # 任务门户不掌握赛道：写死会让 dedup_key 与真实赛道的记录永不相撞（ADR-014 后续修复）
+        assert discovery.sector is None
         assert discovery.discovery_score > 0.5
 
     @respx.mock

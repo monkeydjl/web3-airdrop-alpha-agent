@@ -55,7 +55,8 @@ class TestGalxeCollector:
         assert len(result.items) == 1
         discovery = result.items[0]
         assert discovery.name == "NovaLayer"
-        assert discovery.sector == "Quest"
+        # 同 layer3：不臆造赛道，留空由合并阶段按名称归并
+        assert discovery.sector is None
         assert discovery.discovery_score > 0.5
 
     @respx.mock

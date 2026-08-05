@@ -24,6 +24,11 @@ class _PostgresCursor:
         # Existing columns keep this fake focused on transaction ordering.
         return {"exists": 1}
 
+    def close(self) -> None:
+        # 真实 psycopg 游标具备 close()；executescript 会显式关闭以防泄漏。
+        # 这里保持 no-op，不记录事件以免影响顺序断言。
+        return None
+
 
 class _PostgresRawConnection:
     def __init__(self, events: list[tuple[Any, ...]]) -> None:

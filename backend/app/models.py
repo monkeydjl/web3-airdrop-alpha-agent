@@ -11,7 +11,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 # ── 通用响应包络 ──────────────────────────────
@@ -53,6 +53,13 @@ class RiskResult(BaseModel):
     token_risk: float = Field(..., ge=0.0, le=1.0, description="代币风险")
     risk_flags: list[str] = Field(default_factory=list, description="风险标记")
     unlock_pressure: str = Field(..., pattern=r"^(low|medium|high)$")
+    # Risk Agent 本就计算了女巫难度，此前无字段承载只能打日志，Scorer 只好去
+    # 猜 risk_flags 里的字符串（且字符串对不上，恒为 medium）。补字段消除猜测。
+    sybil_difficulty: str = Field(
+        default="medium",
+        pattern=r"^(low|medium|high)$",
+        description="女巫攻击难度（DATA_SCORING_DICT §5.4 sybil_factor 输入）",
+    )
 
 
 class TokenomicsResult(BaseModel):
@@ -63,6 +70,34 @@ class TokenomicsResult(BaseModel):
     vc_share: float = Field(..., ge=0.0, le=1.0, description="VC 占比")
     team_share: float = Field(..., ge=0.0, le=1.0, description="团队占比")
     unlock_penalty: float = Field(..., ge=0.0, le=1.0, description="解锁惩罚")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_computed_risk(cls, data):
+        """允许把自己 dump 出来的 dict 再喂回来。
+
+        `risk` 是 computed_field，会出现在 `model_dump()` 里；而 `extra="forbid"`
+        会把它当成非法额外字段。不处理的话 `TokenomicsResult(**t.model_dump())`
+        与 `.model_validate(t.model_dump())` 都会抛 ValidationError——任何从
+        `tokenomics_json` 回放的导入/重算路径都会硬失败。这里丢弃传入值并重新
+        计算，保证 risk 永远由三个输入唯一决定，不可被外部覆盖。
+        """
+        if isinstance(data, dict) and "risk" in data:
+            data = {key: value for key, value in data.items() if key != "risk"}
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def risk(self) -> float:
+        """综合代币结构风险。
+
+        DATA_SCORING_DICT §5.7.1 的权威定义：
+            risk = vc_share × 0.4 + team_share × 0.3 + unlock_penalty × 0.3
+
+        此前该字段缺失，Scorer 内联重算（正确）而 Risk Agent 用 unlock_penalty
+        顶替（错误），同一概念存在两套实现。此处收敛为单一定义。
+        """
+        return round(self.vc_share * 0.4 + self.team_share * 0.3 + self.unlock_penalty * 0.3, 6)
 
 
 # ── 评分结果 ──────────────────────────────────
@@ -76,6 +111,7 @@ class ScoreResult(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0, description="置信度")
     reason: list[str] = Field(..., min_length=2, description="评分理由")
     sub_scores: dict[str, float] = Field(default_factory=dict, description="子项分数")
+    weight_version: str = Field(default="v1.2", description="产出该分数的权重版本（ADR-006）")
 
 
 # ── 项目记录 ──────────────────────────────────

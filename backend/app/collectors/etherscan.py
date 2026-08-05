@@ -23,6 +23,7 @@ import structlog
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
+from app.utils.redact import redact
 
 logger = structlog.get_logger(__name__)
 
@@ -112,9 +113,10 @@ class EtherscanCollector(DataCollector):
             result.status = "success" if result.items else "partial"
 
         except Exception as e:
-            self.logger.error("etherscan.error", error=str(e))
+            msg = redact(str(e))
+            self.logger.error("etherscan.error", error=msg)
             result.status = "error"
-            result.error_message = str(e)
+            result.error_message = msg
 
         finally:
             result.finished_at = datetime.now(UTC)
@@ -129,7 +131,7 @@ class EtherscanCollector(DataCollector):
             latest = await self._fetch_latest_block()
             return {"source_id": self.source_id, "status": "healthy", "latest_block": latest}
         except Exception as e:
-            return {"source_id": self.source_id, "status": "unhealthy", "error": str(e)}
+            return {"source_id": self.source_id, "status": "unhealthy", "error": redact(str(e))}
 
     async def _fetch_latest_block(self) -> int:
         """获取最新区块号。"""
@@ -262,7 +264,8 @@ class EtherscanCollector(DataCollector):
             raw_id=address,
             name=name,
             url=f"https://etherscan.io/address/{address}",
-            sector="On-chain",
+            # 链上活动不等于赛道；写死 "On-chain" 会让本源永远无法与他源合并
+            sector=None,
             stage="mainnet",
             raw_data=raw_data,
             raw_signals=signals,

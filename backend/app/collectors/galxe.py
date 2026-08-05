@@ -137,8 +137,11 @@ class GalxeCollector(DataCollector):
         if "errors" in data:
             raise ValueError(f"Galxe GraphQL error: {data['errors']}")
 
-        campaign_list = data.get("data", {}).get("campaignList", {})
-        return campaign_list.get("list", []) or []
+        # GraphQL 部分失败时 data / campaignList 可能为 null 且无顶层 errors，
+        # 用 `or {}` 逐层兜底，避免 None.get 抛 AttributeError。
+        payload = data.get("data") or {}
+        campaign_list = payload.get("campaignList") or {}
+        return campaign_list.get("list") or []
 
     def _build_discovery(self, campaign: dict[str, Any]) -> RawDiscovery:
         """将 Galxe campaign 转换为 RawDiscovery。"""
@@ -181,7 +184,10 @@ class GalxeCollector(DataCollector):
             raw_id=raw_id,
             name=project_name,
             url=f"https://galxe.com/{space.get('alias') or 'space'}/campaign/{raw_id}",
-            sector="Quest",
+            # 不臆造赛道：Galxe 只知道"这是个任务活动"，不知道项目属于哪个赛道。
+            # 写死 "Quest" 会让 dedup_key 变成 name::Quest，与任何真实赛道的记录
+            # 永不相撞——跨源合并对这个源等于从不发生。留空由合并阶段按名称归并。
+            sector=None,
             stage="mainnet",
             raw_data=raw_data,
             raw_signals=signals,

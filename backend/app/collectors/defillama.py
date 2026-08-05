@@ -147,13 +147,26 @@ class DefiLlamaCollector(DataCollector):
         if protocol.get("has_token") is False:
             return True
 
-        gecko_id = protocol.get("gecko_id")
-        return not gecko_id
+        # 判据顺序：真实 ticker > gecko_id。
+        #
+        # 两个坑都踩过，写清楚：
+        #   1. 只看 gecko_id 不行——真实库 1040 条里 gecko_id 有值的是 0 条，
+        #      于是整个语料被判成"未发币"，§5.1 的 airdrop_signal 直接顶到 85–100。
+        #   2. 但 `if symbol:` 也不行——DefiLlama 用字符串 "-" 表示"该协议无代币"，
+        #      真实库里 658/1040 条正是这个值。把 "-" 当成 ticker 会让 _is_unlisted
+        #      恒为 False，而它同时是 _filter_candidates 的硬过滤条件，采集量会从
+        #      934 塌到 2。
+        symbol = str(protocol.get("symbol") or "").strip()
+        if symbol and symbol not in {"-", "--", "n/a", "none"}:
+            return False
+        return not protocol.get("gecko_id")
 
     def _build_discovery(self, protocol: dict[str, Any]) -> RawDiscovery:
         """将 DefiLlama 协议转换为 RawDiscovery。"""
-        name = protocol.get("name", "")
-        slug = protocol.get("slug", "")
+        # get(key, "") 在 key 存在但值为 null 时返回 None，故用 `or ""` 兜底，
+        # 否则下面 name.lower() 会在 "name": null 的条目上抛 AttributeError。
+        name = protocol.get("name") or ""
+        slug = protocol.get("slug") or ""
         url = protocol.get("url") or f"https://defillama.com/protocol/{slug}"
         sector = normalize_sector(protocol.get("category", "DeFi"))
         stage = self._infer_stage(protocol)
@@ -175,13 +188,23 @@ class DefiLlamaCollector(DataCollector):
             "stage": stage,
             "slug": slug,
             "tvl": tvl,
+            # tvl_usd 才是 RawProject 直接读取的字段名；只给 "tvl" 会让规模信息止步于此
+            "tvl_usd": tvl,
             "change_7d": change_7d,
             "chains": chains,
             "category": protocol.get("category"),
+            # description 是 _infer_airdrop_flags 做文本判断的主要输入。此前没有复制，
+            # 文本 blob 基本只剩一个 slug，于是 has_docs / has_roadmap /
+            # explicit_airdrop_mention 在整个语料上恒为 False。
+            "description": protocol.get("description"),
+            "audit_links": protocol.get("audit_links"),
+            "parent_protocol": protocol.get("parentProtocol"),
             "gecko_id": protocol.get("gecko_id"),
             "symbol": protocol.get("symbol"),
             "twitter": protocol.get("twitter"),
+            "has_twitter": bool(protocol.get("twitter")),
             "github": protocol.get("github"),
+            "has_github": bool(protocol.get("github")),
             "no_token_yet": no_token,
             "has_testnet": has_testnet,
             "has_points_program": False,
@@ -211,7 +234,7 @@ class DefiLlamaCollector(DataCollector):
 
         return RawDiscovery(
             source_id=self.source_id,
-            raw_id=slug or name.lower().replace(" ", "-"),
+            raw_id=slug or (name.lower().replace(" ", "-") if name else "unknown"),
             name=name,
             url=url,
             sector=sector,
@@ -223,12 +246,19 @@ class DefiLlamaCollector(DataCollector):
         )
 
     def _infer_stage(self, protocol: dict[str, Any]) -> str:
-        """从 DefiLlama 数据推断项目阶段。"""
+        """从 DefiLlama 数据推断项目阶段。
+
+        TVL 不是阶段的证据：一个协议只要在 DefiLlama 上有 TVL，资金就已经在
+        真实链上，那按定义就是主网。原实现把 $10M–$100M 一律判为 "testnet"，
+        真实库里 31.8% 的项目因此被标成测试网——纯粹是 TVL 分档造成的假象，
+        而 stage 直接进 §5.7.2 的 stage_factor 与 §5.1 的空投信号阶梯。
+
+        现在只区分"链上已有资金（mainnet）"与"查无资金（ideation）"；测试网
+        必须由真实证据（`has_testnet`）而不是金额区间来断言。
+        """
         tvl = protocol.get("tvl") or 0
-        if tvl > 100_000_000:
+        if tvl > 0:
             return "mainnet"
-        if tvl > 10_000_000:
-            return "testnet"
         return "ideation"
 
     def _calculate_discovery_score(self, protocol: dict[str, Any]) -> float:

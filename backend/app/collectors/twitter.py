@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -22,7 +23,6 @@ import structlog
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
-from app.utils.normalize import normalize_sector
 
 logger = structlog.get_logger(__name__)
 
@@ -103,13 +103,31 @@ class TwitterCollector(DataCollector):
             "tweet.fields": "created_at,public_metrics,author_id,lang",
         }
 
-    async def _search_recent(self, query: str, max_results: int | None = None) -> list[dict[str, Any]]:
+    @asynccontextmanager
+    async def _http_client(self, client: httpx.AsyncClient | None = None):
+        """复用调用方传入的客户端，否则临时自建一个。
+
+        批量查询（KOL 分批 / 多关键词）传入同一客户端即可跨请求复用连接，
+        省掉每轮搜索一次 TCP+TLS 握手。
+        """
+        if client is not None:
+            yield client
+        else:
+            async with httpx.AsyncClient(timeout=self.timeout) as owned:
+                yield owned
+
+    async def _search_recent(
+        self,
+        query: str,
+        max_results: int | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> list[dict[str, Any]]:
         """调用 Twitter API v2 search/recent。"""
         url = f"{self.base_url}/tweets/search/recent"
         params = self._search_params(query, max_results)
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=self._headers())
+        async with self._http_client(client) as http, self.rate_limiter:
+            response = await http.get(url, params=params, headers=self._headers())
             response.raise_for_status()
             data = response.json()
 
@@ -190,7 +208,8 @@ class TwitterCollector(DataCollector):
             raw_id=tweet_id or f"twitter-{datetime.now(UTC).timestamp()}",
             name=project_name,
             url=tweet_url,
-            sector=normalize_sector("Unknown"),
+            # 推文不掌握赛道；显式留空而非归一化成 "Unknown" 占位
+            sector=None,
             stage="ideation",
             raw_data=raw_data,
             raw_signals=signals,
@@ -473,13 +492,26 @@ class TwitterKolCollector(TwitterCollector):
         all_tweets: list[dict[str, Any]] = []
         # 每批 5 个账号，控制 query 长度
         batch_size = 5
-        for i in range(0, len(self.accounts), batch_size):
-            batch = self.accounts[i : i + batch_size]
-            # from:handle OR from:handle ... -is:retweet
-            handles = " OR ".join(f"from:{handle}" for handle in batch)
-            query = f"({handles}) -is:retweet"
-            tweets = await self._search_recent(query, max_results=50)
-            all_tweets.extend(tweets)
+        # 整轮共用一个客户端复用连接；单批失败只丢该批，已取回的推文照常保留。
+        # 但若所有批次都失败，说明是鉴权/限流等整体故障，向上抛出标记为 error。
+        succeeded = 0
+        last_error: Exception | None = None
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for i in range(0, len(self.accounts), batch_size):
+                batch = self.accounts[i : i + batch_size]
+                # from:handle OR from:handle ... -is:retweet
+                handles = " OR ".join(f"from:{handle}" for handle in batch)
+                query = f"({handles}) -is:retweet"
+                try:
+                    tweets = await self._search_recent(query, max_results=50, client=client)
+                except Exception as e:
+                    last_error = e
+                    self.logger.warning("twitter_kol.batch_failed", batch_index=i, error=str(e))
+                    continue
+                succeeded += 1
+                all_tweets.extend(tweets)
+        if succeeded == 0 and last_error is not None:
+            raise last_error
         return all_tweets
 
 
@@ -528,11 +560,23 @@ class TwitterKeywordCollector(TwitterCollector):
     async def _fetch_keyword_tweets(self) -> list[dict[str, Any]]:
         """获取关键词搜索结果。"""
         all_tweets: list[dict[str, Any]] = []
-        # 每个关键词单独查询，便于归因与限流控制
-        for keyword in self.keywords:
-            query = f"{keyword} -is:retweet"
-            tweets = await self._search_recent(query, max_results=25)
-            all_tweets.extend(tweets)
+        # 每个关键词单独查询，便于归因与限流控制；整轮共用一个客户端复用连接。
+        # 单个关键词失败不影响其余；全部失败则向上抛出以标记整轮 error。
+        succeeded = 0
+        last_error: Exception | None = None
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for keyword in self.keywords:
+                query = f"{keyword} -is:retweet"
+                try:
+                    tweets = await self._search_recent(query, max_results=25, client=client)
+                except Exception as e:
+                    last_error = e
+                    self.logger.warning("twitter_keyword.query_failed", keyword=keyword, error=str(e))
+                    continue
+                succeeded += 1
+                all_tweets.extend(tweets)
+        if succeeded == 0 and last_error is not None:
+            raise last_error
         return all_tweets
 
 

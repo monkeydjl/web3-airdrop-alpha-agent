@@ -153,7 +153,8 @@ class Layer3Collector(DataCollector):
             raw_id=task_id,
             name=project_name,
             url=f"https://layer3.xyz/tasks/{task_id}",
-            sector="Quest",
+            # 同 galxe：任务门户不掌握赛道信息，写死会隔断跨源合并
+            sector=None,
             stage="mainnet",
             raw_data=raw_data,
             raw_signals=signals,

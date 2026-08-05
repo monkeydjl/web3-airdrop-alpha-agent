@@ -19,6 +19,7 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.db import scalar
 
 logger = structlog.get_logger(__name__)
 
@@ -67,10 +68,17 @@ class RawDataArchiver:
         """
         result = ArchiveResult(dry_run=self.dry_run)
 
-        with conn:
+        # 显式提交，兼容裸 sqlite3.Connection 与 DbConnection（后者的
+        # __exit__ 是 close()，用 `with conn:` 会丢弃未提交事务且误关连接）。
+        try:
             result.raw_archived = self._archive_raw_projects(conn)
             result.signals_archived = self._archive_project_signals(conn)
             result.logs_deleted = self._delete_collection_logs(conn)
+            if not self.dry_run:
+                conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
         logger.info(
             "archive.completed",
@@ -98,7 +106,7 @@ class RawDataArchiver:
             """,
             (cutoff,),
         )
-        count = cursor.fetchone()[0]
+        count = int(scalar(cursor.fetchone()) or 0)
 
         if count == 0:
             return 0
@@ -146,7 +154,7 @@ class RawDataArchiver:
             "SELECT COUNT(*) FROM project_signals WHERE captured_at < ?",
             (cutoff,),
         )
-        count = cursor.fetchone()[0]
+        count = int(scalar(cursor.fetchone()) or 0)
 
         if count == 0:
             return 0
@@ -194,7 +202,7 @@ class RawDataArchiver:
             "SELECT COUNT(*) FROM collection_logs WHERE started_at < ?",
             (cutoff,),
         )
-        count = cursor.fetchone()[0]
+        count = int(scalar(cursor.fetchone()) or 0)
 
         if count == 0:
             return 0

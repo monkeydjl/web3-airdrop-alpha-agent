@@ -149,18 +149,25 @@ class CollectionMetrics:
             p95_latency_ms=p95_latency,
         )
 
-    def get_freshness(self, source_id: str) -> float | None:
-        """Return minutes since last successful sync for a source."""
-        rows = self._execute(
-            """
+    def get_freshness(self, source_id: str | None = None) -> float | None:
+        """Return minutes since last successful sync.
+
+        With ``source_id`` set, scopes to that source. With ``None`` (the
+        overall view), returns the freshest successful sync across all
+        sources — matching the ``None means all sources`` convention used by
+        ``get_latency_metrics`` / ``get_coverage_rate`` / ``get_duplicate_rate``.
+        """
+        query = """
             SELECT last_sync
             FROM data_sources
-            WHERE source_id = ? AND sync_status = 'success'
-            ORDER BY last_sync DESC
-            LIMIT 1
-            """,
-            (source_id,),
-        )
+            WHERE sync_status = 'success'
+        """
+        params: tuple[Any, ...] = ()
+        if source_id is not None:
+            query += " AND source_id = ?"
+            params = (source_id,)
+        query += " ORDER BY last_sync DESC LIMIT 1"
+        rows = self._execute(query, params)
         if not rows or not rows[0].get("last_sync"):
             return None
 
@@ -247,7 +254,7 @@ class CollectionMetrics:
     ) -> CollectionMetricsSnapshot:
         """Get overall metrics across all sources."""
         snapshot = self.get_latency_metrics(None, window_hours)
-        snapshot.last_sync_minutes_ago = self.get_freshness("all_sources") or None
+        snapshot.last_sync_minutes_ago = self.get_freshness(None)
         snapshot.coverage_rate = self.get_coverage_rate(None)
         snapshot.duplicate_rate = self.get_duplicate_rate(None)
         return snapshot

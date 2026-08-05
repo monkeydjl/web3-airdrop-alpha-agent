@@ -22,6 +22,7 @@ from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, Ra
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.utils.normalize import normalize_sector
+from app.utils.redact import redact
 
 logger = structlog.get_logger(__name__)
 
@@ -78,9 +79,10 @@ class CryptoRankCollector(DataCollector):
             result.status = "success" if result.items else "partial"
 
         except Exception as e:
-            self.logger.error("cryptorank.error", error=str(e))
+            msg = redact(str(e))
+            self.logger.error("cryptorank.error", error=msg)
             result.status = "error"
-            result.error_message = str(e)
+            result.error_message = msg
         finally:
             result.finished_at = datetime.now(UTC)
 
@@ -94,14 +96,17 @@ class CryptoRankCollector(DataCollector):
         offset = 0
         target = self.MAX_ITEMS * 2
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        # 客户端在循环外创建以复用 TCP/TLS 连接；限流器必须在循环内逐次获取，
+        # 否则整轮分页（最多 4 次请求）只消耗 1 个令牌，直接把上游打到 429。
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             while len(collected) < target:
                 params = {
                     "api_key": self.api_key,
                     "limit": self.PAGE_SIZE,
                     "offset": offset,
                 }
-                response = await client.get(url, params=params, headers=headers)
+                async with self.rate_limiter:
+                    response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()
                 payload = response.json()
                 if not isinstance(payload, dict):
@@ -278,5 +283,5 @@ class CryptoRankCollector(DataCollector):
             return {
                 "source_id": self.source_id,
                 "status": "unhealthy",
-                "error": str(e),
+                "error": redact(str(e)),
             }

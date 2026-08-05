@@ -16,7 +16,8 @@ from typing import Any
 import structlog
 
 from app.collectors.base import CollectorResult, RawDiscovery
-from app.db import get_connection
+from app.db import dict_from_row, get_connection
+from app.utils.redact import redact
 
 logger = structlog.get_logger(__name__)
 
@@ -183,7 +184,17 @@ class CollectionRepository:
         min_discovery_score: float = 0.3,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """获取未处理且达到初筛分数的原始项目。"""
+        """获取未处理且达到初筛分数的原始项目，并带上同一项目的低分佐证记录。
+
+        `discovery_score` 衡量的是"作为独立发现有多值得跟进"，而 coingecko(0.1)、
+        etherscan(≤0.28)、cryptorank(≤0.28) 这类**信号补充源**的分数天然低于分析
+        阈值 0.3。只按分数过滤会把它们全部挡在门外——于是 coingecko 的
+        `token_listed` 永远纠正不了 `no_token_yet`、etherscan 的 `has_contract`
+        永远补充不到真实项目上，跨源合并对这三个源等于从不存在。
+
+        正确语义是：一条低分记录**自己**不足以立项，但只要同一 dedup_key 已经有
+        记录过线，它就是这个项目的佐证，必须一并进入合并。
+        """
         conn = self._get_conn()
         try:
             cursor = conn.execute(
@@ -198,11 +209,47 @@ class CollectionRepository:
                 """,
                 (min_discovery_score, limit),
             )
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            rows = [dict(row) for row in cursor.fetchall()]
+            if rows:
+                rows.extend(self._corroborating_rows(conn, rows, min_discovery_score))
+            return rows
         finally:
             if self._should_close():
                 conn.close()
+
+    @staticmethod
+    def _corroborating_rows(
+        conn: Any,
+        rows: list[dict[str, Any]],
+        min_discovery_score: float,
+    ) -> list[dict[str, Any]]:
+        """同一 dedup_key 下、分数未过线的其余未处理记录。"""
+        keys = sorted({row["dedup_key"] for row in rows if row.get("dedup_key")})
+        if not keys:
+            return []
+        seen_ids = {row["raw_id"] for row in rows}
+        extra: list[dict[str, Any]] = []
+        # 分块查询：SQLite 默认绑定变量上限 999，一次塞完会在大批量时报错
+        for start in range(0, len(keys), 400):
+            chunk = keys[start : start + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = conn.execute(
+                f"""
+                SELECT raw_id, source_id, dedup_key, raw_data, discovered_at, discovery_score, project_id
+                FROM raw_projects
+                WHERE processed = 0
+                  AND discovery_score < ?
+                  AND COALESCE(quarantined, 0) = 0
+                  AND dedup_key IN ({placeholders})
+                """,  # noqa: S608 — 占位符按数量生成，取值仍走绑定参数
+                (min_discovery_score, *chunk),
+            )
+            for row in cursor.fetchall():
+                record = dict(row)
+                if record["raw_id"] not in seen_ids:
+                    seen_ids.add(record["raw_id"])
+                    extra.append(record)
+        return extra
 
     def mark_raw_project_processed(
         self,
@@ -289,6 +336,31 @@ class CollectionRepository:
             if self._should_close():
                 conn.close()
 
+    @staticmethod
+    def _existing_dedup_keys(conn: Any, items: list[RawDiscovery]) -> set[tuple[str, str]]:
+        """一次性查出这些 discovery 中已存在于 raw_projects 的 (source_id, dedup_key)。
+
+        按 source_id 分组并对 dedup_key 分块（避开 SQLite 变量数上限），把
+        N 次单行 SELECT 压缩为每组常数级查询。
+        """
+        by_source: dict[str, set[str]] = {}
+        for item in items:
+            by_source.setdefault(item.source_id, set()).add(item.dedup_key)
+
+        found: set[tuple[str, str]] = set()
+        chunk_size = 400
+        for source_id, keys in by_source.items():
+            key_list = list(keys)
+            for start in range(0, len(key_list), chunk_size):
+                chunk = key_list[start : start + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                # 占位符数量由分块长度决定，取值全部参数化
+                sql = f"SELECT dedup_key FROM raw_projects WHERE source_id = ? AND dedup_key IN ({placeholders})"  # noqa: S608
+                rows = conn.execute(sql, (source_id, *chunk)).fetchall()
+                for row in rows:
+                    found.add((source_id, dict_from_row(row)["dedup_key"]))
+        return found
+
     def persist_collection_result(
         self,
         result: CollectorResult,
@@ -317,13 +389,17 @@ class CollectionRepository:
             )
 
             # 2. 批量写入原始发现及其信号
+            # 一次性查出本批次已存在的 (source_id, dedup_key)，替代此前"每条一次 SELECT"
+            # 的 N+1 模式（一次 DefiLlama 采集 = 100+ 次往返）。
+            existing_keys = self._existing_dedup_keys(conn, result.items)
+
             items_new = 0
             items_duplicate = 0
             for discovery in result.items:
-                existing = conn.execute(
-                    "SELECT raw_id FROM raw_projects WHERE source_id = ? AND dedup_key = ?",
-                    (discovery.source_id, discovery.dedup_key),
-                ).fetchone()
+                key = (discovery.source_id, discovery.dedup_key)
+                # 批内同 dedup_key 的后续条目也算重复（旧实现依赖同事务内 SELECT
+                # 才能看到，这里显式记账，语义一致且不再需要额外查询）。
+                existing = key in existing_keys
 
                 raw_data = discovery.raw_data.copy()
                 raw_data["name"] = discovery.name
@@ -350,6 +426,7 @@ class CollectionRepository:
                     )
                     items_duplicate += 1
                 else:
+                    existing_keys.add(key)
                     raw_id = uuid.uuid4().hex
                     conn.execute(
                         """
@@ -414,7 +491,7 @@ class CollectionRepository:
                     items_new,
                     items_duplicate,
                     result.status,
-                    result.error_message,
+                    redact(result.error_message) if result.error_message else None,
                 ),
             )
 

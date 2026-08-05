@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from copy import deepcopy
@@ -18,6 +19,12 @@ from app.agents.orchestrator_simple import SimpleOrchestrator
 from app.collectors.persistence import CollectionRepository
 from app.config import Settings
 from app.db import init_db
+from app.inflight import (
+    QUEUE_DRAIN_KEY,
+    QueueDrainInProgressError,
+    active_runs,
+    reset_active_runs,
+)
 from app.pipeline_run import (
     execute_analysis_pipeline,
     is_opportunity_shadow_sampled,
@@ -401,7 +408,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     )
     monkeypatch.setattr(
         "app.pipeline_run.mark_successful_raw_projects",
-        lambda projects, states: events.append("raw-marked") or 1,
+        lambda projects, states, **kwargs: events.append("raw-marked") or 1,
     )
     monkeypatch.setattr(
         "app.pipeline_run.PIPELINE_DURATION.observe",
@@ -462,6 +469,9 @@ async def test_rollout_metric_failure_preserves_primary_pipeline_response(monkey
         "project_count": 1,
         "scored_count": 0,
         "error_count": 0,
+        # 落库行数现在是响应的一部分：光看 scored_count 无法区分"评分成功且写进去了"
+        # 与"评分成功但一行都没写进去"
+        "persisted_count": 0,
         "top_score": None,
         "top_projects": [],
         "marked_processed": 0,
@@ -511,6 +521,7 @@ async def test_shadow_metric_failures_preserve_primary_pipeline_response(monkeyp
         "project_count": 1,
         "scored_count": 0,
         "error_count": 0,
+        "persisted_count": 1,
         "top_score": None,
         "top_projects": [],
         "marked_processed": 0,
@@ -692,3 +703,122 @@ class TestMarkSuccessfulRawProjects:
             ("r1",),
         ).fetchone()[0]
         assert processed == 1
+
+
+class TestQueueDrainGuard:
+    """队列排空的进程内在飞守卫（见 app/inflight.py 的理由说明）。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        reset_active_runs()
+        yield
+        reset_active_runs()
+
+    async def test_concurrent_queue_drains_reject_the_second(self, monkeypatch):
+        """两次并发排空：第一次跑完整流程，第二次抛 QueueDrainInProgressError。
+
+        这是 API-4 的核心回归：修复前两次都会真跑，取到重叠的未处理项目
+        （processed=1 要等评分结束才写），同一项目被重复评分。
+        """
+        drain_started = asyncio.Event()
+        release_first = asyncio.Event()
+        collect_calls = 0
+
+        def fake_collect(self, repo, **kwargs):
+            nonlocal collect_calls
+            collect_calls += 1
+            return [RawProject(id="project-1", name="Project One")]
+
+        async def fake_orchestrator(**kwargs):
+            drain_started.set()
+            await release_first.wait()
+            return SimpleNamespace(
+                run_id="run-1",
+                status="completed",
+                project_count=1,
+                states=[],
+                errors=[],
+                top_score=None,
+                persisted_project_rows=[],
+            )
+
+        monkeypatch.setattr(
+            "app.pipeline_run.CollectorAgent.collect_from_repository",
+            fake_collect,
+        )
+        monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+
+        first = asyncio.create_task(execute_analysis_pipeline(projects=None))
+        await asyncio.wait_for(drain_started.wait(), timeout=5)
+
+        # 第一次仍在飞（卡在 orchestrator）时发起第二次
+        assert QUEUE_DRAIN_KEY in active_runs()
+        with pytest.raises(QueueDrainInProgressError):
+            await execute_analysis_pipeline(projects=None)
+
+        release_first.set()
+        assert (await asyncio.wait_for(first, timeout=5))["run_id"] == "run-1"
+
+        # 被拒的那次绝不能碰队列：只有一次真实读取
+        assert collect_calls == 1
+        # 守卫已释放，后续运行不受影响
+        assert QUEUE_DRAIN_KEY not in active_runs()
+
+    async def test_explicit_projects_bypass_the_guard(self, monkeypatch):
+        """显式传 projects 的路径不共享队列，并发无害，不该被挡。"""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def fake_orchestrator(**kwargs):
+            started.set()
+            await release.wait()
+            return SimpleNamespace(
+                run_id="run-explicit",
+                status="completed",
+                project_count=1,
+                states=[],
+                errors=[],
+                top_score=None,
+                persisted_project_rows=[],
+            )
+
+        monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+        project = RawProject(id="project-1", name="Project One")
+
+        first = asyncio.create_task(execute_analysis_pipeline(projects=[project], save_to_db=False))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert not active_runs()
+
+        release.set()
+        second = await execute_analysis_pipeline(projects=[project], save_to_db=False)
+        assert second["run_id"] == "run-explicit"
+        assert (await asyncio.wait_for(first, timeout=5))["run_id"] == "run-explicit"
+
+    async def test_guard_releases_after_pipeline_error(self, monkeypatch):
+        """排空抛异常时守卫必须释放，否则一次崩溃会永久锁死队列。"""
+
+        async def boom(**kwargs):
+            raise RuntimeError("orchestrator exploded")
+
+        monkeypatch.setattr(
+            "app.pipeline_run.CollectorAgent.collect_from_repository",
+            lambda self, repo, **kwargs: [RawProject(id="project-1", name="Project One")],
+        )
+        monkeypatch.setattr("app.pipeline_run.run_orchestrator", boom)
+
+        with pytest.raises(RuntimeError, match="orchestrator exploded"):
+            await execute_analysis_pipeline(projects=None)
+
+        assert not active_runs()
+
+    async def test_empty_queue_run_releases_the_guard(self, monkeypatch):
+        """空队列提前 return 的分支也要释放（early return 走 contextmanager finally）。"""
+        monkeypatch.setattr(
+            "app.pipeline_run.CollectorAgent.collect_from_repository",
+            lambda self, repo, **kwargs: [],
+        )
+
+        result = await execute_analysis_pipeline(projects=None)
+
+        assert result["project_count"] == 0
+        assert not active_runs()

@@ -43,6 +43,10 @@ class TokenBucketRateLimiter:
         "github": RateLimitConfig(requests_per_second=1.0, burst=3),
         "coingecko": RateLimitConfig(requests_per_second=0.5, burst=2, daily_limit=10000),
         "twitter": RateLimitConfig(requests_per_second=0.2, burst=1),
+        # Twitter 采集器用 twitter_kol / twitter_keyword 作为 source_id，
+        # 需显式登记，否则回落到默认 1.0rps/burst5，比预期宽松 5 倍触发 429。
+        "twitter_kol": RateLimitConfig(requests_per_second=0.2, burst=1),
+        "twitter_keyword": RateLimitConfig(requests_per_second=0.2, burst=1),
         "cryptorank": RateLimitConfig(requests_per_second=1.0, burst=3),
         "rootdata": RateLimitConfig(requests_per_second=0.8, burst=2),
         "etherscan": RateLimitConfig(requests_per_second=0.2, burst=2),
@@ -57,11 +61,23 @@ class TokenBucketRateLimiter:
         self._last_update = time.monotonic()
         self._lock = asyncio.Lock()
         self._daily_count = 0
+        self._daily_epoch = self._utc_day()
         self._logger = logger.bind(source_id=source_id)
+
+    @staticmethod
+    def _utc_day() -> int:
+        """当前 UTC 自然日序号（用于每日配额滚动重置）。"""
+        return int(time.time() // 86400)
 
     async def acquire(self) -> None:
         """获取一个令牌，如无可用则等待。"""
         async with self._lock:
+            # 跨自然日则重置每日计数，避免 daily_limit 变成进程生命周期内的永久锁定
+            today = self._utc_day()
+            if today != self._daily_epoch:
+                self._daily_epoch = today
+                self._daily_count = 0
+
             if self.config.daily_limit and self._daily_count >= self.config.daily_limit:
                 self._logger.warning(
                     "rate_limit.daily_exceeded",
