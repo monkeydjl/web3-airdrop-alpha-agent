@@ -15,20 +15,28 @@
 
 ---
 
-## 2. 当前冻结权重（v1）
+## 2. 当前冻结权重（v1.2 八维）
 
 | 子项 | 权重 |
 |------|------|
-| airdrop_signal | 0.20 |
-| narrative_timing | 0.20 |
-| team_reputation | 0.15 |
-| risk | 0.15 |
-| tokenomics | 0.15 |
-| competition | 0.15 |
+| airdrop_signal | 0.18 |
+| narrative_timing | 0.15 |
+| execution | 0.13 |
+| team_reputation | 0.12 |
+| risk | 0.12 |
+| tokenomics | 0.10 |
+| competition | 0.10 |
+| transparency | 0.10 |
+
+> v1 曾为六维（0.20/0.20/0.15×4）。v1.2 增加 `execution` 与 `transparency`，与
+> `DATA_SCORING_DICT.md §4` 一致。本表随代码同步，**以 `config.py` 为准**。
 
 配置：`backend/app/config.py` 中 `weight_*` 字段；启动校验 Σ=1.0（容差按代码）。
 
-`weight_version` 默认：`"v1"`。
+`weight_version` 默认取自 `settings.weight_version`（当前 `"v1.2"`）。此前该值硬编码在
+`agents/scorer.py`，配置改了、落库版本号不变，与 §1.2「每次生效权重必须有 weight_version」
+的可审计意图相悖；ADR-014 改为从配置读取，并补齐了 `repository.save` UPSERT 中缺失的
+`weight_version` 与 `raw_signals` 两列（此前重算后这两列仍留旧值）。
 
 ---
 
@@ -133,6 +141,15 @@ J = recall(FARM) − 2 × false_positive_rate(FARM)
 | 新权重导致 Golden 失败 | **默认不合并**；若规则语义故意变更 → 先改 `DATA_SCORING_DICT` + Golden 期望 + 记 ADR |
 | 仅数值边界 flaky | 收紧用例或固定 seed，禁止静默改权重过关 |
 | 冷启动无反馈 | 继续 v1；用 seed + Golden 守回归 |
+
+### 6.1 已执行的 Golden 修订记录
+
+| 日期 | 触发 | 处理 |
+|------|------|------|
+| 2026-07-26 | ADR-014：实现回归规范（跨源合并、`tokenomics.risk`、confidence 口径、`airdrop_signal` 单一实现） | 12 个 Golden 用例期望值全部修订；`test_golden_cases.py` 的 confidence 断言由「下限 ≥0.45」改为「与期望值偏差 ≤0.10」（**收紧**，非放松）。权重未变，变的是子分算法与规范的一致性 |
+
+> 该次修订严格按本节协议执行：先改 `DATA_SCORING_DICT`（§5.8、§6.1、Opportunity v2 gates）→
+> 再改 Golden 期望 → 记 ADR-014，并附 264 项 / 270 项双跑对比数据。
 
 ---
 

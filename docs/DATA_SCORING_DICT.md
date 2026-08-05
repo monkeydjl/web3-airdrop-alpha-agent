@@ -11,6 +11,61 @@
 - FARM requires all five risk dimensions: capital security, eligibility, project failure, reward dilution, and liquidity.
 - `capital_at_risk_usd` requires direct evidence even when explicitly zero. Missing exposure is a critical unknown and never defaults to zero.
 
+### 判定顺序（v2.0，ADR-014）
+
+已确知不符合画像的硬约束（`hard_cost_usd.low` 超上限、已确认的最小维护工时超上限）
+**先于**"证据不足"判定，但仍**后于** `SAFETY_BLOCK` / `INTEGRITY_BLOCK` / `RULE_BLOCK`。
+原因：成本超预算会让资格概率无法派生，进而把 `reward_probability` 计入 `critical_unknowns`，
+若先判证据不足，用户会被告知"去补证据"，而真实原因是"太贵了"，且 `TOO_EXPENSIVE`
+在真实链路上永不可达（270 项语料双跑中旧引擎产出 `NOT_FIT` 的数量为 0）。
+
+**"已确知"必须带来源等级门槛**：`resolve_factor` 不设来源等级下限，一条 `U` 档
+（权重 0）的 `assumed` 成本记录也能填满 `hard_cost_usd`。因此该判定要求
+`hard_cost_confirmed_minimum` —— `observation_type ∈ {observed, derived}` 且
+来源等级 ≥ B，与 `_derive_eligibility` 对成本的门槛、以及
+`weekly_time_confirmed_minimum` 对工时的门槛完全一致。达不到这一档的成本证据
+仍走"证据不足"（复核期 7 天），而不是 `IGNORE`（复核期 30 天）。
+
+### 联合概率区间（v2.0，ADR-014）
+
+三因子（event / eligibility / survival）在**独立性假设**下合成：
+
+```
+base     = event.base × eligibility.base × survival.base
+rel_low  = sqrt( Σ ((base_i − low_i)  / base_i)² )
+rel_high = sqrt( Σ ((high_i − base_i) / base_i)² )
+low      = clamp(base × (1 − rel_low),  Π low_i,  base)      # 下界不得低于逐分位连乘
+high     = clamp(base × (1 + rel_high), base,     Π high_i)  # 上界不得高于逐分位连乘
+```
+
+端点**不得**逐分位连乘（`low×low×low`）：那只在三因子完全同向时成立，与 `base` 依赖的
+独立性假设不可能同时为真，且会让「官方分发 + 积分制资格 + 未禁止多钱包」这一档的
+`joint.low` 恒为 0.1650，永远跨不过 FARM 门槛 `reward_probability.low >= 0.20`。
+
+但逐分位连乘的结果仍作为**兜底端点**：它是完全同向假设下的区间，在独立性假设下必然更宽，
+因此可安全用作下界的地板与上界的天花板。缺了这层兜底，当某因子 `low = 0` 导致相对不确定度
+之和超过 100% 时，`base × (1 − rel_low)` 会变成负数并被夹到 0——比连乘还悲观，
+与"只收紧不放宽"的前提自相矛盾。0.1 网格上穷举 2334 万组三元组验证：0 违例。
+
+任一因子 `base = 0` 时联合期望为 0，但端点保留连乘值 `(Π low_i, 0, Π high_i)`。
+`base = 0` 只说明"最可能不发生"，不代表乐观端也是 0；强行把 `high` 归零会让
+`gross_reward.high` 随之为 0，经 `DUST_REWARD` 门槛把项目误判成 30 天 `IGNORE`。
+`survival = forbidden`（0/0/0）时 `Π high_i = 0`，仍正确退化为点 `(0, 0, 0)`。
+
+### 证据新鲜度阶梯（v2.0，ADR-014）
+
+| 证据年龄 | freshness |
+| --- | --- |
+| ≤ 7 天 | 1.0 |
+| ≤ 30 天 | 0.8 |
+| ≤ 90 天 | 0.5 |
+| ≤ 180 天 | 0.2 |
+| ≤ 365 天 | 0.1 |
+| > 365 天 | 0.05 |
+
+前四档为原有值，v2.0 只**延长尾部**（此前 >90 天一律 0.2 且永不再降，5 年前的证据与
+半年前等价）。任何年龄的 freshness 都 ≤ 原值，该阶梯只收紧、不放宽任何结论。
+
 ---
 
 ## 1. `projects` 表字段字典
@@ -310,6 +365,49 @@ MVP 用 `config.SECTOR_PROFILE` 维护赛道基础热度与动量；V2 迁移到
 
 `heat_score = clamp(base_heat + momentum × recency_factor, 0.0, 1.0)`，其中 `recency_factor` 由该赛道近期新增项目数/外部讨论量估算（V2 引入真实数据源后可动态调整）。
 
+### 5.8 跨源合并语义（v1.4，ADR-014）
+
+`DATA_QUALITY.md §128` 规定"同字段多源冲突 → 取 reliability 最高源"，但未规定**不冲突时**如何处理。
+早期实现按来源优先级整条择一，把落选来源的全部字段一并丢弃，导致"多发现一个来源、分数反而下降"。
+
+关键前提：抵达 `merge_raw_records` 的是**已归一化的整行**，缺失布尔一律填 `False`、缺失计数一律填 `0`。
+因此对爬取类来源，`False` / `0` 的含义是"**这个源没看到**"，不是"这个源核实了它不存在"——
+"我没看到"与"我看到了"之间不构成 §128 意义上的冲突。据此分两类：
+
+| 字段类 | 合并策略 | 字段 |
+| --- | --- | --- |
+| 存在性布尔 | 全源 **OR**（任一源观测到即为真） | `has_testnet`、`has_points_program`、`no_token_yet`、`recent_funding`、`has_docs`、`has_whitepaper`、`has_roadmap`、`has_github`、`has_twitter`、`has_discord`、`explicit_airdrop_mention`、`has_task_portal`、`has_contract` |
+| 规模型数值 | 全源 **max** | `github_stars`、`tvl_usd`、`funding_total_usd`、`funding_rounds`、`funding_quality` |
+| "距今天数"型数值 | 全源 **min**（越小越新） | `github_recent_push_days` |
+| 列表 | 全源**并集** | `funding_investors`、`funding_lead_investors` |
+| 标量 | 取**最高可信来源中的已知值**（取值本身即断言，冲突是真冲突，严格按 §128）；`unknown` / 空串 / `None` / 空容器不覆盖已知值 | `url`、`sector`、`stage`、`description`、`funding_tier`、`funding_last_date`、`roadmap_delivery`、`sybil_friction` |
+
+**否定断言的例外**：`manual` 与 `api` 是刻意输入而非抓取产物，其 `False` / `0` 是真实断言，
+一旦对某字段给出显式取值即直接采信，不参与 OR / max。否则一条 twitter 噪声就能把人工确认的
+"已发币"翻回 `no_token_yet=True`，把 `airdrop_signal` 从 20 顶到 100。
+
+`source_count = max(1, 参与合并的来源数, 记录中已有值)`。此前恒为 1，使 §166/§175 的多源加成永不生效、
+`DATA_QUALITY.md §141` 的"≥2 源覆盖率 ≥30%"周 KPI 无法测量。
+
+合并结果与输入顺序**无关**：排序键为（来源优先级, 来源名, 记录内容规范序）。仅按优先级排序时，
+同档来源（`github`/`rootdata` 同为 5，`cryptorank`/`galxe`/`layer3`/`etherscan` 同为 6）的胜出者
+取决于上游 `ORDER BY discovery_score DESC, discovered_at DESC` 的偶然顺序。
+
+来源可信度顺序见 `utils/normalize.SOURCE_PRIORITY`（`galxe`/`layer3`/`etherscan` 于 v1.4 补入）。
+
+### 5.9 评分输出的持久化列（v1.4，ADR-014）
+
+| 列 | 内容 | 写入方 |
+| --- | --- | --- |
+| `weight_version` | 生效权重版本（`WEIGHT_CALIBRATION §1.2`） | Scorer |
+| `sub_scores` | 八维子分快照（`WEIGHT_CALIBRATION §4.3` 步骤 1 的离线重加权所需） | Scorer |
+| `raw_signals` | 采集到的**输入**信号 | 采集/seed |
+| `raw_signals_hash` | 上列的哈希 | 采集/seed |
+
+`sub_scores` 为独立列，不复用 `raw_signals`：后者是输入、前者是输出，形状不兼容。
+两列在 UPSERT 中以 `COALESCE(EXCLUDED.x, projects.x)` 写入——Scorer 失败时二者为空，
+不得用空壳覆盖上一次成功评分的快照。
+
 ---
 
 ## 6. 总分计算
@@ -317,13 +415,24 @@ MVP 用 `config.SECTOR_PROFILE` 维护赛道基础热度与动量；V2 迁移到
 score = round( Σ subscore_i * weight_i )   # 截断到 [0,100]
 ```
 
-## 6.1 confidence 计算
+## 6.1 confidence 计算（v1.3 口径，与 §3.5 一致）
 ```
-confidence = 非缺失分析 agent 数 / 4
+agent_coverage  = 非缺失分析 agent 数 / 4          # Narrative / Team / Risk / Tokenomics
+signal_coverage = 已验证信号数 / 可验证信号总数    # 官网·文档·仓库·社媒·任务入口·合约/TVL·多源
+confidence      = 0.35 × agent_coverage + 0.65 × signal_coverage
 ```
-> 4 个分析 agent（Narrative/Team/Risk/Tokenomics）中成功产出结果的比例。
-> `confidence < 0.5`（≥3 个缺失）时 label 强制降一档（已在 `ENGINEERING_ROADMAP.md` §7.6 降级覆盖率上限实现）。
+> **无下限。** 早期实现在 Agent 覆盖率满时给结果加了 0.55 的地板。影响面要说准：
+> Agent 缺失时旧公式仍可能 < 0.5（缺 1–3 个 Agent 的下限依次为 0.45 / 0.20 / 0.10），
+> 但那是异常路径；**四个 Agent 全部成功的正常路径**下 confidence 恒 ≥ 0.55
+> （穷举 256 种信号配置最低值恰为 0.5500）。结果是降档保护只在 Agent 崩溃时生效，
+> 而它本意是防"可验证信号不足"——两者管的不是同一件事。
+> ADR-014 移除该地板；语料双跑显示 confidence 下限由 0.5500 回落到 0.4429，
+> 信号稀疏的项目首次可触发降档。
+>
+> `confidence < 0.5` 时 label 强制降一档（`ENGINEERING_ROADMAP.md` §7.6 降级覆盖率上限）。
 > 前端可用置信度环/图标展示，辅助用户判断评分可信度。
+>
+> 旧口径 `confidence = 非缺失分析 agent 数 / 4`（v1.2 及以前）已废弃，仅作历史参考。
 
 ## 7. Label 阈值
 | 区间 | label / recommendation |
