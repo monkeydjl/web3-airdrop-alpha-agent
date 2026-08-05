@@ -594,6 +594,13 @@ def build_inputs(
             and latest["weekly_maintenance_hours"][0].observation_type in {"observed", "derived"}
             and SOURCE_GRADE_WEIGHT[latest["weekly_maintenance_hours"][0].source_grade] >= SOURCE_GRADE_WEIGHT["B"]
         ),
+        # 与上面的时间门槛同一把尺子：成本必须是 observed/derived 且来源 >= B 才算"确知"。
+        # `_derive_eligibility` 对 hard_cost_usd 也要求 >= B，这里保持一致。
+        hard_cost_confirmed_minimum=(
+            "hard_cost_usd" in latest
+            and latest["hard_cost_usd"][0].observation_type in {"observed", "derived"}
+            and SOURCE_GRADE_WEIGHT[latest["hard_cost_usd"][0].source_grade] >= SOURCE_GRADE_WEIGHT["B"]
+        ),
         project_quality=normalized.get("project_quality"),
         project_failure_risk=project_failure_risk,
         capital_security_risk=capital_security_risk,

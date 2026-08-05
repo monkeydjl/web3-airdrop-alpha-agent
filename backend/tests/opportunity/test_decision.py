@@ -276,11 +276,35 @@ def test_critical_unknowns_precede_numeric_gates(passing_case):
         ("distribution_catalyst_3_6m", "WAIT_CATALYST"),
         ("conditional_reward", "REWARD_TOO_UNCERTAIN"),
         ("official_identity", "WAIT_MORE_EVIDENCE"),
+        # service.evaluate_row 注入的是模型字段名（带 _usd/_hours 后缀）。此前这套
+        # 命名一个都不在映射表里，8 个缺失事实全部塌缩成通用码 WAIT_MORE_EVIDENCE。
+        ("reward_probability", "REWARD_TOO_UNCERTAIN"),
+        ("conditional_reward_usd", "REWARD_TOO_UNCERTAIN"),
+        ("hard_cost_usd", "WAIT_MORE_EVIDENCE"),
+        ("capital_at_risk_usd", "WAIT_MORE_EVIDENCE"),
+        ("expected_capital_loss_usd", "WAIT_MORE_EVIDENCE"),
+        ("liquidity_cost_usd", "WAIT_MORE_EVIDENCE"),
+        ("total_time_hours", "WAIT_MORE_EVIDENCE"),
+        ("economics_direct_evidence", "WAIT_MORE_EVIDENCE"),
     ],
 )
 def test_critical_unknown_mapping_is_deterministic(passing_case, unknown, code):
     result = decide(**_with_input(passing_case, critical_unknowns=(unknown, unknown)))
     assert result.watch_reason_codes == (code,)
+
+
+def test_both_naming_schemes_for_one_missing_fact_yield_one_reason_code():
+    """conditional_reward 与 conditional_reward_usd 指同一件缺失事实，不得产出两条理由。"""
+    from app.opportunity.decision import _UNKNOWN_REASON_CODES
+
+    assert _UNKNOWN_REASON_CODES["conditional_reward"] == _UNKNOWN_REASON_CODES["conditional_reward_usd"]
+    assert _UNKNOWN_REASON_CODES["hard_cost"] == _UNKNOWN_REASON_CODES["hard_cost_usd"]
+
+
+def test_every_mapped_unknown_code_has_a_recommended_action():
+    from app.opportunity.decision import _UNKNOWN_REASON_CODES
+
+    assert set(_UNKNOWN_REASON_CODES.values()) <= set(WATCH_REASON_ACTIONS)
 
 
 @pytest.mark.parametrize(

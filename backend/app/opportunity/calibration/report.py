@@ -257,9 +257,12 @@ def _probability_evidence(
             replicates=BOOTSTRAP_REPLICATES,
         )
     else:
+        # 聚簇自助重采样后长度可能 > 原始 denominator（各项目 cohort 数不等），
+        # 而 coverage_denominator 必须 >= coverage_count。此处只取 bias（与覆盖率无关），
+        # 故按重采样自身长度作为 denominator，避免多 cohort 项目触发 ValueError。
         result["ci95"] = cluster_bootstrap_interval(
             records,
-            lambda rows: probability_metrics(rows, view=view, coverage_denominator=denominator)["bias"],
+            lambda rows: probability_metrics(rows, view=view, coverage_denominator=len(rows))["bias"],
             seed=seed,
             replicates=BOOTSTRAP_REPLICATES,
         )

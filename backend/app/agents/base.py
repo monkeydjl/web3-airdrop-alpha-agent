@@ -193,6 +193,11 @@ class PipelineState:
     label: str | None = None  # "FARM", "WATCH", "IGNORE"
     confidence: float | None = None
     reason: list[str] = field(default_factory=list)
+    # 子分快照与生效权重版本：WEIGHT_CALIBRATION §4.3 step 1 的离线重加权需要
+    # 子分快照，§1.2 要求每条分数带 weight_version；此前二者都未落到 state/DB，
+    # 使离线调权在结构上无输入、历史分数无法归属到具体权重版本。
+    sub_scores: dict[str, float] = field(default_factory=dict)
+    weight_version: str | None = None
 
     # Errors encountered
     errors: list[AgentError] = field(default_factory=list)

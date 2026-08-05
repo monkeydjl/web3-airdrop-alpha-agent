@@ -11,7 +11,7 @@ from app.opportunity.evidence import build_inputs
 from app.opportunity.models import DecisionStatus, EvidenceRecord
 from app.opportunity.profile import DEFAULT_PROFILE
 from app.opportunity.repository import OpportunityRepository
-from app.opportunity.service import OpportunityService, _build_confidence
+from app.opportunity.service import OpportunityService, _build_confidence, _freshness_score
 from app.repository import ProjectRepository
 
 NOW = datetime(2026, 7, 15, 12, tzinfo=UTC)
@@ -527,7 +527,8 @@ def test_confidence_independence_uses_distinct_groups_over_resolved_records():
 
 @pytest.mark.parametrize(
     ("age", "expected_freshness"),
-    [(7, 1.0), (30, 0.8), (90, 0.5), (91, 0.2)],
+    # 前四档为原有行为，保持不变；后四档覆盖新增的长尾衰减（>180 天不再封顶在 0.2）
+    [(7, 1.0), (30, 0.8), (90, 0.5), (91, 0.2), (180, 0.2), (181, 0.1), (365, 0.1), (366, 0.05)],
 )
 def test_confidence_freshness_uses_exact_age_bands(age, expected_freshness):
     records = _cost_records(
@@ -536,6 +537,19 @@ def test_confidence_freshness_uses_exact_age_bands(age, expected_freshness):
     )
     confidence = _confidence_for(records)
     assert confidence.cost == pytest.approx(0.35 + 0.25 + 0.15 + 0.25 * expected_freshness)
+
+
+def test_confidence_freshness_is_monotonically_non_increasing_in_age():
+    """任何年龄的 freshness 都不得高于更年轻证据的 freshness（尾部延长不得放宽）。"""
+    scores = [
+        _freshness_score(
+            _evidence("hard_cost_usd", {"low": 1, "base": 2, "high": 3}, observed_at=NOW - timedelta(days=age)),
+            NOW,
+        )
+        for age in (0, 7, 8, 30, 31, 90, 91, 180, 181, 365, 366, 1825)
+    ]
+    assert scores == sorted(scores, reverse=True)
+    assert scores[-1] < scores[scores.index(0.2)], "五年前的证据必须严格低于原封顶值 0.2"
 
 
 def test_lower_grade_superseded_conflict_halves_domain_freshness_consistency():
@@ -574,3 +588,109 @@ def test_partially_verified_evidence_does_not_contribute_to_confidence():
 def test_cross_project_evidence_does_not_contribute_to_confidence():
     confidence = _confidence_for(_cost_records(project_id="p2"))
     assert confidence.cost == 0
+
+
+def _rule_derived_evidence(**cost_override):
+    """完整证据集，但移除显式 eligibility_probability，改由规则从成本/机制派生。"""
+    records = [
+        record
+        for record in _complete_evidence()
+        if record.factor_key not in {"eligibility_probability", "hard_cost_usd"}
+    ]
+    records.append(
+        _evidence(
+            "hard_cost_usd",
+            cost_override,
+            observation_type="derived",
+            source_grade="B",
+            source_type="cost_model",
+            independence_group="economics-model",
+        )
+    )
+    return records
+
+
+def test_rule_derived_eligibility_still_reaches_actionable_within_budget(conn):
+    """基准：预算内时这条链路本身是通的，确保下面的对照组只有成本一个变量。"""
+    service = _service(conn)
+    _seed(service.opportunity_repo, _rule_derived_evidence(low=1, base=2, high=3))
+
+    assessment = service.evaluate("p1")
+
+    assert assessment.status == DecisionStatus.ACTIONABLE
+    assert assessment.public_label == "FARM"
+
+
+def test_over_budget_cost_is_reported_as_too_expensive_not_as_missing_evidence(conn):
+    """确知超预算必须判 IGNORE/TOO_EXPENSIVE，而不是"证据不足，去补证据"。
+
+    回归点：超预算成本会让 _derive_eligibility 返回 None，进而把 reward_probability
+    塞进 critical_unknowns。修复前 decide() 先看 critical_unknowns，于是整条链路
+    产出 INSUFFICIENT_EVIDENCE + WAIT_MORE_EVIDENCE——用户被要求去补证据，而真实
+    原因是"这个项目对该画像来说太贵了"，且 TOO_EXPENSIVE 在真实链路上永不可达。
+    """
+    service = _service(conn)
+    # low 已超出画像上限 10.0：最乐观的成本都不合适，不存在"补证据后变便宜"的可能
+    _seed(service.opportunity_repo, _rule_derived_evidence(low=25, base=30, high=40))
+
+    assessment = service.evaluate("p1")
+
+    assert assessment.status == DecisionStatus.NOT_FIT
+    assert assessment.public_label == "IGNORE"
+    assert assessment.ignore_reason_codes == ("TOO_EXPENSIVE",)
+    assert assessment.watch_reason_codes == ()
+
+
+def test_over_budget_cost_from_low_grade_evidence_stays_insufficient(conn):
+    """U 档/未达标来源的成本不得触发 30 天 IGNORE。
+
+    `resolve_factor` 不设来源等级下限，一条 "assumed" 的 U 档成本记录也能填满
+    `hard_cost_usd`。若 `_determinate_misfit` 不校验来源等级，一句道听途说就足以
+    把项目钉成 NOT_FIT/TOO_EXPENSIVE（复核期 30 天）——那恰恰是"证据不足"该管的
+    情形。对照组见 `test_over_budget_cost_is_reported_as_too_expensive_not_as_missing_evidence`。
+    """
+    service = _service(conn)
+    records = [
+        record for record in _rule_derived_evidence(low=25, base=30, high=40) if record.factor_key != "hard_cost_usd"
+    ]
+    records.append(
+        _evidence(
+            "hard_cost_usd",
+            {"low": 25, "base": 30, "high": 40},
+            observation_type="assumed",
+            source_grade="U",
+            source_type="random_blog_guess",
+            independence_group="blog",
+        )
+    )
+    _seed(service.opportunity_repo, records)
+
+    assessment = service.evaluate("p1")
+
+    assert assessment.status == DecisionStatus.INSUFFICIENT_EVIDENCE
+    assert assessment.public_label == "WATCH"
+    assert assessment.ignore_reason_codes == ()
+
+
+def test_over_budget_cost_needs_grade_b_to_be_determinate(conn):
+    """B 档是 `_derive_eligibility` 对成本的同一门槛，这里保持一致。"""
+    service = _service(conn)
+    records = [
+        record for record in _rule_derived_evidence(low=25, base=30, high=40) if record.factor_key != "hard_cost_usd"
+    ]
+    records.append(
+        _evidence(
+            "hard_cost_usd",
+            {"low": 25, "base": 30, "high": 40},
+            observation_type="derived",
+            source_grade="B",
+            source_type="cost_model",
+            independence_group="economics-model",
+        )
+    )
+    _seed(service.opportunity_repo, records)
+
+    assessment = service.evaluate("p1")
+
+    assert assessment.status == DecisionStatus.NOT_FIT
+    assert assessment.ignore_reason_codes == ("TOO_EXPENSIVE",)

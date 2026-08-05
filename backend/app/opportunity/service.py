@@ -322,4 +322,14 @@ def _freshness_score(record: EvidenceRecord, now: datetime) -> float:
         return 0.8
     if age <= timedelta(days=90):
         return 0.5
-    return 0.2
+    # 原阶梯到此为止，>90 天一律 0.2 且永不再降：181 天、400 天与 5 年前的证据
+    # 完全等价。Web3 项目的活动规则/积分方案在半年内就可能整体重写，一份 2021 年
+    # 的"官方空投声明"不应与上季度的同等采信。
+    # 这里只**延长尾部**，不改动任何既有档位：≤180 天仍为 0.2（与原行为一致），
+    # 此后继续衰减。任何年龄的 freshness 都 <= 原值，因此该修改只会收紧、
+    # 不会放宽任何结论。
+    if age <= timedelta(days=180):
+        return 0.2
+    if age <= timedelta(days=365):
+        return 0.1
+    return 0.05

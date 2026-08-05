@@ -10,6 +10,7 @@ Reference:
 """
 
 import json
+import re
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -31,6 +32,59 @@ if TYPE_CHECKING:
     from app.collectors.registry import CollectorRegistry
 
 logger = structlog.get_logger(__name__)
+
+# 归一化后代表"赛道未知"的键（create_dedup_key 对 None/空值归一到 "Unknown"）
+_UNKNOWN_SECTOR_KEY = "Unknown"
+
+
+def _fold_sectorless_groups(groups: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """把"赛道未知"的分组并入同名且赛道已知的分组。
+
+    dedup_key 是 `name::sector`。任务门户(galxe/layer3)、链上活动(etherscan)、
+    推文(twitter)、行情(coingecko)这些**信号补充源**根本不掌握赛道，它们的记录
+    只能落在 `name::Unknown` 上，与 defillama 给出的 `name::Lending` 永不相撞——
+    真实库里 702 个项目 `source_count>=2` 的比例因此恒为 0%。
+
+    这里在合并前做一次归并：若某个 `name::Unknown` 分组恰好只对应一个同名且赛道
+    已知的分组，就并进去。**只在唯一匹配时归并**——同名但落在多个赛道时无从判断
+    该归给谁，保持原样比猜错安全。
+    """
+    by_name: dict[str, list[str]] = {}
+    for key_str in groups:
+        name_key, _, sector_key = key_str.partition("::")
+        if sector_key != _UNKNOWN_SECTOR_KEY:
+            by_name.setdefault(name_key, []).append(key_str)
+
+    folded = dict(groups)
+    for key_str in list(folded):
+        name_key, _, sector_key = key_str.partition("::")
+        if sector_key != _UNKNOWN_SECTOR_KEY or not name_key:
+            continue
+        candidates = by_name.get(name_key) or []
+        if len(candidates) != 1:
+            continue
+        target = candidates[0]
+        folded[target] = folded[target] + folded.pop(key_str)
+        logger.info("collector.dedup.folded_sectorless", name=name_key, into=target)
+    return folded
+
+
+# 文本融资信号：必须出现真实的融资语境，而非裸词 "funding"/"raised"。
+# 反例（应判否）："hourly funding rate settlement"、"raised the block gas limit"。
+_FUNDING_TEXT_RE = re.compile(
+    r"""(
+        raised\s+(?:\$|usd|us\$|€|£)?\s*[\d.,]+\s*(?:k|m|b|million|billion|万|亿)?  # raised $12M
+        | (?:seed|pre-seed|angel|strategic|private)\s+round
+        | series\s+[a-e]\b
+        | funding\s+round
+        | (?:closed|announced|secured|completed)\s+(?:a\s+|its\s+|our\s+)?
+          (?:\$|usd)?\s*[\d.,]*\s*(?:k|m|b|million|billion)?\s*
+          (?:seed|series|funding|round|financing|raise)
+        | backed\s+by\s+(?:a16z|paradigm|sequoia|binance\s+labs|coinbase\s+ventures|polychain|multicoin)
+        | (?:融资|轮融资|领投|种子轮|天使轮|战略投资)
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
 
 class CollectorAgent(BaseAgent):
@@ -110,6 +164,11 @@ class CollectorAgent(BaseAgent):
             for k in (
                 "name",
                 "description",
+                # 推文正文存在 raw_data["text"]，此前不在取值范围内，
+                # 于是两个 twitter 采集器（它们只有这一个载荷）贡献恒为零
+                "text",
+                "summary",
+                "one_liner",
                 "full_name",
                 "slug",
                 "category",
@@ -134,8 +193,14 @@ class CollectorAgent(BaseAgent):
         # Source-aware defaults when flags missing
         if no_token is None:
             if source_id == "defillama":
-                gecko = raw_data.get("gecko_id")
-                no_token = not gecko
+                # 与 DefiLlamaCollector._is_unlisted 保持同一口径：真实 ticker 是
+                # 已发币的正面证据，而 "-" 是 DefiLlama 表示"无代币"的哨兵值。
+                # 两处不一致会让回填/重算写出与采集时相反的 no_token_yet。
+                symbol = str(raw_data.get("symbol") or "").strip()
+                if symbol and symbol not in {"-", "--", "n/a", "none"}:
+                    no_token = False
+                else:
+                    no_token = not raw_data.get("gecko_id")
             elif source_id in ("coingecko", "cryptorank"):
                 no_token = False
             elif source_id == "github":
@@ -154,7 +219,10 @@ class CollectorAgent(BaseAgent):
             )
 
         if recent_funding is None:
-            recent_funding = "funding" in text or "raised" in text
+            # 裸 "funding" / "raised" 会把 "hourly funding rate settlement"、
+            # "raised the block gas limit" 之类的技术描述误判为融资信号。
+            # 要求出现真正的融资语境词组。
+            recent_funding = bool(_FUNDING_TEXT_RE.search(text))
 
         if not stage and source_id == "github":
             stage = "ideation"
@@ -275,7 +343,9 @@ class CollectorAgent(BaseAgent):
 
         push_days = raw_data.get("github_recent_push_days")
         if push_days is None:
-            for key in ("updated_at", "pushed_at", "last_updated"):
+            # pushed_at 优先：updated_at 会被 star/watch/改描述顶新，用它衡量
+            # "代码是否还在推进"会把元数据churn 当成开发活跃度
+            for key in ("pushed_at", "updated_at", "last_updated"):
                 val = raw_data.get(key)
                 if not val:
                     continue
@@ -370,12 +440,22 @@ class CollectorAgent(BaseAgent):
             key_str = key.to_string()
             groups.setdefault(key_str, []).append(rec)
 
+        groups = _fold_sectorless_groups(groups)
+
         results: list[RawProject] = []
         for key_str, items in groups.items():
             merged = merge_raw_records(items, source_key="source")
-            project_id = merged.get("project_id") or generate_deterministic_id(
-                create_dedup_key(merged.get("name", ""), merged.get("sector"))
-            )
+            canonical = create_dedup_key(merged.get("name", ""), merged.get("sector"))
+            # project_id 必须与合并后的 (name, sector) 一致。
+            # merged["project_id"] 来自优先级最高的那条记录，而 sector 走的是
+            # "最高可信已知值"——两者可能来自不同记录。归并了无赛道记录之后尤其
+            # 容易错位：id 还挂在 name::Unknown 上，sector 却已是 Lending，于是
+            # 同一真实项目多出一行，且 mark_raw_project_processed 的 dedup_key
+            # 回退（create_dedup_key(name, sector)）也对不上。
+            expected_id = generate_deterministic_id(canonical)
+            project_id = merged.get("project_id")
+            if not project_id or (key_str != canonical.to_string() and project_id != expected_id):
+                project_id = expected_id
 
             if len(items) > 1:
                 logger.info(
@@ -421,10 +501,13 @@ class CollectorAgent(BaseAgent):
                     description=merged.get("description"),
                     has_task_portal=bool(merged.get("has_task_portal", False)),
                     has_contract=bool(merged.get("has_contract", False)),
+                    # 取"显式 source_count"与"source 串里的去重源数"的较大者。
+                    # 原写法 `int(...) or len(...)` 在 source_count==1 时短路，
+                    # 而 _infer_airdrop_flags 恒返回 1，导致多源交叉验证加成永不触发。
                     source_count=max(
                         1,
-                        int(merged.get("source_count") or 0)
-                        or len({s.strip() for s in str(merged.get("source") or "unknown").split(",") if s.strip()}),
+                        int(merged.get("source_count") or 0),
+                        len({s.strip() for s in str(merged.get("source") or "unknown").split(",") if s.strip()}),
                     ),
                     roadmap_delivery=str(merged.get("roadmap_delivery") or "unknown"),
                     sybil_friction=str(merged.get("sybil_friction") or "unknown"),
@@ -543,9 +626,17 @@ class CollectorAgent(BaseAgent):
 
         records: list[dict] = []
         noise_skipped = 0
+        # limit 约束的是**项目数**而非原始行数。此前按 records 长度截断，而
+        # `_corroborating_rows` 追加的低分佐证记录排在列表末尾，于是只要过线的
+        # 主记录本身就有 limit 条，佐证记录一条都到不了——跨源合并依旧不发生。
+        accepted_keys: set[str] = set()
         for row in rows:
-            if len(records) >= limit:
-                break
+            row_key = str(row.get("dedup_key") or row.get("raw_id") or "")
+            if row_key not in accepted_keys and len(accepted_keys) >= limit:
+                # 用 continue 而非 break：佐证记录（低分、同 dedup_key）被追加在
+                # 列表末尾，一旦 break 就永远扫不到它们。已达 limit 时只是不再
+                # 接纳**新项目**，仍继续为已接纳的项目收集佐证。
+                continue
             raw_data = json.loads(row["raw_data"]) if row["raw_data"] else {}
             source_id = row["source_id"]
             name = raw_data.get("name", "") or ""
@@ -595,6 +686,7 @@ class CollectorAgent(BaseAgent):
             flags = self._infer_airdrop_flags(source_id, raw_data)
             dedup = create_dedup_key(name, sector)
             project_id = row.get("project_id") or generate_deterministic_id(dedup)
+            accepted_keys.add(row_key)
             records.append(
                 {
                     "project_id": project_id,

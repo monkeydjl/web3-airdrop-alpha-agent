@@ -1,4 +1,6 @@
+import math
 from datetime import UTC, datetime, timedelta
+from itertools import product
 
 import pytest
 
@@ -75,15 +77,94 @@ def test_rule_tables_are_exact():
     }
 
 
-def test_joint_probability_multiplies_matching_scenarios():
+def test_joint_probability_base_is_the_product_of_bases():
     result = joint_probability(
         ProbabilityRange(low=0.60, base=0.70, high=0.80),
         ProbabilityRange(low=0.55, base=0.65, high=0.75),
         ProbabilityRange(low=0.70, base=0.80, high=0.90),
     )
-    assert result.low == pytest.approx(0.231)
-    assert result.base == pytest.approx(0.364)
-    assert result.high == pytest.approx(0.54)
+    assert result.base == pytest.approx(0.70 * 0.65 * 0.80)
+
+
+def test_joint_probability_combines_uncertainty_in_quadrature_not_per_quantile():
+    """区间端点按相对不确定度平方和合成，而非 low×low×low。
+
+    逐分位连乘要求三因子完全同向，与 base 所依赖的独立性假设直接矛盾；
+    对本算例它给出 0.231–0.540，而 40 万次独立三角分布抽样的真实 p10–p90
+    只有约 0.283–0.446。平方和合成给出 0.275–0.453，仍略偏保守但不再自相矛盾。
+    """
+    result = joint_probability(
+        ProbabilityRange(low=0.60, base=0.70, high=0.80),
+        ProbabilityRange(low=0.55, base=0.65, high=0.75),
+        ProbabilityRange(low=0.70, base=0.80, high=0.90),
+    )
+    assert result.low == pytest.approx(0.275060, abs=1e-6)
+    assert result.high == pytest.approx(0.452940, abs=1e-6)
+    # 严格窄于逐分位连乘的旧区间，且仍包住 base
+    assert result.low > 0.60 * 0.55 * 0.70
+    assert result.high < 0.80 * 0.75 * 0.90
+    assert result.low <= result.base <= result.high
+
+
+@pytest.mark.parametrize(
+    ("event_key", "eligibility_key", "survival_key"),
+    [
+        ("official_distribution_and_catalyst", "deterministic_open_within_budget", "allowed"),
+        ("official_distribution", "points_open_within_budget", "not_forbidden"),
+        ("official_points_value", "behavioral_open_within_budget", "not_forbidden"),
+    ],
+)
+def test_joint_probability_is_bounded_and_ordered_for_every_rule_stack(event_key, eligibility_key, survival_key):
+    result = joint_probability(
+        EVENT_RULES[event_key],
+        ELIGIBILITY_RULES[eligibility_key],
+        SURVIVAL_RULES[survival_key],
+    )
+    assert 0.0 <= result.low <= result.base <= result.high <= 1.0
+
+
+def test_mid_tier_rule_stack_can_clear_the_farm_probability_gate():
+    """decision 用 reward_probability.low >= 0.20 作为 FARM 门槛。
+
+    旧的逐分位连乘让"官方分发 + 积分制资格 + 未禁止多钱包"这一档的 joint.low
+    恒为 0.55*0.50*0.60 = 0.1650，无论证据多强都无法通过门槛——纯粹是区间
+    算法造成的数学假象。修正后该档为 0.2154，门槛重新可达。
+    """
+    result = joint_probability(
+        EVENT_RULES["official_distribution"],
+        ELIGIBILITY_RULES["points_open_within_budget"],
+        SURVIVAL_RULES["not_forbidden"],
+    )
+    assert 0.55 * 0.50 * 0.60 < 0.20 <= result.low
+
+
+def test_joint_probability_degenerates_to_zero_when_any_factor_is_impossible():
+    result = joint_probability(
+        EVENT_RULES["official_distribution"],
+        ELIGIBILITY_RULES["points_open_within_budget"],
+        SURVIVAL_RULES["forbidden"],
+    )
+    assert (result.low, result.base, result.high) == (0.0, 0.0, 0.0)
+
+
+def test_joint_probability_matches_monte_carlo_within_conservative_bounds():
+    """合成区间必须覆盖真实分布的 p10–p90，且不得比逐分位连乘更宽。"""
+    import random
+
+    factors = (
+        ProbabilityRange(low=0.65, base=0.78, high=0.90),
+        ProbabilityRange(low=0.65, base=0.80, high=0.90),
+        ProbabilityRange(low=0.75, base=0.88, high=0.95),
+    )
+    rng = random.Random(20260726)  # noqa: S311 — 蒙特卡洛抽样，非加密用途；固定种子保证可复现
+    draws = sorted(math.prod(rng.triangular(f.low, f.high, f.base) for f in factors) for _ in range(40_000))
+    p10 = draws[int(0.10 * len(draws))]
+    p90 = draws[int(0.90 * len(draws))]
+
+    result = joint_probability(*factors)
+    assert result.low < p10 and p90 < result.high, "合成区间必须覆盖真实 p10–p90"
+    assert result.low > factors[0].low * factors[1].low * factors[2].low
+    assert result.high < factors[0].high * factors[1].high * factors[2].high
 
 
 def test_explicit_probability_ranges_are_preserved():
@@ -576,3 +657,49 @@ def test_derivation_uses_evidence_normalization_instead_of_truthy_raw_values():
     )
     event, _, _ = _derive([malformed])
     assert event is None
+
+
+def test_joint_probability_is_never_wider_than_per_quantile_product():
+    """合成区间必须恒为逐分位连乘区间的子集。
+
+    相对不确定度之和可能超过 100%（例如某因子 low=0），此时 base×(1−rel) 会变成
+    负数并被夹到 0——那比连乘还悲观，与"只收紧不放宽"的前提矛盾。
+
+    这里用 0.2 网格穷举（约 17 万组，含 low=0 与 base≈0 的全部边界形态）。
+    ADR-014 记录了同一断言在 0.1 网格上的 2334 万组全穷举结果：0 违例。
+    """
+    grid = [i / 5 for i in range(6)]
+    ranges = [
+        ProbabilityRange(low=low, base=base, high=high)
+        for low, base, high in product(grid, grid, grid)
+        if low <= base <= high
+    ]
+    for event, eligibility, survival in product(ranges, repeat=3):
+        result = joint_probability(event, eligibility, survival)
+        assert 0.0 <= result.low <= result.base <= result.high <= 1.0
+        assert result.low >= event.low * eligibility.low * survival.low - 1e-12
+        assert result.high <= event.high * eligibility.high * survival.high + 1e-12
+
+
+def test_zero_base_keeps_a_non_zero_optimistic_endpoint():
+    """base=0 只说明"最可能不发生"，不代表乐观端也是 0。
+
+    若强行把 high 归零，`gross_reward.high` 随之为 0，会经 DUST_REWARD 门槛
+    把项目误判成 30 天 IGNORE。
+    """
+    result = joint_probability(
+        ProbabilityRange(low=0.5, base=0.7, high=0.9),
+        ProbabilityRange(low=0.4, base=0.6, high=0.8),
+        ProbabilityRange(low=0.0, base=0.0, high=0.9),
+    )
+    assert result.base == 0.0
+    assert result.high == pytest.approx(0.9 * 0.8 * 0.9)
+
+
+def test_forbidden_survival_still_degenerates_to_a_point():
+    result = joint_probability(
+        EVENT_RULES["official_distribution"],
+        ELIGIBILITY_RULES["points_open_within_budget"],
+        SURVIVAL_RULES["forbidden"],
+    )
+    assert (result.low, result.base, result.high) == (0.0, 0.0, 0.0)

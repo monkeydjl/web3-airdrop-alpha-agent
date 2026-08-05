@@ -54,7 +54,7 @@ class TestTeamAgent:
         assert result_state.team is not None
         assert result_state.team.team_score >= 0.7  # High score
         assert result_state.team.team_type == "doxxed"
-        assert "tier-1 vc backed" in result_state.team.team_flags
+        assert "recent funding" in result_state.team.team_flags  # §196: tier-1 需结构化融资证据
         assert "doxxed team" in result_state.team.team_flags
         assert len(result_state.errors) == 0
 
@@ -80,7 +80,7 @@ class TestTeamAgent:
         assert result_state.team is not None
         assert 0.4 <= result_state.team.team_score <= 1.0
         assert result_state.team.team_type == "semi_anon"
-        assert "tier-1 vc backed" in result_state.team.team_flags
+        assert "recent funding" in result_state.team.team_flags  # §196: tier-1 需结构化融资证据
         assert len(result_state.errors) == 0
 
     @pytest.mark.asyncio
@@ -256,7 +256,7 @@ class TestInferTeamFlags:
             source="seed",
         )
         flags = infer_team_flags(project)
-        assert "tier-1 vc backed" in flags
+        assert "recent funding" in flags  # §196: 裸 recent_funding 不构成 tier-1
 
     def test_mainnet_project(self):
         """Test mainnet project gets doxxed flag."""
@@ -312,7 +312,7 @@ class TestInferTeamFlags:
             source="seed",
         )
         flags = infer_team_flags(project)
-        assert "tier-1 vc backed" in flags
+        assert "recent funding" in flags  # §196: 裸 recent_funding 不构成 tier-1
         assert "doxxed team" in flags
 
 

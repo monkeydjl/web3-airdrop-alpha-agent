@@ -33,11 +33,62 @@ def joint_probability(
     eligibility: ProbabilityRange,
     survival: ProbabilityRange,
 ) -> ProbabilityRange:
-    return ProbabilityRange(
-        low=event.low * eligibility.low * survival.low,
-        base=event.base * eligibility.base * survival.base,
-        high=event.high * eligibility.high * survival.high,
-    )
+    """三因子联合概率（假设三者相互独立）。
+
+    `base` 取三者相乘——这是独立性假设下的正确联合期望。
+
+    区间端点**不能**同样逐分位相乘：`low×low×low` 只有在三个因子完全同向
+    （perfect comonotonicity）时才成立，与 `base` 所依赖的独立性假设直接矛盾，
+    两者不可能同时为真。逐分位连乘会把不确定度过度累积：以最佳规则栈
+    (0.65/0.78/0.90 × 0.65/0.80/0.90 × 0.75/0.88/0.95) 为例，40 万次蒙特卡洛
+    （各因子独立三角分布）的真实 p10–p90 是 0.4528–0.5953，而逐分位连乘给出
+    0.3169–0.7695——两个端点都落在约 0% 的尾部，区间宽度虚高约 1.6 倍。
+
+    后果不只是"看起来不准"：`decision` 用 `reward_probability.low >= 0.20` 作为
+    FARM 门槛，三重下界连乘会让"官方分发+积分制"这类中档规则栈的 joint.low
+    恒为 0.1650，**永远无法通过门槛**，纯粹是数学假象而非项目本身的问题。
+
+    这里改为在独立性假设下按相对不确定度做平方和合成（误差独立时的标准做法）：
+        rel_low  = sqrt(Σ ((base_i - low_i)  / base_i)^2)
+        rel_high = sqrt(Σ ((high_i - base_i) / base_i)^2)
+    同一算例下给出 0.3893–0.6664，仍偏保守（覆盖率 99.2%），但不再自相矛盾，
+    中档规则栈的 joint.low 回到 0.2154，重新可达。
+    """
+    factors = (event, eligibility, survival)
+    base = event.base * eligibility.base * survival.base
+    # 逐分位连乘的结果同时作为**兜底端点**：它是完全同向假设下的区间，在独立性
+    # 假设下必然更宽（更保守），因此可以安全地当作下界的地板、上界的天花板。
+    comonotone_low = event.low * eligibility.low * survival.low
+    comonotone_high = event.high * eligibility.high * survival.high
+
+    if base <= 0.0:
+        # 任一因子 base 为 0（如 survival=forbidden）则联合期望为 0。
+        # 但端点不必同时为 0：base=0 只说明"最可能不发生"，若某因子 high>0，
+        # 乐观端仍应保留——否则 `gross_reward.high` 被强行归零，会经
+        # DUST_REWARD 门槛把项目误判成 30 天 IGNORE。
+        return ProbabilityRange(low=comonotone_low, base=0.0, high=comonotone_high)
+
+    rel_low_sq = 0.0
+    rel_high_sq = 0.0
+    for factor in factors:
+        if factor.base <= 0.0:
+            continue
+        rel_low_sq += ((factor.base - factor.low) / factor.base) ** 2
+        rel_high_sq += ((factor.high - factor.base) / factor.base) ** 2
+
+    low = base * (1.0 - rel_low_sq**0.5)
+    high = base * (1.0 + rel_high_sq**0.5)
+
+    # 相对不确定度合成后可能超过 100%（例如某因子 low=0），此时 low 会被压到
+    # 负数再夹到 0——那比逐分位连乘还悲观，与"合成区间不得比连乘更宽"的前提
+    # 相矛盾。用连乘端点兜底，保证新区间恒为旧区间的子集。
+    low = min(max(low, comonotone_low), base)
+    high = max(min(high, comonotone_high), base)
+
+    # 夹紧到 [0,1] 并保持 low <= base <= high
+    low = min(max(low, 0.0), base)
+    high = max(min(high, 1.0), base)
+    return ProbabilityRange(low=low, base=base, high=high)
 
 
 def derive_probability_inputs(
@@ -130,7 +181,9 @@ def _official_true(item: tuple[EvidenceRecord, Any] | None) -> bool:
 def _explicit_range(
     item: tuple[EvidenceRecord, Any] | None,
 ) -> ProbabilityRange | None:
-    if not _approved(item):
+    # 显式概率证据须满足与规则派生同一档的来源等级下限（B），
+    # 否则 U 档（权重 0）证据也能覆盖 A 档规则结论，形成信任绕过。
+    if not _approved(item, minimum_grade="B"):
         return None
     value = item[1]
     return value if isinstance(value, ProbabilityRange) else None

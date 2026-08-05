@@ -13,6 +13,7 @@ Reference:
 import asyncio
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
@@ -104,12 +105,47 @@ class SimpleOrchestrator:
         # Calculate statistics
         elapsed_ms = (time.time() - start_time) * 1000
         scored_projects = [s for s in states if s.score is not None]
+        top_score = max((s.score for s in scored_projects), default=None)
 
-        if scored_projects:
-            top_score = max(s.score for s in scored_projects)
+        # 先落库，再定状态。此前状态在持久化**之前**就算好了，于是"评分成功但一行都没
+        # 写进去"依然返回 status=completed / error_count=0；上游 pipeline_run 又只看
+        # state.score 就把 raw_projects 标成已处理，于是整批数据既没落库、也不再排队
+        # 重试，而 DB 与 metrics 里都查不到任何痕迹。
+        persisted_project_rows: list[dict[str, Any]] = []
+        persist_failed = False
+        if save_to_db and states:
+            try:
+                repo = ProjectRepository()
+                persisted_project_rows = repo.save_batch_with_rows(states)
+            except Exception as e:
+                persist_failed = True
+                errors.append({"stage": "persist", "error": str(e)})
+                logger.error(
+                    "orchestrator.db_save_failed",
+                    run_id=context.run_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+            else:
+                # save_batch_with_rows 会逐条吞掉单行异常，只有行数差额能暴露它们
+                missing = len(states) - len(persisted_project_rows)
+                if missing > 0:
+                    persist_failed = True
+                    errors.append(
+                        {"stage": "persist", "error": f"{missing} of {len(states)} rows were not persisted"}
+                    )
+                logger.info(
+                    "orchestrator.db_save_complete",
+                    run_id=context.run_id,
+                    saved_count=len(persisted_project_rows),
+                    total_count=len(states),
+                )
+
+        if persist_failed:
+            status = "partial" if persisted_project_rows else "failed"
+        elif scored_projects:
             status = "completed" if not errors else "partial"
         else:
-            top_score = None
             status = "failed" if errors else "completed"
 
         logger.info(
@@ -118,29 +154,10 @@ class SimpleOrchestrator:
             status=status,
             project_count=len(projects),
             scored_count=len(scored_projects),
+            persisted_count=len(persisted_project_rows),
             error_count=len(errors),
             elapsed_ms=elapsed_ms,
         )
-
-        # Save to database if enabled
-        persisted_project_rows = []
-        if save_to_db and states:
-            try:
-                repo = ProjectRepository()
-                persisted_project_rows = repo.save_batch_with_rows(states)
-                logger.info(
-                    "orchestrator.db_save_complete",
-                    run_id=context.run_id,
-                    saved_count=len(persisted_project_rows),
-                    total_count=len(states),
-                )
-            except Exception as e:
-                logger.error(
-                    "orchestrator.db_save_failed",
-                    run_id=context.run_id,
-                    error=str(e),
-                    exc_info=True,
-                )
 
         return RunResponse(
             run_id=context.run_id,
@@ -190,20 +207,22 @@ class SimpleOrchestrator:
                 project_name=project.name,
             )
 
-            # Execute 4 agents concurrently
-            results = await asyncio.gather(
+            # Stage 1a: 独立 agent 并行执行（Risk 依赖 Tokenomics 结果，故拆到 1b）
+            stage1_results = await asyncio.gather(
                 self.narrative.run(state),
                 self.team.run(state),
-                self.risk.run(state),
                 self.tokenomics.run(state),
                 return_exceptions=True,
             )
+            # Stage 1b: Tokenomics 就绪后再跑 Risk，保证 token_risk 用真实解锁数据
+            risk_result = await asyncio.gather(self.risk.run(state), return_exceptions=True)
 
             # Merge results back into state
             # Note: Each agent modifies state in-place, so we just need to check for exceptions
+            results = [stage1_results[0], stage1_results[1], risk_result[0], stage1_results[2]]
+            agent_names = ["narrative", "team", "risk", "tokenomics"]
             for idx, result in enumerate(results):
                 if isinstance(result, Exception):
-                    agent_names = ["narrative", "team", "risk", "tokenomics"]
                     error = AgentError(
                         agent_name=agent_names[idx],
                         kind="execution_error",
@@ -262,6 +281,9 @@ class SimpleOrchestrator:
     def _calculate_sector_counts(self, projects: list[RawProject]) -> dict[str, int]:
         """Calculate project count per sector for competition scoring.
 
+        保持纯函数语义（只统计传入批次），这是 Golden 用例"同输入同输出"的前提。
+        需要以全库为基准时请用 `global_sector_counts()`。
+
         Args:
             projects: List of raw projects
 
@@ -281,6 +303,30 @@ class SimpleOrchestrator:
         )
 
         return counts
+
+
+def global_sector_counts(fallback: list[RawProject] | None = None) -> dict[str, int]:
+    """以全库为基准的赛道计数，用于单项目重算路径。
+
+    竞争度衡量"该赛道里有多少项目"，是项目全集的属性。批量评分时批次本身就是
+    一个合理的样本，但单项目重算（如改完融资后触发 rescore）只会得到 {sector: 1}
+    → 竞争度 100 分，而同一项目在 20 个项目的批次里只有 40 分——6.0 个加权分
+    完全由"以什么方式触发重算"决定。此函数让重算路径与批量路径口径一致。
+    """
+    try:
+        from app.repository import ProjectRepository
+
+        counts = {str(sector): int(n) for sector, n in ProjectRepository().aggregate_counts("sector").items() if sector}
+        if counts:
+            return counts
+    except Exception as exc:  # pragma: no cover - 冷启动/无库时回落
+        logger.warning("orchestrator.global_sector_counts_unavailable", error=str(exc))
+
+    counts = {}
+    for project in fallback or []:
+        if project.sector:
+            counts[project.sector] = counts.get(project.sector, 0) + 1
+    return counts
 
 
 async def run_orchestrator(

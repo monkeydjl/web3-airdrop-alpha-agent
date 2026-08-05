@@ -10,6 +10,7 @@ Reference:
 
 import json
 import sqlite3
+from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -17,10 +18,22 @@ from typing import Any
 import structlog
 
 from app.agents.base import PipelineState
-from app.db import dict_from_row, get_connection, is_postgres
+from app.db import dict_from_row, get_connection, is_postgres, scalar
 from app.services.project_signals import merge_meta, parse_meta
 
 logger = structlog.get_logger(__name__)
+
+
+def _sub_scores_json(state: PipelineState) -> str | None:
+    """子分快照序列化；无子分时返回 None（交由 UPSERT 的 COALESCE 保留旧值）。
+
+    ScorerAgent 失败时会吞掉异常并留下空 sub_scores（scorer.py 的 run()），
+    若此处写入 "{}"，一次评分失败就会永久抹掉上一次成功评分的子分快照。
+    """
+    sub_scores = getattr(state, "sub_scores", None)
+    if not sub_scores:
+        return None
+    return json.dumps(sub_scores, ensure_ascii=False)
 
 
 class ProjectRepository:
@@ -65,8 +78,15 @@ class ProjectRepository:
             tokenomics_json = json.dumps(state.tokenomics.model_dump()) if state.tokenomics else None
             reason_json = json.dumps(state.reason) if state.reason else None
 
-            # Preserve + merge extended signals into meta
-            existing = conn.execute("SELECT meta FROM projects WHERE id = ?", (project.id,)).fetchone()
+            # Preserve + merge extended signals into meta.
+            # 先开写事务/行锁再读旧 meta，关闭并发保存时的 read-modify-write 丢更新窗口。
+            with suppress(Exception):  # 已有事务打开时尽力而为
+                if hasattr(conn, "begin_serialized_write"):
+                    conn.begin_serialized_write()
+            select_meta_sql = "SELECT meta FROM projects WHERE id = ?"
+            if getattr(conn, "kind", None) == "postgres":
+                select_meta_sql += " FOR UPDATE"
+            existing = conn.execute(select_meta_sql, (project.id,)).fetchone()
             existing_meta = None
             if existing is not None:
                 existing_meta = dict_from_row(existing).get("meta")
@@ -84,8 +104,9 @@ class ProjectRepository:
                     score, label, confidence, reason,
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
-                    discovery_source, discovered_at, auto_discovered, signal_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    discovery_source, discovered_at, auto_discovered, signal_count,
+                    weight_version, sub_scores
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -106,9 +127,50 @@ class ProjectRepository:
                     discovery_source = EXCLUDED.discovery_source,
                     discovered_at = EXCLUDED.discovered_at,
                     auto_discovered = EXCLUDED.auto_discovered,
-                    signal_count = EXCLUDED.signal_count
+                    signal_count = EXCLUDED.signal_count,
+                    weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
                 RETURNING *
                 """
+            elif sqlite3.sqlite_version_info >= (3, 24, 0):
+                # SQLite UPSERT（3.24+）：与 Postgres 分支保持同一语义。
+                # 不能用 INSERT OR REPLACE：它是 DELETE+INSERT，会把未列出的列
+                # （recommendation/raw_signals/raw_signals_hash/created_at）清空。
+                sql = """
+                INSERT INTO projects (
+                    id, name, url, sector, stage,
+                    score, label, confidence, reason,
+                    narrative_json, team_json, risk_json, tokenomics_json,
+                    source, meta, fetched_at, updated_at,
+                    discovery_source, discovered_at, auto_discovered, signal_count,
+                    weight_version, sub_scores
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    url = EXCLUDED.url,
+                    sector = EXCLUDED.sector,
+                    stage = EXCLUDED.stage,
+                    score = EXCLUDED.score,
+                    label = EXCLUDED.label,
+                    confidence = EXCLUDED.confidence,
+                    reason = EXCLUDED.reason,
+                    narrative_json = EXCLUDED.narrative_json,
+                    team_json = EXCLUDED.team_json,
+                    risk_json = EXCLUDED.risk_json,
+                    tokenomics_json = EXCLUDED.tokenomics_json,
+                    source = EXCLUDED.source,
+                    meta = EXCLUDED.meta,
+                    fetched_at = EXCLUDED.fetched_at,
+                    updated_at = EXCLUDED.updated_at,
+                    discovery_source = EXCLUDED.discovery_source,
+                    discovered_at = EXCLUDED.discovered_at,
+                    auto_discovered = EXCLUDED.auto_discovered,
+                    signal_count = EXCLUDED.signal_count,
+                    weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                """
+                if sqlite_supports_returning:
+                    sql += " RETURNING *"
             else:
                 sql = """
                 INSERT OR REPLACE INTO projects (
@@ -116,8 +178,9 @@ class ProjectRepository:
                     score, label, confidence, reason,
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
-                    discovery_source, discovered_at, auto_discovered, signal_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    discovery_source, discovered_at, auto_discovered, signal_count,
+                    weight_version, sub_scores
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -145,6 +208,12 @@ class ProjectRepository:
                     project.discovered_at or project.created_at,
                     1 if project.auto_discovered else 0,
                     source_count,
+                    # 生效权重版本 + 子分快照：离线重加权与版本归属所必需
+                    # （WEIGHT_CALIBRATION §1.2 / §4.3）。Scorer 失败时二者为空，
+                    # 此时传 NULL 让 UPSERT 的 COALESCE 保留上一次的好值，
+                    # 而不是用空壳覆盖掉可用的历史快照。
+                    getattr(state, "weight_version", None) or None,
+                    _sub_scores_json(state),
                 ),
             )
             if postgres_upsert or sqlite_supports_returning:
@@ -171,12 +240,30 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
-    def update_meta_signals(self, project_id: str, signals: dict[str, Any]) -> dict[str, Any] | None:
-        """Merge keys into projects.meta.signals and return updated row."""
+    def update_meta_signals(
+        self,
+        project_id: str,
+        signals: dict[str, Any],
+        meta_updates: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Merge keys into projects.meta.signals and return updated row.
+
+        meta_updates（可选）在**同一事务**内合并进 meta 顶层（如 funding_note）。
+        此前调用方要写顶层键须另开一条连接、重新整体覆盖 meta，与这里的 signals
+        写非同一事务：第二次写用读时刻的 meta 快照覆盖，并发下会丢掉中间写入，
+        且第二次失败时 signals 已提交、顶层键丢失。合并到这里消除该窗口。
+        """
         conn = self._get_conn()
         try:
-            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            with suppress(Exception):
+                if hasattr(conn, "begin_serialized_write"):
+                    conn.begin_serialized_write()
+            select_sql = "SELECT * FROM projects WHERE id = ?"
+            if getattr(conn, "kind", None) == "postgres":
+                select_sql += " FOR UPDATE"
+            row = conn.execute(select_sql, (project_id,)).fetchone()
             if not row:
+                conn.rollback()
                 return None
             d = dict_from_row(row)
             meta = parse_meta(d.get("meta"))
@@ -184,6 +271,8 @@ class ProjectRepository:
             merged = {**prev, **signals}
             # drop Nones that would wipe intentionally? keep explicit null clear
             meta["signals"] = merged
+            if meta_updates:
+                meta.update(meta_updates)
             meta_json = json.dumps(meta, ensure_ascii=False)
             conn.execute(
                 "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
@@ -207,18 +296,63 @@ class ProjectRepository:
         return len(self.save_batch_with_rows(states))
 
     def save_batch_with_rows(self, states: list[PipelineState]) -> list[dict[str, Any]]:
-        """Save states and return one detached row snapshot per successful save."""
+        """Save states and return one detached row snapshot per successful save.
+
+        整批复用一条连接：此前每个 state 都新建并关闭一次连接（含 WAL pragma
+        与 SQLite 文件打开），500 个项目就是 500 次建连开销。逐条提交的语义保持
+        不变，单条失败仍只跳过该条。
+        """
         persisted_project_rows: list[dict[str, Any]] = []
-        for state in states:
-            try:
-                persisted_project_rows.append(self.save(state))
-            except Exception as e:
-                logger.error(
-                    "repository.project.save_failed",
-                    project_id=state.project.id,
-                    error=str(e),
-                )
+        owns_conn = self._conn is None
+        conn = self._conn if self._conn is not None else get_connection()
+        # 绑定到同一连接的作用域仓库：其 _should_close() 为 False，save() 不会关闭它
+        scoped = ProjectRepository(conn) if owns_conn else self
+        try:
+            for state in states:
+                try:
+                    persisted_project_rows.append(scoped.save(state))
+                except Exception as e:
+                    logger.error(
+                        "repository.project.save_failed",
+                        project_id=state.project.id,
+                        error=str(e),
+                    )
+        finally:
+            if owns_conn:
+                conn.close()
         return persisted_project_rows
+
+    def aggregate_counts(self, column: str) -> dict[str, int]:
+        """在数据库侧按列做分组计数（label / sector）。
+
+        避免为了统计把全部行搬进 Python。列名走白名单，杜绝注入。
+        """
+        allowed = {"label", "sector", "stage"}
+        if column not in allowed:
+            raise ValueError(f"unsupported aggregate column: {column}")
+        conn = self._get_conn()
+        try:
+            # 列名来自上方闭合白名单，取值无用户输入
+            sql = f"SELECT {column} AS bucket, COUNT(*) AS n FROM projects GROUP BY {column}"
+            rows = conn.execute(sql).fetchall()
+            return {dict_from_row(r)["bucket"]: int(dict_from_row(r)["n"]) for r in rows}
+        finally:
+            if self._should_close():
+                conn.close()
+
+    def list_insight_rows(self) -> list[dict[str, Any]]:
+        """只取洞察聚合真正需要的窄投影。
+
+        原实现用 `SELECT *` 拉最多 1 万行，连 raw_signals / meta / risk_json /
+        tokenomics_json 等大 JSON 一起搬运，仅为读取其中两个字段。
+        """
+        conn = self._get_conn()
+        try:
+            rows = conn.execute("SELECT id, name, sector, label, narrative_json, team_json FROM projects").fetchall()
+            return [dict_from_row(r) for r in rows]
+        finally:
+            if self._should_close():
+                conn.close()
 
     def get_by_id(self, project_id: str) -> dict[str, Any] | None:
         """根据 ID 查询项目。
@@ -288,10 +422,10 @@ class ProjectRepository:
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-            # 查询总数
+            # 查询总数（scalar 兼容 sqlite Row 与 Postgres dict_row）
             count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
             cursor = conn.execute(count_query, params)
-            total = cursor.fetchone()[0]
+            total = int(scalar(cursor.fetchone()) or 0)
 
             # 构建排序
             sort_column = {

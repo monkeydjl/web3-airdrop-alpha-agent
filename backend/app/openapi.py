@@ -138,7 +138,7 @@ PROJECTS_LIST_RESPONSE_EXAMPLE = {
         "total": 2,
         "page": 1,
         "page_size": 20,
-        "filters": {"label": "FARM", "sector": None, "stage": None, "min_score": 70},
+        "filters": {"label": "FARM", "sector": None, "stage": None, "min_score": 65},
         "sort": {"by": "score", "order": "desc"},
     },
 }

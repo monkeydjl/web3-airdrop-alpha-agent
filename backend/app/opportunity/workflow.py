@@ -745,7 +745,12 @@ def _parse_created_at(value: Any) -> datetime:
         return _as_utc(value)
     if isinstance(value, str) and value:
         text = value.replace("Z", "+00:00")
-        return _as_utc(datetime.fromisoformat(text))
+        try:
+            return _as_utc(datetime.fromisoformat(text))
+        except ValueError:
+            # 历史/导入数据可能存在非 ISO 的 created_at；回落到哨兵值而非
+            # 让整个 workflow 投影 500，与缺失值走同一兜底路径。
+            return datetime.min.replace(tzinfo=UTC)
     return datetime.min.replace(tzinfo=UTC)
 
 

@@ -277,6 +277,10 @@ class OpportunityInputs(BaseModel):
     opportunity_timing: Literal["open", "late", "closed", "unknown"] = "unknown"
     profile_fit: Literal["fit", "single_wallet_only", "mismatch", "unknown"] = "unknown"
     weekly_time_confirmed_minimum: bool = False
+    # hard_cost_usd 可由任意等级证据填充（resolve_factor 不设来源等级下限），
+    # 因此"成本已确知"必须单独标记：只有 observed/derived 且来源等级 >= B 才算数。
+    # 缺了这个标记，一条 U 档"某博客随口一提"的成本也能让项目被判 30 天 IGNORE。
+    hard_cost_confirmed_minimum: bool = False
     project_quality: float | None = Field(None, ge=0, le=100)
     project_failure_risk: RiskLevel | None = None
     capital_security_risk: RiskLevel | None = None

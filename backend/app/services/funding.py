@@ -121,9 +121,14 @@ def _parse_date(value: Any) -> datetime | None:
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # fromisoformat 对无偏移字符串返回 naive datetime，统一补 UTC，
+    # 否则下游 datetime.now(UTC) - dt 会抛 TypeError。
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 def classify_investor_tier(investors: list[str]) -> str:

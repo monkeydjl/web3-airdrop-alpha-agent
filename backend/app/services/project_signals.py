@@ -67,20 +67,40 @@ def signals_from_project(project: RawProject) -> dict[str, Any]:
     return out
 
 
+def _is_missing(value: Any) -> bool:
+    """判断一个信号值是否为"缺失"（而非"观测到的假/零"）。
+
+    关键：Python 中 `False == 0` 且 `True == 1`，原实现用 `v == 0` 判空会把
+    布尔 False 和数值 0 都当成缺失，形成单向棘轮——信号只能升不能降：
+      - has_task_portal 从 True 变 False（活动已结束）永远写不回去
+      - github_recent_push_days = 0（今天推送，最强新鲜度信号）被当作缺失丢弃，
+        保留陈旧的 200，执行力子分因此从 75 掉到 47
+
+    这里只把真正的"没有值"视为缺失：None / 空串 / 空列表 / unknown 占位。
+    布尔 False 与数值 0 都是有效观测，必须写入。
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return False  # False 是观测结果，不是缺失
+    if isinstance(value, (int, float)):
+        return False  # 0 是观测结果（0 star / 今天推送 / 0 融资）
+    if isinstance(value, str):
+        return value.strip().lower() in ("", "unknown", "none")
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value) == 0
+    return False
+
+
 def merge_meta(existing: Any, project: RawProject) -> str:
     """Merge project signals into meta JSON string for DB storage."""
     meta = parse_meta(existing)
     prev = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
     new_sig = signals_from_project(project)
-    # Prefer non-empty / more informative values from project
+    # 新值缺失且旧值有效时保留旧值；否则一律以新观测为准
     merged = dict(prev)
     for k, v in new_sig.items():
-        if (
-            (v is None or v == "" or v == [] or v == 0 or v == "unknown")
-            and k in prev
-            and prev[k] not in (None, "", [], 0, "unknown", "none")
-        ):
-            # keep previous if new is empty default
+        if _is_missing(v) and k in prev and not _is_missing(prev[k]):
             continue
         merged[k] = v
     meta["signals"] = merged

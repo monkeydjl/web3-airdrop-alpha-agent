@@ -333,8 +333,11 @@ class TestRiskSubscore:
             context=context,
             risk=RiskResult(
                 token_risk=0.30,
-                risk_flags=["kyc required"],
+                risk_flags=[],
                 unlock_pressure="low",
+                # sybil 难度改为读取 Risk Agent 的结论字段（此前靠匹配 risk_flags
+                # 字符串，而 generate_risk_flags 从不产出 "kyc required"，恒为 medium）
+                sybil_difficulty="high",
             ),
         )
 
@@ -371,7 +374,8 @@ class TestRiskSubscore:
             context=context,
             risk=RiskResult(
                 token_risk=0.20,
-                risk_flags=["testnet only"],
+                risk_flags=[],
+                sybil_difficulty="low",
                 unlock_pressure="low",
             ),
         )

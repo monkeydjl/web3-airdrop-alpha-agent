@@ -153,9 +153,13 @@ class TestGoldenCases:
         # Validate confidence (v1.3 evidence mix — not pure agent ratio)
         assert state.confidence is not None, f"{case.name}: Confidence is None"
         assert 0.0 <= state.confidence <= 1.0
-        # Soft floor: full agent pipeline should not collapse confidence entirely
-        if case.expected_confidence >= 0.9:
-            assert state.confidence >= 0.45, f"{case.name}: Confidence {state.confidence} too low for full-agent case"
+        # confidence 是"证据完整度"（DATA_SCORING_DICT §97），低证据项目本就该低置信度。
+        # 此前这里是一条 >= 0.45 的硬地板，与代码里那条 0.55 的地板同源，二者共同
+        # 让规格中的低置信度降级永不触发；而 expected_confidence 字段从未被断言过。
+        # 现改为对声明值做带容差的正向断言，把空字段变成真正的回归守卫。
+        assert abs(state.confidence - case.expected_confidence) <= 0.10, (
+            f"{case.name}: Confidence {state.confidence:.3f} != expected {case.expected_confidence:.3f} (±0.10)"
+        )
 
         # Validate reasons (at least 2 of expected keywords should match)
         matched_reasons = sum(
@@ -382,4 +386,10 @@ class TestGoldenCaseCategories:
             state = await orchestrator._run_single_project(case.project, context, sector_counts)
 
             assert state.label == "IGNORE", f"{case.name}: Expected IGNORE label"
-            assert state.score < 50, f"{case.name}: IGNORE score should be < 50"
+            # IGNORE 有两条来源：分数低于阈值，或分数够但证据置信度过低被降级
+            # （DATA_SCORING_DICT 的低置信度降级）。此前降级因 confidence 恒 >= 0.55
+            # 而永不触发，于是"IGNORE ⟹ 分数<50"看起来总成立。
+            assert state.score < 50 or state.confidence < 0.5, (
+                f"{case.name}: IGNORE 需来自低分(<50)或低置信度降级(<0.5)，"
+                f"实际 score={state.score} confidence={state.confidence:.3f}"
+            )

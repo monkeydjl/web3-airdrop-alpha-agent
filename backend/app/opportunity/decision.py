@@ -38,11 +38,29 @@ BLOCK_REASON_ACTIONS = {
     "RULE_BLOCK": "Do not interact until credible remediation evidence is verified.",
 }
 
+# critical_unknowns 有两个生产者，各用一套命名：
+#   - build_inputs 用 CRITICAL_KEYS（无后缀，如 conditional_reward）
+#   - service.evaluate_row 用模型字段名（带 _usd/_hours 后缀）
+# 此前映射表只收录了前者，导致后者注入的 8 个名字全部落到通用码
+# WAIT_MORE_EVIDENCE；且 conditional_reward 与 conditional_reward_usd 同时出现
+# 时会为同一件缺失事实产出两条自相矛盾的理由。此处两套命名都登记。
 _UNKNOWN_REASON_CODES = {
+    # build_inputs 命名
     "participation_open": "WAIT_TASK_OPEN",
     "multiwallet_policy": "WAIT_RULES",
     "distribution_catalyst_3_6m": "WAIT_CATALYST",
     "conditional_reward": "REWARD_TOO_UNCERTAIN",
+    "hard_cost": "WAIT_MORE_EVIDENCE",
+    "weekly_maintenance": "WAIT_MORE_EVIDENCE",
+    # service.evaluate_row 命名（模型字段名）
+    "conditional_reward_usd": "REWARD_TOO_UNCERTAIN",
+    "reward_probability": "REWARD_TOO_UNCERTAIN",
+    "hard_cost_usd": "WAIT_MORE_EVIDENCE",
+    "capital_at_risk_usd": "WAIT_MORE_EVIDENCE",
+    "expected_capital_loss_usd": "WAIT_MORE_EVIDENCE",
+    "liquidity_cost_usd": "WAIT_MORE_EVIDENCE",
+    "total_time_hours": "WAIT_MORE_EVIDENCE",
+    "economics_direct_evidence": "WAIT_MORE_EVIDENCE",
 }
 
 _ACTIONABLE_ACTION = "Run 1-2 wallets, record actual cost and time, then reassess before expanding."
@@ -80,6 +98,15 @@ def decide(
         return _blocked("INTEGRITY_BLOCK", now)
     if inputs.official_multiwallet_policy == "forbidden":
         return _blocked("RULE_BLOCK", now)
+
+    # 已确知为"不符合画像"的硬约束必须先于"证据不足"判定。
+    # 超预算成本会让 _derive_eligibility 返回 None（probability.py:115），进而把
+    # reward_probability 塞进 critical_unknowns，于是在这里被短路成
+    # INSUFFICIENT_EVIDENCE——用户被告知"去补证据"，而真实原因是"太贵了"，
+    # 且 _structural_reason 里的 TOO_EXPENSIVE 在真实链路上永远不可达。
+    determinate_code = _determinate_misfit(inputs, profile)
+    if determinate_code is not None:
+        return _not_fit(determinate_code, now)
 
     if inputs.critical_unknowns:
         codes = _unique_codes(
@@ -281,6 +308,28 @@ def _structural_reason(
     if inputs.hard_cost_usd.low > profile.hard_cost_limit_per_wallet_usd:
         return "TOO_EXPENSIVE"
     if inputs.weekly_time_confirmed_minimum and inputs.weekly_maintenance_hours > profile.weekly_time_limit_hours:
+        return "TOO_TIME_INTENSIVE"
+    return None
+
+
+def _determinate_misfit(inputs: OpportunityInputs, profile: OpportunityProfile) -> str | None:
+    """已确知（而非未知）就不符合画像的硬约束。
+
+    与 `_structural_reason` 的区别：这里只看那些**证据已经充分、结论已经确定**
+    的维度，因此可以在"证据不足"短路之前判定，不依赖 economics/probability。
+    """
+    cost = inputs.hard_cost_usd
+    # `hard_cost_confirmed_minimum` 是必须的：`resolve_factor` 不设来源等级下限，
+    # 一条 U 档（权重 0）的 "assumed" 成本记录也能填满 hard_cost_usd。若不校验，
+    # 一句道听途说就足以让项目被判 30 天 IGNORE——那正是"证据不足"该管的情形。
+    if cost is not None and inputs.hard_cost_confirmed_minimum and cost.low > profile.hard_cost_limit_per_wallet_usd:
+        # 最乐观的成本都超出画像上限——这不是证据不足，是确定不合适
+        return "TOO_EXPENSIVE"
+    if (
+        inputs.weekly_time_confirmed_minimum
+        and inputs.weekly_maintenance_hours is not None
+        and inputs.weekly_maintenance_hours > profile.weekly_time_limit_hours
+    ):
         return "TOO_TIME_INTENSIVE"
     return None
 

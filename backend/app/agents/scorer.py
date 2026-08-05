@@ -12,24 +12,38 @@ import time
 
 import structlog
 
+from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState
+from app.config import settings
 from app.models import ScoreResult
 
 logger = structlog.get_logger(__name__)
 
 
-# ── Scoring Weights (v1.2) ────────────────────────
-# 在 v1 六维上增加：execution（路线图/GitHub 推进）、transparency（文档/社媒）
-WEIGHTS = {
-    "airdrop_signal": 0.18,
-    "narrative_timing": 0.15,
-    "team_reputation": 0.12,
-    "risk": 0.12,
-    "tokenomics": 0.10,
-    "competition": 0.10,
-    "execution": 0.13,  # GitHub 活跃、路线图、TVL 推进
-    "transparency": 0.10,  # 白皮书/文档/Twitter/Discord
-}
+# ── Scoring Weights ───────────────────────────────
+# 在 v1 六维上增加：execution（路线图/GitHub 推进）、transparency（文档/社媒）。
+#
+# 权重的唯一真源是 `settings.weight_*`（WEIGHT_CALIBRATION.md §2 明确要求配置
+# 位于 config.py）。此前这里硬编码了第二份副本，settings 那份被零处代码读取，
+# 于是启动时的 Σ=1.0 校验校验的是一组不起作用的数，改 .env 也静默无效。
+def _load_weights() -> dict[str, float]:
+    return {
+        "airdrop_signal": settings.weight_airdrop_signal,
+        "narrative_timing": settings.weight_narrative_timing,
+        "team_reputation": settings.weight_team_reputation,
+        "risk": settings.weight_risk,
+        "tokenomics": settings.weight_tokenomics,
+        "competition": settings.weight_competition,
+        "execution": settings.weight_execution,
+        "transparency": settings.weight_transparency,
+    }
+
+
+WEIGHTS = _load_weights()
+
+# 生效权重版本，写入 ScoreResult / projects.weight_version（WEIGHT_CALIBRATION §1.2）。
+# 没有它就无法区分历史分数由哪版权重产出，§5 的回滚方案也无从执行。
+WEIGHT_VERSION = settings.weight_version
 
 # ── Label Thresholds (v1.1: FARM 70→65 for auto-scan early-signal mix) ──
 LABEL_THRESHOLDS = [
@@ -106,6 +120,7 @@ class ScorerAgent(BaseAgent):
                 confidence=confidence,
                 reason=reasons,
                 sub_scores=subscores,
+                weight_version=WEIGHT_VERSION,
             )
 
             # Update state
@@ -113,6 +128,9 @@ class ScorerAgent(BaseAgent):
             state.label = result.label
             state.confidence = result.confidence
             state.reason = result.reason
+            # 供 Repository 持久化到 projects.weight_version / raw_signals
+            state.sub_scores = result.sub_scores
+            state.weight_version = result.weight_version
 
             logger.info(
                 "scorer.completed",
@@ -153,51 +171,10 @@ class ScorerAgent(BaseAgent):
     def _calc_airdrop_signal(self, state: PipelineState) -> float:
         """Calculate airdrop signal subscore (0-100).
 
-        v1.3: base ladder + explicit wording + **verifiable task portal** +
-        multi-source evidence bonus + funding.
+        实现收敛到 `app.agents.airdrop_signal`，与 Risk Agent 共用同一份阶梯，
+        避免两份复制实现继续漂移。
         """
-        project = state.project
-        has_points = bool(project.has_points_program)
-        no_token = bool(project.no_token_yet)
-        has_testnet = bool(project.has_testnet) or ((project.stage or "").lower() == "testnet")
-        explicit = bool(getattr(project, "explicit_airdrop_mention", False))
-        funding = bool(project.recent_funding)
-        fq = float(getattr(project, "funding_quality", 0) or 0)
-        f_tier = str(getattr(project, "funding_tier", "unknown") or "unknown").lower()
-        task_portal = bool(getattr(project, "has_task_portal", False))
-        sources = int(getattr(project, "source_count", 1) or 1)
-
-        if has_points and no_token:
-            base = 100.0
-        elif no_token and has_testnet:
-            base = 85.0
-        elif has_points or no_token:
-            base = 60.0
-        elif has_testnet:
-            base = 40.0
-        else:
-            base = 20.0
-
-        bonus = 0.0
-        if explicit:
-            bonus += 10.0
-        if task_portal:
-            # Galxe/Layer3/quest portal is stronger than wording alone
-            bonus += 14.0
-        # Funding quality (RootData etc.): better capital = more likely real campaign later
-        if fq >= 0.55 and (has_points or no_token or has_testnet or task_portal):
-            bonus += 8.0 + (5.0 if f_tier == "tier1" else 0.0)
-        elif funding and (has_points or no_token or has_testnet or task_portal):
-            bonus += 5.0
-        if sources >= 3 and (has_points or no_token or task_portal or explicit):
-            bonus += 6.0
-        elif sources >= 2 and (has_points or no_token or task_portal):
-            bonus += 3.0
-
-        # listed tokens without airdrop story stay capped
-        if not no_token and not has_points and not explicit and not task_portal:
-            return min(35.0, base + bonus)
-        return min(100.0, base + bonus)
+        return airdrop_signal_subscore(state.project)
 
     def _calc_execution(self, state: PipelineState) -> float:
         """Repo health / roadmap **delivery** / product running (0-100).
@@ -336,13 +313,15 @@ class ScorerAgent(BaseAgent):
             int(getattr(p, "source_count", 1) or 1) >= 2,
         ]
         signal_cov = sum(1 for c in checks if c) / len(checks)
-        # weight toward signals; agent still matters
-        conf = 0.40 * agent_cov + 0.60 * signal_cov
-        # Full agent pipeline still gets a usable floor (label degradation is for sparse runs)
-        if agent_cov >= 1.0:
-            conf = max(conf, 0.55)
-        elif agent_cov >= 0.75:
-            conf = max(conf, 0.45)
+        # DATA_SCORING_DICT §97（v1.3）：confidence = 0.35×Agent覆盖 + 0.65×可验证信号。
+        # 此前系数为 0.40/0.60，且在 agent_cov>=1.0 时加了 0.55 的下限。
+        # 影响面要说准：旧公式在 Agent 缺失时仍可能 <0.5（缺 1–3 个 Agent 的下限
+        # 依次为 0.45 / 0.20 / 0.10），但那是异常路径；**四个 Agent 全部成功的正常
+        # 路径**下 confidence 恒 >= 0.55（穷举 256 种信号配置最低值恰为 0.5500），
+        # 于是"证据再稀疏也不降级"——降级保护只在 Agent 崩溃时生效，而它本意是
+        # 防"信号不足"，两者管的根本不是同一件事。
+        # 现按规格取系数并移除该下限：零可验证信号时 confidence = 0.35，降级生效。
+        conf = 0.35 * agent_cov + 0.65 * signal_cov
         return self._clamp(conf, 0.0, 1.0)
 
     def _agent_coverage(self, state: PipelineState) -> float:
@@ -418,12 +397,8 @@ class ScorerAgent(BaseAgent):
         if state.tokenomics is None:
             return 50.0
 
-        # Calculate tokenomics.risk from components
-        tok_risk = (
-            state.tokenomics.vc_share * 0.4 + state.tokenomics.team_share * 0.3 + state.tokenomics.unlock_penalty * 0.3
-        )
-
-        subscore = (1 - tok_risk) * 100
+        # 使用模型上的单一权威定义，避免在多处内联重算而漂移
+        subscore = (1 - state.tokenomics.risk) * 100
         return self._clamp(subscore, 0, 100)
 
     def _calc_competition(self, state: PipelineState) -> float:
@@ -574,14 +549,19 @@ class ScorerAgent(BaseAgent):
                 candidates.append(("high token unlock pressure", abs((1 - tok_risk) * 100 - 50), False))
 
         # Competition
+        # 只有在确实有该赛道的统计数据时才给竞争度理由。原实现把"赛道不在
+        # sector_counts 里"（即无数据，_calc_competition 返回中性 50）当作
+        # count=0 从而宣称"低竞争"——子分说"我们不知道"，理由却说"竞争很低"。
         comp_score = subscores["competition"]
         sector = state.project.sector
-        count = self.sector_counts.get(sector, 0) if sector else 0
+        has_competition_data = bool(sector) and sector in self.sector_counts
 
-        if count <= 3:
-            candidates.append(("low competition", abs(comp_score - 50), False))
-        elif count > 15:
-            candidates.append(("high competition", abs(comp_score - 50), False))
+        if has_competition_data:
+            count = self.sector_counts[sector]
+            if count <= 3:
+                candidates.append(("low competition", abs(comp_score - 50), False))
+            elif count > 15:
+                candidates.append(("high competition", abs(comp_score - 50), False))
 
         # Execution (v1.2)
         exec_score = subscores.get("execution", 50)
@@ -691,39 +671,57 @@ class ScorerAgent(BaseAgent):
                     final_reasons.append(reason)
                     break
 
-        # Ensure minimum 2 reasons
-        if len(final_reasons) < 2 and "moderate airdrop signal" not in final_reasons and optional:
-            for reason, _ in optional:
-                if reason not in final_reasons:
-                    final_reasons.append(reason)
-                    if len(final_reasons) >= 2:
-                        break
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_reasons = []
+        # Remove duplicates while preserving order (先去重，避免把重复项当作两条)
+        seen: set[str] = set()
+        unique_reasons: list[str] = []
         for r in final_reasons:
             if r not in seen:
                 seen.add(r)
                 unique_reasons.append(r)
 
+        # Ensure minimum 2 reasons (ScoreResult.reason 要求 min_length=2)。
+        # 先补充未选中的 optional，再用与标签匹配的确定性兜底，保证任何输入都不会
+        # 因 <2 条 reason 触发 ValidationError 而把整条评分吞成 None。
+        if len(unique_reasons) < 2:
+            for reason, _ in optional:
+                if reason not in seen:
+                    seen.add(reason)
+                    unique_reasons.append(reason)
+                    if len(unique_reasons) >= 2:
+                        break
+        if len(unique_reasons) < 2:
+            fallback_pool = (
+                ["airdrop signal detected", "early-stage opportunity"]
+                if label == "FARM"
+                else ["mixed signals, monitor closely", "insufficient standout signals"]
+                if label == "WATCH"
+                else ["weak overall signals", "limited airdrop evidence"]
+            )
+            for reason in fallback_pool:
+                if reason not in seen:
+                    seen.add(reason)
+                    unique_reasons.append(reason)
+                    if len(unique_reasons) >= 2:
+                        break
+
         return unique_reasons[:6]  # Cap at 6 to avoid excessive output
 
     def _infer_sybil_difficulty(self, state: PipelineState) -> str:
-        """Infer sybil difficulty from project friction + risk flags."""
+        """Infer sybil difficulty from project friction, else the Risk Agent's own assessment.
+
+        原实现在 risk_flags 里匹配 "kyc required" / "easy sybil" 等字符串，而
+        generate_risk_flags 从不产出这些词（交集为空），使该维度恒为 medium。
+        Risk Agent 本就计算了难度，现在直接读它的结论。
+        """
         friction = str(getattr(state.project, "sybil_friction", "unknown") or "unknown").lower()
         if friction in ("high", "medium", "low"):
             return friction
 
-        if state.risk is None or not state.risk.risk_flags:
+        if state.risk is None:
             return "medium"
 
-        flags = state.risk.risk_flags
-        if "kyc required" in flags or "soul-bound" in flags:
-            return "high"
-        if "testnet only" in flags or "easy sybil" in flags:
-            return "low"
-        return "medium"
+        assessed = str(getattr(state.risk, "sybil_difficulty", "medium") or "medium").lower()
+        return assessed if assessed in ("high", "medium", "low") else "medium"
 
     @staticmethod
     def _clamp(value: float, min_val: float, max_val: float) -> float:

@@ -96,16 +96,18 @@ def infer_team_flags(project: "RawProject") -> list[str]:
     """
     flags = []
 
-    # Funding quality (RootData / structured). Legacy: bare recent_funding
-    # without quality still maps to tier-1 (historical heuristic / tests).
+    # Funding quality (RootData / structured).
+    # DATA_SCORING_DICT §196：`tier-1 vc backed` / `reputable vc backed` 由
+    # funding_tier / funding_quality 这类**结构化证据**决定。
+    # 此前有一条 `recent_funding and fq <= 0 -> tier-1` 的遗留分支，使仅凭描述
+    # 文本推断出的融资信号（零结构化证据）拿到 +0.25，反而高于真实披露的 tier-3
+    # 融资（+0.08），证据序颠倒；该分支已移除。
     fq = float(getattr(project, "funding_quality", 0) or 0)
     tier = str(getattr(project, "funding_tier", "unknown") or "unknown").lower()
     if tier == "tier1" or fq >= 0.65:
         flags.append("tier-1 vc backed")
     elif tier == "tier2" or fq >= 0.45:
         flags.append("reputable vc backed")
-    elif project.recent_funding and fq <= 0:
-        flags.append("tier-1 vc backed")
     elif project.recent_funding or fq >= 0.25:
         flags.append("recent funding")
 

@@ -13,6 +13,7 @@ import time
 
 import structlog
 
+from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.models import RiskResult
 
@@ -33,47 +34,11 @@ DEFAULT_STAGE_FACTOR = 0.40
 def calculate_airdrop_signal_subscore(project: "RawProject") -> float:
     """Calculate airdrop signal subscore.
 
-    Args:
-        project: Raw project data
-
-    Returns:
-        Airdrop signal subscore (0-100)
-
-    Logic (DATA_SCORING_DICT §5.1 v1.2): ladder + explicit airdrop / funding bonus.
+    保留此函数名以兼容既有调用方，实现委托给 `app.agents.airdrop_signal` 的
+    唯一实现。此前这里是 Scorer 那份阶梯的复制品，且漏掉了 v1.4 的
+    funding_quality 分支，导致 token_risk 基于一份过时的空投子分计算。
     """
-    has_points = bool(project.has_points_program)
-    no_token = bool(project.no_token_yet)
-    has_testnet = bool(project.has_testnet) or ((project.stage or "").lower() == "testnet")
-    explicit = bool(getattr(project, "explicit_airdrop_mention", False))
-    funding = bool(project.recent_funding)
-    task_portal = bool(getattr(project, "has_task_portal", False))
-    sources = int(getattr(project, "source_count", 1) or 1)
-
-    if has_points and no_token:
-        base = 100.0
-    elif no_token and has_testnet:
-        base = 85.0
-    elif has_points or no_token:
-        base = 60.0
-    elif has_testnet:
-        base = 40.0
-    else:
-        base = 20.0
-
-    bonus = 0.0
-    if explicit:
-        bonus += 10.0
-    if task_portal:
-        bonus += 14.0
-    if funding and (has_points or no_token or has_testnet or task_portal):
-        bonus += 5.0
-    if sources >= 3 and (has_points or no_token or task_portal or explicit):
-        bonus += 6.0
-    elif sources >= 2 and (has_points or no_token or task_portal):
-        bonus += 3.0
-    if not no_token and not has_points and not explicit and not task_portal:
-        return min(35.0, base + bonus)
-    return min(100.0, base + bonus)
+    return airdrop_signal_subscore(project)
 
 
 def calculate_token_risk(project: "RawProject", tokenomics_risk: float | None = None) -> float:
@@ -250,7 +215,9 @@ class RiskAgent(BaseAgent):
             tokenomics_missing = False
 
             if state.tokenomics:
-                tokenomics_risk = state.tokenomics.unlock_penalty
+                # DATA_SCORING_DICT §5.7.2: token_risk = 0.6 × tokenomics.risk，
+                # 其中 tokenomics.risk 是 vc/team/unlock 三项加权，而非 unlock 单项。
+                tokenomics_risk = state.tokenomics.risk
             else:
                 tokenomics_missing = True
 
@@ -269,11 +236,12 @@ class RiskAgent(BaseAgent):
             # Generate risk flags
             risk_flags = generate_risk_flags(state.project, token_risk, sybil_difficulty, tokenomics_missing)
 
-            # Create result
+            # Create result（sybil_difficulty 此前只进日志，Scorer 拿不到只能猜字符串）
             result = RiskResult(
                 token_risk=token_risk,
                 risk_flags=risk_flags,
                 unlock_pressure=unlock_pressure,
+                sybil_difficulty=sybil_difficulty,
             )
 
             # Update state
