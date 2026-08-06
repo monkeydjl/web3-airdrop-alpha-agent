@@ -205,6 +205,9 @@ class _PostgresCursor:
     def fetchone(self) -> dict[str, int]:
         return {"exists": 1}
 
+    def close(self) -> None:
+        pass
+
 
 class _PostgresRawConnection:
     def __init__(self, events: list[tuple[Any, ...]]) -> None:
@@ -390,7 +393,9 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         main_module.settings.app_env = "development"
         main_module.settings.collection_auto_run_enabled = False
         with contextlib.ExitStack() as stack:
-            stack.enter_context(patch.object(main_module, "CollectorRegistry", _Reg))
+            stack.enter_context(
+                patch.object(main_module, "get_default_registry", lambda: _Reg())
+            )
             stack.enter_context(
                 patch.object(main_module, "CollectionScheduler", _CollSched)
             )
@@ -401,10 +406,6 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
                 patch.object(main_module, "CollectionRepository", _PersistRepo)
             )
             stack.enter_context(patch.object(main_module, "init_db", lambda: None))
-            for name in _COLLECTOR_CTOR_NAMES:
-                stack.enter_context(
-                    patch.object(main_module, name, lambda: object())
-                )
             stack.enter_context(
                 patch(
                     "app.opportunity.economic_repository.EconomicSnapshotRepository",
