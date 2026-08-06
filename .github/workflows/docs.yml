@@ -8,10 +8,10 @@ name: Docs Link Check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, main]
     paths: ["docs/**", "*.md", "agents/**", "skills/**", "knowledge/**", "prompts/**"]
   push:
-    branches: [main]
+    branches: [master, main]
     paths: ["docs/**", "*.md"]
 
 jobs:

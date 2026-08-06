@@ -128,7 +128,7 @@ next-env.d.ts
 # ── Security Scan ─────────────────────────────
 .bandit
 .baseline
-secrets.baseline
+# .secrets.baseline should be committed (detect-secrets baseline)
 
 # ── OS Generated ──────────────────────────────
 # macOS
