@@ -3,7 +3,8 @@
 import { EmptyState, SectionTitle, StatCard, Toast } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { sourceZh } from '@/lib/format';
-import type { CollectionSource } from '@/lib/types';
+import { normalizeCollectionSource } from '@/lib/types';
+import type { CollectionSource, CollectionSourceApi } from '@/lib/types';
 import { useCallback, useEffect, useState } from 'react';
 
 interface QuarantineItem {
@@ -27,6 +28,8 @@ export default function OpsPage() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // 部分接口失败时的提示：整页不该因为一个子接口挂掉就空白，但也不能装作成功
+  const [partialError, setPartialError] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(
     null,
@@ -40,24 +43,35 @@ export default function OpsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    setPartialError([]);
     try {
       const [src, q, ix] = await Promise.all([
-        apiFetch<{ sources: CollectionSource[] }>('/collections/sources'),
-        apiFetch<{ count: number; items: QuarantineItem[] }>('/quarantine?limit=50').catch(() => ({
-          count: 0,
-          items: [] as QuarantineItem[],
-        })),
+        apiFetch<{ sources: CollectionSourceApi[] }>('/collections/sources'),
+        // 不把失败吞成空成功：原先 .catch(() => ({count:0,items:[]})) 会让
+        // 接口挂掉时页面显示"隔离区为空 · 共 0 条"，与真的没有数据无法区分
+        apiFetch<{ count: number; items: QuarantineItem[] }>('/quarantine?limit=50').catch(
+          (err: unknown) => {
+            setPartialError((prev) => [...prev, '隔离区加载失败']);
+            void err;
+            return { count: -1, items: [] as QuarantineItem[] };
+          },
+        ),
         apiFetch<{
           total?: number;
           total_cost_usd?: number;
           total_profit_usd?: number;
           net_usd?: number;
           total_hours?: number;
-        }>('/interactions/summary').catch(() => null),
+        }>('/interactions/summary').catch((err: unknown) => {
+          setPartialError((prev) => [...prev, '成本汇总加载失败']);
+          void err;
+          return null;
+        }),
       ]);
-      setSources(src.sources || []);
+      setSources((src.sources || []).map(normalizeCollectionSource));
       setQuarantine(q.items || []);
-      setQCount(q.count || 0);
+      // 注意不能写 `q.count || 0`：失败哨兵 -1 是**真值**，会原样渲染成"隔离中 −1"
+      setQCount(typeof q.count === 'number' ? q.count : 0);
       setIxSummary(ix);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
@@ -147,10 +161,16 @@ export default function OpsPage() {
         </div>
       ) : null}
 
+      {partialError.length > 0 ? (
+        <div className="card border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+          部分数据加载失败：{partialError.join('、')}（页面其余部分仍为最新）
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="数据源总数" value={sources.length} accent="brand" />
         <StatCard label="已启用" value={enabled} accent="farm" />
-        <StatCard label="隔离中" value={qCount} accent="watch" />
+        <StatCard label="隔离中" value={qCount < 0 ? '—' : qCount} accent="watch" />
         <StatCard label="交互记录" value={ixSummary?.total ?? 0} accent="brand" />
         <StatCard
           label="累计净收益"
@@ -235,7 +255,9 @@ export default function OpsPage() {
           </p>
         </div>
         {quarantine.length === 0 ? (
-          <div className="p-8 text-center text-sm text-ink-faint">隔离区为空 · 共 {qCount} 条</div>
+          <div className="p-8 text-center text-sm text-ink-faint">
+            {qCount < 0 ? '隔离区数据加载失败' : `隔离区为空 · 共 ${qCount} 条`}
+          </div>
         ) : (
           <div className="divide-y divide-line">
             {quarantine.map((q) => (

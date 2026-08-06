@@ -11,7 +11,6 @@ const ThemeCtx = createContext<{ theme: Theme; toggle: () => void }>({
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>('light');
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const stored = (localStorage.getItem('aa-theme') as Theme | null) || null;
@@ -20,7 +19,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     setTheme(preferred);
     document.documentElement.classList.toggle('dark', preferred === 'dark');
-    setReady(true);
   }, []);
 
   const toggle = () => {
@@ -32,10 +30,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  if (!ready) {
-    return <div className="min-h-screen bg-canvas">{children}</div>;
-  }
-
+  // 始终渲染同一 Provider 元素类型：早期用 `!ready` 返回 <div> 会在挂载后
+  // 切换元素类型，导致整棵子树卸载重挂 —— 每次访问重复触发所有 useEffect
+  // （包括付费的 /ai-brief POST）并丢失用户已输入的状态。
   return <ThemeCtx.Provider value={{ theme, toggle }}>{children}</ThemeCtx.Provider>;
 }
 

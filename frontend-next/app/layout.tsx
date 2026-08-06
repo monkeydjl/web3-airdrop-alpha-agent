@@ -8,9 +8,15 @@ export const metadata: Metadata = {
   description: 'Web3 早期项目自动发现、多维评分与空投决策系统',
 };
 
+// 首帧前同步应用主题，消除 dark 模式用户的白屏闪烁（FOUC）。
+const themeInitScript = `(function(){try{var t=localStorage.getItem('aa-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(t==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="min-h-screen">
         <ThemeProvider>
           <Nav />

@@ -4,9 +4,11 @@ import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { LABEL_ORDER, LABEL_ZH } from '@/lib/format';
-import type { InsightsData, Label, Project, ProjectsResponse } from '@/lib/types';
+import { fetchAllProjects } from '@/lib/projects';
+import type { InsightsData, Label, Project } from '@/lib/types';
+import { useAsyncData } from '@/lib/useAsyncData';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
 function normalizeSectors(
   raw: InsightsData['sector_counts'] | undefined,
@@ -29,29 +31,24 @@ function normalizeSectors(
 }
 
 export default function InsightsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [insights, setInsights] = useState<InsightsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const loader = useCallback(
+    async (signal: AbortSignal) => {
+      const [all, i] = await Promise.all([
+        fetchAllProjects(signal),
+        apiFetch<InsightsData>('/insights', { signal }),
+      ]);
+      return {
+        projects: [...all.projects].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
+        insights: i,
+      };
+    },
+    [],
+  );
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError('');
-    Promise.all([
-      apiFetch<ProjectsResponse>('/projects?page_size=500'),
-      apiFetch<InsightsData>('/insights'),
-    ])
-      .then(([p, i]) => {
-        setProjects([...(p.projects || [])].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)));
-        setInsights(i);
-      })
-      .catch((err) => setError(err.message || '加载失败'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // useAsyncData 负责取消旧请求并丢弃过期响应，连点"刷新"不再出现旧数据覆盖新数据
+  const { data, error, loading, reload: load } = useAsyncData(loader, []);
+  const projects: Project[] = data?.projects ?? [];
+  const insights: InsightsData | null = data?.insights ?? null;
 
   const labelCounts = useMemo(() => {
     const counts: Record<Label, number> = { FARM: 0, WATCH: 0, IGNORE: 0 };
@@ -102,8 +99,8 @@ export default function InsightsPage() {
           <h1 className="page-title">洞察</h1>
           <p className="page-sub">标签分布 · 赛道热度 · 风险团队 · 机会榜</p>
         </div>
-        <button type="button" className="btn-secondary" onClick={load}>
-          刷新
+        <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
+          {loading ? '加载中…' : '刷新'}
         </button>
       </div>
 
@@ -229,13 +226,13 @@ export default function InsightsPage() {
                   <div className="mb-1 flex items-center justify-between text-sm">
                     <span className="font-medium text-ink">{n.sector}</span>
                     <span className="text-xs text-ink-muted">
-                      热度 {Number(n.heat_score).toFixed(2)} · {n.project_count} 个项目
+                      热度 {Number(n.avg_heat_score).toFixed(2)} · {n.project_count} 个项目
                     </span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-brand-500 to-farm"
-                      style={{ width: `${Math.min(100, Number(n.heat_score) * 100)}%` }}
+                      style={{ width: `${Math.min(100, Number(n.avg_heat_score) * 100)}%` }}
                     />
                   </div>
                 </div>

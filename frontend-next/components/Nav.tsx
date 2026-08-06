@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { fetchHealth } from '@/lib/api';
 import type { HealthData } from '@/lib/types';
 import { useTheme } from './ThemeProvider';
 
@@ -19,14 +19,19 @@ export function Nav() {
   const [health, setHealth] = useState<HealthData | null>(null);
 
   useEffect(() => {
-    apiFetch<{ sources?: unknown[] }>('/collections/sources')
-      .then(() =>
-        setHealth({
-          ok: true,
-          status: 'healthy',
-        }),
-      )
-      .catch(() => setHealth({ ok: false, status: 'down' }));
+    let cancelled = false;
+    // 探 /health 而不是 /collections/sources：后者是业务接口，探它既不准确
+    // 又会平白占用限流配额。/health 自身返回 ok 字段，直接采信。
+    fetchHealth()
+      .then((data) => {
+        if (!cancelled) setHealth(data as HealthData);
+      })
+      .catch(() => {
+        if (!cancelled) setHealth({ ok: false, status: 'down' });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -75,8 +80,12 @@ export function Nav() {
             }`}
             title="接口状态"
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${health?.ok ? 'bg-farm' : 'bg-ink-faint'}`} />
-            {health?.ok ? '接口在线' : '接口检测中…'}
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                health === null ? 'bg-ink-faint' : health.ok ? 'bg-farm' : 'bg-red-500'
+              }`}
+            />
+            {health === null ? '接口检测中…' : health.ok ? '接口在线' : '接口异常'}
           </div>
 
           <button

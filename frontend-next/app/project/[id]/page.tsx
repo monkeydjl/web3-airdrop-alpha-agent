@@ -13,11 +13,12 @@ import {
   ScoreRing,
   Toast,
 } from '@/components/ui';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, isAbortError } from '@/lib/api';
 import {
   formatPct,
   relativeTime,
   riskLevelZh,
+  safeExternalUrl,
   sourceZh,
   stageZh,
   teamTypeZh,
@@ -26,7 +27,7 @@ import {
 import type { Project } from '@/lib/types';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const SIGNALS = [
   { id: 'useful', label: '👍 有用', hint: 'useful' },
@@ -101,22 +102,58 @@ export default function ProjectPage() {
     null,
   );
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3200);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3200);
   };
+
+  // 代次守卫 + 取消：本页有三处会触发 loadProject（首次加载、重评后、融资保存后），
+  // 原实现既无 AbortController 也无代次判断，慢的旧响应后到会覆盖新响应——
+  // 重评完成后紧接着的刷新可能把页面写回重评**之前**的分数。
+  const generation = useRef(0);
+  const inflight = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      inflight.current?.abort();
+    };
+  }, []);
 
   const loadProject = useCallback(() => {
     if (!projectId) return;
+    inflight.current?.abort();
+    const ac = new AbortController();
+    inflight.current = ac;
+    const myGeneration = ++generation.current;
+
     setLoading(true);
     setError('');
-    apiFetch<{ project: Project }>(`/projects/${projectId}`)
+    apiFetch<{ project: Project }>(`/projects/${projectId}`, { signal: ac.signal })
       .then((data) => {
+        if (!mounted.current || myGeneration !== generation.current) return;
         if (!data?.project) throw new Error('项目数据为空或格式不正确');
         setProject(data.project);
       })
-      .catch((err) => setError(err.message || '加载失败'))
-      .finally(() => setLoading(false));
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        if (!mounted.current || myGeneration !== generation.current) return;
+        setError(err instanceof Error ? err.message : '加载失败');
+      })
+      .finally(() => {
+        if (!mounted.current || myGeneration !== generation.current) return;
+        setLoading(false);
+      });
   }, [projectId]);
 
   useEffect(() => {
@@ -246,9 +283,9 @@ export default function ProjectPage() {
                 ) : null}
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{project.name}</h1>
-              {project.url ? (
+              {safeExternalUrl(project.url) ? (
                 <a
-                  href={project.url}
+                  href={safeExternalUrl(project.url) as string}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-1 inline-block text-sm text-brand-600 hover:underline dark:text-brand-300"

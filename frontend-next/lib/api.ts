@@ -6,6 +6,16 @@ export interface ApiResponse<T> {
   error?: { code: string; message: string };
 }
 
+/** 请求被 AbortController 取消时抛出的错误（调用方应静默忽略，而非当作故障展示） */
+export function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: string }).name === 'AbortError'
+  );
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   let res: Response;
@@ -17,9 +27,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         ...(init?.headers || {}),
       },
     });
-  } catch {
+  } catch (cause) {
+    // 主动取消不是故障，原样抛出让调用方识别
+    if (isAbortError(cause)) throw cause;
+    // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"
     throw new Error(
       `无法连接 API（${url}）。请确认后端已在 8002 启动，前端 3002 的 rewrite 指向 127.0.0.1:8002。`,
+      { cause },
     );
   }
 
@@ -56,4 +70,23 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     throw new Error(json.error?.message || fallback);
   }
   return json.data as T;
+}
+
+
+/**
+ * 健康检查专用取数。
+ *
+ * 不能复用 `apiFetch`：它会自动加上 `/api/v1` 前缀，而 `/health` 在后端根路径；
+ * 且它在 `ok === false` 时抛异常，而"后端在线但已降级"恰恰是我们要区分出来
+ * 展示的状态，不该和"完全连不上"混为一谈。
+ */
+export async function fetchHealth(): Promise<{ ok: boolean; status: string } & Record<string, unknown>> {
+  const res = await fetch('/health', { headers: { Accept: 'application/json' } });
+  const text = await res.text();
+  try {
+    const json = JSON.parse(text) as { ok?: boolean; status?: string };
+    return { ...json, ok: Boolean(json.ok), status: json.status || (res.ok ? 'healthy' : 'degraded') };
+  } catch {
+    return { ok: false, status: `http_${res.status}` };
+  }
 }

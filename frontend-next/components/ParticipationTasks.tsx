@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from '@/lib/api';
+import { safeExternalUrl } from '@/lib/format';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export interface ParticipationTask {
@@ -236,9 +237,9 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                               做法：{t.action_hint}
                             </p>
                           ) : null}
-                          {t.link ? (
+                          {safeExternalUrl(t.link) ? (
                             <a
-                              href={t.link}
+                              href={safeExternalUrl(t.link) as string}
                               target="_blank"
                               rel="noreferrer"
                               className="mt-1 inline-block text-xs text-brand-600 underline dark:text-brand-300"

@@ -166,3 +166,21 @@ export function sortProjects<T extends { score?: number; name?: string; confiden
 }
 
 export const LABEL_ORDER: Label[] = ['FARM', 'WATCH', 'IGNORE'];
+
+/**
+ * 安全外链：仅放行 http/https，拦截 javascript:/data: 等可执行伪协议，
+ * 防止来自采集源（可控性弱）的项目 URL 触发存储型 XSS。
+ * 返回 null 表示不可信，调用方应据此禁用/隐藏链接。
+ */
+export function safeExternalUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return trimmed;
+  } catch {
+    return null;
+  }
+  return null;
+}

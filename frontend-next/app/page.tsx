@@ -11,15 +11,15 @@ import {
 } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { LABEL_ORDER, LABEL_ZH, sortProjects, stageZh } from '@/lib/format';
-import type { CollectionSource, Label, Project, ProjectsResponse } from '@/lib/types';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchAllProjects } from '@/lib/projects';
+import { normalizeCollectionSource } from '@/lib/types';
+import type { CollectionSourceApi, Label, Project } from '@/lib/types';
+import { useAsyncData } from '@/lib/useAsyncData';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type SortBy = 'score' | 'name' | 'confidence';
 
 export default function DashboardPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [labelFilter, setLabelFilter] = useState<Label | ''>('');
   const [sectorFilter, setSectorFilter] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -33,30 +33,35 @@ export default function DashboardPage() {
     null,
   );
 
+  // 保存定时器句柄：否则前一条 toast 的定时器会提前清掉后一条，且卸载后仍会触发 setState
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4200);
+    toastTimer.current = setTimeout(() => setToast(null), 4200);
   };
-
-  const loadProjects = useCallback(() => {
-    setLoading(true);
-    setError('');
-    apiFetch<ProjectsResponse>('/projects?page_size=500')
-      .then((data) => setProjects(sortProjects(data.projects || [], 'score', 'desc')))
-      .catch((err) => setError(err.message || '加载失败'))
-      .finally(() => setLoading(false));
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+  const loader = useCallback(async (signal: AbortSignal) => {
+    const all = await fetchAllProjects(signal);
+    return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
+  }, []);
+
+  // 取消旧请求 + 丢弃过期响应，避免慢响应覆盖新响应
+  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, []);
+  const projects: Project[] = useMemo(() => data?.projects ?? [], [data]);
+  const truncated = data?.truncated ?? false;
 
   const runPipeline = async () => {
     setRunning(true);
       setRunStatus('正在检查采集源…');
     try {
-      const sources = await apiFetch<{ sources: CollectionSource[] }>('/collections/sources');
-      const enabled = (sources.sources || []).filter((s) => s.enabled);
+      const sources = await apiFetch<{ sources: CollectionSourceApi[] }>('/collections/sources');
+      // 后端返回的是 is_enabled + 嵌套 status，直接读 s.enabled 恒为 undefined，
+      // 于是 enabled 列表恒为空——按钮点了什么都不会采集，还提示"采集成功 0"
+      const enabled = (sources.sources || []).map(normalizeCollectionSource).filter((s) => s.enabled);
       let ok = 0;
       let fail = 0;
       for (const s of enabled) {
@@ -287,6 +292,11 @@ export default function DashboardPage() {
         <span>
           当前显示 {filtered.length} / 共 {projects.length} 个
         </span>
+        {truncated ? (
+          <span className="text-amber-600 dark:text-amber-400">
+            数据量超出加载上限，仅统计已载入的 {projects.length} 个
+          </span>
+        ) : null}
       </div>
 
       {/* list */}

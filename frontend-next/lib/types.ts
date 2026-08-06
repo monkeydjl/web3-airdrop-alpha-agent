@@ -46,7 +46,7 @@ export interface InsightsData {
   sector_counts: Record<string, number> | Array<{ sector?: string; count?: number } | [string, number]>;
   hottest_narratives: {
     sector: string;
-    heat_score: number;
+    avg_heat_score: number;
     project_count: number;
   }[];
   risky_teams: {
@@ -59,12 +59,46 @@ export interface InsightsData {
   }[];
 }
 
+/**
+ * 后端 /collections/sources 的真实返回形状。
+ *
+ * 此前这里声明的是顶层 `enabled` / `sync_status` / `last_sync`，而后端返回的是
+ * 顶层 `is_enabled` + 嵌套 `status.{enabled,sync_status,last_sync}`。因为响应
+ * 只做了类型断言、没有运行时校验，tsc 查不出来，结果是：
+ *   - 首页"开始采集"按钮的 enabled 列表恒为空 → 点了等于没点，还提示"采集成功 0"
+ *   - Ops 页每个源都显示"已禁用"，触发按钮全部灰掉
+ */
+export interface CollectionSourceApi {
+  source_id: string;
+  source_name?: string;
+  source_type?: string;
+  is_enabled?: boolean;
+  status?: {
+    enabled?: boolean;
+    sync_status?: string | null;
+    last_sync?: string | null;
+    api_calls_today?: number;
+  } | null;
+}
+
+/** 归一化后供 UI 直接使用的形状。 */
 export interface CollectionSource {
   source_id: string;
   source_name?: string;
   enabled: boolean;
   last_sync?: string | null;
   sync_status?: string | null;
+}
+
+/** 把后端形状摊平成 UI 形状；字段缺失时按"未启用"保守处理。 */
+export function normalizeCollectionSource(raw: CollectionSourceApi): CollectionSource {
+  return {
+    source_id: raw.source_id,
+    source_name: raw.source_name,
+    enabled: Boolean(raw.is_enabled ?? raw.status?.enabled ?? false),
+    last_sync: raw.status?.last_sync ?? null,
+    sync_status: raw.status?.sync_status ?? null,
+  };
 }
 
 export interface HealthData {

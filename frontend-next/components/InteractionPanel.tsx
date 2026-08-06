@@ -375,7 +375,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
                           Number(it.net_usd || 0) >= 0 ? 'text-farm-dark dark:text-farm' : 'text-red-600'
                         }`}
                       >
-                        净 ${(it.net_usd ?? 0).toFixed(2)}
+                        净 ${Number(it.net_usd || 0).toFixed(2)}
                       </div>
                       <div className="mt-2 flex justify-end gap-2">
                         <button type="button" className="btn-ghost !px-2 !py-1 text-xs" onClick={() => fillFrom(it)}>
