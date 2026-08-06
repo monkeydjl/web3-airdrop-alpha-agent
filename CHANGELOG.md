@@ -8,7 +8,66 @@
 
 ## [Unreleased]
 
+### Fixed — 系统审查（采集链路 / 流水线 / 安全 / 前端，2026-07-26）
+
+详见 `SYSTEM_AUDIT_REPORT.md`。真实库（702 项目 / 1040 原始记录）实测：7 项可验证信号里 6 项命中率为 0%。
+
+**采集链路**
+- **DefiLlama 补齐字段映射**：`description`（文本判断的唯一来源，缺失导致 `has_docs`/`has_roadmap`/`explicit_airdrop_mention` 全语料恒为 False）、`tvl_usd`、`has_twitter`/`has_github`
+- **跨源合并首次可发生**：galxe/layer3/etherscan/twitter/coingecko 不再臆造赛道（写死 `Quest`/`On-chain`/`Unknown`/`DeFi` 会让 dedup_key 与真实赛道永不相撞，真实库 `source_count>=2` 恒为 0%）；新增"赛道未知分组并入同名已知分组"（仅唯一匹配时）
+- **信号补充源不再被阈值挡在门外**：coingecko(0.1)/etherscan/cryptorank(≤0.28) 低于分析阈值 0.3，此前从不进入合并；现在同 dedup_key 已有记录过线时，低分佐证一并载入，且 `limit` 改为约束项目数而非原始行数
+- **Twitter 正文参与解析**：推文载荷在 `raw_data["text"]`，此前不在取值范围内，两个 twitter 源贡献恒为零
+- **修正阶段与代币推断**：TVL 分档判 testnet 造成 31.8% 项目误标；`_is_unlisted` 改为"真实 ticker > gecko_id"，并把 DefiLlama 的 `"-"` 哨兵值（真实库 658/1040 条）排除在 ticker 之外
+- **GitHub 赛道整词匹配**：`"ai" in desc` 会命中 blockchain/chain/mainnet；改存 `pushed_at` 而非会被 star 顶新的 `updated_at`
+- **CoinGecko 不再拿币种图标当官网**
+- **合并容忍 naive/aware 时间戳混用**：`min()` 抛 TypeError 会中断整批采集
+
+**流水线与调度**
+- **持久化失败不再报成功**：状态改到落库之后再定；出队判据从"内存评分成功"改为"确实写进 projects"，此前整批丢失且队列已清空、DB 与 metrics 均无痕迹
+- **每次运行落持久记录**（`LogRepository.log_run` 此前定义了却从无调用方）
+- **cron 传 timezone**：预构造的 `CronTrigger` 不继承 `scheduler.timezone`，`TIMEZONE` 配置被静默忽略；`misfire_grace_time` 由默认 1 秒改为 1 小时 + `coalesce`
+
+**安全（对照 `docs/SECURITY.md`）**
+- **500 响应不再回显异常原文**（psycopg 异常带 DSN 含库密码，httpx 异常带 `?apikey=`）
+- **安装 structlog 脱敏 processor**（§3.3 要求但全仓库无 `structlog.configure()`）：按字段名脱敏、递归容器，且排在 traceback 渲染**之后**
+- **`APP_ENV` 归一化**：`Production`/`PRODUCTION`/`prod`/`"production "` 此前全部绕过生产安全校验
+- **API_KEY 长度下限 32**（§4.2；原实现只校验非空）
+- **接入限流**（§4.2/§10.4，三个配置项此前无人读取）：按 IP 滑动窗口 + 429/Retry-After，昂贵端点分档；默认不采信可伪造的 `X-Forwarded-For`，新增 `TRUSTED_PROXY_COUNT`
+- **输入长度与取值域上限**：feedback 的 note 实测 20MB 直接落库；funding 的 NaN 会写进 meta 再报 500
+- **移除根目录 nginx.conf 的 CORS 通配**：`Access-Control-Allow-Origin: *` + 自动放行预检 + `always`（连 401 都带），且与后端同名头重复导致白名单失效
+- `/health` 降级时返回 503（探针按状态码判活）
+
+**前端**
+- **采集按钮失效**：后端返回嵌套 `status.enabled`，前端读顶层 `enabled` → 启用列表恒为空；同一错位让 Ops 页全部显示"已禁用"
+- **Insights 页 `热度 NaN`**：读错字段名（`heat_score` vs `avg_heat_score`）
+- **失败请求不再渲染成空数据成功**；Nav 的接口状态改为三态（检测中/在线/异常），并改探 `/health`
+- **项目详情页加代次守卫**：重评后的刷新可能被慢的旧响应覆盖，把分数写回重评之前
+
+### Fixed — 评分引擎回归规范（ADR-014，2026-07-26）
+- **跨源合并不再丢信号**（`utils/normalize.py`）：原按来源优先级整条择一，落选来源的 23 个信号字段被清空、`source_count` 恒为 1，导致「多发现一个来源分数反而下降」。改为按字段类合并（存在性布尔 OR / 数值 max·min / 列表并集 / 标量取最高可信已知值），并给 `manual`/`api` 显式取值以否决权（唯二能主张否定的来源）；合并结果与输入顺序、与 `PYTHONHASHSEED` 均无关。见 `DATA_SCORING_DICT.md §5.8`
+- **Risk Agent 改用 `tokenomics.risk`**（`agents/risk.py`）：原误取 `unlock_penalty`，与 `DATA_SCORING_DICT.md §5.7.2` 不符，方向与模型意图相反（高解锁压力少扣 31.5 分、VC 集中反加 12 分）
+- **`airdrop_signal` 子分统一到 `agents/airdrop_signal.py`**：原在 scorer 与 risk 各有一份实现，2304 种信号组合中 666 种结果不一致
+- **confidence 去掉 0.55/0.45 人为下限**（`agents/scorer.py`）：四个 Agent 全部成功的正常路径下 confidence 恒 ≥0.55，`confidence < 0.5 强制降档` 只在 Agent 崩溃时生效，而它本意是防「可验证信号不足」
+- **`weight_version` 改为从配置读取**；新增 `projects.sub_scores` 列承载子分快照（不复用 `raw_signals`——那一列存的是采集**输入**信号），UPSERT 以 `COALESCE` 写入，评分失败时不覆盖上一次的好快照
+- **`TokenomicsResult` 可往返**：`computed_field` + `extra="forbid"` 曾使 `model_dump()` 无法回放，任何从 `tokenomics_json` 重建的路径都会硬失败
+- **`tier-1 vc backed` 误判修正**（`agents/team.py`）：`funding_quality <= 0` 时不再打 tier-1 标记
+- **融资文本匹配收紧**（`agents/collector.py`）："hourly funding rate"、"raised the block gas limit" 等不再误判为融资事件
+- **信号缺失判定修正**（`services/project_signals.py`）：布尔 `False` 与数值 `0` 是有效观测，不再当作缺失，消除单向棘轮
+
+### Fixed — 旁路机会引擎（ADR-014，`opportunity-v2.0`）
+- **联合概率区间算法**（`opportunity/probability.py`）：端点由逐分位连乘（`low×low×low`，与 `base` 的独立性假设自相矛盾）改为相对不确定度平方和合成，并以逐分位连乘为地板/天花板，保证新区间恒为旧区间的子集（0.1 网格穷举 2334 万组验证）。原算法使「官方分发 + 积分制资格」档的 `joint.low` 恒为 0.1650，永远跨不过 FARM 门槛 0.20。`base=0` 时端点不再一并归零，避免经 `DUST_REWARD` 误判 IGNORE
+- **`TOO_EXPENSIVE` 恢复可达**（`opportunity/decision.py`）：已确知超预算的判定前移到「证据不足」短路之前（仍后于三个 BLOCK 判定），并要求来源等级 ≥ B 且为 observed/derived，避免一条 U 档道听途说把项目钉成 30 天 IGNORE。此前 270 项语料中旧引擎产出 `NOT_FIT` 的数量为 0，用户被告知「去补证据」而真实原因是「太贵了」
+- **理由码不再塌缩**（`opportunity/decision.py`）：补齐 `service.evaluate_row` 使用的 8 个 `_usd`/`_hours` 后缀命名，此前一律映射为通用码 `WAIT_MORE_EVIDENCE`
+- **证据新鲜度延长衰减尾部**（`opportunity/service.py`）：原 >90 天一律 0.2 且永不再降；现 ≤180 天 0.2、≤365 天 0.1、此后 0.05（只收紧，任何年龄都 ≤ 原值）
+
 ### Added
+- `backend/app/agents/airdrop_signal.py` — `airdrop_signal` 子分唯一实现
+- `backend/scripts/dual_run_compare.py` — 新旧引擎双跑对比（`dump`/`diff` 主引擎，`dump-opp`/`diff-opp` 旁路引擎）
+- `backend/tests/test_review_regressions.py` — 74 条回归测试（每条对应一处已确认并修复的缺陷）
+- `backend/app/rate_limit.py` — 按 IP 限流中间件
+- `backend/scripts/backfill_meta_signals.py` — 从 raw_projects / project_signals 回填历史行的 meta.signals
+- `SYSTEM_AUDIT_REPORT.md`
+- `docs/adr/ADR-014-engine-spec-conformance.md`
 - 工程基础设施完整搭建（P0/P1 全部完成）
 - `pyproject.toml` — 项目元数据 + ruff/mypy/pytest 配置
 - `.env.example` — 全量环境变量模板

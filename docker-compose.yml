@@ -33,6 +33,10 @@ services:
       - LLM_ENABLED=${LLM_ENABLED:-false}
 
       # API 配置
+      # API_KEY 必须透传：APP_ENV 默认 production，而 config.py 的生产自检要求
+      # API_KEY 非空且 >= 32 字符，否则拒绝启动。此前这里漏了这一行，运维即使
+      # 在 .env 里正确设置了 API_KEY 也传不进容器，容器必然起不来。
+      - API_KEY=${API_KEY}
       - MAX_CONCURRENT_PROJECTS=${MAX_CONCURRENT_PROJECTS:-10}
       - LLM_SEMAPHORE_SIZE=${LLM_SEMAPHORE_SIZE:-5}
     healthcheck:
