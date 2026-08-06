@@ -1,6 +1,8 @@
+from typing import Literal
+
 from app.opportunity.models import OpportunityProfile
 
-MODEL_VERSION = "opportunity-v2.0"
+MODEL_VERSION: Literal["opportunity-v2.0"] = "opportunity-v2.0"
 
 DEFAULT_PROFILE = OpportunityProfile(
     profile_id="low-cost-curated-multiwallet-v1",

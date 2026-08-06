@@ -11,6 +11,7 @@ Reference:
 """
 
 from enum import StrEnum
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Path, Query
@@ -240,7 +241,7 @@ def list_projects(
 )
 def get_project(
     project_id: str = Path(..., description="项目 ID"),
-) -> ProjectsResponse:
+) -> dict[str, Any]:
     """获取单个项目详情.
 
     Args:

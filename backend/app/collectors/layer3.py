@@ -100,7 +100,7 @@ class Layer3Collector(DataCollector):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        params = {"limit": limit, "status": "active"}
+        params: dict[str, str | int | float | bool | None] = {"limit": limit, "status": "active"}
 
         async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(url, params=params, headers=headers)

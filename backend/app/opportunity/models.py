@@ -152,7 +152,7 @@ class EvidenceRecord(BaseModel):
 
     @field_validator("source_url")
     @classmethod
-    def safe_source_url(cls, value: HttpUrl) -> HttpUrl:
+    def safe_source_url(cls, value: HttpUrl) -> HttpUrl | str:
         return validate_source_url(value)
 
     @field_validator("value", mode="before")

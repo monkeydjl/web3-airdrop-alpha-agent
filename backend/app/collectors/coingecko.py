@@ -85,7 +85,7 @@ class CoinGeckoCollector(DataCollector):
     async def _fetch_markets(self) -> list[dict[str, Any]]:
         """拉取 CoinGecko 市场数据。"""
         url = f"{self.base_url}/coins/markets"
-        params = {
+        params: dict[str, str | int | float | bool | None] = {
             "vs_currency": self.VS_CURRENCY,
             "order": "market_cap_desc",
             "per_page": self.TOP_N,

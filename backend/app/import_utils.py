@@ -67,7 +67,7 @@ def import_projects_from_excel(file_content: bytes) -> list[dict[str, Any]]:
             if pd.isna(row.get("name")):
                 continue
 
-            project = {
+            project: dict[str, Any] = {
                 "name": str(row.get("name", "")).strip(),
                 "url": str(row.get("url", "")) if not pd.isna(row.get("url")) else None,
                 "sector": str(row.get("sector", "")) if not pd.isna(row.get("sector")) else None,
@@ -156,7 +156,7 @@ def import_projects_from_csv(file_content: str) -> list[dict[str, Any]]:
             if pd.isna(row.get("name")):
                 continue
 
-            project = {
+            project: dict[str, Any] = {
                 "name": str(row.get("name", "")).strip(),
                 "url": str(row.get("url", "")) if not pd.isna(row.get("url")) else None,
                 "sector": str(row.get("sector", "")) if not pd.isna(row.get("sector")) else None,

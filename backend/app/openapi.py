@@ -9,7 +9,7 @@ from typing import Any
 # Request Examples
 # ══════════════════════════════════════════════════════════════
 
-RUN_REQUEST_EXAMPLES = {
+RUN_REQUEST_EXAMPLES: dict[str, Any] = {
     "single_project": {
         "summary": "单个项目评分",
         "description": "评分单个具有完整信号的项目",

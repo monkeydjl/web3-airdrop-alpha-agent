@@ -100,7 +100,7 @@ class CryptoRankCollector(DataCollector):
         # 否则整轮分页（最多 4 次请求）只消耗 1 个令牌，直接把上游打到 429。
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             while len(collected) < target:
-                params = {
+                params: dict[str, str | int | float | bool | None] = {
                     "api_key": self.api_key,
                     "limit": self.PAGE_SIZE,
                     "offset": offset,
@@ -145,7 +145,7 @@ class CryptoRankCollector(DataCollector):
             return None
         sector = normalize_sector(str(category))
 
-        usd = {}
+        usd: dict[str, Any] = {}
         values = item.get("values") or {}
         if isinstance(values, dict):
             usd = values.get("USD") or values.get("usd") or {}

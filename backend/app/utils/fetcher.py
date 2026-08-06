@@ -38,8 +38,8 @@ class CircuitBreaker:
         self.timeout = timeout
         self.window_size = window_size
 
-        self.failures = deque(maxlen=window_size)
-        self.last_failure_time = 0
+        self.failures: deque[float] = deque(maxlen=window_size)
+        self.last_failure_time: float = 0
         self.state = "CLOSED"
 
     def record_success(self):

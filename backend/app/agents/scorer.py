@@ -9,6 +9,7 @@ Reference:
 """
 
 import time
+from typing import Literal
 
 import structlog
 
@@ -46,7 +47,7 @@ WEIGHTS = _load_weights()
 WEIGHT_VERSION = settings.weight_version
 
 # ── Label Thresholds (v1.1: FARM 70→65 for auto-scan early-signal mix) ──
-LABEL_THRESHOLDS = [
+LABEL_THRESHOLDS: list[tuple[int, Literal["FARM", "WATCH", "IGNORE"]]] = [
     (65, "FARM"),
     (50, "WATCH"),
     (0, "IGNORE"),
@@ -432,14 +433,16 @@ class ScorerAgent(BaseAgent):
         # Round using banker's rounding (Python default)
         return round(self._clamp(total, 0, 100))
 
-    def _score_to_label(self, score: int) -> str:
+    def _score_to_label(self, score: int) -> Literal["FARM", "WATCH", "IGNORE"]:
         """Map score to label."""
         for threshold, label in LABEL_THRESHOLDS:
             if score >= threshold:
                 return label
         return "IGNORE"
 
-    def _apply_confidence_degradation(self, label: str, confidence: float) -> str:
+    def _apply_confidence_degradation(
+        self, label: Literal["FARM", "WATCH", "IGNORE"], confidence: float
+    ) -> Literal["FARM", "WATCH", "IGNORE"]:
         """Degrade label if confidence < 0.5 (≥3 agents missing)."""
         if confidence < 0.5:
             if label == "FARM":

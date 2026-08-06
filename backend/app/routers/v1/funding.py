@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import AgentContext, RawProject
@@ -73,7 +73,7 @@ def get_funding(project_id: str = Path(...)):
 @router.patch("/projects/{project_id}/funding")
 async def patch_funding(
     project_id: str = Path(...),
-    body: FundingUpdate = ...,
+    body: FundingUpdate = Body(...),
     rescore: bool = Query(True, description="保存后是否立即重算评分"),
 ):
     """Save manual funding fields into meta.signals and optionally rescore."""

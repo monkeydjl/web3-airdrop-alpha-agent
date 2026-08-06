@@ -118,7 +118,7 @@ def export_projects(
 
         # 生成文件
         if format == "excel":
-            file_content = export_projects_to_excel(projects)
+            file_content: bytes | str = export_projects_to_excel(projects)
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"projects_{label or 'all'}.xlsx"
         else:  # csv

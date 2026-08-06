@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any, Final
 
 import structlog
+from pydantic import HttpUrl
 
 from app.metrics import (
     record_opportunity_economic_evidence,
@@ -216,7 +217,7 @@ def _build_evidence_record(
         value=factor.value,
         value_type=factor.value_type,
         observation_type="observed",
-        source_url=factor.source_url or observation.source_url,
+        source_url=HttpUrl(factor.source_url or observation.source_url),
         source_type=source_type,
         source_grade="C",
         observed_at=factor.observed_at,

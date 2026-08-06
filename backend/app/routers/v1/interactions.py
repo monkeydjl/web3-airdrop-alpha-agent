@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.db import dict_from_row, get_connection, scalar
@@ -580,7 +580,7 @@ def list_project_interactions(
 @router.patch("/interactions/{interaction_id}")
 def update_interaction(
     interaction_id: int = Path(...),
-    body: InteractionUpdate = ...,
+    body: InteractionUpdate = Body(...),
 ):
     fields = body.model_dump(exclude_unset=True, mode="json")
     if not fields:

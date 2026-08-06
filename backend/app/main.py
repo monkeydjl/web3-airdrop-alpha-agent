@@ -457,7 +457,7 @@ def create_app(db_override=None) -> FastAPI:
     def custom_openapi():
         return customize_openapi_schema(app)
 
-    app.openapi = custom_openapi
+    setattr(app, "openapi", custom_openapi)
 
     # ── 注册路由 ────────────────────────────────
     from app.routers.v1 import (

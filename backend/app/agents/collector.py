@@ -13,7 +13,7 @@ import json
 import re
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -820,7 +820,7 @@ if __name__ == "__main__":
         print("=== Testing Collector Agent ===\n")
 
         # Create test seed data with duplicates
-        seed_data = [
+        seed_data: list[dict[str, Any]] = [
             {
                 "name": "LayerX",
                 "url": "https://layerx.xyz",

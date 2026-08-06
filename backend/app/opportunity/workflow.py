@@ -29,10 +29,10 @@ from app.opportunity.models import (
     RiskSet,
 )
 
-WORKFLOW_VERSION = "opportunity-action-workflow-v1"
-LEGACY_MODEL_VERSION = "score-v1.4"
-OPPORTUNITY_MODEL_VERSION = "opportunity-v2.0"
-OPPORTUNITY_PROFILE_VERSION = "low-cost-curated-multiwallet-v1"
+WORKFLOW_VERSION: Literal["opportunity-action-workflow-v1"] = "opportunity-action-workflow-v1"
+LEGACY_MODEL_VERSION: Literal["score-v1.4"] = "score-v1.4"
+OPPORTUNITY_MODEL_VERSION: Literal["opportunity-v2.0"] = "opportunity-v2.0"
+OPPORTUNITY_PROFILE_VERSION: Literal["low-cost-curated-multiwallet-v1"] = "low-cost-curated-multiwallet-v1"
 
 ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "planned": ("active", "abandoned"),
@@ -403,6 +403,7 @@ def _missing_factor_keys(assessment: OpportunityAssessment | None) -> tuple[str,
     raw = snapshot.get("critical_unknowns", ())
     if raw is None:
         return ()
+    values: tuple[str, ...]
     if isinstance(raw, str):
         values = (raw,)
     elif isinstance(raw, Sequence):

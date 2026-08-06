@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from math import isfinite
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from app.opportunity.models import (
     ConfidenceSet,
@@ -497,7 +497,7 @@ def build_inputs(
     conflicted_factors = {factor_key for factor_key, resolution in resolutions.items() if resolution.conflicted}
     normalized = {factor_key: value for factor_key, (_, value) in latest.items()}
 
-    multiwallet_policy = "unknown"
+    multiwallet_policy: Literal["allowed", "not_forbidden", "forbidden", "unknown"] = "unknown"
     if "multiwallet_policy" in normalized:
         multiwallet_policy = normalized["multiwallet_policy"]
 
@@ -561,7 +561,7 @@ def build_inputs(
     airdrop_records = _current_airdrop_support(supporting, conflicted_factors)
     if airdrop_records:
         unknowns.discard("airdrop_basis")
-    confidence = ConfidenceSet(event=0, eligibility=0, reward=0, cost=0, risk=0, quality=0)
+    confidence = ConfidenceSet(event=0, eligibility=0, reward=0, cost=0, risk=0, quality=0, overall=0)
     risks = RiskSet(
         capital_security=capital_security_risk,
         eligibility=eligibility_risk,

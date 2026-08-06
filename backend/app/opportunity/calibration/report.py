@@ -503,7 +503,7 @@ def build_calibration_report(
             profile_version=profile_version,
             seed=seed,
         )
-    report = {
+    report: dict[str, Any] = {
         "metadata": {
             "schema": SCHEMA,
             "model_version": model_version,

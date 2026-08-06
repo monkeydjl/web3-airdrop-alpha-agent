@@ -271,6 +271,8 @@ if __name__ == "__main__":
     # Test risk agent
     import asyncio
 
+    from typing import Any
+
     from app.agents.base import AgentContext, RawProject
     from app.models import TokenomicsResult
 
@@ -278,7 +280,7 @@ if __name__ == "__main__":
         print("=== Testing Risk Agent ===\n")
 
         # Test cases
-        test_cases = [
+        test_cases: list[dict[str, Any]] = [
             # High risk: Ideation, no signals
             {
                 "name": "HighRisk",

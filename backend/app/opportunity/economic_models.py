@@ -18,7 +18,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-SCHEMA_VERSION: Final[str] = "opportunity-economic-snapshot-v1"
+SCHEMA_VERSION: Final[Literal["opportunity-economic-snapshot-v1"]] = "opportunity-economic-snapshot-v1"
 ValueType = Literal["bool", "number", "string", "json"]
 EconomicsDataMode = Literal["PROXY_ONLY", "DIRECT_AVAILABLE", "UNKNOWN"]
 

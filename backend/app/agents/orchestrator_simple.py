@@ -13,7 +13,7 @@ Reference:
 import asyncio
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
@@ -143,6 +143,7 @@ class SimpleOrchestrator:
                     total_count=len(states),
                 )
 
+        status: Literal["completed", "failed", "partial"]
         if persist_failed:
             status = "partial" if persisted_project_rows else "failed"
         elif scored_projects:

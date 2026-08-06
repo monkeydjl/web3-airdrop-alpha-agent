@@ -182,7 +182,7 @@ class GitHubCollector(DataCollector):
         since = (datetime.now(UTC) - timedelta(days=self.SEARCH_WINDOW_DAYS)).strftime("%Y-%m-%d")
         query = f'(airdrop OR testnet OR "points program" OR airdrops) pushed:>{since} stars:>={self.STARS_THRESHOLD}'
         url = f"{self.base_url}/search/repositories"
-        params = {
+        params: dict[str, str | int | float | bool | None] = {
             "q": query,
             "sort": "updated",
             "order": "desc",

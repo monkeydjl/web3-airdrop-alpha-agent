@@ -424,7 +424,7 @@ class ProjectRepository:
         try:
             # 构建 WHERE 条件
             conditions = []
-            params = []
+            params: list[Any] = []
 
             if label:
                 conditions.append("label = ?")

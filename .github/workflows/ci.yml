@@ -170,9 +170,8 @@ jobs:
           fi
           pip install mypy
 
-      - name: Run mypy (non-strict, incremental adoption)
-        run: mypy app --ignore-missing-imports --no-strict-optional
-        continue-on-error: true
+      - name: Run mypy
+        run: mypy app --config-file pyproject.toml
 
   # ── Phase 5: Frontend CI ─────────────────
   frontend:

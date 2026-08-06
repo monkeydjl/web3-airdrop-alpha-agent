@@ -377,7 +377,7 @@ def generate_participation_tasks(project: dict[str, Any]) -> dict[str, Any]:
     # Sort: priority asc, then required first
     tasks.sort(key=lambda t: (t["priority"], 0 if t["required"] else 1, t["id"]))
 
-    summary = {
+    summary: dict[str, Any] = {
         "total": len(tasks),
         "required_count": sum(1 for t in tasks if t["required"]),
         "by_category": {},

@@ -33,7 +33,7 @@ def _weighted_median(values: Sequence[float], weights: Sequence[float]) -> float
 
 
 def sample_weights(
-    observations: Sequence[BinaryObservation],
+    observations: Sequence[BinaryObservation] | Sequence[NumericObservation] | Sequence[CalibrationSample],
     view: str,
 ) -> tuple[float, ...]:
     if view == "cohort_weighted":
