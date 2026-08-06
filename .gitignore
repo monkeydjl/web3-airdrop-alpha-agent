@@ -83,11 +83,13 @@ Desktop.ini
 
 # ── Database ──────────────────────────────────
 *.db
+*.db.bak-*
 *.sqlite
 *.sqlite3
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+backend/data/
 !data/.gitkeep
 
 # ── Logs ─────────────────────────────────────
