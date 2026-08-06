@@ -1,6 +1,6 @@
 # 项目记忆：Web3 Airdrop Alpha Agent System
 
-> 更新：2026-07-26 · 最近交付：Opportunity Economic Data Acquisition（本地 feature 分支，待后续集成）
+> 更新：2026-08-06 · P0+P1+P2+经济分支+CI+文档+前端打磨 ✅ · 13 commits on master · 2,155 测试
 
 ## 开发环境端口约定
 - 前端：**3002**（`frontend-next`；旧 `frontend/` 非主入口）
@@ -37,7 +37,8 @@
 - 采集：`backend/app/collectors/`（DefiLlama 已联调；GitHub/CoinGecko 等需 API key）
 - 前端：Next.js 16 App Router + React 19（`frontend-next/`）；旧 `frontend/index.html` 保留但非主路径
 - 调度：APScheduler 进程内 + `POST /run` / collections trigger
-- 测试：Opportunity Economic Data Acquisition 分支最新后端全量基线 **2,039 passed / 1 skipped / 87% coverage**；离线 verifier、compileall、Ruff 与静态边界检查已绿
+- 测试：后端全量 **2,155 passed / 1 skipped / 87% coverage**（2026-08-06 经济分支合并后）；ruff 干净；compileall 通过
+- 前端：Next.js **16.3.0** + React 19；`npm audit` **0 vulnerabilities**；Turbopack build pass；typecheck pass
 
 ## 关键文档
 - 索引：`docs/00_index.md`、`QUICK_REFERENCE.md`、`docs/PROJECT_BOOTSTRAP_OVERVIEW.md`
@@ -137,7 +138,7 @@ scorer / team / tokenomics 读 funding_quality / funding_tier
 - Quarantine：`raw_projects.quarantined`；API `GET/POST /api/v1/quarantine`、`POST .../release`
 - 噪声命中自动 quarantine；分析队列 `COALESCE(quarantined,0)=0`
 - API 鉴权：`API_KEY` 非空时中间件校验；`/health` `/docs` 仍公开
-- Next：**16.2.10** + React 19；`npm audit` **0 vulnerabilities**
+- Next：**16.3.0** + React 19；`npm audit` **0 vulnerabilities**（2026-08-06 修复 16 CVE）
 - 前端：暗色主题、Dashboard 图表/筛选/表格、详情 Agent 面板+反馈、Insights、**/ops 运维台**
 - **AI 解读**：`POST /api/v1/projects/{id}/ai-brief` + `AiBriefPanel`
 - **交互记录**：表 `interactions`；API `/api/v1/interactions`；详情「我的交互记录」
@@ -145,16 +146,42 @@ scorer / team / tokenomics 读 funding_quality / funding_tier
 - **融资编辑**：`FundingPanel` + PATCH funding（2026-07-14）
 
 ## 已知债务 / 下一步
-1. 反馈样本 ≥200 后：`make calibrate` / `--search` 并走 changelog/灰度（WEIGHT_CALIBRATION.md）
-2. 可选：列表「有融资信号」筛选 / 卡片 `funding_tier` 徽章
-3. 可选：CSV/导入扩融资金额与投资方列
-4. 观测栈日常化（Grafana 等）
-5. 历史文档 8000/HTML 漂移（以 IMPLEMENTATION_STATUS 为准）
-6. Opportunity 后续独立计划：实时稀释/估值数据、Next.js 行动工作流、预测结果校准
+1. ~~**P0**：系统审查 commit~~ ✅ 2026-08-06 完成（8 个语义提交：016693c → eff1bea）
+2. ~~**P0**：pytest 基线复跑~~ ✅ 1919 passed / ruff clean / compileall pass
+3. ~~**P0 红线**：`backfill_meta_signals.py --apply`~~ ✅ 602/702 已回填；备份 `airdrop.db.bak-20260806-044608`；100 条无原始记录（seed/测试）保持 NULL
+4. ~~**P1**：Next.js + PostCSS 安全漏洞~~ ✅ next 16.3.0 + postcss ^8.5.26（16 CVE 修复，npm audit 0）
+5. ~~**P2**：Opportunity Shadow 默认开启~~ ✅ `db26bca` shadow_enabled=true, sample_rate=1.0，渐进式转正第一阶段完成
+6. ~~**经济分支合并**~~ ✅ `bd9013e` + `2e73500`：13 commits 合并，9 冲突解决，2 verifier 修复，2,155 passed
+7. ~~**CI/CD 修复**~~ ✅ `1088c67`：mypy 启用（非 strict）、前端 CI、security/docs 分支对齐、secret baseline
+8. ~~**文档对齐**~~ ✅ `e2e3985`：IMPLEMENTATION_STATUS.md v1.2
+9. ~~**前端打磨**~~ ✅ `ae3d9ba`：有融资筛选 + tier 徽章 + CSV 导出 + 客户端路由 + 共享 tierZh
+10. **P2**：Shadow 数据积累足够后做 dual_run_compare 对比，决定是否切主引擎
+11. 反馈样本 ≥200 后：`make calibrate` / `--search` 并走 changelog/灰度（WEIGHT_CALIBRATION.md）
+12. P3：观测栈日常化
+13. P3：Opportunity 实时稀释/估值数据接入、预测结果校准回写
+
+## ✅ 2026-07-26 系统审查（已提交 · 已回填）
+**8 个语义 commit 已提交到 master（2026-08-06）；meta.signals 回填 602/702 已完成。**
+
+提交序列：
+1. `016693c` docs: ADR-014 + 4 份审计报告
+2. `fbd3250` fix(collectors): 跨源字段合并 + 管道持久化
+3. `a0fc3d1` fix(scoring): ADR-014 引擎规范 + opportunity shadow 加固
+4. `351b457` fix(security): 认证/限流/日志脱敏/CORS
+5. `960d95b` fix(frontend): Next.js 仪表盘对齐后端审计修复
+6. `c43a4f1` chore(deploy): CHANGELOG + 依赖 + docker-compose + nginx
+7. `01e450e` fix(security): Next.js 16.3.0 + PostCSS 8.5.26 安全补丁
+8. `eff1bea` chore: .gitignore 排除 backend/data/ 和 db 备份
+
+回填结果（`backfill_meta_signals.py --apply`）：
+- 602/702 项目已回填 22 个信号字段（`explicit_airdrop_mention`、`tvl_usd`、`funding_tier` 等）
+- 100 个无原始记录项目（seed/测试）保持 meta=NULL
+- 备份：`backend/data/airdrop.db.bak-20260806-044608`
+- **rescore 安全红线已解除**：现在可以安全执行 `/rescore` 或 `dual_run_compare.py`
 
 ## Opportunity v2.0 Shadow
 - 版本：`opportunity-v2.0`；默认画像：`low-cost-curated-multiwallet-v1`。
-- `OPPORTUNITY_SHADOW_ENABLED=false`、`OPPORTUNITY_SHADOW_SAMPLE_RATE=0.0`；全局开关优先，采样率必须是 `[0.0, 1.0]` 内有限浮点数。
+- **默认开启（2026-08-06 `db26bca`）**：`OPPORTUNITY_SHADOW_ENABLED=true`、`OPPORTUNITY_SHADOW_SAMPLE_RATE=1.0`（全量采样）。
 - 自动 Shadow 仅处理成功持久化且 legacy score 非空的项目；显式 Opportunity API 评估不采样。
 - 采样按非空 project ID 做 SHA-256 确定性分桶：前 8 字节按无符号大端整数解释，`mod 10_000`，阈值为 `floor(rate * 10_000)`；扩量形成单调超集。
 - 汇总字段：`eligible` / `sampled` / `attempted` / `saved` / `failed` / `skipped`。
