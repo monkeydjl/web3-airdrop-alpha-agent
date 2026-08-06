@@ -2,9 +2,9 @@
 
 > 引用：`W1_STATUS.md` / `W2_PROGRESS.md` / `W3_PROGRESS.md` / `W4_PROGRESS.md`、ADR-012、`.workbuddy/memory/MEMORY.md`
 > 阶段：**W1–W4 已完成**（非规划阶段）
-> 更新：2026-07-14
+> 更新：2026-08-06
 > 原则：以代码与进度文件为准；与旧设计表述冲突时，以本表 + 代码为准。
-> Agent 会话记忆：`.workbuddy/memory/MEMORY.md` + `.workbuddy/memory/2026-07-14.md`
+> Agent 会话记忆：`.workbuddy/memory/MEMORY.md` + `.workbuddy/memory/2026-08-06.md`
 
 ---
 
@@ -31,7 +31,7 @@
 | W4 MVP 收尾 | ✅ | CI、seed、DefiLlama 联调、Start.bat、Next 主前端 |
 | 采集多源全量 | 🟡 | 代码多源已有；联调以 DefiLlama 为主，其余依赖 key/开关 |
 | 权重反馈校准 | 🟡 | 表与 API/UI 有；离线校准未成主线 |
-| 生产硬化 | ⬜ | 鉴权、观测栈日常化、依赖安全升级 |
+| 生产硬化 | 🟡 | API Key 鉴权 ✅、pip-audit 进 CI ✅、npm audit 0 ✅；多租户/JWT、观测栈日常化待做 |
 
 图例：✅ 已实现可用 · 🟡 部分实现 · ⬜ 未实现 / 仅设计
 
@@ -62,9 +62,9 @@
 | 采集调度 | `collectors/scheduler.py` | ✅ | 与分析调度双开（非 testing）；cron 按源配置 |
 | 分析调度 / handoff | `analysis_scheduler.py` + `pipeline_run.py` | ✅ | 成功项 mark processed；`COLLECTION_AUTO_RUN_ENABLED` 默认关 |
 | 归档 | `archive.py` | ✅ | raw_projects 保留期默认 30 天 |
-| 鉴权 / 多租户 | ADR-008 | ⬜ | MVP 无鉴权 |
+| 鉴权 / 多租户 | ADR-008 | 🟡 | API Key 鉴权 ✅（`API_KEY` 非空时启用 `X-API-Key`/Bearer）；JWT/RBAC/多租户未实现 |
 | SQLite / PostgreSQL 双后端 | ADR-004 | ✅ | 默认 SQLite；设置 `DATABASE_URL` 后使用 PostgreSQL；`verify_postgres.py` 已验收；health 含 `db_backend`（不表示已完成生产部署） |
-| Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | ✅ | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；默认关闭、非权威；按项目 ID 确定性灰度并追加保存不可变快照 |
+| Opportunity v2.0 Shadow | `opportunity/*` + `routers/v1/opportunity.py` | ✅ | `opportunity-v2.0` / `low-cost-curated-multiwallet-v1`；**默认开启 100% 采样**、非权威；按项目 ID 确定性灰度并追加保存不可变快照 |
 | Opportunity outcome calibration | `app/opportunity/calibration/*` + `scripts/calibrate_opportunity.py` + `scripts/verify_opportunity_calibration.py` | ✅ | 90d/180d nested windows；SQLite network-free verifier；production loader/report SELECT-only；aggregate privacy；no-auto-apply；manual approval requires a new model/profile version |
 | Opportunity economic data acquisition | app/opportunity/economic_* + scripts/verify_opportunity_economic.py | ✅ | Network-free verifier §17.1 26/26；frozen fixtures；CLI PASS |
 | 竞争度缓存 | ADR-010 | 🟡 | 规则在；缓存策略按阶段演进 |
@@ -105,7 +105,7 @@
 
 | 项 | 状态 |
 |----|------|
-| pytest（已验证基线） | ✅ 1,751 passed / 1 skipped，覆盖率 85.48% |
+| pytest（已验证基线） | ✅ 2,155 passed / 1 skipped，覆盖率 87% |
 | CI `.github/workflows/ci.yml` | ✅ Python 3.13；push 支持 master/main/feat/**/fix/**/docs/**，PR 支持 master/main |
 | seed `make seed` | ✅ |
 | Opportunity Shadow 汇总 | ✅ `eligible`/`sampled`/`attempted`/`saved`/`failed`/`skipped` 六字段 |
@@ -114,7 +114,7 @@
 | Docker 健康轮询 | ✅ compose healthcheck 使用有限 timeout、retries 与 start period |
 | Prometheus 指标暴露 | 🟡 Shadow 指标已实现；其他目录仍有部分 counter/gauge |
 | 完整 Grafana/Loki 日常使用 | ⬜ 配置存在，非默认必开 |
-| Next 依赖安全告警 | 🟡 升级待办 |
+| Next 依赖安全告警 | ✅ Next 16.3.0 + PostCSS 8.5.26；npm audit 0 |
 
 ---
 
@@ -152,12 +152,18 @@
 5. ~~反馈采集 UI + 开关默认开~~ ✅；样本≥200 后再做权重搜索（`feedback_snapshot.py`）
 6. ~~Quarantine 全链路~~ ✅（列/写/释放 API + 分析跳过 + health 计数）
 7. ~~API Key 鉴权~~ ✅（`API_KEY` 非空时 `X-API-Key` / Bearer）
-8. ~~Next 安全升级~~ ✅ `next@16.2.10` + React 19；`npm audit` 0
+8. ~~Next 安全升级~~ ✅ `next@16.3.0` + PostCSS ^8.5.26 + React 19；`npm audit` 0（16 CVE 修复）
 9. ~~权重校准骨架~~ ✅ `calibrate_weights.py` / `weight_changelog` 表；门禁 200 样本
 10. ~~手动融资编辑 + 重评~~ ✅ `FundingPanel` + `PATCH .../funding?rescore=true`（2026-07-14）
 
 后续可选：列表「有融资信号」筛选、卡片 tier 徽章、CSV 扩融资列、样本≥200 权重搜索。
 
----
+已完成新增（2026-08-06）：
+11. ~~Opportunity Shadow 默认开启~~ ✅ 100% 采样（`db26bca`）
+12. ~~经济数据采集分支合并~~ ✅ 7 个 `economic_*` 模块 + 236 新测试（`bd9013e` + `2e73500`）
+13. ~~CI/CD 修复~~ ✅ mypy 启用、前端 CI、security/docs 分支对齐、secret baseline（`1088c67`）
+14. ~~系统审查 8 commit~~ ✅ ADR-014 引擎对齐 + 采集器修复 + 安全加固 + 前端对齐 + 部署更新
+15. ~~meta.signals 回填~~ ✅ 602/702 项目修复
 
-_文档版本：v1.1 · 2026-07-14_
+---
+_文档版本：v1.2 · 2026-08-06_
