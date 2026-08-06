@@ -171,10 +171,16 @@ class DefiLlamaCollector(DataCollector):
         sector = normalize_sector(protocol.get("category", "DeFi"))
         stage = self._infer_stage(protocol)
 
-        tvl = protocol.get("tvl") or 0
-        change_7d = protocol.get("change_7d") or 0
-        chains = protocol.get("chains", [])
-        chain_count = len(chains) if isinstance(chains, list) else 0
+        # Economic raw: preserve provider None; never coerce missing → 0.
+        tvl_raw = protocol.get("tvl")
+        change_7d_raw = protocol.get("change_7d")
+        chains_raw = protocol.get("chains")
+
+        # Legacy locals for filter/signal/score — missing falls back to 0 / [].
+        tvl = tvl_raw if tvl_raw is not None else 0
+        change_7d = change_7d_raw if change_7d_raw is not None else 0
+        chains_legacy = chains_raw if isinstance(chains_raw, list) else []
+        chain_count = len(chains_legacy)
 
         discovery_score = self._calculate_discovery_score(protocol)
 
@@ -187,11 +193,12 @@ class DefiLlamaCollector(DataCollector):
             "sector": sector,
             "stage": stage,
             "slug": slug,
-            "tvl": tvl,
+            "tvl": tvl_raw,
             # tvl_usd 才是 RawProject 直接读取的字段名；只给 "tvl" 会让规模信息止步于此
             "tvl_usd": tvl,
-            "change_7d": change_7d,
-            "chains": chains,
+            "change_7d": change_7d_raw,
+            "change_7d_unit": "ratio",
+            "chains": chains_raw,
             "category": protocol.get("category"),
             # description 是 _infer_airdrop_flags 做文本判断的主要输入。此前没有复制，
             # 文本 blob 基本只剩一个 slug，于是 has_docs / has_roadmap /
@@ -221,7 +228,7 @@ class DefiLlamaCollector(DataCollector):
             RawSignal(
                 signal_type="chain_activity",
                 signal_source=self.source_id,
-                signal_data={"chain_count": chain_count, "chains": chains},
+                signal_data={"chain_count": chain_count, "chains": chains_legacy},
                 signal_strength=min(1.0, chain_count / 5.0),
             ),
             RawSignal(

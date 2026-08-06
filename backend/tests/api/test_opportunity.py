@@ -2,6 +2,7 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -34,6 +35,33 @@ FORBIDDEN_RESPONSE_MARKERS = (
     "seed_phrase",
     "0xdeadbeefwallet",
     "mnemonic",
+)
+# Task 8 boundary: Task 6 offline economic surface must not leak into workflow API.
+# Pre-existing opportunity.economics (assessment EconomicsResult) remains allowed.
+FORBIDDEN_ECONOMIC_WORKFLOW_KEYS = frozenset(
+    {
+        "economic_proxy",
+        "economics_data_mode",
+    }
+)
+BASELINE_WORKFLOW_DATA_KEYS = (
+    "workflow_version",
+    "project_id",
+    "legacy",
+    "opportunity",
+    "workflow",
+    "evidence",
+    "validation",
+    "review_at",
+    "expires_at",
+)
+ECONOMIC_FLAG_NAMES = (
+    "opportunity_economic_snapshot_enabled",
+    "opportunity_economic_source_defillama_enabled",
+    "opportunity_economic_source_coingecko_enabled",
+    "opportunity_economic_source_cryptorank_enabled",
+    "opportunity_economic_evidence_emit_enabled",
+    "opportunity_economic_resolver_enabled",
 )
 
 
@@ -139,6 +167,48 @@ def _insert_interaction(connection, **overrides):
     return connection.execute("SELECT id FROM interactions ORDER BY id DESC LIMIT 1").fetchone()[0]
 
 
+def _canonical_json_bytes(payload) -> bytes:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _collect_keys(value) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            keys.add(str(key))
+            keys |= _collect_keys(nested)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            keys |= _collect_keys(item)
+    return keys
+
+
+def _set_economic_flags(monkeypatch, **overrides: bool) -> None:
+    values = {name: False for name in ECONOMIC_FLAG_NAMES}
+    values.update(overrides)
+    # Valid Settings rollout chain when resolver is enabled.
+    if values.get("opportunity_economic_resolver_enabled"):
+        values["opportunity_economic_evidence_emit_enabled"] = True
+        values["opportunity_economic_snapshot_enabled"] = True
+    for name, value in values.items():
+        monkeypatch.setattr(settings, name, value)
+
+
+def _assert_no_economic_workflow_surface(payload: dict) -> None:
+    keys = _collect_keys(payload)
+    leaked = keys & FORBIDDEN_ECONOMIC_WORKFLOW_KEYS
+    assert not leaked, f"forbidden economic keys in workflow response: {sorted(leaked)}"
+    assert "raw_snapshot_ref" not in keys
+    blob = json.dumps(payload, ensure_ascii=False)
+    for token in ("economic_proxy", "economics_data_mode", "raw_snapshot_ref"):
+        assert token not in blob
+
+
 def _assert_workflow_privacy(payload: dict) -> None:
     serialized = json.dumps(payload, ensure_ascii=False).lower()
     for marker in FORBIDDEN_RESPONSE_MARKERS:
@@ -168,6 +238,7 @@ def _assert_workflow_privacy(payload: dict) -> None:
             parsed = urlsplit(url)
             assert parsed.scheme in {"http", "https"}
             assert parsed.netloc
+    _assert_no_economic_workflow_surface(payload)
 
 
 def _evidence(**overrides):
@@ -979,3 +1050,220 @@ def test_workflow_service_db_adapter_contract_matches_across_connection_wrappers
     assert _table_names(conn) == tables_before
     raw_service.close()
     wrapped_service.close()
+
+
+# ── Task 8: v1 workflow API economic boundary regression (tests only) ─────
+
+
+def _seed_workflow_boundary_fixture(conn) -> None:
+    repo = OpportunityRepository(conn)
+    assessment = repo.save_assessment(
+        _assessment(
+            assessment_id="assess-econ-boundary",
+            status=DecisionStatus.ACTIONABLE,
+            public_label="FARM",
+            recommended_action="validate boundary",
+            factor_snapshot={"critical_unknowns": []},
+        )
+    )
+    # Persist private raw_snapshot_ref in storage; workflow projection must not expose it.
+    repo.add_evidence(
+        EvidenceRecord(
+            **{
+                **_evidence(
+                    source_url="https://project.example/rules",
+                    raw_snapshot_ref="snap-boundary-private",
+                ),
+                "project_id": "p1",
+                "evidence_id": "ev-boundary-1",
+                "verification_status": "verified",
+            }
+        )
+    )
+    _insert_interaction(
+        conn,
+        opportunity_assessment_id=assessment.assessment_id,
+        status="planned",
+        created_at="2026-07-15T11:30:00+00:00",
+        note="private boundary note",
+        wallet_cohort_id="cohort-boundary-private",
+    )
+
+
+def test_workflow_api_all_economic_flags_false_exact_baseline_body(client, conn, monkeypatch):
+    _set_economic_flags(monkeypatch)  # all six false
+    _seed_workflow_boundary_fixture(conn)
+
+    call_log: list[str] = []
+
+    def _spy_project_economics_data(*_args, **_kwargs):
+        call_log.append("project_economics_data")
+        raise AssertionError("workflow API must not call project_economics_data")
+
+    class _SpyResolver:
+        def __init__(self, *_args, **_kwargs):
+            call_log.append("EconomicResolver.__init__")
+
+        def resolve(self, *_args, **_kwargs):
+            call_log.append("EconomicResolver.resolve")
+            raise AssertionError("workflow API must not call EconomicResolver")
+
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.project_economics_data",
+        _spy_project_economics_data,
+    )
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.EconomicResolver",
+        _SpyResolver,
+    )
+
+    first = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    second = client.get(WORKFLOW_PATH.format(project_id="p1"))
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert call_log == []
+
+    body = first.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert tuple(data.keys()) == BASELINE_WORKFLOW_DATA_KEYS
+    _assert_workflow_privacy(data)
+    _assert_no_economic_workflow_surface(data)
+
+    # Exact baseline: repeated GET is byte-identical under canonical dump.
+    baseline_bytes = _canonical_json_bytes(body)
+    assert _canonical_json_bytes(second.json()) == baseline_bytes
+    assert first.content == second.content
+
+    # Meaningful baseline vs service direct model_dump (router serialization path).
+    from app.opportunity.workflow_service import OpportunityWorkflowService
+
+    service = OpportunityWorkflowService(conn)
+    projection = service.get_project_workflow("p1", NOW)
+    service.close()
+    expected_data = projection.model_dump(mode="json")
+    assert data == expected_data
+    assert _canonical_json_bytes(data) == _canonical_json_bytes(expected_data)
+    assert b"economic_proxy" not in baseline_bytes
+    assert b"economics_data_mode" not in baseline_bytes
+    assert b"raw_snapshot_ref" not in baseline_bytes
+
+
+def test_workflow_api_resolver_flag_true_still_has_no_economic_surface(
+    client, conn, monkeypatch
+):
+    # Valid Settings: resolver requires evidence_emit requires snapshot.
+    _set_economic_flags(
+        monkeypatch,
+        opportunity_economic_resolver_enabled=True,
+    )
+    assert settings.opportunity_economic_resolver_enabled is True
+    assert settings.opportunity_economic_evidence_emit_enabled is True
+    assert settings.opportunity_economic_snapshot_enabled is True
+
+    _seed_workflow_boundary_fixture(conn)
+
+    call_log: list[str] = []
+
+    def _spy_project_economics_data(*_args, **_kwargs):
+        call_log.append("project_economics_data")
+        return None
+
+    class _SpyResolver:
+        def __init__(self, *_args, **_kwargs):
+            call_log.append("EconomicResolver.__init__")
+
+        def resolve(self, *_args, **_kwargs):
+            call_log.append("EconomicResolver.resolve")
+            return None
+
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.project_economics_data",
+        _spy_project_economics_data,
+    )
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.EconomicResolver",
+        _SpyResolver,
+    )
+
+    # Capture flag-off baseline key set first (same fixture, flags toggled).
+    _set_economic_flags(monkeypatch)
+    baseline_response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert baseline_response.status_code == 200, baseline_response.text
+    baseline_data = baseline_response.json()["data"]
+    baseline_keys = _collect_keys(baseline_data)
+    baseline_top = tuple(baseline_data.keys())
+
+    _set_economic_flags(monkeypatch, opportunity_economic_resolver_enabled=True)
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    assert call_log == [], f"economic surfaces invoked with resolver on: {call_log}"
+
+    body = response.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert tuple(data.keys()) == BASELINE_WORKFLOW_DATA_KEYS
+    assert tuple(data.keys()) == baseline_top
+    _assert_workflow_privacy(data)
+    _assert_no_economic_workflow_surface(data)
+
+    keys = _collect_keys(data)
+    assert "economic_proxy" not in keys
+    assert "economics_data_mode" not in keys
+    assert "raw_snapshot_ref" not in keys
+    # Key set must not grow Task 6 economic surface relative to baseline.
+    assert not (keys - baseline_keys) & FORBIDDEN_ECONOMIC_WORKFLOW_KEYS
+    assert keys == baseline_keys
+    # Body remains free of new economic surface vs flag-off baseline dump.
+    assert _canonical_json_bytes(data) == _canonical_json_bytes(baseline_data)
+
+
+def test_workflow_router_returns_projection_model_dump_path(client, conn, monkeypatch):
+    """End-to-end proof that the router exposes projection.model_dump(mode='json')."""
+    _set_economic_flags(monkeypatch)
+    _seed_workflow_boundary_fixture(conn)
+
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    http_data = response.json()["data"]
+
+    from app.opportunity.workflow_service import OpportunityWorkflowService
+    from app.routers.v1 import opportunity as opportunity_router
+
+    service = OpportunityWorkflowService(conn)
+    projection = service.get_project_workflow("p1", NOW)
+    service.close()
+    direct_dump = projection.model_dump(mode="json")
+
+    assert http_data == direct_dump
+    assert tuple(http_data.keys()) == BASELINE_WORKFLOW_DATA_KEYS
+    _assert_no_economic_workflow_surface(http_data)
+    assert "raw_snapshot_ref" not in _collect_keys(http_data)
+
+    # Router source still serializes via model_dump (supplemental static check).
+    router_source = Path(opportunity_router.__file__).read_text(encoding="utf-8")
+    assert "projection.model_dump(mode=\"json\")" in router_source or (
+        "projection.model_dump(mode='json')" in router_source
+    )
+    for token in (
+        "economic_proxy",
+        "economics_data_mode",
+        "project_economics_data",
+        "EconomicProxyProjection",
+    ):
+        assert token not in router_source
+
+
+def test_workflow_api_raw_snapshot_ref_absent_from_response_body(client, conn, monkeypatch):
+    _set_economic_flags(monkeypatch)
+    _seed_workflow_boundary_fixture(conn)
+
+    response = client.get(WORKFLOW_PATH.format(project_id="p1"))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    _assert_no_economic_workflow_surface(data)
+    for item in data["evidence"]["items"]:
+        assert "raw_snapshot_ref" not in item
+        assert "evidence_id" in item
+        assert "source_url" in item

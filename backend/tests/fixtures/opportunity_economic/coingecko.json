@@ -1,0 +1,47 @@
+{
+  "provider": "coingecko",
+  "credential_canaries": {
+    "api_key": "CANARY_CG_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+    "token": "CANARY_CG_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+  },
+  "samples": {
+    "happy": {
+      "market_cap": 50000000,
+      "current_price": 1.25,
+      "total_volume": 2500000,
+      "circulating_supply": 100000000,
+      "market_cap_rank": 120,
+      "price_change_percentage_24h": 5.0,
+      "price_change_24h": 999.99,
+      "unknown_noise_field": "strip-me",
+      "api_key": "CANARY_CG_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+      "token": "CANARY_CG_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_none": {
+      "market_cap": null,
+      "current_price": 2.0,
+      "total_volume": null,
+      "circulating_supply": 50000000,
+      "market_cap_rank": 200,
+      "price_change_percentage_24h": null,
+      "price_change_24h": 1.5,
+      "api_key": "CANARY_CG_API_KEY_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_zero": {
+      "market_cap": 0,
+      "current_price": 0,
+      "total_volume": 0,
+      "circulating_supply": 0,
+      "market_cap_rank": 0,
+      "price_change_percentage_24h": 0,
+      "price_change_24h": 0
+    }
+  },
+  "discovery": {
+    "name": "Coin Economic Token",
+    "raw_id": "coin-economic-token",
+    "url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&api_key=CANARY_CG_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+    "sector": "DeFi",
+    "stage": "mainnet"
+  }
+}

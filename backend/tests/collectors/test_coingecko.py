@@ -136,3 +136,114 @@ async def test_coingecko_health_check(coingecko_collector: CoinGeckoCollector) -
     assert health["source_id"] == "coingecko"
     assert health["status"] == "healthy"
     assert health["ping"] == {"gecko_says": "(V3) To the Moon!"}
+
+
+class TestCoinGeckoEconomicOptionA:
+    """Option A: economic raw_data keeps provider None; legacy signal uses local 0."""
+
+    def test_missing_economic_fields_are_none_not_zero(
+        self, coingecko_collector: CoinGeckoCollector
+    ) -> None:
+        coin = {
+            "id": "sparse-coin",
+            "symbol": "spc",
+            "name": "Sparse Coin",
+            "image": "https://example.com/spc.png",
+            # economic fields absent
+            "last_updated": "2026-07-09T00:00:00Z",
+        }
+        discovery = coingecko_collector._build_discovery(coin)
+        raw = discovery.raw_data
+        for key in (
+            "market_cap",
+            "current_price",
+            "total_volume",
+            "circulating_supply",
+            "market_cap_rank",
+            "price_change_percentage_24h",
+        ):
+            assert raw.get(key) is None or key not in raw
+            assert raw.get(key) != 0
+
+        coin_null = {
+            **coin,
+            "market_cap": None,
+            "current_price": None,
+            "total_volume": None,
+            "circulating_supply": None,
+            "market_cap_rank": None,
+            "price_change_percentage_24h": None,
+            "price_change_24h": None,
+        }
+        raw_null = coingecko_collector._build_discovery(coin_null).raw_data
+        assert raw_null["market_cap"] is None
+        assert raw_null["current_price"] is None
+        assert raw_null["total_volume"] is None
+        assert raw_null["circulating_supply"] is None
+        assert raw_null["market_cap_rank"] is None
+        assert raw_null["price_change_percentage_24h"] is None
+
+    def test_real_zero_preserved_in_raw_data(self, coingecko_collector: CoinGeckoCollector) -> None:
+        coin = {
+            "id": "zero-coin",
+            "symbol": "zro",
+            "name": "Zero Coin",
+            "image": "https://example.com/zro.png",
+            "market_cap": 0,
+            "current_price": 0,
+            "total_volume": 0,
+            "circulating_supply": 0,
+            "market_cap_rank": 0,
+            "price_change_percentage_24h": 0,
+            "price_change_24h": 0,
+            "last_updated": "2026-07-09T00:00:00Z",
+        }
+        raw = coingecko_collector._build_discovery(coin).raw_data
+        assert raw["market_cap"] == 0
+        assert raw["current_price"] == 0
+        assert raw["total_volume"] == 0
+        assert raw["circulating_supply"] == 0
+        assert raw["market_cap_rank"] == 0
+        assert raw["price_change_percentage_24h"] == 0
+
+    def test_legacy_signal_strength_unchanged_for_present_rank(
+        self, coingecko_collector: CoinGeckoCollector
+    ) -> None:
+        coin = {
+            "id": "bitcoin",
+            "symbol": "btc",
+            "name": "Bitcoin",
+            "image": "https://example.com/btc.png",
+            "market_cap": 1_000_000_000_000,
+            "current_price": 50_000,
+            "total_volume": 30_000_000_000,
+            "circulating_supply": 19_000_000,
+            "market_cap_rank": 1,
+            "price_change_percentage_24h": 0.2,
+            "price_change_24h": 100,
+            "last_updated": "2026-07-09T00:00:00Z",
+        }
+        discovery = coingecko_collector._build_discovery(coin)
+        assert discovery.discovery_score == 0.1
+        signal = discovery.raw_signals[0]
+        assert signal.signal_strength == 1.0
+        assert signal.signal_data["market_cap"] == 1_000_000_000_000
+        assert signal.signal_data["market_cap_rank"] == 1
+
+    def test_legacy_signal_strength_fallback_when_rank_missing(
+        self, coingecko_collector: CoinGeckoCollector
+    ) -> None:
+        coin = {
+            "id": "no-rank",
+            "symbol": "nrk",
+            "name": "No Rank",
+            "image": "https://example.com/nrk.png",
+            "market_cap": 1_000,
+            "current_price": 1,
+            "last_updated": "2026-07-09T00:00:00Z",
+        }
+        discovery = coingecko_collector._build_discovery(coin)
+        # Pre-Option-A: missing rank → local 0 → strength 0.5
+        assert discovery.raw_signals[0].signal_strength == 0.5
+        assert coingecko_collector._calculate_signal_strength(0) == 0.5
+        assert discovery.raw_data.get("market_cap_rank") is None or "market_cap_rank" not in discovery.raw_data

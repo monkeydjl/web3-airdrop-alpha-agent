@@ -115,7 +115,9 @@ class SimpleOrchestrator:
         persist_failed = False
         if save_to_db and states:
             try:
-                repo = ProjectRepository()
+                repo = ProjectRepository(
+                    economic_replay_enabled=settings.opportunity_economic_evidence_emit_enabled
+                )
                 persisted_project_rows = repo.save_batch_with_rows(states)
             except Exception as e:
                 persist_failed = True

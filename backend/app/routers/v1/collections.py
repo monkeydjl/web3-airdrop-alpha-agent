@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
@@ -17,8 +18,10 @@ from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
 from app.collectors.registry import CollectorRegistry
 from app.config import settings
-from app.db import scalar
+from app.db import get_connection, scalar
 from app.inflight import QueueDrainInProgressError, claim_run, collect_key
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["collection"])
 
@@ -216,39 +219,73 @@ async def trigger_collection(
                 },
             )
 
-        result = await collector.collect()
+        conn = get_connection()
+        try:
+            result = await collector.collect()
 
-        # 持久化到 raw_projects
-        repo = CollectionRepository()
-        repo.persist_collection_result(
-            result,
-            source_type=collector.source_type,
-            source_name=collector.source_name,
-        )
+            # 持久化到 raw_projects（request-scoped connection）
+            repo = CollectionRepository(conn)
+            repo.persist_collection_result(
+                result,
+                source_type=collector.source_type,
+                source_name=collector.source_name,
+            )
 
-        auto_run: dict | None = None
-        auto_run_skipped: str | None = None
-        if settings.collection_auto_run_enabled and result.status in ("success", "partial"):
-            from app.pipeline_run import execute_analysis_pipeline
-
+            # Economic path after successful persist only; failures must not alter response.
             try:
-                auto_run = await execute_analysis_pipeline(trigger="collection_auto")
-            except QueueDrainInProgressError:
-                # 采集本身已成功落库，不因此报错：另一次排空正在跑，本批项目
-                # 会被后续运行取到（它们仍是 processed=0）。
-                auto_run_skipped = "queue_drain_in_progress"
+                from app.opportunity.economic_evidence import EconomicEvidenceEmitter
+                from app.opportunity.economic_integration import (
+                    manual_run_id,
+                    process_persisted_collection,
+                )
+                from app.opportunity.economic_repository import EconomicSnapshotRepository
+                from app.opportunity.economic_writer import EconomicSnapshotWriter
+                from app.opportunity.repository import OpportunityRepository
 
-        return CollectionTriggerResponse(
-            ok=True,
-            data={
-                "source_id": source_id,
-                "status": result.status,
-                "items_collected": len(result.items),
-                "items_new": result.items_new,
-                "items_duplicate": result.items_duplicate,
-                "started_at": result.started_at.isoformat() if result.started_at else None,
-                "finished_at": result.finished_at.isoformat() if result.finished_at else None,
-                "auto_run": auto_run,
-                "auto_run_skipped": auto_run_skipped,
-            },
-        )
+                snap_repo = EconomicSnapshotRepository(conn)
+                opp_repo = OpportunityRepository(conn)
+                writer = EconomicSnapshotWriter(snap_repo)
+                emitter = EconomicEvidenceEmitter(conn, snap_repo, opp_repo)
+                process_persisted_collection(
+                    result,
+                    run_id=manual_run_id(),
+                    writer=writer,
+                    emitter=emitter,
+                    settings_obj=settings,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "collections.economic_failed",
+                    source_id=source_id,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
+
+            auto_run: dict | None = None
+            auto_run_skipped: str | None = None
+            if settings.collection_auto_run_enabled and result.status in ("success", "partial"):
+                from app.pipeline_run import execute_analysis_pipeline
+
+                try:
+                    auto_run = await execute_analysis_pipeline(trigger="collection_auto")
+                except QueueDrainInProgressError:
+                    # 采集本身已成功落库，不因此报错：另一次排空正在跑，本批项目
+                    # 会被后续运行取到（它们仍是 processed=0）。
+                    auto_run_skipped = "queue_drain_in_progress"
+
+            return CollectionTriggerResponse(
+                ok=True,
+                data={
+                    "source_id": source_id,
+                    "status": result.status,
+                    "items_collected": len(result.items),
+                    "items_new": result.items_new,
+                    "items_duplicate": result.items_duplicate,
+                    "started_at": result.started_at.isoformat() if result.started_at else None,
+                    "finished_at": result.finished_at.isoformat() if result.finished_at else None,
+                    "auto_run": auto_run,
+                    "auto_run_skipped": auto_run_skipped,
+                },
+            )
+        finally:
+            conn.close()

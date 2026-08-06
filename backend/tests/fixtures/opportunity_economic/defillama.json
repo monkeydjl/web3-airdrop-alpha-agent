@@ -1,0 +1,59 @@
+{
+  "provider": "defillama",
+  "unit_contract": {
+    "accepted_change_7d_unit": "ratio",
+    "rejected_change_7d_unit": "percent",
+    "notes": "DefiLlama change_7d provider unit contract: exact literal 'ratio' required for ratio factor; mismatch → schema_invalid"
+  },
+  "credential_canaries": {
+    "api_key": "CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+    "token": "CANARY_DL_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+  },
+  "samples": {
+    "happy": {
+      "tvl": 2500000.5,
+      "change_7d": 0.05,
+      "change_7d_unit": "ratio",
+      "chains": ["Ethereum", "Arbitrum"],
+      "no_token_yet": true,
+      "unknown_noise_field": "strip-me",
+      "api_key": "CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+      "token": "CANARY_DL_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_none": {
+      "tvl": null,
+      "change_7d": 0.12,
+      "change_7d_unit": "ratio",
+      "chains": ["Ethereum"],
+      "no_token_yet": false,
+      "api_key": "CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_zero": {
+      "tvl": 0,
+      "change_7d": 0,
+      "change_7d_unit": "ratio",
+      "chains": ["Optimism"],
+      "no_token_yet": false
+    },
+    "invalid_unit": {
+      "tvl": 1000000,
+      "change_7d": 0.05,
+      "change_7d_unit": "percent",
+      "chains": ["Ethereum"],
+      "no_token_yet": true
+    },
+    "missing_unit": {
+      "tvl": 1000000,
+      "change_7d": 0.05,
+      "chains": ["Ethereum"],
+      "no_token_yet": true
+    }
+  },
+  "discovery": {
+    "name": "Alpha Economic Protocol",
+    "raw_id": "alpha-economic-protocol",
+    "url": "https://api.llama.fi/protocol/alpha-economic?api_key=CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK&token=CANARY_DL_TOKEN_TASK9_SYNTH_NEVER_LEAK#frag",
+    "sector": "DeFi",
+    "stage": "mainnet"
+  }
+}

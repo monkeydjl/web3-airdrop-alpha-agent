@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,6 +25,70 @@ from app.opportunity.models import (
 )
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
+
+# Pre-Task-8 / Task 6 offline surface must never appear on the workflow projection.
+# Note: opportunity.economics (EconomicsResult) is a pre-existing assessment field and is allowed.
+FORBIDDEN_ECONOMIC_WORKFLOW_KEYS = frozenset(
+    {
+        "economic_proxy",
+        "economics_data_mode",
+        "EconomicProxyProjection",
+        "project_economics_data",
+    }
+)
+BASELINE_WORKFLOW_PROJECTION_FIELDS = (
+    "workflow_version",
+    "project_id",
+    "legacy",
+    "opportunity",
+    "workflow",
+    "evidence",
+    "validation",
+    "review_at",
+    "expires_at",
+)
+BASELINE_BUILDER_PARAMS = (
+    "project",
+    "assessment",
+    "evidence",
+    "participation_tasks",
+    "interactions",
+    "now",
+)
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _collect_keys(value: Any) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            keys.add(str(key))
+            keys |= _collect_keys(nested)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            keys |= _collect_keys(item)
+    return keys
+
+
+def _assert_no_forbidden_economic_surface(payload: Any, *, require_json_blob: bool = True) -> None:
+    keys = _collect_keys(payload)
+    leaked = keys & FORBIDDEN_ECONOMIC_WORKFLOW_KEYS
+    assert not leaked, f"forbidden economic keys on workflow surface: {sorted(leaked)}"
+    assert "raw_snapshot_ref" not in keys
+    if not require_json_blob:
+        return
+    # String-token defense for accidental serialization of private Task 6 names.
+    blob = json.dumps(payload, ensure_ascii=False)
+    for token in ("economic_proxy", "economics_data_mode", "raw_snapshot_ref"):
+        assert token not in blob
 
 
 def _confidence(**overrides: Any) -> ConfidenceSet:
@@ -636,3 +704,208 @@ def test_builder_is_pure_and_does_not_mutate_inputs():
     assert tasks == tasks_before
     assert interactions == interactions_before
     assert assessment.model_dump(mode="json") == assessment_dump
+
+
+# ── Task 8: workflow economic boundary regression (tests only) ─────────────
+
+
+def test_opportunity_workflow_projection_model_has_no_economic_surface_fields():
+    from app.opportunity.workflow import OpportunityWorkflowProjection
+
+    field_names = tuple(OpportunityWorkflowProjection.model_fields.keys())
+    assert field_names == BASELINE_WORKFLOW_PROJECTION_FIELDS
+    forbidden = set(field_names) & FORBIDDEN_ECONOMIC_WORKFLOW_KEYS
+    assert not forbidden
+    assert "economic_proxy" not in field_names
+    assert "economics_data_mode" not in field_names
+    annotations = {
+        name: str(field.annotation)
+        for name, field in OpportunityWorkflowProjection.model_fields.items()
+    }
+    joined = " ".join(annotations.values())
+    assert "EconomicProxyProjection" not in joined
+    assert "economics_data_mode" not in joined
+    assert "economic_proxy" not in joined
+
+
+def test_workflow_model_dump_key_set_is_baseline_identical_without_economic_keys():
+    projection = _build()
+    json_dump = projection.model_dump(mode="json")
+    python_dump = projection.model_dump()
+
+    assert tuple(json_dump.keys()) == BASELINE_WORKFLOW_PROJECTION_FIELDS
+    assert tuple(python_dump.keys()) == BASELINE_WORKFLOW_PROJECTION_FIELDS
+    _assert_no_forbidden_economic_surface(json_dump)
+    # Python-mode dump retains datetime objects; key-set scan only (not JSON blob).
+    _assert_no_forbidden_economic_surface(python_dump, require_json_blob=False)
+
+    # Pre-existing assessment economics remain under opportunity; Task 6 surface does not.
+    assert "economics" in json_dump["opportunity"]
+    assert "economic_proxy" not in json_dump
+    assert "economics_data_mode" not in json_dump
+
+    canonical = _canonical_json_bytes(json_dump)
+    assert _canonical_json_bytes(projection.model_dump(mode="json")) == canonical
+    assert b"economic_proxy" not in canonical
+    assert b"economics_data_mode" not in canonical
+    assert b"raw_snapshot_ref" not in canonical
+
+
+def test_build_workflow_projection_signature_and_output_shape_unchanged():
+    from app.opportunity.workflow import build_workflow_projection
+
+    signature = inspect.signature(build_workflow_projection)
+    assert tuple(signature.parameters) == BASELINE_BUILDER_PARAMS
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in signature.parameters.values()
+    )
+    assert signature.return_annotation is not inspect.Signature.empty
+
+    projection = build_workflow_projection(
+        project=_project(),
+        assessment=_assessment(),
+        evidence=[_evidence()],
+        participation_tasks=[_task("t1", priority=1, required=True)],
+        interactions=[],
+        now=NOW,
+    )
+    dump = projection.model_dump(mode="json")
+    assert tuple(dump.keys()) == BASELINE_WORKFLOW_PROJECTION_FIELDS
+    _assert_no_forbidden_economic_surface(dump)
+    # Existing kwargs only — no economic kwargs accepted on the builder.
+    with pytest.raises(TypeError):
+        build_workflow_projection(  # type: ignore[call-arg]
+            project=_project(),
+            assessment=None,
+            evidence=[],
+            participation_tasks=[],
+            interactions=[],
+            now=NOW,
+            economic_proxy=None,
+        )
+
+
+def test_workflow_full_dump_raw_snapshot_ref_absent_under_boundary_contract():
+    projection = _build(
+        evidence=[
+            _evidence(evidence_id="ev-private", raw_snapshot_ref="s3://secret/do-not-leak"),
+            _evidence(
+                evidence_id="ev-private-2",
+                observed_at=NOW - timedelta(hours=3),
+                factor_key="hard_cost_usd",
+                raw_snapshot_ref="local://raw/2",
+            ),
+        ]
+    )
+    dump = projection.model_dump(mode="json")
+    _assert_no_forbidden_economic_surface(dump)
+    for item in dump["evidence"]["items"]:
+        assert "raw_snapshot_ref" not in item
+        # Evidence item contract still exposes public fields only.
+        assert "evidence_id" in item
+        assert "source_url" in item
+
+
+def test_workflow_service_never_calls_economic_resolver_or_projection_helpers(
+    monkeypatch,
+):
+    from app.db import init_db
+    from app.opportunity.workflow_service import OpportunityWorkflowService
+
+    call_log: list[str] = []
+
+    def _spy_project_economics_data(*_args: Any, **_kwargs: Any) -> None:
+        call_log.append("project_economics_data")
+        raise AssertionError("project_economics_data must not be called from workflow")
+
+    class _SpyResolver:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            call_log.append("EconomicResolver.__init__")
+
+        def resolve(self, *_args: Any, **_kwargs: Any) -> None:
+            call_log.append("EconomicResolver.resolve")
+            raise AssertionError("EconomicResolver.resolve must not be called from workflow")
+
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.project_economics_data",
+        _spy_project_economics_data,
+    )
+    monkeypatch.setattr(
+        "app.opportunity.economic_resolver.EconomicResolver",
+        _SpyResolver,
+    )
+
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    init_db(connection)
+    connection.execute(
+        """INSERT INTO projects
+               (id, name, sector, stage, score, label, confidence, source, url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("proj-alpha", "Alpha", "DeFi", "testnet", 88, "FARM", 0.9, "seed", "https://alpha.example"),
+    )
+    connection.commit()
+
+    try:
+        for resolver_enabled in (False, True):
+            call_log.clear()
+            monkeypatch.setattr(
+                "app.config.settings.opportunity_economic_resolver_enabled",
+                resolver_enabled,
+            )
+            if resolver_enabled:
+                # Valid Settings rollout chain when resolver is on.
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_snapshot_enabled", True
+                )
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_evidence_emit_enabled", True
+                )
+            else:
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_snapshot_enabled", False
+                )
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_evidence_emit_enabled", False
+                )
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_source_defillama_enabled", False
+                )
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_source_coingecko_enabled", False
+                )
+                monkeypatch.setattr(
+                    "app.config.settings.opportunity_economic_source_cryptorank_enabled", False
+                )
+
+            service = OpportunityWorkflowService(connection)
+            projection = service.get_project_workflow("proj-alpha", NOW)
+            service.close()
+
+            assert call_log == [], f"economic surfaces called under resolver={resolver_enabled}: {call_log}"
+            dump = projection.model_dump(mode="json")
+            assert tuple(dump.keys()) == BASELINE_WORKFLOW_PROJECTION_FIELDS
+            _assert_no_forbidden_economic_surface(dump)
+    finally:
+        connection.close()
+
+
+def test_workflow_and_router_production_sources_have_no_economic_tokens_static_scan():
+    """Supplemental static defense; behavioral tests above remain primary proof."""
+    repo_root = Path(__file__).resolve().parents[3]
+    targets = (
+        repo_root / "backend" / "app" / "opportunity" / "workflow.py",
+        repo_root / "backend" / "app" / "opportunity" / "workflow_service.py",
+        repo_root / "backend" / "app" / "routers" / "v1" / "opportunity.py",
+    )
+    forbidden_tokens = (
+        "economic_proxy",
+        "economics_data_mode",
+        "project_economics_data",
+        "EconomicProxyProjection",
+    )
+    for path in targets:
+        source = path.read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            assert token not in source, f"{token!r} found in {path}"

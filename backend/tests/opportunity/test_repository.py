@@ -616,3 +616,276 @@ def test_latest_assessment_returns_none_when_absent():
 
     assert OpportunityRepository(conn).latest_assessment("missing", "low-cost-curated-multiwallet-v1") is None
     conn.close()
+
+
+# ── Task 5: economic Evidence insert-if-absent (dual-backend) ─────
+
+
+def _economic_evidence(**overrides) -> EvidenceRecord:
+    data = {
+        "evidence_id": "a" * 64,
+        "project_id": "p1",
+        "factor_key": "tvl_usd",
+        "value": "1000000.00000000",
+        "value_type": "string",
+        "observation_type": "observed",
+        "source_url": "https://api.llama.fi/protocol/example",
+        "source_type": "public_aggregator",
+        "source_grade": "C",
+        "observed_at": NOW,
+        "effective_at": NOW,
+        "expires_at": NOW + timedelta(hours=48),
+        "verification_status": "verified",
+        "independence_group": "defillama-protocols",
+        "raw_snapshot_ref": "econ-snapshot:snap-1",
+        "supersedes_evidence_id": None,
+    }
+    data.update(overrides)
+    return EvidenceRecord(**data)
+
+
+def _assert_add_economic_evidence_if_absent_contract(repo: OpportunityRepository, raw_fetch) -> None:
+    from app.opportunity.repository import EconomicEvidenceContentConflict
+
+    record = _economic_evidence()
+    stored, inserted = repo.add_economic_evidence_if_absent(record)
+    assert inserted is True
+    assert stored.evidence_id == record.evidence_id
+    assert raw_fetch(record.evidence_id) is not None
+
+    again, again_inserted = repo.add_economic_evidence_if_absent(record)
+    assert again_inserted is False
+    assert again.evidence_id == record.evidence_id
+    assert again.model_dump(mode="json") == stored.model_dump(mode="json")
+    after_dup = raw_fetch(record.evidence_id)
+    assert after_dup is not None
+    assert after_dup["factor_key"] == "tvl_usd"
+    assert after_dup["value_json"]  # content unchanged
+
+    conflict = _economic_evidence(factor_key="market_cap_usd", value="9.00000000")
+    with pytest.raises(EconomicEvidenceContentConflict):
+        repo.add_economic_evidence_if_absent(conflict)
+    after_conflict = raw_fetch(record.evidence_id)
+    assert after_conflict is not None
+    assert after_conflict["factor_key"] == "tvl_usd"
+    assert after_conflict["value_json"] == after_dup["value_json"]
+
+
+def test_add_economic_evidence_if_absent_insert_duplicate_conflict_sqlite():
+    conn = _connection()
+    repo = OpportunityRepository(conn)
+
+    def raw_fetch(evidence_id: str):
+        return conn.execute(
+            "SELECT evidence_id, factor_key, value_json FROM opportunity_evidence WHERE evidence_id = ?",
+            (evidence_id,),
+        ).fetchone()
+
+    try:
+        _assert_add_economic_evidence_if_absent_contract(repo, raw_fetch)
+        # generic add_evidence still raises IntegrityError on duplicate id
+        repo.add_evidence(_economic_evidence(evidence_id="b" * 64))
+        with pytest.raises(sqlite3.IntegrityError):
+            repo.add_evidence(_economic_evidence(evidence_id="b" * 64))
+    finally:
+        conn.close()
+
+
+class _PgEvidenceFakeRaw:
+    """PostgreSQL recording backend for opportunity_evidence insert-if-absent."""
+
+    def __init__(self, *, ambiguous_rowcount: bool = False) -> None:
+        self._rows: dict[str, dict] = {}
+        self._pending: dict[str, dict] | None = None
+        self._last_fetch = None
+        self._ambiguous_rowcount = ambiguous_rowcount
+        self.events: list[str] = []
+        self.rowcount = -1
+
+    def cursor(self):
+        return self
+
+    def _set_rowcount(self, value: int) -> None:
+        # Drivers that leave rowcount as -1 after DML must still classify insert vs conflict.
+        self.rowcount = -1 if self._ambiguous_rowcount else value
+
+    def execute(self, sql: str, params: tuple = ()):
+        sql_n = " ".join(sql.split()).lower()
+        self._last_fetch = None
+        self.rowcount = -1
+        if "insert into opportunity_evidence" in sql_n and "on conflict" in sql_n:
+            # 16 business columns
+            keys = [
+                "evidence_id",
+                "project_id",
+                "factor_key",
+                "value_json",
+                "value_type",
+                "observation_type",
+                "source_url",
+                "source_type",
+                "source_grade",
+                "observed_at",
+                "effective_at",
+                "expires_at",
+                "verification_status",
+                "independence_group",
+                "raw_snapshot_ref",
+                "supersedes_evidence_id",
+            ]
+            row = dict(zip(keys, params, strict=True))
+            if params[0] in self._rows:
+                self._set_rowcount(0)
+                # ON CONFLICT DO NOTHING RETURNING yields no row
+                self._last_fetch = None
+                return self
+            if self._pending is None:
+                self._pending = dict(self._rows)
+            self._pending[params[0]] = row
+            self._set_rowcount(1)
+            # RETURNING evidence_id on successful insert (mapping or tuple-compatible)
+            if "returning" in sql_n:
+                self._last_fetch = {"evidence_id": params[0]}
+            return self
+        if "insert into opportunity_evidence" in sql_n:
+            # generic add_evidence path (no ON CONFLICT)
+            keys = [
+                "evidence_id",
+                "project_id",
+                "factor_key",
+                "value_json",
+                "value_type",
+                "observation_type",
+                "source_url",
+                "source_type",
+                "source_grade",
+                "observed_at",
+                "effective_at",
+                "expires_at",
+                "verification_status",
+                "independence_group",
+                "raw_snapshot_ref",
+                "supersedes_evidence_id",
+            ]
+            row = dict(zip(keys, params, strict=True))
+            if params[0] in self._rows or (self._pending and params[0] in self._pending):
+                err = Exception("duplicate key value violates unique constraint")
+                err.sqlstate = "23505"  # type: ignore[attr-defined]
+                raise err
+            if self._pending is None:
+                self._pending = dict(self._rows)
+            self._pending[params[0]] = row
+            self._set_rowcount(1)
+            return self
+        if "from opportunity_evidence where evidence_id" in sql_n:
+            store = self._pending if self._pending is not None else self._rows
+            self._last_fetch = store.get(params[0]) if store else None
+            return self
+        if "select project_id, factor_key, observed_at from opportunity_evidence" in sql_n:
+            store = self._pending if self._pending is not None else self._rows
+            row = store.get(params[0]) if store else None
+            if row is None:
+                self._last_fetch = None
+            else:
+                self._last_fetch = {
+                    "project_id": row["project_id"],
+                    "factor_key": row["factor_key"],
+                    "observed_at": row["observed_at"],
+                }
+            return self
+        if "select supersedes_evidence_id from opportunity_evidence" in sql_n:
+            store = self._pending if self._pending is not None else self._rows
+            row = store.get(params[0]) if store else None
+            self._last_fetch = (
+                {"supersedes_evidence_id": row["supersedes_evidence_id"]} if row else None
+            )
+            return self
+        raise AssertionError(f"unexpected SQL in PG evidence fake: {sql!r}")
+
+    def fetchone(self):
+        return self._last_fetch
+
+    def fetchall(self):
+        return []
+
+    def commit(self):
+        self.events.append("commit")
+        if self._pending is not None:
+            self._rows = self._pending
+            self._pending = None
+
+    def rollback(self):
+        self.events.append("rollback")
+        self._pending = None
+
+    def close(self):
+        self.events.append("close")
+
+
+def test_add_economic_evidence_if_absent_insert_duplicate_conflict_postgres_recording():
+    from app.opportunity.repository import OpportunityRepository as OppRepo
+
+    raw = _PgEvidenceFakeRaw()
+    conn = DbConnection(raw, kind="postgres")
+    repo = OppRepo(conn)
+
+    def raw_fetch(evidence_id: str):
+        row = raw._rows.get(evidence_id)
+        return row
+
+    try:
+        _assert_add_economic_evidence_if_absent_contract(repo, raw_fetch)
+        # generic add_evidence: duplicate still fails (not rewritten to if-absent)
+        first = _economic_evidence(evidence_id="c" * 64)
+        repo.add_evidence(first)
+        # Driver IntegrityError/Exception is re-raised as-is on generic path.
+        with pytest.raises(Exception, match="duplicate key"):
+            repo.add_evidence(_economic_evidence(evidence_id="c" * 64, factor_key="other"))
+        # original row unchanged
+        assert raw._rows["c" * 64]["factor_key"] == "tvl_usd"
+    finally:
+        repo.close()
+        conn.close()
+
+
+def test_add_economic_evidence_if_absent_postgres_recording_ambiguous_rowcount():
+    """Drivers that leave rowcount as -1/None must not misclassify inserts as duplicates."""
+    from app.opportunity.repository import EconomicEvidenceContentConflict
+    from app.opportunity.repository import OpportunityRepository as OppRepo
+
+    raw = _PgEvidenceFakeRaw(ambiguous_rowcount=True)
+    conn = DbConnection(raw, kind="postgres")
+    repo = OppRepo(conn)
+
+    def raw_fetch(evidence_id: str):
+        # Prefer pending uncommitted state so content-conflict can assert no overwrite.
+        store = raw._pending if raw._pending is not None else raw._rows
+        return store.get(evidence_id) if store else None
+
+    try:
+        record = _economic_evidence(evidence_id="d" * 64)
+        stored, inserted = repo.add_economic_evidence_if_absent(record)
+        assert inserted is True
+        assert stored.evidence_id == record.evidence_id
+        assert raw_fetch(record.evidence_id) is not None
+
+        again, again_inserted = repo.add_economic_evidence_if_absent(record)
+        assert again_inserted is False
+        assert again.evidence_id == record.evidence_id
+        assert again.model_dump(mode="json") == stored.model_dump(mode="json")
+        after_dup = raw_fetch(record.evidence_id)
+        assert after_dup is not None
+        assert after_dup["factor_key"] == "tvl_usd"
+
+        conflict = _economic_evidence(
+            evidence_id="d" * 64, factor_key="market_cap_usd", value="9.00000000"
+        )
+        with pytest.raises(EconomicEvidenceContentConflict):
+            repo.add_economic_evidence_if_absent(conflict)
+        after_conflict = raw_fetch(record.evidence_id)
+        assert after_conflict is not None
+        assert after_conflict["factor_key"] == "tvl_usd"
+        assert after_conflict["value_json"] == after_dup["value_json"]
+    finally:
+        repo.close()
+        conn.close()

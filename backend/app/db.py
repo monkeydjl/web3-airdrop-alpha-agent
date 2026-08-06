@@ -439,6 +439,19 @@ def _sqlite_ddl() -> str:
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots (
+                snapshot_id        TEXT PRIMARY KEY,
+                schema_version     TEXT NOT NULL,
+                run_id             TEXT NOT NULL,
+                source_id          TEXT NOT NULL,
+                dedup_key          TEXT NOT NULL CHECK(length(trim(dedup_key))>0),
+                provider_entity_id TEXT NOT NULL,
+                payload_sha256     TEXT NOT NULL,
+                payload_json       TEXT NOT NULL,
+                source_url         TEXT NOT NULL,
+                collected_at       TIMESTAMP NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -474,6 +487,9 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_factor ON opportunity_evidence(project_id, factor_key, verification_status);
             CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_latest ON opportunity_assessments(project_id, profile_version, scored_at DESC);
             CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_label ON opportunity_assessments(public_label, expires_at);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_run_source ON opportunity_economic_snapshots(run_id, source_id);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_identity ON opportunity_economic_snapshots(source_id, dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_collected ON opportunity_economic_snapshots(collected_at DESC);
     """
 
 
@@ -681,6 +697,19 @@ def _postgres_ddl() -> str:
                 created_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots (
+                snapshot_id        TEXT PRIMARY KEY,
+                schema_version     TEXT NOT NULL,
+                run_id             TEXT NOT NULL,
+                source_id          TEXT NOT NULL,
+                dedup_key          TEXT NOT NULL CHECK(length(trim(dedup_key))>0),
+                provider_entity_id TEXT NOT NULL,
+                payload_sha256     TEXT NOT NULL,
+                payload_json       TEXT NOT NULL,
+                source_url         TEXT NOT NULL,
+                collected_at       TIMESTAMPTZ NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -716,6 +745,9 @@ def _postgres_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_opportunity_evidence_factor ON opportunity_evidence(project_id, factor_key, verification_status);
             CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_latest ON opportunity_assessments(project_id, profile_version, scored_at DESC);
             CREATE INDEX IF NOT EXISTS idx_opportunity_assessment_label ON opportunity_assessments(public_label, expires_at);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_run_source ON opportunity_economic_snapshots(run_id, source_id);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_identity ON opportunity_economic_snapshots(source_id, dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_collected ON opportunity_economic_snapshots(collected_at DESC);
     """
 
 

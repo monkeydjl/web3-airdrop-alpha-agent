@@ -1,0 +1,50 @@
+{
+  "provider": "cryptorank",
+  "credential_canaries": {
+    "api_key": "CANARY_CR_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+    "token": "CANARY_CR_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+  },
+  "samples": {
+    "happy": {
+      "market_cap": 80000000,
+      "price": 3.5,
+      "volume_24h": 4000000,
+      "circulating_supply": 20000000,
+      "total_supply": 50000000,
+      "rank": 85,
+      "percent_change_24h": 10.0,
+      "percent_change_7d": 25.0,
+      "unknown_noise_field": "strip-me",
+      "api_key": "CANARY_CR_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+      "token": "CANARY_CR_TOKEN_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_none": {
+      "market_cap": null,
+      "price": 1.0,
+      "volume_24h": null,
+      "circulating_supply": 10000000,
+      "total_supply": null,
+      "rank": 300,
+      "percent_change_24h": null,
+      "percent_change_7d": 5.0,
+      "api_key": "CANARY_CR_API_KEY_TASK9_SYNTH_NEVER_LEAK"
+    },
+    "with_zero": {
+      "market_cap": 0,
+      "price": 0,
+      "volume_24h": 0,
+      "circulating_supply": 0,
+      "total_supply": 0,
+      "rank": 0,
+      "percent_change_24h": 0,
+      "percent_change_7d": 0
+    }
+  },
+  "discovery": {
+    "name": "Rank Economic Asset",
+    "raw_id": "rank-economic-asset",
+    "url": "https://api.cryptorank.io/v1/currencies?api_key=CANARY_CR_API_KEY_TASK9_SYNTH_NEVER_LEAK",
+    "sector": "DeFi",
+    "stage": "mainnet"
+  }
+}

@@ -12,7 +12,7 @@
 from math import isfinite
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 优先仓库根 .env，其次 backend/.env（从 backend 启动时也能读到根配置）
@@ -188,6 +188,12 @@ class Settings(BaseSettings):
     enable_competition_cache: bool = True
     opportunity_shadow_enabled: bool = True
     opportunity_shadow_sample_rate: float = 1.0
+    opportunity_economic_snapshot_enabled: bool = False
+    opportunity_economic_source_defillama_enabled: bool = False
+    opportunity_economic_source_coingecko_enabled: bool = False
+    opportunity_economic_source_cryptorank_enabled: bool = False
+    opportunity_economic_evidence_emit_enabled: bool = False
+    opportunity_economic_resolver_enabled: bool = False
 
     # ── 缓存配置 ──────────────────────────────────
     competition_cache_ttl: int = 3600
@@ -264,6 +270,21 @@ class Settings(BaseSettings):
         if not isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("sample rate must be finite and between 0 and 1")
         return value
+
+    @model_validator(mode="after")
+    def validate_opportunity_economic_flag_rollout(self):
+        """Upstream economic rollout gates: evidence_emit⇒snapshot, resolver⇒evidence."""
+        if self.opportunity_economic_evidence_emit_enabled and not self.opportunity_economic_snapshot_enabled:
+            raise ValueError(
+                "opportunity_economic_evidence_emit_enabled requires "
+                "opportunity_economic_snapshot_enabled"
+            )
+        if self.opportunity_economic_resolver_enabled and not self.opportunity_economic_evidence_emit_enabled:
+            raise ValueError(
+                "opportunity_economic_resolver_enabled requires "
+                "opportunity_economic_evidence_emit_enabled"
+            )
+        return self
 
     def model_post_init(self, __context) -> None:
         """启动时断言权重和为 1.0。"""

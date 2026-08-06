@@ -19,6 +19,7 @@ import structlog
 
 from app.agents.base import PipelineState
 from app.db import dict_from_row, get_connection, is_postgres, scalar
+from app.opportunity.economic_evidence import replay_economic_snapshots_for_project
 from app.services.project_signals import merge_meta, parse_meta
 
 logger = structlog.get_logger(__name__)
@@ -42,13 +43,17 @@ class ProjectRepository:
     负责项目的持久化和查询操作。
     """
 
-    def __init__(self, conn: Any = None):
+    def __init__(self, conn: Any = None, *, economic_replay_enabled: bool = False):
         """初始化仓库。
 
         Args:
             conn: 可选的数据库连接。不提供时每次操作创建新连接。
+            economic_replay_enabled: When True, post-commit economic Evidence replay
+                runs for the saved project. Defaults False (no-op for existing callers).
+                Does not read Settings; production wiring is Task 7.
         """
         self._conn = conn
+        self._economic_replay_enabled = economic_replay_enabled
 
     def _get_conn(self) -> Any:
         """获取数据库连接。"""
@@ -231,6 +236,23 @@ class ProjectRepository:
                 name=project.name,
                 score=state.score,
             )
+
+            # Post-commit, pre-return economic Evidence replay on the same conn.
+            # Failures warn only — never roll back the committed project.
+            try:
+                replay_economic_snapshots_for_project(
+                    project.id,
+                    conn=conn,
+                    enabled=self._economic_replay_enabled,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "repository.project.economic_replay_failed",
+                    project_id=project.id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+
             return snapshot
 
         except Exception:

@@ -639,3 +639,232 @@ class TestLogRepository:
         repo = LogRepository(db_conn)
         logs = repo.get_run_logs("nonexistent")
         assert logs == []
+
+
+# ── Task 5: ProjectRepository post-link economic replay ───────────
+
+
+def _seed_economic_link_for_project(conn, project_id: str, dedup_key: str = "protocol:test-001"):
+    """Insert raw_projects link + one reconstructible economic snapshot."""
+    from datetime import UTC, datetime
+
+    from app.opportunity.economic_models import SCHEMA_VERSION, EconomicSnapshotRow, build_snapshot_id, payload_sha256
+    from app.opportunity.economic_repository import EconomicSnapshotRepository
+
+    # raw link may exist before projects row (identity dual-condition checks projects.id
+    # only at emit time — after save the project exists).
+    conn.execute(
+        """
+        INSERT INTO raw_projects (
+            raw_id, source_id, dedup_key, raw_data, discovered_at, discovery_score, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"raw-{project_id}",
+            "defillama",
+            dedup_key,
+            "{}",
+            datetime(2026, 7, 22, 12, 0, tzinfo=UTC).isoformat(),
+            0.9,
+            project_id,
+        ),
+    )
+    conn.commit()
+
+    payload = {
+        "tvl": 1_000_000,
+        "change_7d": 0.05,
+        "change_7d_unit": "ratio",
+        "chains": ["ethereum"],
+        "no_token_yet": True,
+    }
+    digest = payload_sha256(payload)
+    snapshot_id = build_snapshot_id(
+        run_id="daily:2026-07-22:defillama",
+        source_id="defillama",
+        provider_entity_id=f"ent-{project_id}",
+        payload_sha256_hex=digest,
+    )
+    snap = EconomicSnapshotRow(
+        snapshot_id=snapshot_id,
+        schema_version=SCHEMA_VERSION,
+        run_id="daily:2026-07-22:defillama",
+        source_id="defillama",
+        dedup_key=dedup_key,
+        provider_entity_id=f"ent-{project_id}",
+        payload_sha256=digest,
+        payload_json=payload,
+        source_url="https://api.llama.fi/protocol/example",
+        collected_at=datetime(2026, 7, 22, 12, 0, tzinfo=UTC),
+    )
+    EconomicSnapshotRepository(conn).insert_if_absent(snap)
+    return snapshot_id
+
+
+def test_project_save_replays_economic_snapshots_stable_id_no_http_on_error(db_conn, sample_state):
+    from unittest.mock import patch
+
+    from app.metrics import OPPORTUNITY_ECONOMIC_EVIDENCE, metric_sample_value
+    from app.opportunity.economic_models import build_evidence_id
+    from app.repository import ProjectRepository
+
+    project_id = sample_state.project.id
+    snapshot_id = _seed_economic_link_for_project(db_conn, project_id)
+
+    # Before save: project may not exist yet → zero evidence
+    assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
+
+    before_emitted = metric_sample_value(
+        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
+    )
+
+    # Ensure no network: patch urllib if anything tries HTTP during save/replay
+    with patch("urllib.request.urlopen", side_effect=AssertionError("no network")):
+        repo = ProjectRepository(db_conn, economic_replay_enabled=True)
+        saved = repo.save(sample_state)
+
+    assert saved["id"] == project_id
+    # Project committed
+    assert db_conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is not None
+
+    count = db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0]
+    assert count >= 1
+    after_emitted = metric_sample_value(
+        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
+    )
+    assert after_emitted > before_emitted
+
+    # Stable evidence_id for tvl_usd
+    expected = build_evidence_id(
+        snapshot_id=snapshot_id, project_id=project_id, factor_key="tvl_usd"
+    )
+    row = db_conn.execute(
+        "SELECT evidence_id FROM opportunity_evidence WHERE evidence_id = ?",
+        (expected,),
+    ).fetchone()
+    assert row is not None
+
+    # Outer replay failure must not drop committed project
+    with patch(
+        "app.repository.replay_economic_snapshots_for_project",
+        side_effect=RuntimeError("replay boom"),
+    ):
+        sample_state.score = 77
+        saved2 = ProjectRepository(db_conn, economic_replay_enabled=True).save(sample_state)
+    assert saved2["id"] == project_id
+    assert db_conn.execute("SELECT score FROM projects WHERE id = ?", (project_id,)).fetchone()[0] == 77
+
+
+def test_project_save_replay_enabled_false_noop(db_conn, sample_state):
+    from unittest.mock import patch
+
+    from app.metrics import (
+        OPPORTUNITY_ECONOMIC_EVIDENCE,
+        OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION,
+        metric_sample_value,
+    )
+    from app.repository import ProjectRepository
+
+    project_id = sample_state.project.id
+    _seed_economic_link_for_project(db_conn, project_id)
+
+    before_ev = metric_sample_value(
+        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
+    )
+    before_id = metric_sample_value(
+        OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
+    )
+
+    with (
+        patch("app.repository.replay_economic_snapshots_for_project", return_value=None) as replay_spy,
+        patch("app.opportunity.economic_evidence.observation_from_snapshot") as recon_spy,
+    ):
+        # default economic_replay_enabled=False — must call replay with enabled=False
+        # (or no-op path that returns None immediately)
+        repo = ProjectRepository(db_conn)
+        saved = repo.save(sample_state)
+        assert recon_spy.call_count == 0
+        assert replay_spy.call_count == 1
+        assert replay_spy.call_args.kwargs.get("enabled") is False
+        assert replay_spy.call_args.args[0] == project_id
+
+    assert saved["id"] == project_id
+    assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
+    assert (
+        metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
+        == before_ev
+    )
+    assert (
+        metric_sample_value(
+            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
+        )
+        == before_id
+    )
+
+    # Explicit False — real no-op path (no spy): zero Evidence / zero metric delta
+    ProjectRepository(db_conn, economic_replay_enabled=False).save(sample_state)
+    assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
+    assert (
+        metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
+        == before_ev
+    )
+
+
+def test_project_save_replay_connection_borrow_and_own_close_semantics(db_conn, sample_state, monkeypatch):
+    from dataclasses import replace
+
+    from app.repository import ProjectRepository
+
+    project_id = sample_state.project.id
+    _seed_economic_link_for_project(db_conn, project_id)
+
+    # Borrowed: external conn must remain usable after save
+    borrowed = ProjectRepository(db_conn, economic_replay_enabled=True)
+    borrowed.save(sample_state)
+    still = db_conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
+    assert still is not None
+    # conn still open
+    db_conn.execute("SELECT 1").fetchone()
+
+    # Owned: ProjectRepository() without external conn closes in finally
+    import sqlite3
+
+    from app.db import init_db
+
+    owned_raw = sqlite3.connect(":memory:")
+    owned_raw.row_factory = sqlite3.Row
+    init_db(owned_raw)
+    closed = {"v": False}
+
+    class _OwnedConn:
+        """Proxy that tracks close while delegating to a real sqlite connection."""
+
+        def __init__(self, raw: sqlite3.Connection):
+            self._raw = raw
+
+        def execute(self, *args, **kwargs):
+            return self._raw.execute(*args, **kwargs)
+
+        def commit(self):
+            return self._raw.commit()
+
+        def rollback(self):
+            return self._raw.rollback()
+
+        def close(self):
+            closed["v"] = True
+            return self._raw.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self._raw, name)
+
+    owned = _OwnedConn(owned_raw)
+    monkeypatch.setattr("app.repository.get_connection", lambda: owned)
+
+    state2 = deepcopy(sample_state)
+    state2.project = replace(state2.project, id="owned-project-001")
+    # seed link on owned conn before save
+    _seed_economic_link_for_project(owned_raw, "owned-project-001")
+
+    ProjectRepository(economic_replay_enabled=False).save(state2)
+    assert closed["v"] is True
