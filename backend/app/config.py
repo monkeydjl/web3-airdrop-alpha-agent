@@ -186,8 +186,8 @@ class Settings(BaseSettings):
     enable_events_tracking: bool = False
     enable_user_system: bool = False
     enable_competition_cache: bool = True
-    opportunity_shadow_enabled: bool = False
-    opportunity_shadow_sample_rate: float = 0.0
+    opportunity_shadow_enabled: bool = True
+    opportunity_shadow_sample_rate: float = 1.0
 
     # ── 缓存配置 ──────────────────────────────────
     competition_cache_ttl: int = 3600

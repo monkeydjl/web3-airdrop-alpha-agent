@@ -64,14 +64,14 @@ def _insert_raw(conn, raw_id: str, name: str, score: float = 0.6) -> str:
     return project_id
 
 
-def test_opportunity_shadow_defaults_disabled_and_unsampled(monkeypatch):
+def test_opportunity_shadow_defaults_enabled_and_full_sampling(monkeypatch):
     monkeypatch.delenv("OPPORTUNITY_SHADOW_ENABLED", raising=False)
     monkeypatch.delenv("OPPORTUNITY_SHADOW_SAMPLE_RATE", raising=False)
 
     configured = Settings(_env_file=None)
 
-    assert configured.opportunity_shadow_enabled is False
-    assert configured.opportunity_shadow_sample_rate == 0.0
+    assert configured.opportunity_shadow_enabled is True
+    assert configured.opportunity_shadow_sample_rate == 1.0
 
 
 @pytest.mark.parametrize("sample_rate", [0.0, 0.05, 1.0])

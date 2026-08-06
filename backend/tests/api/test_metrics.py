@@ -62,6 +62,7 @@ class TestMetricsEndpoint:
             for sample in family.samples
             if sample.name == "airdrop_opportunity_shadow_assessments_total"
             and sample.labels.get("public_label") == "WATCH"
+            and sample.labels.get("status") == "None"
         )
 
         assert assessment_sample.labels == {

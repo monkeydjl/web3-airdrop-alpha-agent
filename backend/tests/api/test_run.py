@@ -256,8 +256,9 @@ class TestRunEndpoint:
         assert data["ok"] is True
         assert data["data"]["project_count"] == 1
 
-    def test_run_empty_projects_triggers_auto_collection(self, client):
+    def test_run_empty_projects_triggers_auto_collection(self, client, monkeypatch):
         """Test that empty projects list triggers auto collection path."""
+        monkeypatch.setattr(settings, "opportunity_shadow_enabled", False)
         payload = {
             "projects": [],
             "enable_llm": False,
