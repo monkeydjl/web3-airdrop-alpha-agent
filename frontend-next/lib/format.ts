@@ -60,6 +60,21 @@ export function teamTypeZh(t?: string | null): string {
   return map[t.toLowerCase()] || t;
 }
 
+export function tierZh(tier?: string | null): string {
+  switch ((tier || '').toLowerCase()) {
+    case 'tier1':
+      return '一线 VC';
+    case 'tier2':
+      return '二线 VC';
+    case 'tier3':
+      return '其他机构';
+    case 'none':
+      return '无融资';
+    default:
+      return '未知';
+  }
+}
+
 export function sourceZh(source?: string | null): string {
   if (!source) return '—';
   const map: Record<string, string> = {

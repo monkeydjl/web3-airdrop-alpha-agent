@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
-import { formatPct, sourceZh, stageZh } from '@/lib/format';
+import { formatPct, sourceZh, stageZh, tierZh } from '@/lib/format';
 
 export function ProjectCard({ project, rank }: { project: Project; rank?: number }) {
   return (
@@ -17,6 +17,11 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
             <LabelBadge label={project.label} />
             {project.stage ? (
               <span className="badge bg-surface-3 text-ink-muted">{stageZh(project.stage)}</span>
+            ) : null}
+            {project.funding?.funding_tier && project.funding.funding_tier !== 'none' ? (
+              <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
+                {tierZh(project.funding.funding_tier)}
+              </span>
             ) : null}
           </div>
           <h3 className="truncate text-base font-semibold text-ink group-hover:text-brand-600 dark:group-hover:text-brand-300">

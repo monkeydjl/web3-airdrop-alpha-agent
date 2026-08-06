@@ -10,20 +10,24 @@ import {
   Toast,
 } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
+import { exportProjectsCsv } from '@/lib/export';
 import { LABEL_ORDER, LABEL_ZH, sortProjects, stageZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSourceApi, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type SortBy = 'score' | 'name' | 'confidence';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [labelFilter, setLabelFilter] = useState<Label | ''>('');
   const [sectorFilter, setSectorFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [hideIgnore, setHideIgnore] = useState(true);
+  const [hasFundingOnly, setHasFundingOnly] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>('score');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [running, setRunning] = useState(false);
@@ -124,11 +128,12 @@ export default function DashboardPage() {
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
+      if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
       return true;
     });
     list = sortProjects(list, sortBy, sortOrder);
     return list;
-  }, [projects, hideIgnore, labelFilter, sectorFilter, keyword, sortBy, sortOrder]);
+  }, [projects, hideIgnore, labelFilter, sectorFilter, keyword, hasFundingOnly, sortBy, sortOrder]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -272,6 +277,26 @@ export default function DashboardPage() {
           隐藏「忽略」
         </label>
 
+        <label className="flex cursor-pointer items-center gap-2 px-1 text-sm text-ink-muted">
+          <input
+            type="checkbox"
+            className="rounded border-line text-brand-600 focus:ring-brand-500/30"
+            checked={hasFundingOnly}
+            onChange={(e) => setHasFundingOnly(e.target.checked)}
+          />
+          有融资信号
+        </label>
+
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={filtered.length === 0}
+          title={`导出当前筛选的 ${filtered.length} 个项目`}
+          onClick={() => exportProjectsCsv(filtered)}
+        >
+          导出 CSV ({filtered.length})
+        </button>
+
         <div className="ml-auto flex rounded-xl border border-line p-0.5">
           {(['grid', 'table'] as const).map((v) => (
             <button
@@ -324,6 +349,7 @@ export default function DashboardPage() {
                   setSectorFilter('');
                   setKeyword('');
                   setHideIgnore(false);
+                  setHasFundingOnly(false);
                 }}
               >
                 清除筛选
@@ -358,7 +384,7 @@ export default function DashboardPage() {
                     key={p.id}
                     className="border-b border-line/70 transition hover:bg-surface-2/60"
                     onClick={() => {
-                      window.location.href = `/project/${p.id}`;
+                      router.push(`/project/${p.id}`);
                     }}
                     style={{ cursor: 'pointer' }}
                   >

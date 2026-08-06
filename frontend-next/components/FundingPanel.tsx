@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from '@/lib/api';
+import { tierZh } from '@/lib/format';
 import { useCallback, useEffect, useState } from 'react';
 
 export interface FundingData {
@@ -12,21 +13,6 @@ export interface FundingData {
   funding_tier?: string;
   funding_quality?: number;
   recent_funding?: boolean;
-}
-
-function tierZh(tier?: string | null) {
-  switch ((tier || '').toLowerCase()) {
-    case 'tier1':
-      return '一线 VC';
-    case 'tier2':
-      return '二线 VC';
-    case 'tier3':
-      return '其他机构';
-    case 'none':
-      return '无融资';
-    default:
-      return '未知';
-  }
 }
 
 function formatUsd(v?: number | null) {
