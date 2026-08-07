@@ -1,6 +1,6 @@
 # 项目记忆：Web3 Airdrop Alpha Agent System
 
-> 更新：2026-08-06 · P0+P1+P2+经济分支+CI+文档+前端打磨 ✅ · 13 commits on master · 2,155 测试
+> 更新：2026-08-06 · P0+P1+P2+经济分支+CI+文档+前端+mypy+GitHub ✅ · 15 commits on master · 2,155 测试 · mypy 0 errors
 
 ## 开发环境端口约定
 - 前端：**3002**（`frontend-next`；旧 `frontend/` 非主入口）
@@ -155,10 +155,13 @@ scorer / team / tokenomics 读 funding_quality / funding_tier
 7. ~~**CI/CD 修复**~~ ✅ `1088c67`：mypy 启用（非 strict）、前端 CI、security/docs 分支对齐、secret baseline
 8. ~~**文档对齐**~~ ✅ `e2e3985`：IMPLEMENTATION_STATUS.md v1.2
 9. ~~**前端打磨**~~ ✅ `ae3d9ba`：有融资筛选 + tier 徽章 + CSV 导出 + 客户端路由 + 共享 tierZh
-10. **P2**：Shadow 数据积累足够后做 dual_run_compare 对比，决定是否切主引擎
-11. 反馈样本 ≥200 后：`make calibrate` / `--search` 并走 changelog/灰度（WEIGHT_CALIBRATION.md）
-12. P3：观测栈日常化
-13. P3：Opportunity 实时稀释/估值数据接入、预测结果校准回写
+10. ~~**CI 强化 mypy**~~ ✅ `38472fa`：287→0 errors（29 文件修复），`pyproject.toml` 新增 `[tool.mypy]`，CI 阻断模式
+11. ~~**GitHub 仓库完善**~~ ✅ 公开仓库 + 10 topics + 分支保护（5 CI 必过）+ Actions 权限 + 安全扫描
+12. ~~**跑数据 + Shadow 验证**~~ ✅ 5 源采集成功，100 项目评分，Shadow 300 条快照全部 INSUFFICIENT_EVIDENCE（经济数据表为空）
+13. **Shadow 经济数据接入**：`opportunity_economic_snapshots` 表 0 行，7 个 `economic_*` 模块已合并但未触发写入
+14. **反馈积累**：0/200，需要日常使用系统并提交反馈
+15. **Shadow 转正**：等 Shadow 产出有意义 action 分布后，做 dual_run_compare 对比
+16. P3：观测栈日常化 / LLM 集成 / PG 切换
 
 ## ✅ 2026-07-26 系统审查（已提交 · 已回填）
 **8 个语义 commit 已提交到 master（2026-08-06）；meta.signals 回填 602/702 已完成。**
