@@ -115,10 +115,8 @@ class CoinGeckoCollector(DataCollector):
         # 使用 symbol 作为项目名，因为 raw_projects 通常也用 symbol/name
         display_name = name or symbol or coin_id
 
-        # 不拿图标顶替官网：url 在合并里属于"最高可信已知值"类字段，coingecko
-        # 优先级(4)高于 github(5)，一张 PNG 会直接盖掉真实官网，并让
-        # scorer 的 `bool(p.url)` 证据检查在一个 logo 上判过。
-        url = coin.get("homepage") or None
+        # Use CoinGecko coin page URL as canonical source URL for economic snapshots.
+        url = f"https://www.coingecko.com/en/coins/{coin_id}" if coin_id else None
 
         # Economic raw: preserve provider None; never coerce missing → 0.
         market_cap_raw = coin.get("market_cap")
