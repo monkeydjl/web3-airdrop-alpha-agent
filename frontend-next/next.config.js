@@ -8,6 +8,7 @@ const proxyTarget =
 
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
   async rewrites() {
     if (!proxyTarget) return [];
     return [

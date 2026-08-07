@@ -3,22 +3,40 @@
 # 包含：nginx 前端 + FastAPI 后端 + PostgreSQL + 可选监控栈
 
 services:
-  # Nginx 反向代理 + 静态前端托管
+  # Nginx 反向代理（HTTP-only，TLS 由上游反向代理终止）
   nginx:
     image: nginx:alpine
     container_name: airdrop-nginx
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro  # TLS 证书
+      - ./docker/nginx/nginx-http.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - web
+      web:
+        condition: service_healthy
+      frontend:
+        condition: service_started
     restart: unless-stopped
     networks:
       - frontend
+
+  # Next.js 前端（主前端）
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend-next/Dockerfile
+    container_name: airdrop-frontend
+    expose:
+      - "3002"
+    environment:
+      - PORT=3002
+      - HOSTNAME=0.0.0.0
+      # 前端通过 nginx 反代访问 API，无需直连后端
+      - API_PROXY_TARGET=http://web:8002
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
 
   # FastAPI 后端服务
   web:

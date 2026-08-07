@@ -53,7 +53,11 @@ fi
 
 # 3. 备份当前数据库
 echo_info "备份数据库..."
-./scripts/workflows/db-backup.sh
+if [ -f "./scripts/workflows/db-backup.sh" ]; then
+    ./scripts/workflows/db-backup.sh
+else
+    echo_warn "备份脚本不存在，跳过（建议手动备份）"
+fi
 
 # 4. 拉取最新代码
 echo_info "拉取代码..."
@@ -83,7 +87,7 @@ MAX_RETRIES=30
 RETRY_COUNT=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || echo "000")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/health || echo "000")
 
     if [ "$HTTP_CODE" = "200" ]; then
         echo_info "✅ 健康检查通过"
@@ -103,7 +107,7 @@ fi
 
 # 10. 烟雾测试
 echo_info "运行烟雾测试..."
-curl -f http://localhost:8000/api/projects?limit=1 || {
+curl -f "http://localhost:8002/api/v1/projects?limit=1" -H "X-API-Key: ${API_KEY}" || {
     echo_error "烟雾测试失败，开始回滚..."
     ./scripts/deploy/rollback.sh
     exit 1
@@ -126,5 +130,5 @@ Git Commit: $(git rev-parse HEAD)
 EOF
 
 echo_info "✅ 部署完成: v$VERSION"
-echo_info "服务地址: http://localhost:8000"
-echo_info "监控面板: http://localhost:3000 (Grafana)"
+echo_info "服务地址: http://localhost:80 (nginx)"
+echo_info "后端 API: http://localhost:8002"
