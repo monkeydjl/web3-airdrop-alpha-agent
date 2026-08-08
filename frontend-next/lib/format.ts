@@ -1,4 +1,4 @@
-import type { Label } from './types';
+﻿import type { Label } from './types';
 
 /** 展示用中文标签（API 仍传 FARM/WATCH/IGNORE） */
 export const LABEL_ZH: Record<Label, string> = {
@@ -98,15 +98,15 @@ export function labelStyles(label: string): { badge: string; dot: string; text: 
   switch (label) {
     case 'FARM':
       return {
-        badge: 'bg-farm-soft text-farm-dark dark:bg-farm/20 dark:text-farm',
+        badge: 'bg-farm-soft text-farm dark:bg-farm/20 dark:text-farm',
         dot: 'bg-farm',
-        text: 'text-farm-dark dark:text-farm',
+        text: 'text-farm dark:text-farm',
       };
     case 'WATCH':
       return {
-        badge: 'bg-watch-soft text-watch-dark dark:bg-watch/20 dark:text-watch',
+        badge: 'bg-watch-soft text-watch dark:bg-watch/20 dark:text-watch',
         dot: 'bg-watch',
-        text: 'text-watch-dark dark:text-watch',
+        text: 'text-watch dark:text-watch',
       };
     default:
       return {
@@ -118,8 +118,8 @@ export function labelStyles(label: string): { badge: string; dot: string; text: 
 }
 
 export function confColor(c: number): string {
-  if (c >= 0.75) return 'text-farm-dark dark:text-farm';
-  if (c >= 0.5) return 'text-watch-dark dark:text-watch';
+  if (c >= 0.75) return 'text-farm dark:text-farm';
+  if (c >= 0.5) return 'text-watch dark:text-watch';
   return 'text-red-500';
 }
 

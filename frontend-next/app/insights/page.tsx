@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
@@ -93,7 +93,7 @@ export default function InsightsPage() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] text-brand-600 dark:text-brand-300">
+          <p className="text-xs font-semibold tracking-[0.2em] text-farm dark:text-farm">
             数据分析
           </p>
           <h1 className="page-title">洞察</h1>
@@ -156,7 +156,7 @@ export default function InsightsPage() {
           <SectionTitle
             title="重点参与榜"
             action={
-              <Link href="/" className="text-xs text-brand-600 hover:underline dark:text-brand-300">
+              <Link href="/" className="text-xs text-farm hover:underline dark:text-farm">
                 返回工作台
               </Link>
             }
@@ -169,7 +169,7 @@ export default function InsightsPage() {
                 <Link
                   key={p.id}
                   href={`/project/${p.id}`}
-                  className="flex items-center justify-between rounded-xl border border-line/70 px-3 py-2.5 transition hover:border-farm/40 hover:bg-farm-soft/30 dark:hover:bg-farm/10"
+                  className="flex items-center justify-between rounded-md border border-line px-3 py-2.5 transition hover:border-farm/40 hover:bg-farm-soft/30 dark:hover:bg-farm/10"
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="w-5 font-mono text-xs text-ink-faint">{i + 1}</span>
@@ -178,7 +178,7 @@ export default function InsightsPage() {
                       <div className="text-xs text-ink-faint">{p.sector}</div>
                     </div>
                   </div>
-                  <span className="text-sm font-bold tabular-nums text-farm-dark dark:text-farm">
+                  <span className="text-sm font-bold tabular-nums text-farm dark:text-farm">
                     {p.score}
                   </span>
                 </Link>
@@ -197,7 +197,7 @@ export default function InsightsPage() {
                 <Link
                   key={p.id}
                   href={`/project/${p.id}`}
-                  className="flex items-center justify-between rounded-xl border border-line/70 px-3 py-2.5 transition hover:bg-surface-2"
+                  className="flex items-center justify-between rounded-md border border-line px-3 py-2.5 transition hover:bg-surface-2"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-ink">{p.name}</div>
@@ -231,7 +231,7 @@ export default function InsightsPage() {
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-brand-500 to-farm"
+                      className="h-full rounded-full bg-gradient-to-r from-farm to-farm-dark"
                       style={{ width: `${Math.min(100, Number(n.avg_heat_score) * 100)}%` }}
                     />
                   </div>
@@ -251,7 +251,7 @@ export default function InsightsPage() {
                 <Link
                   key={t.id}
                   href={`/project/${t.id}`}
-                  className="flex items-center justify-between rounded-xl border border-line/70 px-3 py-2.5 transition hover:border-red-300/50 hover:bg-red-50/50 dark:hover:bg-red-500/10"
+                  className="flex items-center justify-between rounded-md border border-line px-3 py-2.5 transition hover:border-red-300/50 hover:bg-red-50/50 dark:hover:bg-red-500/10"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-ink">{t.name}</div>

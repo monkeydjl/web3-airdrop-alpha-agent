@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { apiFetch } from '@/lib/api';
 import { labelZh } from '@/lib/format';
@@ -592,12 +592,12 @@ function LegacyDecisionBadge({ legacy }: { legacy: OpportunityWorkflowProjection
   return (
     <div className="rounded-xl border border-line/80 bg-surface-2/50 px-3 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/20 dark:text-brand-200">
+        <span className="badge bg-farm-soft text-farm dark:bg-farm-soft0/20 dark:text-farm">
           权威决策
         </span>
         <span className="text-[11px] text-ink-faint">{legacy.model_version}</span>
         {legacy.authoritative ? (
-          <span className="badge bg-farm-soft text-farm-dark dark:bg-farm/15 dark:text-farm">
+          <span className="badge bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm">
             authoritative
           </span>
         ) : null}
@@ -631,7 +631,7 @@ function OpportunityAssessmentSummary({
   return (
     <div className="rounded-xl border border-dashed border-watch/40 bg-watch-soft/30 px-3 py-3 dark:bg-watch/10">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="badge bg-watch-soft text-watch-dark dark:bg-watch/20 dark:text-watch">
+        <span className="badge bg-watch-soft text-watch dark:bg-watch/20 dark:text-watch">
           Opportunity Shadow · 实验性
         </span>
         <span className="badge bg-surface-3 text-ink-muted">{STATE_ZH[state]}</span>
@@ -681,7 +681,7 @@ function NextActionCard({
   guidanceOnly: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-brand-200/60 bg-gradient-to-r from-brand-500/10 via-transparent to-farm/10 px-4 py-3 dark:border-brand-500/25">
+    <div className="border border-line bg-surface-2 px-4 py-3">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
         下一步
       </div>
@@ -729,7 +729,7 @@ function ActionPlanAccordion({
               <span className="badge bg-surface-3 text-ink-muted">#{item.sequence}</span>
               <span className="text-sm font-medium text-ink">{item.title}</span>
               {item.required ? (
-                <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
+                <span className="badge bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
                   必要
                 </span>
               ) : null}
@@ -743,7 +743,7 @@ function ActionPlanAccordion({
                 href={item.external_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-block text-brand-600 underline dark:text-brand-300"
+                className="mt-1 inline-block text-farm underline dark:text-farm"
               >
                 打开链接
               </a>
@@ -780,7 +780,7 @@ function BlockerAndUpgradeConditions({
       ) : null}
       {upgrades.length ? (
         <div className="rounded-xl border border-watch/40 bg-watch-soft/40 px-3 py-2.5 dark:bg-watch/10">
-          <div className="text-xs font-semibold text-watch-dark dark:text-watch">升级条件</div>
+          <div className="text-xs font-semibold text-watch dark:text-watch">升级条件</div>
           <ul className="mt-1.5 space-y-1 text-xs text-ink-muted">
             {upgrades.map((u) => (
               <li key={`${u.code}-${u.message}`}>
@@ -839,7 +839,7 @@ function EvidenceSummary({
                       href={item.source_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-brand-600 underline dark:text-brand-300"
+                      className="text-farm underline dark:text-farm"
                     >
                       来源
                     </a>
@@ -943,7 +943,7 @@ function ValidationPanel({
       {current ? (
         <div className="rounded-xl border border-line/80 bg-surface-2/40 px-3 py-3 text-sm">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
+            <span className="badge bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
               {STATUS_ZH[String(current.status) as InteractionStatus] || current.status}
             </span>
             <span className="text-xs text-ink-muted">
@@ -1335,17 +1335,17 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
 
   return (
     <section
-      className="card overflow-hidden"
+      className="overflow-hidden border border-line bg-surface"
       aria-labelledby={headingId}
       aria-busy={busy}
       aria-describedby={statusId}
     >
-      <div className="border-b border-line bg-gradient-to-r from-brand-500/10 via-transparent to-watch/10 px-5 py-4 sm:px-6">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id={headingId} className="text-base font-bold text-ink">
+            <h3 id={headingId} className="text-sm font-semibold text-ink">
               Opportunity 工作流
-            </h2>
+            </h3>
             <p className="mt-0.5 text-xs text-ink-muted">
               权威标签仍为 score-v1.4；Opportunity 为 Shadow 实验路径
             </p>
@@ -1384,7 +1384,7 @@ export function OpportunityWorkflowPanel({ projectId }: { projectId: string }) {
         ) : null}
 
         {msg ? (
-          <p className="text-xs text-farm-dark dark:text-farm" role="status" aria-live="polite">
+          <p className="text-xs text-farm dark:text-farm" role="status" aria-live="polite">
             {msg}
           </p>
         ) : null}

@@ -1,4 +1,4 @@
-import type { Project } from './types';
+﻿import type { Project } from './types';
 
 function formatFundingUsd(n?: number | null): string {
   if (n == null || Number.isNaN(n)) return '';

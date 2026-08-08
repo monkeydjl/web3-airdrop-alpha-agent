@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -8,9 +8,9 @@ import type { HealthData } from '@/lib/types';
 import { useTheme } from './ThemeProvider';
 
 const links = [
-  { href: '/', label: '工作台', icon: '◈' },
-  { href: '/insights', label: '洞察', icon: '◎' },
-  { href: '/ops', label: '运维', icon: '⬡' },
+  { href: '/', label: '工作台' },
+  { href: '/insights', label: '洞察' },
+  { href: '/ops', label: '运维' },
 ];
 
 export function Nav() {
@@ -39,14 +39,16 @@ export function Nav() {
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
         <div className="flex items-center gap-6">
           <Link href="/" className="group flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-glow">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-farm text-sm font-bold text-white">
               α
             </span>
             <div className="leading-tight">
-              <div className="text-sm font-bold tracking-tight text-ink group-hover:text-brand-600 dark:group-hover:text-brand-300">
+              <div className="text-sm font-semibold tracking-tight text-ink group-hover:text-farm dark:group-hover:text-farm">
                 空投阿尔法
               </div>
-              <div className="hidden text-[10px] text-ink-faint sm:block">Web3 早期项目雷达</div>
+              <div className="hidden font-mono text-[10px] tracking-wide text-ink-faint sm:block">
+                早期项目雷达
+              </div>
             </div>
           </Link>
 
@@ -57,13 +59,12 @@ export function Nav() {
                 <Link
                   key={l.href}
                   href={l.href}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
                     active
-                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+                      ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm'
                       : 'text-ink-muted hover:bg-surface-2 hover:text-ink'
                   }`}
                 >
-                  <span className="mr-1.5 opacity-60">{l.icon}</span>
                   {l.label}
                 </Link>
               );
@@ -75,7 +76,7 @@ export function Nav() {
           <div
             className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium sm:flex ${
               health?.ok
-                ? 'border-farm/30 bg-farm-soft/60 text-farm-dark dark:bg-farm/10 dark:text-farm'
+                ? 'border-farm/30 bg-farm-soft/60 text-farm dark:bg-farm/10 dark:text-farm'
                 : 'border-line bg-surface-2 text-ink-faint'
             }`}
             title="接口状态"
@@ -107,8 +108,8 @@ export function Nav() {
             <Link
               key={l.href}
               href={l.href}
-              className={`whitespace-nowrap rounded-lg px-3 py-1 text-xs font-medium ${
-                active ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15' : 'text-ink-muted'
+              className={`whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ${
+                active ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm' : 'text-ink-muted'
               }`}
             >
               {l.label}

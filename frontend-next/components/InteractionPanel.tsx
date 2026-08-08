@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { apiFetch } from '@/lib/api';
 import { labelZh } from '@/lib/format';
@@ -183,8 +183,8 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <section className="card overflow-hidden">
-      <div className="border-b border-line bg-gradient-to-r from-farm/10 via-transparent to-watch/10 px-5 py-4 sm:px-6">
+    <section className="overflow-hidden border border-line bg-surface">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
         <h2 className="text-base font-bold text-ink">我的交互记录</h2>
         <p className="mt-0.5 text-xs text-ink-muted">
           记录是否做过、起止日期、成本与收益，用于复盘与后期系统优化
@@ -303,7 +303,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
               </button>
             ) : null}
           </div>
-          {msg ? <p className="text-xs text-farm-dark dark:text-farm">{msg}</p> : null}
+          {msg ? <p className="text-xs text-farm dark:text-farm">{msg}</p> : null}
           {error ? <p className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
         </div>
 
@@ -318,7 +318,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
             <span
               className={`badge ${
                 totals.net >= 0
-                  ? 'bg-farm-soft text-farm-dark dark:bg-farm/15 dark:text-farm'
+                  ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm'
                   : 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
               }`}
             >
@@ -346,7 +346,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
+                        <span className="badge bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
                           {statusZh(it.status)}
                         </span>
                         <span className="badge bg-surface-3 text-ink-muted">{outcomeZh(it.outcome)}</span>
@@ -372,7 +372,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
                       </div>
                       <div
                         className={`font-semibold tabular-nums ${
-                          Number(it.net_usd || 0) >= 0 ? 'text-farm-dark dark:text-farm' : 'text-red-600'
+                          Number(it.net_usd || 0) >= 0 ? 'text-farm dark:text-farm' : 'text-red-600'
                         }`}
                       >
                         净 ${Number(it.net_usd || 0).toFixed(2)}

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+﻿import type { Metadata } from 'next';
 import './globals.css';
 import { Nav } from '@/components/Nav';
 import { ThemeProvider } from '@/components/ThemeProvider';

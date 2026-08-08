@@ -1,4 +1,4 @@
-export type Label = 'FARM' | 'WATCH' | 'IGNORE';
+﻿export type Label = 'FARM' | 'WATCH' | 'IGNORE';
 
 export interface FundingInfo {
   funding_total_usd?: number | null;
@@ -62,17 +62,17 @@ export interface InsightsData {
 /**
  * 后端 /collections/sources 的真实返回形状。
  *
- * 此前这里声明的是顶层 `enabled` / `sync_status` / `last_sync`，而后端返回的是
- * 顶层 `is_enabled` + 嵌套 `status.{enabled,sync_status,last_sync}`。因为响应
- * 只做了类型断言、没有运行时校验，tsc 查不出来，结果是：
- *   - 首页"开始采集"按钮的 enabled 列表恒为空 → 点了等于没点，还提示"采集成功 0"
- *   - Ops 页每个源都显示"已禁用"，触发按钮全部灰掉
+ * - `config_ready`: 环境/密钥侧是否具备采集能力（collector.is_enabled）
+ * - `operator_enabled` / `status.enabled`: 运维台开关（data_sources.enabled）
+ * - `is_enabled`: 二者同时为真时才可 trigger
  */
 export interface CollectionSourceApi {
   source_id: string;
   source_name?: string;
   source_type?: string;
   is_enabled?: boolean;
+  config_ready?: boolean;
+  operator_enabled?: boolean;
   status?: {
     enabled?: boolean;
     sync_status?: string | null;
@@ -85,17 +85,38 @@ export interface CollectionSourceApi {
 export interface CollectionSource {
   source_id: string;
   source_name?: string;
+  /** 可触发：配置就绪且运维开关打开 */
   enabled: boolean;
+  /** 运维开关（PATCH 写入） */
+  operatorEnabled: boolean;
+  /** .env / key 是否具备采集能力 */
+  configReady: boolean;
   last_sync?: string | null;
   sync_status?: string | null;
 }
 
-/** 把后端形状摊平成 UI 形状；字段缺失时按"未启用"保守处理。 */
+/** 把后端形状摊平成 UI 形状。 */
 export function normalizeCollectionSource(raw: CollectionSourceApi): CollectionSource {
+  const configReady =
+    raw.config_ready !== undefined
+      ? Boolean(raw.config_ready)
+      : Boolean(raw.is_enabled ?? raw.status?.enabled ?? false);
+  const operatorEnabled =
+    raw.operator_enabled !== undefined
+      ? Boolean(raw.operator_enabled)
+      : raw.status?.enabled !== undefined
+        ? Boolean(raw.status.enabled)
+        : true;
+  const enabled =
+    raw.is_enabled !== undefined
+      ? Boolean(raw.is_enabled)
+      : configReady && operatorEnabled;
   return {
     source_id: raw.source_id,
     source_name: raw.source_name,
-    enabled: Boolean(raw.is_enabled ?? raw.status?.enabled ?? false),
+    enabled,
+    operatorEnabled,
+    configReady,
     last_sync: raw.status?.last_sync ?? null,
     sync_status: raw.status?.sync_status ?? null,
   };

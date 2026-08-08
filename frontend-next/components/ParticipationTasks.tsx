@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
@@ -49,8 +49,8 @@ function saveDone(projectId: string, map: Record<string, boolean>) {
 }
 
 const effortColor: Record<string, string> = {
-  low: 'bg-farm-soft text-farm-dark dark:bg-farm/15 dark:text-farm',
-  medium: 'bg-watch-soft text-watch-dark dark:bg-watch/15 dark:text-watch',
+  low: 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm',
+  medium: 'bg-watch-soft text-watch dark:bg-watch/15 dark:text-watch',
   high: 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300',
 };
 
@@ -105,17 +105,17 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
   const pct = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
 
   return (
-    <section className="card overflow-hidden">
-      <div className="border-b border-line bg-gradient-to-r from-watch/10 via-transparent to-brand-500/10 px-5 py-4 sm:px-6">
+    <section className="overflow-hidden border border-line bg-surface">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-ink">可参与任务清单</h2>
+            <h3 className="text-sm font-semibold text-ink">可参与任务</h3>
             <p className="mt-0.5 text-xs text-ink-muted">
-              按官方活动 · 测试网 · 社群 · 主网产品等分类；勾选进度保存在本机浏览器
+              官方活动 · 测试网 · 社群 · 主网；勾选进度保存在本机
             </p>
           </div>
           <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={load} disabled={loading}>
-            {loading ? '加载中…' : '刷新清单'}
+            {loading ? '加载中…' : '刷新'}
           </button>
         </div>
         {tasks.length > 0 ? (
@@ -129,17 +129,14 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
               </span>
               <span className="tabular-nums">{pct}%</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-brand-500 to-farm transition-all"
-                style={{ width: `${pct}%` }}
-              />
+            <div className="h-0.5 overflow-hidden bg-line">
+              <div className="h-full bg-farm transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
         ) : null}
       </div>
 
-      <div className="px-5 py-4 sm:px-6">
+      <div className="px-4 py-3 sm:px-5">
         {loading && !data ? (
           <div className="space-y-2">
             <div className="skeleton h-16" />
@@ -174,7 +171,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                     onClick={() => setFilter(key)}
                     className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
                       active
-                        ? 'bg-brand-600 text-white'
+                        ? 'bg-farm text-white'
                         : 'bg-surface-2 text-ink-muted hover:text-ink'
                     }`}
                   >
@@ -220,7 +217,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                               {t.title}
                             </span>
                             {t.required ? (
-                              <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
+                              <span className="badge bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
                                 建议优先
                               </span>
                             ) : null}
@@ -233,7 +230,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                           <p className="mt-1 text-xs leading-relaxed text-ink-muted">{t.description}</p>
                           <p className="mt-1 text-xs text-ink-faint">为什么：{t.why}</p>
                           {t.action_hint ? (
-                            <p className="mt-0.5 text-xs text-brand-700 dark:text-brand-300">
+                            <p className="mt-0.5 text-xs text-farm dark:text-farm">
                               做法：{t.action_hint}
                             </p>
                           ) : null}
@@ -242,7 +239,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                               href={safeExternalUrl(t.link) as string}
                               target="_blank"
                               rel="noreferrer"
-                              className="mt-1 inline-block text-xs text-brand-600 underline dark:text-brand-300"
+                              className="mt-1 inline-block text-xs text-farm underline dark:text-farm"
                             >
                               打开相关链接
                             </a>

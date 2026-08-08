@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { apiFetch } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
@@ -61,33 +61,25 @@ export function AiBriefPanel({
     [];
 
   return (
-    <section className="card overflow-hidden border-brand-200/60 dark:border-brand-500/25">
-      <div className="relative border-b border-line bg-gradient-to-r from-brand-500/15 via-brand-400/5 to-farm/10 px-5 py-4 sm:px-6">
-        <div className="pointer-events-none absolute -right-6 -top-8 h-28 w-28 rounded-full bg-brand-500/10 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-3">
+    <section className="overflow-hidden border border-line bg-surface">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-600 text-sm text-white shadow-glow">
-                AI
-              </span>
-              <div>
-                <h2 className="text-base font-bold text-ink">智能解读</h2>
-                <p className="text-xs text-ink-muted">
-                  结合叙事 · 团队 · 风险 · 代币结构 · 系统理由，说明「为什么是这个标签」
-                </p>
-              </div>
-            </div>
+            <h3 className="text-sm font-semibold text-ink">智能解读</h3>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              结合叙事 · 团队 · 风险 · 代币结构 · 系统理由
+            </p>
           </div>
           <div className="flex items-center gap-2">
             {data ? (
               <span
                 className={`badge ${
                   data.mode === 'llm'
-                    ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/20 dark:text-brand-200'
+                    ? 'bg-farm-soft text-farm dark:bg-farm/20 dark:text-farm'
                     : 'bg-surface-3 text-ink-muted'
                 }`}
               >
-                {data.mode === 'llm' ? '大模型增强' : '规则引擎解读'}
+                {data.mode === 'llm' ? '大模型增强' : '规则引擎'}
               </span>
             ) : null}
             <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={load} disabled={loading}>
@@ -125,7 +117,7 @@ export function AiBriefPanel({
                     key={b}
                     className="flex gap-2 rounded-xl border border-line/80 bg-surface-2/60 px-3 py-2 text-sm text-ink-muted"
                   >
-                    <span className="mt-0.5 text-brand-500">▸</span>
+                    <span className="mt-0.5 text-farm">▸</span>
                     <span>{b}</span>
                   </li>
                 ))}

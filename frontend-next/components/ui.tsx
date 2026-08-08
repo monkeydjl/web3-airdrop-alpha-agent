@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import type { Label } from '@/lib/types';
 import { confColor, formatPct, labelStyles, labelZh, reasonTone } from '@/lib/format';
@@ -34,12 +34,12 @@ export function StatCard({
           : 'from-brand-500/15 to-transparent';
   const valueColor =
     accent === 'farm'
-      ? 'text-farm-dark dark:text-farm'
+      ? 'text-farm dark:text-farm'
       : accent === 'watch'
-        ? 'text-watch-dark dark:text-watch'
+        ? 'text-watch dark:text-watch'
         : accent === 'ignore'
           ? 'text-ignore-dark dark:text-slate-300'
-          : 'text-brand-600 dark:text-brand-400';
+          : 'text-farm dark:text-farm';
 
   return (
     <div className={`card relative overflow-hidden p-4 sm:p-5`}>
@@ -121,11 +121,11 @@ export function ReasonChips({ reasons }: { reasons?: string[] | null }) {
         const tone = reasonTone(r);
         const cls =
           tone === 'pos'
-            ? 'bg-farm-soft text-farm-dark dark:bg-farm/15 dark:text-farm'
+            ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm'
             : tone === 'neg'
               ? 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
               : tone === 'warn'
-                ? 'bg-watch-soft text-watch-dark dark:bg-watch/15 dark:text-watch'
+                ? 'bg-watch-soft text-watch dark:bg-watch/15 dark:text-watch'
                 : 'bg-surface-3 text-ink-muted';
         const prefix = tone === 'pos' ? '+' : tone === 'neg' ? '−' : tone === 'warn' ? '!' : '·';
         return (
@@ -150,7 +150,7 @@ export function EmptyState({
 }) {
   return (
     <div className="card flex flex-col items-center justify-center border-dashed px-6 py-16 text-center animate-fade-in">
-      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
         <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
         </svg>
@@ -176,6 +176,60 @@ export function SkeletonGrid({ n = 8 }: { n?: number }) {
   );
 }
 
+/** 采集源启用开关 */
+export function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+  id,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  label: string;
+  id?: string;
+}) {
+  return (
+    <label
+      className={`inline-flex min-h-8 cursor-pointer items-center gap-2 select-none ${
+        disabled ? 'cursor-not-allowed opacity-50' : ''
+      }`}
+    >
+      <span className="relative inline-flex h-[22px] w-10 shrink-0 items-center">
+        <input
+          id={id}
+          type="checkbox"
+          role="switch"
+          className="peer sr-only"
+          checked={checked}
+          disabled={disabled}
+          aria-checked={checked}
+          aria-label={label}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span
+          className={`absolute inset-0 rounded-full border transition ${
+            checked
+              ? 'border-transparent bg-farm'
+              : 'border-line bg-surface-3'
+          } peer-focus-visible:ring-2 peer-focus-visible:ring-farm/40`}
+          aria-hidden
+        />
+        <span
+          className={`absolute top-[3px] left-[3px] h-4 w-4 rounded-full bg-white shadow transition ${
+            checked ? 'translate-x-[18px]' : ''
+          }`}
+          aria-hidden
+        />
+      </span>
+      <span className={`text-xs font-medium ${checked ? 'text-farm dark:text-farm' : 'text-ink-muted'}`}>
+        {checked ? '开' : '关'}
+      </span>
+    </label>
+  );
+}
+
 export function Toast({
   message,
   type,
@@ -185,10 +239,10 @@ export function Toast({
 }) {
   const cls =
     type === 'success'
-      ? 'border-farm/30 bg-farm-soft text-farm-dark dark:bg-farm/20 dark:text-farm'
+      ? 'border-farm/30 bg-farm-soft text-farm dark:bg-farm/20 dark:text-farm'
       : type === 'error'
         ? 'border-red-200 bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
-        : 'border-brand-200 bg-brand-50 text-brand-800 dark:bg-brand-500/15 dark:text-brand-200';
+        : 'border-farm/30 bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm';
   return (
     <div
       className={`fixed right-4 top-20 z-[80] max-w-sm animate-slide-up rounded-xl border px-4 py-3 text-sm font-medium shadow-lift ${cls}`}
@@ -198,7 +252,7 @@ export function Toast({
   );
 }
 
-export function ProgressBar({ value, max = 1, color = 'bg-brand-500' }: { value: number; max?: number; color?: string }) {
+export function ProgressBar({ value, max = 1, color = 'bg-farm-soft0' }: { value: number; max?: number; color?: string }) {
   const pct = Math.max(0, Math.min(100, (value / (max || 1)) * 100));
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">

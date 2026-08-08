@@ -1,4 +1,4 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
+﻿export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
 
 export interface ApiResponse<T> {
   ok: boolean;

@@ -8,17 +8,18 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // brand maps to utility green (was indigo AI-default)
         brand: {
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
+          50: '#ecfdf5',
+          100: '#d1fae5',
+          200: '#a7f3d0',
+          300: '#6ee7b7',
+          400: '#34d399',
+          500: '#10b981',
+          600: '#059669',
+          700: '#047857',
+          800: '#065f46',
+          900: '#064e3b',
         },
         farm: { DEFAULT: '#10b981', soft: '#d1fae5', dark: '#059669' },
         watch: { DEFAULT: '#f59e0b', soft: '#fef3c7', dark: '#d97706' },
@@ -50,13 +51,13 @@ module.exports = {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       boxShadow: {
-        card: '0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.04)',
-        lift: '0 8px 30px rgb(0 0 0 / 0.08)',
-        glow: '0 0 0 1px rgb(99 102 241 / 0.15), 0 8px 24px rgb(99 102 241 / 0.12)',
+        card: '0 1px 2px rgb(0 0 0 / 0.04), 0 0 0 1px rgb(0 0 0 / 0.02)',
+        lift: '0 4px 16px rgb(0 0 0 / 0.07)',
+        glow: '0 0 0 1px rgb(16 185 129 / 0.12)',
       },
       borderRadius: {
-        xl: '0.875rem',
-        '2xl': '1.125rem',
+        xl: '0.5rem',
+        '2xl': '0.625rem',
       },
       animation: {
         'fade-in': 'fadeIn 0.35s ease-out',

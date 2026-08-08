@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { apiFetch } from '@/lib/api';
 import { tierZh } from '@/lib/format';
@@ -165,7 +165,7 @@ export function FundingPanel({
 
   if (loading) {
     return (
-      <section className="card p-5">
+      <section className="border border-line bg-surface p-4">
         <div className="skeleton mb-2 h-5 w-32" />
         <div className="skeleton h-24 w-full" />
       </section>
@@ -173,17 +173,17 @@ export function FundingPanel({
   }
 
   return (
-    <section className="card overflow-hidden">
-      <div className="border-b border-line bg-gradient-to-r from-brand-500/10 via-transparent to-farm/10 px-5 py-4 sm:px-6">
+    <section className="overflow-hidden border border-line bg-surface">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-ink">融资信息（手动）</h2>
+            <h3 className="text-sm font-semibold text-ink">融资信息（手动）</h3>
             <p className="mt-0.5 text-xs text-ink-muted">
-              免费 RootData 轮次不全时，可在此补全金额 / 投资方；保存后写入 meta.signals 并重算评分
+              可补全金额 / 投资方；保存后写入 meta.signals 并重算评分
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+            <span className="badge bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm">
               {tierZh(tier)}
             </span>
             <span className="badge bg-surface-3 text-ink-muted tabular-nums">
@@ -193,7 +193,7 @@ export function FundingPanel({
         </div>
       </div>
 
-      <div className="grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-5">
+      <div className="grid gap-5 px-4 py-4 sm:px-5 lg:grid-cols-5">
         <div className="space-y-3 lg:col-span-3">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <label className="text-xs text-ink-muted">

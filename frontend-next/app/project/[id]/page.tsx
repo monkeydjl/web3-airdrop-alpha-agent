@@ -5,14 +5,7 @@ import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
 import { ParticipationTasks } from '@/components/ParticipationTasks';
-import {
-  ConfidenceBar,
-  LabelBadge,
-  ProgressBar,
-  ReasonChips,
-  ScoreRing,
-  Toast,
-} from '@/components/ui';
+import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
 import {
   formatPct,
@@ -30,60 +23,72 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const SIGNALS = [
-  { id: 'useful', label: '👍 有用', hint: 'useful' },
-  { id: 'useless', label: '👎 无用', hint: 'useless' },
-  { id: 'wrong_label', label: '🏷 标签错误', hint: 'wrong_label' },
-  { id: 'correct_outcome', label: '✓ 结果正确', hint: 'correct_outcome' },
+  { id: 'useful', label: '有用' },
+  { id: 'useless', label: '没用' },
+  { id: 'wrong_label', label: '标签错了' },
+  { id: 'correct_outcome', label: '结果对上了' },
 ] as const;
 
 const OUTCOMES = [
-  { id: '', label: '事后结果（可选）' },
+  { id: '', label: '先不标' },
   { id: 'airdropped', label: '已空投' },
   { id: 'not_airdropped', label: '未空投' },
-  { id: 'pumped', label: '拉盘' },
-  { id: 'dumped', label: '砸盘' },
+  { id: 'pumped', label: '拉升' },
+  { id: 'dumped', label: '下跌' },
 ] as const;
+
+const SIGNAL_CHECKS: { key: string; label: string }[] = [
+  { key: 'has_testnet', label: '测试网' },
+  { key: 'has_points_program', label: '积分计划' },
+  { key: 'no_token_yet', label: '未发币' },
+  { key: 'has_docs', label: '文档' },
+  { key: 'has_github', label: 'GitHub' },
+  { key: 'has_twitter', label: '社媒' },
+];
 
 function num(v: unknown, fallback = 0): number {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function AgentPanel({
-  title,
-  accent,
-  children,
-  defaultOpen = true,
-}: {
-  title: string;
-  accent: string;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
+function scoreTone(label?: string): string {
+  if (label === 'FARM') return 'text-farm dark:text-farm';
+  if (label === 'WATCH') return 'text-watch dark:text-watch';
+  return 'text-ink-muted';
+}
+
+function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="card overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-surface-2/50"
-      >
-        <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${accent}`} />
-          <span className="text-sm font-semibold text-ink">{title}</span>
-        </div>
-        <span className="text-xs text-ink-faint">{open ? '收起' : '展开'}</span>
-      </button>
-      {open ? <div className="border-t border-line px-4 py-4">{children}</div> : null}
+    <div className="grid grid-cols-[5.5rem_1fr] gap-2 text-[12.5px] leading-snug">
+      <dt className="text-ink-muted font-normal">{label}</dt>
+      <dd className="m-0 text-right font-medium text-ink tabular-nums break-words">{value ?? '—'}</dd>
     </div>
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function SecHead({ title, meta }: { title: string; meta?: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5 text-sm">
-      <span className="text-ink-muted">{label}</span>
-      <span className="max-w-[60%] text-right font-medium text-ink break-all">{value ?? '—'}</span>
+    <div className="mb-3.5 flex items-baseline justify-between gap-3">
+      <h2 className="m-0 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        {title}
+      </h2>
+      {meta ? (
+        <span className="font-mono text-[10px] tracking-wide text-ink-faint">{meta}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function ScoreRing({ score, label }: { score: number; label?: string }) {
+  const color = label === 'FARM' ? 'var(--farm)' : label === 'WATCH' ? 'var(--watch)' : 'var(--ignore)';
+  return (
+    <div className="score-ring" style={{ '--score': score, '--ring': color, width: 112, height: 112 } as React.CSSProperties}>
+      <div className="score-ring-inner">
+        <div className="text-center">
+          <div className="score-ring-value">{score}</div>
+          <div className="text-[10px] uppercase tracking-wider text-ink-faint">综合分</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -96,6 +101,7 @@ export default function ProjectPage() {
   const [error, setError] = useState('');
   const [rescoring, setRescoring] = useState(false);
   const [feedbackSending, setFeedbackSending] = useState(false);
+  const [selectedSignal, setSelectedSignal] = useState<string | null>(null);
   const [outcome, setOutcome] = useState('');
   const [note, setNote] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(
@@ -115,9 +121,6 @@ export default function ProjectPage() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   };
 
-  // 代次守卫 + 取消：本页有三处会触发 loadProject（首次加载、重评后、融资保存后），
-  // 原实现既无 AbortController 也无代次判断，慢的旧响应后到会覆盖新响应——
-  // 重评完成后紧接着的刷新可能把页面写回重评**之前**的分数。
   const generation = useRef(0);
   const inflight = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -164,7 +167,6 @@ export default function ProjectPage() {
     if (!project) return;
     setRescoring(true);
     try {
-      // 用已存 meta.signals（含融资）重评，避免 /run 丢信号
       const data = await apiFetch<{
         score?: { score?: number; label?: string; error?: string } | null;
       }>(`/projects/${project.id}/funding?rescore=true`, {
@@ -189,21 +191,26 @@ export default function ProjectPage() {
     }
   };
 
-  const sendFeedback = async (signal: string) => {
+  const sendFeedback = async () => {
     if (!project) return;
+    if (!selectedSignal) {
+      showToast('请先选择一种反馈类型', 'error');
+      return;
+    }
     setFeedbackSending(true);
     try {
       await apiFetch('/feedback', {
         method: 'POST',
         body: JSON.stringify({
           project_id: project.id,
-          signal,
+          signal: selectedSignal,
           note: note || undefined,
           outcome: outcome || undefined,
         }),
       });
-      showToast(`反馈已提交：${signal}`, 'success');
+      showToast('反馈已提交', 'success');
       setNote('');
+      setSelectedSignal(null);
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : '反馈提交失败', 'error');
     } finally {
@@ -213,15 +220,21 @@ export default function ProjectPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4 animate-fade-in">
-        <div className="skeleton h-4 w-32" />
-        <div className="card p-6">
-          <div className="skeleton mb-3 h-8 w-1/2" />
-          <div className="skeleton h-4 w-1/3" />
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="skeleton h-40" />
-          <div className="skeleton h-40" />
+      <div className="mx-auto max-w-[1080px] space-y-4 animate-fade-in py-2">
+        <div className="skeleton h-3 w-24" />
+        <div className="skeleton h-9 w-1/2" />
+        <div className="skeleton h-4 w-2/5" />
+        <div className="mt-8 grid gap-10 lg:grid-cols-[1fr_280px]">
+          <div className="space-y-3">
+            <div className="skeleton h-3 w-full" />
+            <div className="skeleton h-3 w-5/6" />
+            <div className="skeleton h-3 w-4/6" />
+            <div className="skeleton mt-6 h-28 w-full" />
+          </div>
+          <div className="space-y-3">
+            <div className="skeleton h-3 w-3/4" />
+            <div className="skeleton h-20 w-full" />
+          </div>
         </div>
       </div>
     );
@@ -229,229 +242,437 @@ export default function ProjectPage() {
 
   if (error) {
     return (
-      <div className="card mx-auto max-w-lg p-8 text-center">
-        <p className="text-red-600 dark:text-red-300">加载失败：{error}</p>
-        <button type="button" className="btn-primary mt-4" onClick={loadProject}>
-          重试
-        </button>
+      <div className="mx-auto max-w-lg border-t border-line py-12">
+        <h1 className="text-xl font-semibold text-ink" style={{ lineHeight: 1.35 }}>
+          加载失败
+        </h1>
+        <p className="mt-2 text-sm text-ink-muted" style={{ lineHeight: 1.65 }}>
+          {error}
+        </p>
+        <div className="mt-4 flex gap-2">
+          <button type="button" className="btn-primary" onClick={loadProject}>
+            重试
+          </button>
+          <Link href="/" className="btn-secondary">
+            回工作台
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (!project) {
-    return <div className="py-16 text-center text-ink-muted">未找到项目</div>;
+    return (
+      <div className="mx-auto max-w-lg border-t border-line py-12">
+        <h1 className="text-xl font-semibold text-ink" style={{ lineHeight: 1.35 }}>
+          没有这条项目
+        </h1>
+        <p className="mt-2 text-sm text-ink-muted">ID 无效或库中不存在。从工作台列表重新点开即可。</p>
+        <Link href="/" className="btn-primary mt-4 inline-flex">
+          回工作台
+        </Link>
+      </div>
+    );
   }
 
   const narrative = project.narrative || {};
   const team = project.team || {};
   const risk = project.risk || {};
   const tokenomics = project.tokenomics || {};
+  const signals = (project.signals || {}) as Record<string, unknown>;
   const heat = num(narrative.heat_score);
   const teamScore = num(team.score ?? team.team_score, 0.5);
   const tokenRisk = num(risk.token_risk, 0.5);
   const conf = project.confidence ?? 0;
+  const confPct = Math.round(conf * 100);
+  const confWarn = conf < 0.5;
+  const reasons = Array.isArray(project.reason) ? project.reason : [];
+  const site = safeExternalUrl(project.url);
+  const score = project.score ?? 0;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="mx-auto max-w-[1080px] animate-fade-in">
       {toast ? <Toast message={toast.message} type={toast.type} /> : null}
 
-      <div className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
-        <Link href="/" className="hover:text-brand-600 dark:hover:text-brand-300">
+      {/* top bar */}
+      <div className="mb-7 flex flex-wrap items-baseline justify-between gap-3 border-b border-line pb-4">
+        <Link
+          href="/"
+          className="text-[13px] text-ink-muted transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-farm"
+        >
           ← 工作台
         </Link>
-        <span className="text-ink-faint">/</span>
-        <span className="text-ink">{project.name}</span>
+        <span className="font-mono text-[11px] tracking-wide text-ink-faint">
+          {sourceZh(project.source)} · {relativeTime(project.updated_at)}
+        </span>
       </div>
 
-      {/* hero */}
-      <div className="card overflow-hidden">
-        <div className="border-b border-line bg-gradient-to-r from-brand-500/10 via-transparent to-farm/5 px-5 py-5 sm:px-6">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <LabelBadge label={project.label} />
-                {project.sector ? (
-                  <span className="badge bg-surface-3 text-ink-muted">{project.sector}</span>
-                ) : null}
-                {project.stage ? (
-                  <span className="badge bg-surface-3 text-ink-muted">{stageZh(project.stage)}</span>
-                ) : null}
-                {project.source ? (
-                  <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
-                    {sourceZh(project.source)}
-                  </span>
-                ) : null}
+      {/* masthead */}
+      <header className="mb-9 grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="min-w-0">
+          <h1
+            className="m-0 text-[clamp(1.75rem,3.5vw,2.25rem)] font-semibold tracking-tight text-ink"
+            style={{ lineHeight: 1.3 }}
+          >
+            {project.name}
+          </h1>
+          <p className="mt-2.5 max-w-[52ch] text-sm text-ink-muted" style={{ lineHeight: 1.65 }}>
+            {project.sector || '未分赛道'} · {stageZh(project.stage)}
+            {project.funding?.funding_tier &&
+            project.funding.funding_tier !== 'none' &&
+            project.funding.funding_tier !== 'unknown'
+              ? ` · 融资 ${project.funding.funding_tier}`
+              : ''}
+            {confWarn ? ' · 置信度偏低，先别重仓时间' : ''}
+          </p>
+          <div className="mt-3.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
+            <LabelBadge label={project.label} />
+            <span className="font-mono text-[11px] font-medium tracking-wide text-ink-muted">
+              score-v1.4
+            </span>
+            {confWarn ? (
+              <span className="font-mono text-[11px] text-watch dark:text-watch">
+                置信 {confPct}%
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              className="btn-primary min-h-9"
+              onClick={rescore}
+              disabled={rescoring}
+            >
+              {rescoring ? '评分中…' : '重新评分'}
+            </button>
+            {site ? (
+              <a
+                href={site}
+                target="_blank"
+                rel="noreferrer"
+                className="px-1 py-2 text-[13px] text-ink-muted underline decoration-1 underline-offset-[3px] hover:text-ink"
+              >
+                官网
+                <span className="sr-only">（新窗口）</span>
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-x-7 gap-y-4 lg:flex-col lg:items-end lg:text-right">
+          <ScoreRing score={score} label={project.label} />
+          <div className="min-w-[140px] lg:w-36">
+            <div className="mb-1.5 flex justify-between gap-3 font-mono text-[11px] tracking-wide text-ink-muted">
+              <span>置信</span>
+              <span>{formatPct(conf)}</span>
+            </div>
+            <div
+              className="h-0.5 overflow-hidden bg-line"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={confPct}
+              aria-label="置信度"
+            >
+              <i
+                className={`block h-full ${
+                  project.label === 'FARM'
+                    ? 'bg-farm'
+                    : project.label === 'WATCH'
+                      ? 'bg-watch'
+                      : 'bg-ink'
+                }`}
+                style={{ width: `${confPct}%` }}
+              />
+            </div>
+            {confWarn ? (
+              <p className="mt-2 text-left text-[11px] leading-snug text-watch dark:text-watch lg:text-right">
+                证据面不足，补信号后再加大投入。
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </header>
+
+      {/* body */}
+      <div className="grid gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+        <div className="min-w-0 space-y-0">
+          {/* reasons */}
+          <section className="border-t border-line py-5 first:border-t-0 first:pt-0">
+            <SecHead title="为何是这个标签" meta="权威主决策" />
+            {reasons.length ? (
+              <ol className="m-0 list-none space-y-0 p-0">
+                {reasons.map((r, i) => (
+                  <li
+                    key={`${i}-${r}`}
+                    className="grid grid-cols-[1.5rem_1fr] gap-2.5 border-b border-line py-2 text-sm last:border-b-0"
+                    style={{ lineHeight: 1.55 }}
+                  >
+                    <span className="pt-0.5 font-mono text-[11px] font-semibold tracking-wide text-ink-faint">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="text-ink">{r}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="m-0 text-[13px] text-ink-muted">暂无写入的决策理由。</p>
+            )}
+          </section>
+
+          {/* agents matrix */}
+          <section className="border-t border-line py-5">
+            <SecHead title="四路分析" meta="并行 Agent" />
+            <div className="grid border-t border-line sm:grid-cols-2">
+              <div className="border-b border-line py-3.5 sm:border-r sm:pr-5">
+                <p className="mb-2.5 text-xs font-semibold text-ink">叙事</p>
+                <dl className="m-0 space-y-1.5">
+                  <Fact label="热度" value={heat ? heat.toFixed(2) : '—'} />
+                  <div className="py-0.5" aria-hidden>
+                    <ProgressBar value={heat} max={1} color="bg-ink" />
+                  </div>
+                  <Fact label="时机" value={timingZh(String(narrative.timing ?? ''))} />
+                  <Fact
+                    label="阶段"
+                    value={stageZh(String(narrative.stage ?? project.stage ?? ''))}
+                  />
+                </dl>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{project.name}</h1>
-              {safeExternalUrl(project.url) ? (
-                <a
-                  href={safeExternalUrl(project.url) as string}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-block text-sm text-brand-600 hover:underline dark:text-brand-300"
-                >
-                  {project.url}
-                </a>
-              ) : (
-                <p className="mt-1 text-sm text-ink-faint">无官网链接</p>
-              )}
-              <p className="mt-2 text-xs text-ink-faint">
-                更新于 {relativeTime(project.updated_at)} · 编号{' '}
-                <span className="font-mono">{project.id.slice(0, 8)}…</span>
+              <div className="border-b border-line py-3.5 sm:pl-5">
+                <p className="mb-2.5 text-xs font-semibold text-ink">团队</p>
+                <dl className="m-0 space-y-1.5">
+                  <Fact label="得分" value={formatPct(teamScore)} />
+                  <Fact label="风险" value={riskLevelZh(String(team.risk_level ?? ''))} />
+                  <Fact label="身份" value={teamTypeZh(String(team.team_type ?? ''))} />
+                  <Fact
+                    label="Flags"
+                    value={
+                      Array.isArray(team.flags) && team.flags.length
+                        ? (team.flags as string[]).join(', ')
+                        : '无'
+                    }
+                  />
+                </dl>
+              </div>
+              <div className="border-b border-line py-3.5 sm:border-b-0 sm:border-r sm:pr-5">
+                <p className="mb-2.5 text-xs font-semibold text-ink">风险</p>
+                <dl className="m-0 space-y-1.5">
+                  <Fact label="女巫难度" value={riskLevelZh(String(risk.sybil_difficulty ?? ''))} />
+                  <Fact label="交互成本" value={riskLevelZh(String(risk.farming_cost ?? ''))} />
+                  <Fact label="解锁压力" value={riskLevelZh(String(risk.unlock_pressure ?? ''))} />
+                  <Fact label="代币风险" value={tokenRisk.toFixed(2)} />
+                </dl>
+              </div>
+              <div className="py-3.5 sm:border-b-0 sm:pl-5">
+                <p className="mb-2.5 text-xs font-semibold text-ink">代币经济</p>
+                <dl className="m-0 space-y-1.5">
+                  <Fact
+                    label="VC 份额"
+                    value={
+                      tokenomics.vc_share != null ? formatPct(num(tokenomics.vc_share)) : '—'
+                    }
+                  />
+                  <Fact
+                    label="团队份额"
+                    value={
+                      tokenomics.team_share != null ? formatPct(num(tokenomics.team_share)) : '—'
+                    }
+                  />
+                  <Fact
+                    label="解锁压力"
+                    value={riskLevelZh(String(tokenomics.unlock_pressure ?? ''))}
+                  />
+                  <Fact
+                    label="解锁惩罚"
+                    value={
+                      tokenomics.unlock_penalty != null
+                        ? num(tokenomics.unlock_penalty).toFixed(2)
+                        : '—'
+                    }
+                  />
+                </dl>
+              </div>
+            </div>
+          </section>
+
+          {/* signals */}
+          <section className="border-t border-line py-5">
+            <SecHead title="可核验信号" meta="meta.signals" />
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              {SIGNAL_CHECKS.map(({ key, label }) => {
+                const on = Boolean(signals[key]);
+                return (
+                  <div
+                    key={key}
+                    className="flex items-baseline justify-between gap-3 border-b border-line py-2 text-[13px]"
+                  >
+                    <span className="text-ink-muted">{label}</span>
+                    <span
+                      className={`font-mono text-[11px] font-semibold tracking-wide ${
+                        on ? 'text-farm dark:text-farm' : 'text-ink-faint'
+                      }`}
+                    >
+                      {on ? '有' : '无'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* participation */}
+          <section className="border-t border-line py-5">
+            <SecHead title="参与清单" meta="participation" />
+            <ParticipationTasks projectId={project.id} />
+          </section>
+
+          {/* opportunity */}
+          <section className="border-t border-line py-5">
+            <SecHead title="Opportunity 行动流" meta="非权威旁路" />
+            <OpportunityWorkflowPanel projectId={project.id} />
+          </section>
+
+          {/* AI brief */}
+          <section className="border-t border-line py-5">
+            <SecHead title="简报" meta="规则 / 可选 LLM" />
+            <AiBriefPanel projectId={project.id} autoLoad />
+          </section>
+
+          {/* funding */}
+          <section className="border-t border-line py-5">
+            <SecHead title="融资" meta="可编辑 → 重评" />
+            <FundingPanel
+              projectId={project.id}
+              initialFunding={project.funding}
+              initialNote={project.funding_note}
+              onSaved={loadProject}
+            />
+          </section>
+
+          {/* interactions */}
+          <section className="border-t border-line py-5">
+            <SecHead title="我的投入" meta="interactions" />
+            <InteractionPanel projectId={project.id} />
+          </section>
+
+          {/* feedback */}
+          <section className="border-t border-line py-5">
+            <SecHead title="校正这条判断" meta="进入校准样本" />
+            <p className="mb-3 text-[13px] text-ink-muted" style={{ lineHeight: 1.55 }}>
+              样本累计足够后可跑权重校准。先选类型，再可选填事后结果与备注。
+            </p>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="反馈类型">
+              {SIGNALS.map((s) => {
+                const on = selectedSignal === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    aria-pressed={on}
+                    disabled={feedbackSending}
+                    onClick={() => setSelectedSignal(on ? null : s.id)}
+                    className={`min-h-8 rounded-sm border px-2.5 text-xs font-medium tracking-wide transition ${
+                      on
+                        ? 'border-ink bg-surface-2 text-ink'
+                        : 'border-line bg-transparent text-ink-muted hover:border-line hover:bg-surface-2 hover:text-ink'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3.5 grid gap-3 sm:grid-cols-[12rem_1fr]">
+              <select
+                className="select"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value)}
+                aria-label="事后结果"
+              >
+                {OUTCOMES.map((o) => (
+                  <option key={o.id || 'none'} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                placeholder="可选：哪里判断偏了"
+                value={note}
+                maxLength={500}
+                onChange={(e) => setNote(e.target.value)}
+                aria-label="备注"
+              />
+            </div>
+            <p className="mt-1 font-mono text-[10px] tracking-wide text-ink-faint">
+              {note.length} / 500
+            </p>
+            <button
+              type="button"
+              className="btn-secondary mt-3 min-h-8 text-xs"
+              disabled={feedbackSending}
+              onClick={sendFeedback}
+            >
+              {feedbackSending ? '提交中…' : '提交反馈'}
+            </button>
+          </section>
+        </div>
+
+        {/* rail — sticky summary on desktop */}
+        <aside className="min-w-0 border-t border-line pt-5 lg:sticky lg:top-[calc(3.5rem+1rem)] lg:self-start lg:border-t-0 lg:pt-0">
+          <div className="space-y-5">
+            <div className="border-b border-line pb-5">
+              <h3 className="mb-3 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+                摘要
+              </h3>
+              <dl className="m-0 space-y-0">
+                <div className="flex justify-between gap-3 border-b border-line/70 py-1.5 text-[12.5px]">
+                  <dt className="text-ink-muted">标签</dt>
+                  <dd className="m-0">
+                    <LabelBadge label={project.label} />
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3 border-b border-line/70 py-1.5 text-[12.5px]">
+                  <dt className="text-ink-muted">分数</dt>
+                  <dd className={`m-0 font-mono font-semibold tabular-nums ${scoreTone(project.label)}`}>
+                    {score}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3 border-b border-line/70 py-1.5 text-[12.5px]">
+                  <dt className="text-ink-muted">置信</dt>
+                  <dd className="m-0 font-mono tabular-nums">{formatPct(conf)}</dd>
+                </div>
+                <div className="flex justify-between gap-3 border-b border-line/70 py-1.5 text-[12.5px]">
+                  <dt className="text-ink-muted">赛道</dt>
+                  <dd className="m-0 max-w-[58%] text-right font-medium break-words">
+                    {project.sector || '—'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3 py-1.5 text-[12.5px]">
+                  <dt className="text-ink-muted">来源</dt>
+                  <dd className="m-0 font-medium">{sourceZh(project.source)}</dd>
+                </div>
+              </dl>
+              <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">
+                {project.name} / {project.sector || '—'} / {stageZh(project.stage)}。分 {score}，
+                {project.label}。
+                {reasons[0] ? `${reasons[0]}。` : ''}
+                置信 {formatPct(conf)}
+                {confWarn ? '，证据偏薄。' : '。'}
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-6">
-              <ScoreRing score={project.score ?? 0} size={112} label={project.label} />
-              <div className="w-44 space-y-3">
-                <ConfidenceBar value={conf} />
-                {conf < 0.5 ? (
-                  <p className="text-xs text-watch-dark dark:text-watch">⚠ 置信度偏低，建议复核 Agent 输出</p>
-                ) : null}
-                <button type="button" className="btn-primary w-full" onClick={rescore} disabled={rescoring}>
-                  {rescoring ? '评分中…' : '↻ 重新评分'}
-                </button>
-              </div>
+            <div>
+              <h3 className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+                编号
+              </h3>
+              <p className="m-0 break-all font-mono text-[11px] text-ink-faint">{project.id}</p>
+              <p className="mt-2 text-[11px] text-ink-faint">
+                更新 {relativeTime(project.updated_at)}
+              </p>
             </div>
           </div>
-        </div>
-
-        <div className="px-5 py-4 sm:px-6">
-          <h2 className="mb-2 text-xs font-semibold tracking-wider text-ink-muted">系统评分要点</h2>
-          <ReasonChips reasons={project.reason} />
-        </div>
-      </div>
-
-      {/* AI 解读：把冷冰冰的因子讲成人话 */}
-      <AiBriefPanel projectId={project.id} autoLoad />
-
-      {/* 机会行动流：资格校验 / 钱包分配 / 参与执行 */}
-      <OpportunityWorkflowPanel projectId={project.id} />
-
-      {/* 可参与任务：官方活动 / 测试网 / Discord 等 */}
-      <ParticipationTasks projectId={project.id} />
-
-      {/* 融资：手动补全 → meta.signals → 重评 */}
-      <FundingPanel
-        projectId={project.id}
-        initialFunding={project.funding}
-        initialNote={project.funding_note}
-        onSaved={loadProject}
-      />
-
-      {/* agents */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <AgentPanel title="叙事时机" accent="bg-brand-500">
-          <Field label="时机" value={timingZh(String(narrative.timing ?? ''))} />
-          <Field
-            label="阶段"
-            value={stageZh(String(narrative.stage ?? project.stage ?? ''))}
-          />
-          <div className="mt-2">
-            <div className="mb-1 flex justify-between text-xs text-ink-muted">
-              <span>热度分</span>
-              <span className="tabular-nums">{heat.toFixed(2)}</span>
-            </div>
-            <ProgressBar value={heat} max={1} color="bg-brand-500" />
-          </div>
-        </AgentPanel>
-
-        <AgentPanel title="团队信誉" accent="bg-farm">
-          <Field label="风险等级" value={riskLevelZh(String(team.risk_level ?? ''))} />
-          <Field label="团队类型" value={teamTypeZh(String(team.team_type ?? ''))} />
-          <div className="mt-2">
-            <div className="mb-1 flex justify-between text-xs text-ink-muted">
-              <span>团队分</span>
-              <span className="tabular-nums">{formatPct(teamScore)}</span>
-            </div>
-            <ProgressBar value={teamScore} max={1} color="bg-farm" />
-          </div>
-          {Array.isArray(team.flags) && team.flags.length ? (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {(team.flags as string[]).map((f) => (
-                <span key={f} className="badge bg-surface-3 text-ink-muted">
-                  {f}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </AgentPanel>
-
-        <AgentPanel title="风险" accent="bg-red-500">
-          <Field label="女巫难度" value={riskLevelZh(String(risk.sybil_difficulty ?? ''))} />
-          <Field label="交互成本" value={riskLevelZh(String(risk.farming_cost ?? ''))} />
-          <Field label="解锁压力" value={riskLevelZh(String(risk.unlock_pressure ?? ''))} />
-          <div className="mt-2">
-            <div className="mb-1 flex justify-between text-xs text-ink-muted">
-              <span>代币风险</span>
-              <span className="tabular-nums">{tokenRisk.toFixed(2)}</span>
-            </div>
-            <ProgressBar value={tokenRisk} max={1} color="bg-red-500" />
-          </div>
-        </AgentPanel>
-
-        <AgentPanel title="代币结构" accent="bg-watch">
-          <Field
-            label="VC 占比"
-            value={
-              tokenomics.vc_share != null ? formatPct(num(tokenomics.vc_share)) : '—'
-            }
-          />
-          <Field
-            label="团队占比"
-            value={
-              tokenomics.team_share != null ? formatPct(num(tokenomics.team_share)) : '—'
-            }
-          />
-          <Field label="解锁压力" value={riskLevelZh(String(tokenomics.unlock_pressure ?? ''))} />
-          <Field
-            label="解锁惩罚"
-            value={
-              tokenomics.unlock_penalty != null
-                ? String(num(tokenomics.unlock_penalty).toFixed(2))
-                : '—'
-            }
-          />
-        </AgentPanel>
-      </div>
-
-      {/* 交互记录：做过/日期/成本收益 */}
-      <InteractionPanel projectId={project.id} />
-
-      {/* feedback */}
-      <div className="card p-5 sm:p-6">
-        <h2 className="text-base font-semibold text-ink">反馈校准</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          样本累计 ≥200 后可触发权重校准。你的每一次点击都在改进模型。
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {SIGNALS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              disabled={feedbackSending}
-              onClick={() => sendFeedback(s.id)}
-              className="btn-secondary"
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <select className="select sm:w-48" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
-            {OUTCOMES.map((o) => (
-              <option key={o.id || 'none'} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <input
-            className="input sm:flex-1"
-            placeholder="备注（可选；标签错误时可写：重点参与 / 观察 / 忽略）"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </div>
+        </aside>
       </div>
     </div>
   );

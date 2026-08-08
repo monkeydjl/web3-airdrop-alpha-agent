@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import type { Project } from '@/lib/types';
@@ -19,12 +19,12 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
               <span className="badge bg-surface-3 text-ink-muted">{stageZh(project.stage)}</span>
             ) : null}
             {project.funding?.funding_tier && project.funding.funding_tier !== 'none' ? (
-              <span className="badge bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
+              <span className="badge bg-farm-soft text-farm dark:bg-brand-900/30 dark:text-farm">
                 {tierZh(project.funding.funding_tier)}
               </span>
             ) : null}
           </div>
-          <h3 className="truncate text-base font-semibold text-ink group-hover:text-brand-600 dark:group-hover:text-brand-300">
+          <h3 className="truncate text-base font-semibold text-ink group-hover:text-farm dark:group-hover:text-farm">
             {project.name}
           </h3>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
