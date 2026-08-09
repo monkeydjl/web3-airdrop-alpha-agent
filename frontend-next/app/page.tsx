@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -82,7 +82,7 @@ export default function DashboardPage() {
   }, [projects]);
 
   const filtered = useMemo(() => {
-    let list = projects.filter((p) => {
+    const list = projects.filter((p) => {
       if (hideIgnore && !labelFilter && p.label === 'IGNORE') return false;
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;

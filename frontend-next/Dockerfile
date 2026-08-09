@@ -4,11 +4,11 @@
 # 多阶段构建：deps → builder → runner
 # ──────────────────────────────────────────────
 
-# Stage 1: 安装依赖
+# Stage 1: 安装依赖（含 devDependencies，构建需要 typescript/tailwind）
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY frontend-next/package.json frontend-next/package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 # Stage 2: 构建
 FROM node:22-alpine AS builder
@@ -20,7 +20,10 @@ COPY frontend-next/ .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-RUN npm run build
+# 确保 public 目录存在（Next.js 可能不生成）
+RUN mkdir -p public
+
+RUN npx next build --webpack
 
 # Stage 3: 生产运行
 FROM node:22-alpine AS runner
@@ -45,6 +48,6 @@ ENV PORT=3002
 ENV HOSTNAME="0.0.0.0"
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3002/ || exit 1
+    CMD node -e "fetch('http://localhost:3002/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server.js"]

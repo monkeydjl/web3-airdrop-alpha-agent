@@ -20,14 +20,14 @@ services:
     networks:
       - frontend
 
-  # Next.js 前端（主前端）
+  # Next.js 前端（主前端，直接暴露 3002 端口）
   frontend:
     build:
       context: .
       dockerfile: frontend-next/Dockerfile
     container_name: airdrop-frontend
-    expose:
-      - "3002"
+    ports:
+      - "3002:3002"
     environment:
       - PORT=3002
       - HOSTNAME=0.0.0.0

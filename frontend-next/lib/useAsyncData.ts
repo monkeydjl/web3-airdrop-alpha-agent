@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAbortError } from './api';
@@ -75,7 +75,6 @@ export function useAsyncData<T>(
     if (!immediate) return;
     run();
     // deps 由调用方声明，run 本身稳定
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   return { data, error, loading, reload: run };

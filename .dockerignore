@@ -1,16 +1,32 @@
-# 忽略环境配置文件
-.env
-.env.local
-.env.*.local
+# ── 版本控制 ──
+.git/
+.gitignore
+.gitattributes
 
-# 忽略数据库文件
+# ── 环境配置（所有层级）──
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.development
+**/.env.production
+!.env.example
+
+# ── 数据库文件 ──
 *.db
 *.db-shm
 *.db-wal
 data/
 logs/
 
-# 忽略 Python 缓存
+# ── Node.js ──
+**/node_modules/
+**/.next/
+**/out/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# ── Python 缓存 ──
 __pycache__/
 *.py[cod]
 *$py.class
@@ -32,7 +48,7 @@ wheels/
 .installed.cfg
 *.egg
 
-# 测试和覆盖率
+# ── 测试和覆盖率 ──
 .pytest_cache/
 backend/.pytest_cache/
 backend/.pytest_tmp/
@@ -41,7 +57,7 @@ htmlcov/
 .tox/
 .hypothesis/
 
-# IDE
+# ── IDE ──
 .vscode/
 .idea/
 *.swp
@@ -49,17 +65,17 @@ htmlcov/
 *~
 .DS_Store
 
-# Jupyter
+# ── Jupyter ──
 .ipynb_checkpoints
 
-# mypy
+# ── mypy ──
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# Docker volumes
+# ── Docker volumes ──
 docker-volumes/
 
-# Temporary files
+# ── Temporary files ──
 *.tmp
 *.log

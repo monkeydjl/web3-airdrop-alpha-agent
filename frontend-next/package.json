@@ -6,7 +6,7 @@
     "dev": "next dev --port 3002",
     "build": "next build",
     "start": "next start --port 3002",
-    "lint": "next lint",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,10 +17,15 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "@typescript-eslint/parser": "^8.66.0",
     "autoprefixer": "^10.4.19",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.0",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.7.0"
