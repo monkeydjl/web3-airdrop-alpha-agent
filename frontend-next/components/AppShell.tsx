@@ -1,14 +1,15 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Radar, Sun, Moon, LineChart, ServerCog } from 'lucide-react';
 import { fetchHealth } from '@/lib/api';
 
 const NAV_ITEMS = [
-  { href: '/', label: '工作台' },
-  { href: '/insights', label: '洞察' },
-  { href: '/ops', label: '运维' },
+  { href: '/', label: '工作台', icon: Radar },
+  { href: '/insights', label: '洞察', icon: LineChart },
+  { href: '/ops', label: '运维', icon: ServerCog },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -57,7 +58,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-4">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 text-lg font-semibold text-ink">
-            <span className="text-farm">α</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-farm text-white">
+              <Radar className="h-[18px] w-[18px]" strokeWidth={2.2} />
+            </span>
             <span className="hidden sm:inline">空投阿尔法</span>
           </Link>
 
@@ -97,7 +100,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               className="btn-ghost btn-sm"
               aria-label={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
             >
-              {theme === 'light' ? '🌙' : '☀️'}
+              {theme === 'light' ? <Moon className="h-[18px] w-[18px]" /> : <Sun className="h-[18px] w-[18px]" />}
             </button>
           </div>
         </div>
@@ -108,6 +111,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex items-center justify-around py-2">
           {NAV_ITEMS.map((item) => {
             const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
@@ -116,7 +120,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   active ? 'text-farm' : 'text-ink-muted'
                 }`}
               >
-                <span className="text-base">{item.label === '工作台' ? '📋' : item.label === '洞察' ? '📊' : '⚙️'}</span>
+                <Icon className="h-5 w-5" strokeWidth={2} />
                 {item.label}
               </Link>
             );

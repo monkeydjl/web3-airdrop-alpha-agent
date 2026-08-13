@@ -7,6 +7,7 @@ import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel'
 import { ParticipationTasks } from '@/components/ParticipationTasks';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
+import { ArrowLeft } from 'lucide-react';
 import {
   formatPct,
   relativeTime,
@@ -298,9 +299,10 @@ export default function ProjectPage() {
       <div className="mb-7 flex flex-wrap items-baseline justify-between gap-3 border-b border-line pb-4">
         <Link
           href="/"
-          className="text-[13px] text-ink-muted transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-farm"
+          className="flex items-center gap-1 text-[13px] text-ink-muted transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-farm"
         >
-          ← 工作台
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+          工作台
         </Link>
         <span className="font-mono text-[11px] tracking-wide text-ink-faint">
           {sourceZh(project.source)} · {relativeTime(project.updated_at)}

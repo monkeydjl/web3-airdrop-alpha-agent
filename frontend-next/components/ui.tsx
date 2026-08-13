@@ -1,8 +1,9 @@
-﻿'use client';
+'use client';
 
 import type { Label } from '@/lib/types';
 import { confColor, formatPct, labelStyles, labelZh, reasonTone } from '@/lib/format';
 import type { ReactNode } from 'react';
+import { Inbox } from 'lucide-react';
 
 export function LabelBadge({ label, className = '' }: { label: string; className?: string }) {
   const s = labelStyles(label);
@@ -151,9 +152,7 @@ export function EmptyState({
   return (
     <div className="card flex flex-col items-center justify-center border-dashed px-6 py-16 text-center animate-fade-in">
       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
-        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-        </svg>
+        <Inbox className="h-6 w-6" strokeWidth={1.5} />
       </div>
       <h3 className="text-base font-semibold text-ink">{title}</h3>
       {description ? <p className="mt-1 max-w-md text-sm text-ink-muted">{description}</p> : null}

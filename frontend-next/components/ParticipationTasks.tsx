@@ -1,8 +1,9 @@
-﻿'use client';
+'use client';
 
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check } from 'lucide-react';
 
 export interface ParticipationTask {
   id: string;
@@ -207,7 +208,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                           }`}
                           aria-label={isDone ? '标为未完成' : '标为完成'}
                         >
-                          ✓
+                          {isDone ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
                         </button>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
