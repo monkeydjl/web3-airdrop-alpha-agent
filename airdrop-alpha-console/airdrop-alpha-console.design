@@ -1,0 +1,1986 @@
+{
+  "data": [
+    {
+      "id": "page-index",
+      "title": "工作台 · 项目雷达",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1256,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-5f74e2ed",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "cta-discoveries",
+            "targetPageId": "page-discoveries",
+            "transitionLabel": "前往发现队列质检"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "link-project-detail-2",
+            "targetPageId": "page-project-detail",
+            "hideEdge": true,
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "link-project-detail-3",
+            "targetPageId": "page-project-detail",
+            "hideEdge": true,
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-project-detail",
+      "title": "项目详情",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700001,
+      "canvasData": {
+        "x": 1240,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 2561,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-20817e5a",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/project-detail.html",
+        "interactions": [
+          {
+            "domId": "cta-portfolio",
+            "targetPageId": "page-portfolio",
+            "transitionLabel": "记录参与并复盘"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "back-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "返回工作台"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-discoveries",
+      "title": "发现队列",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700002,
+      "canvasData": {
+        "x": 620,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1077,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-dcb41dff",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/discoveries.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看入库项目"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "shortcut-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "查看隔离区"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-insights",
+      "title": "洞察",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700003,
+      "canvasData": {
+        "x": 620,
+        "y": 428,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1304,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-3d619770",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/insights.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看榜首项目"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "shortcut-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "查看复盘"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-portfolio",
+      "title": "参与复盘",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700004,
+      "canvasData": {
+        "x": 1860,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1701,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-a831582c",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/portfolio.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail",
+            "hideEdge": true,
+            "transitionLabel": "查看参与项目"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-ops",
+      "title": "运维台",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786292700005,
+      "canvasData": {
+        "x": 0,
+        "y": 1676,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1739,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-d49d20e2",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/ops.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-index-dark",
+      "title": "工作台 · 项目雷达 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600000,
+      "canvasData": {
+        "x": 0,
+        "y": 922,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1256,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-e7cc84c5",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index-dark.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "cta-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "transitionLabel": "前往发现队列质检"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "link-project-detail-2",
+            "targetPageId": "page-project-detail-dark",
+            "hideEdge": true,
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "link-project-detail-3",
+            "targetPageId": "page-project-detail-dark",
+            "hideEdge": true,
+            "transitionLabel": "查看项目详情"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-project-detail-dark",
+      "title": "项目详情 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600001,
+      "canvasData": {
+        "x": 1240,
+        "y": 922,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 2561,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-3d575c12",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/project-detail-dark.html",
+        "interactions": [
+          {
+            "domId": "cta-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "transitionLabel": "记录参与并复盘"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "back-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "返回工作台"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-discoveries-dark",
+      "title": "发现队列 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600002,
+      "canvasData": {
+        "x": 620,
+        "y": 922,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1077,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-e7883497",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/discoveries-dark.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看入库项目"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "shortcut-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "查看隔离区"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-insights-dark",
+      "title": "洞察 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600003,
+      "canvasData": {
+        "x": 620,
+        "y": 1299,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1304,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-85d2e378",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/insights-dark.html",
+        "interactions": [
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看榜首项目"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "shortcut-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "查看复盘"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-portfolio-dark",
+      "title": "参与复盘 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600004,
+      "canvasData": {
+        "x": 1860,
+        "y": 922,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1701,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-da402c34",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/portfolio-dark.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "link-project-detail",
+            "targetPageId": "page-project-detail-dark",
+            "hideEdge": true,
+            "transitionLabel": "查看参与项目"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-ops-dark",
+      "title": "运维台 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786359600005,
+      "canvasData": {
+        "x": 620,
+        "y": 1676,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1739,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-8b02726a",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/ops-dark.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-index-btt",
+      "title": "工作台 · 项目雷达 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 0,
+        "y": 2200,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1256,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-d562f59d",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-project-detail-btt",
+      "title": "项目详情 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 620,
+        "y": 2200,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 2561,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-62d7c638",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/project-detail-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-portfolio-btt",
+      "title": "参与复盘 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 1240,
+        "y": 2200,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1701,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-f5097d4c",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/portfolio-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-insights-btt",
+      "title": "洞察 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 1860,
+        "y": 2200,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1304,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-932f3d96",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/insights-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-index-dark-btt",
+      "title": "工作台 · 项目雷达 暗色 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 0,
+        "y": 3300,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1256,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-aab05685",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index-dark-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-project-detail-dark-btt",
+      "title": "项目详情 暗色 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 620,
+        "y": 3300,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 2561,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-047bc840",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/project-detail-dark-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-portfolio-dark-btt",
+      "title": "参与复盘 暗色 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 1240,
+        "y": 3300,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1701,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-adad2564",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/portfolio-dark-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-insights-dark-btt",
+      "title": "洞察 暗色 — 回到顶部",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786361700000,
+      "canvasData": {
+        "x": 1860,
+        "y": 3300,
+        "group": 2,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 1304,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-6a0d13ae",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/insights-dark-btt.html",
+        "interactions": [
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-collections",
+      "title": "收藏关注",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786464525277,
+      "canvasData": {
+        "x": 1240,
+        "y": 428,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-ef697fb2",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/collections.html",
+        "interactions": [
+          {
+            "domId": "col-card-nova",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看 Nova Protocol"
+          },
+          {
+            "domId": "col-card-poly",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看 Poly Oracle"
+          },
+          {
+            "domId": "col-card-kite",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看 Kite Network"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-collections-dark",
+      "title": "收藏关注 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786464525278,
+      "canvasData": {
+        "x": 1240,
+        "y": 1299,
+        "group": 1,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-2b587e2f",
+          "measuredAt": 1786548604100
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/collections-dark.html",
+        "interactions": [
+          {
+            "domId": "col-card-nova",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看 Nova Protocol"
+          },
+          {
+            "domId": "col-card-poly",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看 Poly Oracle"
+          },
+          {
+            "domId": "col-card-kite",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看 Kite Network"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-notifications",
+      "title": "通知中心",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552154774,
+      "canvasData": {
+        "x": 1860,
+        "y": 428,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/notifications.html",
+        "interactions": [
+          {
+            "domId": "ntf-item-1",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "查看 Nova Protocol"
+          },
+          {
+            "domId": "ntf-item-2",
+            "targetPageId": "page-project-detail",
+            "transitionLabel": "前往参与 Poly Oracle"
+          },
+          {
+            "domId": "ntf-item-3",
+            "targetPageId": "page-ops",
+            "transitionLabel": "处理采集器告警"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-notifications-dark",
+      "title": "通知中心 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552154775,
+      "canvasData": {
+        "x": 1860,
+        "y": 1299,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/notifications-dark.html",
+        "interactions": [
+          {
+            "domId": "ntf-item-1",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "查看 Nova Protocol"
+          },
+          {
+            "domId": "ntf-item-2",
+            "targetPageId": "page-project-detail-dark",
+            "transitionLabel": "前往参与 Poly Oracle"
+          },
+          {
+            "domId": "ntf-item-3",
+            "targetPageId": "page-ops-dark",
+            "transitionLabel": "处理采集器告警"
+          },
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-archive",
+      "title": "归档历史",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552154776,
+      "canvasData": {
+        "x": 0,
+        "y": 428,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/archive.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-archive-dark",
+      "title": "归档历史 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552154777,
+      "canvasData": {
+        "x": 0,
+        "y": 1299,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/archive-dark.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-settings",
+      "title": "系统设置",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552940924,
+      "canvasData": {
+        "x": 620,
+        "y": 856,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/settings.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-settings-dark",
+      "title": "系统设置 — 暗色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786552940925,
+      "canvasData": {
+        "x": 1240,
+        "y": 1676,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/settings-dark.html",
+        "interactions": [
+          {
+            "domId": "nav-index",
+            "targetPageId": "page-index-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-discoveries",
+            "targetPageId": "page-discoveries-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-insights",
+            "targetPageId": "page-insights-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-portfolio",
+            "targetPageId": "page-portfolio-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-ops",
+            "targetPageId": "page-ops-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-notifications",
+            "targetPageId": "page-notifications-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-archive",
+            "targetPageId": "page-archive-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          },
+          {
+            "domId": "nav-collections",
+            "targetPageId": "page-collections-dark",
+            "hideEdge": true,
+            "transitionLabel": "全局导航"
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": false,
+    "deviceType": "desktop",
+    "projectName": "空投 Alpha 控制台",
+    "designLibrary": null
+  }
+}

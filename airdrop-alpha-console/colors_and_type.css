@@ -1,0 +1,228 @@
+/* Alpha Console — Web3 Airdrop Alpha Agent System 前端设计令牌
+ * 单一品牌色（信号靛 Signal Indigo）+ 状态语义色（FARM/WATCH/IGNORE）
+ * 字体：Inter + Noto Sans SC；数据：JetBrains Mono
+ * 亮/暗双主题变量；静态表面以边框/表面分层为主，阴影 alpha ≤ 0.05
+ */
+
+:root {
+  /* ---- solo-design 语义别名（apply-html-head-contract 消费） ---- */
+  --alpha-background: var(--background);
+  --alpha-foreground: var(--foreground);
+  --alpha-card: var(--card);
+  --alpha-card-foreground: var(--card-foreground);
+  --alpha-popover: var(--popover);
+  --alpha-popover-foreground: var(--popover-foreground);
+  --alpha-primary: var(--primary);
+  --alpha-primary-foreground: var(--primary-foreground);
+  --alpha-muted: var(--muted);
+  --alpha-muted-foreground: var(--muted-foreground);
+  --alpha-border: var(--border);
+  --alpha-input: var(--input);
+  --alpha-ring: var(--ring);
+  --alpha-destructive: var(--state-error);
+  --alpha-destructive-foreground: #ffffff;
+  --alpha-radius-small: var(--radius-sm);
+  --alpha-radius-medium: var(--radius-md);
+  --alpha-radius-large: var(--radius-lg);
+  --alpha-sidebar: var(--sidebar);
+  --alpha-sidebar-foreground: var(--sidebar-foreground);
+  --alpha-sidebar-primary: var(--sidebar-primary);
+  --alpha-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --alpha-sidebar-accent: var(--sidebar-accent);
+  --alpha-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --alpha-chart-1: var(--chart-1);
+  --alpha-chart-2: var(--chart-2);
+  --alpha-chart-3: var(--chart-3);
+  --alpha-chart-4: var(--chart-4);
+  --alpha-chart-5: var(--chart-5);
+
+  /* ---- 品牌色阶：信号靛（唯一品牌色相，h≈233°） ---- */
+  --alpha-50: #eef0fd;
+  --alpha-100: #e0e3fb;
+  --alpha-200: #c3c8f7;
+  --alpha-300: #9ba2f0;
+  --alpha-400: #6f77e6;
+  --alpha-500: #4d56dd;
+  --alpha-600: #3d44c8;
+  --alpha-700: #3339a6;
+  --alpha-800: #2c3185;
+  --alpha-900: #282d6b;
+  --alpha-brand-subtle: var(--alpha-100);
+  --alpha-brand-strong: var(--alpha-700);
+
+  /* ---- 表面 / 文本 / 边框 ---- */
+  --background: #f6f7fb;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #eef0f7;
+  --foreground: #11142c;
+  --card-foreground: #11142c;
+  --popover-foreground: #11142c;
+  --primary: #4d56dd;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #5c6278;
+  --border: #e2e5f0;
+  --input: #dfe3ef;
+  --ring: #4d56dd;
+
+  /* ---- 状态语义色（仅用于真实状态 / 标签徽章） ---- */
+  --state-success: #0f9d6e;
+  --state-success-subtle: #e2f5ee;
+  --state-success-foreground: #0a6b4c;
+  --state-warning: #d9870b;
+  --state-warning-subtle: #fbf1de;
+  --state-warning-foreground: #8a5a08;
+  --state-error: #e0483f;
+  --state-error-subtle: #fceaea;
+  --state-error-foreground: #a02a23;
+  --state-info: #4d56dd;
+  --state-info-subtle: #e0e3fb;
+  --state-info-foreground: #3339a6;
+
+  /* ---- 决策标签（FARM / WATCH / IGNORE 业务语义） ---- */
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #6b7280;
+  --label-ignore-bg: #eef0f4;
+  --label-ignore-foreground: #4b5261;
+
+  /* ---- 图表 ---- */
+  --chart-1: #4d56dd;
+  --chart-2: #6f77e6;
+  --chart-3: #9ba2f0;
+  --chart-4: #0f9d6e;
+  --chart-5: #d9870b;
+
+  /* ---- 侧边栏 ---- */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #11142c;
+  --sidebar-primary: #4d56dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef0f7;
+  --sidebar-accent-foreground: #3339a6;
+  --sidebar-border: #e2e5f0;
+  --sidebar-ring: #4d56dd;
+
+  /* ---- 字体 ---- */
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --tracking-normal: 0em;
+
+  /* ---- 间距基准 ---- */
+  --spacing: 0.25rem;
+
+  /* ---- 圆角（克制 4/8/12） ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ---- 阴影：静态表面 alpha ≤ 0.05；深层仅浮层 ---- */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 44, 0.05);
+  --shadow-md: 0 10px 24px -8px rgba(17, 20, 44, 0.18);
+  --shadow-lg: 0 24px 56px -20px rgba(17, 20, 44, 0.28);
+
+  /* ---- 动效 ---- */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --alpha-brand-subtle: #272c52;
+  --alpha-brand-strong: #b2b8f8;
+
+  --background: #0e1120;
+  --card: #161a2e;
+  --popover: #1c2138;
+  --muted: #22274a;
+  --foreground: #eceffa;
+  --card-foreground: #eceffa;
+  --popover-foreground: #eceffa;
+  --primary: #8b93f5;
+  --primary-foreground: #10122a;
+  --muted-foreground: #a3aacc;
+  --border: #303759;
+  --input: #3a4166;
+  --ring: #8b93f5;
+
+  --state-success: #34c491;
+  --state-success-subtle: #14382b;
+  --state-success-foreground: #6fe0b6;
+  --state-warning: #f0a93c;
+  --state-warning-subtle: #3f3014;
+  --state-warning-foreground: #f7c66f;
+  --state-error: #f06a62;
+  --state-error-subtle: #421d1b;
+  --state-error-foreground: #f79b95;
+  --state-info: #8b93f5;
+  --state-info-subtle: #272c52;
+  --state-info-foreground: #b2b8f8;
+
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #98a0b4;
+  --label-ignore-bg: #282e42;
+  --label-ignore-foreground: #c3c9d8;
+
+  --chart-1: #8b93f5;
+  --chart-2: #aab0f8;
+  --chart-3: #5f68d4;
+  --chart-4: #3ecf9b;
+  --chart-5: #f5b455;
+
+  --sidebar: #12152a;
+  --sidebar-foreground: #eceffa;
+  --sidebar-primary: #8b93f5;
+  --sidebar-primary-foreground: #10122a;
+  --sidebar-accent: #232850;
+  --sidebar-accent-foreground: #b2b8f8;
+  --sidebar-border: #2b3152;
+  --sidebar-ring: #8b93f5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 56px -20px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- 排版工具类 ---- */
+.alpha-display {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.alpha-heading {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.alpha-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.alpha-caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.alpha-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}

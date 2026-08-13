@@ -1,0 +1,1697 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>运维台</title>
+    <style id="theme-vars">
+/* Alpha Console — Web3 Airdrop Alpha Agent System 前端设计令牌
+ * 单一品牌色（信号靛 Signal Indigo）+ 状态语义色（FARM/WATCH/IGNORE）
+ * 字体：Inter + Noto Sans SC；数据：JetBrains Mono
+ * 亮/暗双主题变量；静态表面以边框/表面分层为主，阴影 alpha ≤ 0.05
+ */
+
+:root {
+  /* ---- solo-design 语义别名（apply-html-head-contract 消费） ---- */
+  --alpha-background: var(--background);
+  --alpha-foreground: var(--foreground);
+  --alpha-card: var(--card);
+  --alpha-card-foreground: var(--card-foreground);
+  --alpha-popover: var(--popover);
+  --alpha-popover-foreground: var(--popover-foreground);
+  --alpha-primary: var(--primary);
+  --alpha-primary-foreground: var(--primary-foreground);
+  --alpha-muted: var(--muted);
+  --alpha-muted-foreground: var(--muted-foreground);
+  --alpha-border: var(--border);
+  --alpha-input: var(--input);
+  --alpha-ring: var(--ring);
+  --alpha-destructive: var(--state-error);
+  --alpha-destructive-foreground: #ffffff;
+  --alpha-radius-small: var(--radius-sm);
+  --alpha-radius-medium: var(--radius-md);
+  --alpha-radius-large: var(--radius-lg);
+  --alpha-sidebar: var(--sidebar);
+  --alpha-sidebar-foreground: var(--sidebar-foreground);
+  --alpha-sidebar-primary: var(--sidebar-primary);
+  --alpha-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --alpha-sidebar-accent: var(--sidebar-accent);
+  --alpha-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --alpha-chart-1: var(--chart-1);
+  --alpha-chart-2: var(--chart-2);
+  --alpha-chart-3: var(--chart-3);
+  --alpha-chart-4: var(--chart-4);
+  --alpha-chart-5: var(--chart-5);
+
+  /* ---- 品牌色阶：信号靛（唯一品牌色相，h≈233°） ---- */
+  --alpha-50: #eef0fd;
+  --alpha-100: #e0e3fb;
+  --alpha-200: #c3c8f7;
+  --alpha-300: #9ba2f0;
+  --alpha-400: #6f77e6;
+  --alpha-500: #4d56dd;
+  --alpha-600: #3d44c8;
+  --alpha-700: #3339a6;
+  --alpha-800: #2c3185;
+  --alpha-900: #282d6b;
+  --alpha-brand-subtle: var(--alpha-100);
+  --alpha-brand-strong: var(--alpha-700);
+
+  /* ---- 表面 / 文本 / 边框 ---- */
+  --background: #f6f7fb;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #eef0f7;
+  --foreground: #11142c;
+  --card-foreground: #11142c;
+  --popover-foreground: #11142c;
+  --primary: #4d56dd;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #5c6278;
+  --border: #e2e5f0;
+  --input: #dfe3ef;
+  --ring: #4d56dd;
+
+  /* ---- 状态语义色（仅用于真实状态 / 标签徽章） ---- */
+  --state-success: #0f9d6e;
+  --state-success-subtle: #e2f5ee;
+  --state-success-foreground: #0a6b4c;
+  --state-warning: #d9870b;
+  --state-warning-subtle: #fbf1de;
+  --state-warning-foreground: #8a5a08;
+  --state-error: #e0483f;
+  --state-error-subtle: #fceaea;
+  --state-error-foreground: #a02a23;
+  --state-info: #4d56dd;
+  --state-info-subtle: #e0e3fb;
+  --state-info-foreground: #3339a6;
+
+  /* ---- 决策标签（FARM / WATCH / IGNORE 业务语义） ---- */
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #6b7280;
+  --label-ignore-bg: #eef0f4;
+  --label-ignore-foreground: #4b5261;
+
+  /* ---- 图表 ---- */
+  --chart-1: #4d56dd;
+  --chart-2: #6f77e6;
+  --chart-3: #9ba2f0;
+  --chart-4: #0f9d6e;
+  --chart-5: #d9870b;
+
+  /* ---- 侧边栏 ---- */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #11142c;
+  --sidebar-primary: #4d56dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef0f7;
+  --sidebar-accent-foreground: #3339a6;
+  --sidebar-border: #e2e5f0;
+  --sidebar-ring: #4d56dd;
+
+  /* ---- 字体 ---- */
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --tracking-normal: 0em;
+
+  /* ---- 间距基准 ---- */
+  --spacing: 0.25rem;
+
+  /* ---- 圆角（克制 4/8/12） ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ---- 阴影：静态表面 alpha ≤ 0.05；深层仅浮层 ---- */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 44, 0.05);
+  --shadow-md: 0 10px 24px -8px rgba(17, 20, 44, 0.18);
+  --shadow-lg: 0 24px 56px -20px rgba(17, 20, 44, 0.28);
+
+  /* ---- 动效 ---- */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --alpha-brand-subtle: #272c52;
+  --alpha-brand-strong: #b2b8f8;
+
+  --background: #0e1120;
+  --card: #161a2e;
+  --popover: #1c2138;
+  --muted: #22274a;
+  --foreground: #eceffa;
+  --card-foreground: #eceffa;
+  --popover-foreground: #eceffa;
+  --primary: #8b93f5;
+  --primary-foreground: #10122a;
+  --muted-foreground: #a3aacc;
+  --border: #303759;
+  --input: #3a4166;
+  --ring: #8b93f5;
+
+  --state-success: #34c491;
+  --state-success-subtle: #14382b;
+  --state-success-foreground: #6fe0b6;
+  --state-warning: #f0a93c;
+  --state-warning-subtle: #3f3014;
+  --state-warning-foreground: #f7c66f;
+  --state-error: #f06a62;
+  --state-error-subtle: #421d1b;
+  --state-error-foreground: #f79b95;
+  --state-info: #8b93f5;
+  --state-info-subtle: #272c52;
+  --state-info-foreground: #b2b8f8;
+
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #98a0b4;
+  --label-ignore-bg: #282e42;
+  --label-ignore-foreground: #c3c9d8;
+
+  --chart-1: #8b93f5;
+  --chart-2: #aab0f8;
+  --chart-3: #5f68d4;
+  --chart-4: #3ecf9b;
+  --chart-5: #f5b455;
+
+  --sidebar: #12152a;
+  --sidebar-foreground: #eceffa;
+  --sidebar-primary: #8b93f5;
+  --sidebar-primary-foreground: #10122a;
+  --sidebar-accent: #232850;
+  --sidebar-accent-foreground: #b2b8f8;
+  --sidebar-border: #2b3152;
+  --sidebar-ring: #8b93f5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 56px -20px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- 排版工具类 ---- */
+.alpha-display {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.alpha-heading {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.alpha-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.alpha-caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.alpha-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--alpha-background);
+    --color-foreground: var(--alpha-foreground);
+    --color-card: var(--alpha-card);
+    --color-card-foreground: var(--alpha-card-foreground);
+    --color-popover: var(--alpha-popover);
+    --color-popover-foreground: var(--alpha-popover-foreground);
+    --color-primary: var(--alpha-primary);
+    --color-primary-foreground: var(--alpha-primary-foreground);
+    --color-muted: var(--alpha-muted);
+    --color-muted-foreground: var(--alpha-muted-foreground);
+    --color-destructive: var(--alpha-destructive);
+    --color-destructive-foreground: var(--alpha-destructive-foreground);
+    --color-border: var(--alpha-border);
+    --color-input: var(--alpha-input);
+    --color-ring: var(--alpha-ring);
+    --color-chart-1: var(--alpha-chart-1);
+    --color-chart-2: var(--alpha-chart-2);
+    --color-chart-3: var(--alpha-chart-3);
+    --color-chart-4: var(--alpha-chart-4);
+    --color-chart-5: var(--alpha-chart-5);
+    --color-sidebar: var(--alpha-sidebar);
+    --color-sidebar-foreground: var(--alpha-sidebar-foreground);
+    --color-sidebar-primary: var(--alpha-sidebar-primary);
+    --color-sidebar-primary-foreground: var(--alpha-sidebar-primary-foreground);
+    --color-sidebar-accent: var(--alpha-sidebar-accent);
+    --color-sidebar-accent-foreground: var(--alpha-sidebar-accent-foreground);
+    --radius-sm: var(--alpha-radius-small);
+    --radius-md: var(--alpha-radius-medium);
+    --radius-lg: var(--alpha-radius-large);
+  }
+  @layer base {
+    body { background: var(--alpha-background); color: var(--alpha-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style id="semantic-token-fallback">
+      .bg-background { background-color: var(--alpha-background); }
+      .text-background { color: var(--alpha-background); }
+      .border-background { border-color: var(--alpha-background); }
+      .ring-background { --tw-ring-color: var(--alpha-background); }
+      .bg-foreground { background-color: var(--alpha-foreground); }
+      .text-foreground { color: var(--alpha-foreground); }
+      .border-foreground { border-color: var(--alpha-foreground); }
+      .ring-foreground { --tw-ring-color: var(--alpha-foreground); }
+      .bg-card { background-color: var(--alpha-card); }
+      .text-card { color: var(--alpha-card); }
+      .border-card { border-color: var(--alpha-card); }
+      .ring-card { --tw-ring-color: var(--alpha-card); }
+      .bg-card-foreground { background-color: var(--alpha-card-foreground); }
+      .text-card-foreground { color: var(--alpha-card-foreground); }
+      .border-card-foreground { border-color: var(--alpha-card-foreground); }
+      .ring-card-foreground { --tw-ring-color: var(--alpha-card-foreground); }
+      .bg-popover { background-color: var(--alpha-popover); }
+      .text-popover { color: var(--alpha-popover); }
+      .border-popover { border-color: var(--alpha-popover); }
+      .ring-popover { --tw-ring-color: var(--alpha-popover); }
+      .bg-popover-foreground { background-color: var(--alpha-popover-foreground); }
+      .text-popover-foreground { color: var(--alpha-popover-foreground); }
+      .border-popover-foreground { border-color: var(--alpha-popover-foreground); }
+      .ring-popover-foreground { --tw-ring-color: var(--alpha-popover-foreground); }
+      .bg-primary { background-color: var(--alpha-primary); }
+      .text-primary { color: var(--alpha-primary); }
+      .border-primary { border-color: var(--alpha-primary); }
+      .ring-primary { --tw-ring-color: var(--alpha-primary); }
+      .bg-primary-foreground { background-color: var(--alpha-primary-foreground); }
+      .text-primary-foreground { color: var(--alpha-primary-foreground); }
+      .border-primary-foreground { border-color: var(--alpha-primary-foreground); }
+      .ring-primary-foreground { --tw-ring-color: var(--alpha-primary-foreground); }
+      .bg-muted { background-color: var(--alpha-muted); }
+      .text-muted { color: var(--alpha-muted); }
+      .border-muted { border-color: var(--alpha-muted); }
+      .ring-muted { --tw-ring-color: var(--alpha-muted); }
+      .bg-muted-foreground { background-color: var(--alpha-muted-foreground); }
+      .text-muted-foreground { color: var(--alpha-muted-foreground); }
+      .border-muted-foreground { border-color: var(--alpha-muted-foreground); }
+      .ring-muted-foreground { --tw-ring-color: var(--alpha-muted-foreground); }
+      .bg-destructive { background-color: var(--alpha-destructive); }
+      .text-destructive { color: var(--alpha-destructive); }
+      .border-destructive { border-color: var(--alpha-destructive); }
+      .ring-destructive { --tw-ring-color: var(--alpha-destructive); }
+      .bg-destructive-foreground { background-color: var(--alpha-destructive-foreground); }
+      .text-destructive-foreground { color: var(--alpha-destructive-foreground); }
+      .border-destructive-foreground { border-color: var(--alpha-destructive-foreground); }
+      .ring-destructive-foreground { --tw-ring-color: var(--alpha-destructive-foreground); }
+      .bg-border { background-color: var(--alpha-border); }
+      .text-border { color: var(--alpha-border); }
+      .border-border { border-color: var(--alpha-border); }
+      .ring-border { --tw-ring-color: var(--alpha-border); }
+      .bg-input { background-color: var(--alpha-input); }
+      .text-input { color: var(--alpha-input); }
+      .border-input { border-color: var(--alpha-input); }
+      .ring-input { --tw-ring-color: var(--alpha-input); }
+      .bg-ring { background-color: var(--alpha-ring); }
+      .text-ring { color: var(--alpha-ring); }
+      .border-ring { border-color: var(--alpha-ring); }
+      .ring-ring { --tw-ring-color: var(--alpha-ring); }
+      .bg-chart-1 { background-color: var(--alpha-chart-1); }
+      .text-chart-1 { color: var(--alpha-chart-1); }
+      .border-chart-1 { border-color: var(--alpha-chart-1); }
+      .ring-chart-1 { --tw-ring-color: var(--alpha-chart-1); }
+      .bg-chart-2 { background-color: var(--alpha-chart-2); }
+      .text-chart-2 { color: var(--alpha-chart-2); }
+      .border-chart-2 { border-color: var(--alpha-chart-2); }
+      .ring-chart-2 { --tw-ring-color: var(--alpha-chart-2); }
+      .bg-chart-3 { background-color: var(--alpha-chart-3); }
+      .text-chart-3 { color: var(--alpha-chart-3); }
+      .border-chart-3 { border-color: var(--alpha-chart-3); }
+      .ring-chart-3 { --tw-ring-color: var(--alpha-chart-3); }
+      .bg-chart-4 { background-color: var(--alpha-chart-4); }
+      .text-chart-4 { color: var(--alpha-chart-4); }
+      .border-chart-4 { border-color: var(--alpha-chart-4); }
+      .ring-chart-4 { --tw-ring-color: var(--alpha-chart-4); }
+      .bg-chart-5 { background-color: var(--alpha-chart-5); }
+      .text-chart-5 { color: var(--alpha-chart-5); }
+      .border-chart-5 { border-color: var(--alpha-chart-5); }
+      .ring-chart-5 { --tw-ring-color: var(--alpha-chart-5); }
+      .bg-sidebar { background-color: var(--alpha-sidebar); }
+      .text-sidebar { color: var(--alpha-sidebar); }
+      .border-sidebar { border-color: var(--alpha-sidebar); }
+      .ring-sidebar { --tw-ring-color: var(--alpha-sidebar); }
+      .bg-sidebar-foreground { background-color: var(--alpha-sidebar-foreground); }
+      .text-sidebar-foreground { color: var(--alpha-sidebar-foreground); }
+      .border-sidebar-foreground { border-color: var(--alpha-sidebar-foreground); }
+      .ring-sidebar-foreground { --tw-ring-color: var(--alpha-sidebar-foreground); }
+      .bg-sidebar-primary { background-color: var(--alpha-sidebar-primary); }
+      .text-sidebar-primary { color: var(--alpha-sidebar-primary); }
+      .border-sidebar-primary { border-color: var(--alpha-sidebar-primary); }
+      .ring-sidebar-primary { --tw-ring-color: var(--alpha-sidebar-primary); }
+      .bg-sidebar-primary-foreground { background-color: var(--alpha-sidebar-primary-foreground); }
+      .text-sidebar-primary-foreground { color: var(--alpha-sidebar-primary-foreground); }
+      .border-sidebar-primary-foreground { border-color: var(--alpha-sidebar-primary-foreground); }
+      .ring-sidebar-primary-foreground { --tw-ring-color: var(--alpha-sidebar-primary-foreground); }
+      .bg-sidebar-accent { background-color: var(--alpha-sidebar-accent); }
+      .text-sidebar-accent { color: var(--alpha-sidebar-accent); }
+      .border-sidebar-accent { border-color: var(--alpha-sidebar-accent); }
+      .ring-sidebar-accent { --tw-ring-color: var(--alpha-sidebar-accent); }
+      .bg-sidebar-accent-foreground { background-color: var(--alpha-sidebar-accent-foreground); }
+      .text-sidebar-accent-foreground { color: var(--alpha-sidebar-accent-foreground); }
+      .border-sidebar-accent-foreground { border-color: var(--alpha-sidebar-accent-foreground); }
+      .ring-sidebar-accent-foreground { --tw-ring-color: var(--alpha-sidebar-accent-foreground); }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body>
+<style id="critical-layout">
+  /* ===== gen-project-shell · 关键布局（浅色专业主题 · 仅引用注入 token）===== */
+  .app-shell,
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after { box-sizing: border-box; }
+
+  .app-shell {
+    display: flex;
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  /* ---------- 侧边栏（240px · 固定） ---------- */
+  .app-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--sidebar-border);
+  }
+
+  .app-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px 20px;
+  }
+  .app-brand-mark { display: block; flex-shrink: 0; }
+  .app-brand-mark-bg { fill: var(--primary); }
+  .app-brand-text { min-width: 0; }
+  .app-brand-wordmark {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-brand-caption {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--muted-foreground);
+  }
+
+  .app-nav { display: flex; flex-direction: column; gap: 2px; }
+
+  .app-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    font-size: 13.5px;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-nav-item:hover { background: var(--muted); color: var(--foreground); }
+  .app-nav-item:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  .app-nav-item[data-active="true"] {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+    font-weight: 500;
+  }
+  .app-nav-item[data-active="true"]:hover {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+  }
+  .app-nav-item [data-lucide] { width: 20px; height: 20px; flex-shrink: 0; }
+  .app-nav-label { overflow: hidden; text-overflow: ellipsis; }
+
+  .app-nav-badge {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 7px;
+    border-radius: var(--radius-full);
+    background: var(--alpha-brand-subtle);
+    color: var(--alpha-brand-strong);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+    line-height: 1;
+  }
+
+  .app-sidebar-spacer { flex: 1; }
+
+  .app-sidebar-footer {
+    border-top: 1px solid var(--sidebar-border);
+    padding: 12px;
+  }
+  .app-api-health { display: flex; align-items: center; gap: 8px; }
+  .app-api-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--state-success);
+    flex-shrink: 0;
+  }
+  .app-api-label { font-size: 12px; color: var(--muted-foreground); }
+  .app-api-version {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .app-engine-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .app-engine-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 10.5px;
+    line-height: 1;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  /* ---------- 主区域 ---------- */
+  .app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin-left: 240px;
+  }
+
+  .app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+  }
+  .app-topbar-titles {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .app-page-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-page-subtitle {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--muted-foreground);
+  }
+
+  .app-topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .app-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 220px;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-search:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  .app-search [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; }
+  .app-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .app-search input::placeholder { color: var(--muted-foreground); }
+
+  .app-content {
+    flex: 1;
+    padding: 24px;
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+  /* ---------- 响应式：<960px 折叠为 64px 纯图标栏 ---------- */
+  @media (max-width: 959px) {
+    .app-sidebar { width: 64px; padding: 14px 10px; align-items: center; }
+    .app-main { margin-left: 64px; }
+    .app-brand { padding: 4px 0 18px; justify-content: center; }
+    .app-brand-text { display: none; }
+    .app-nav { width: 100%; align-items: center; gap: 4px; }
+    .app-nav-item {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+      gap: 0;
+      border-radius: var(--radius-md);
+    }
+    .app-nav-item[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--primary);
+    }
+    .app-nav-badge { display: none; }
+    .app-nav-label {
+      display: none;
+      position: absolute;
+      left: calc(100% + 14px);
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 6px 10px;
+      background: var(--popover, var(--card));
+      color: var(--popover-foreground, var(--foreground));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      font-size: 12.5px;
+      line-height: 1;
+      white-space: nowrap;
+      z-index: 60;
+      pointer-events: none;
+    }
+    .app-nav-item:hover .app-nav-label,
+    .app-nav-item:focus-visible .app-nav-label { display: block; }
+    .app-sidebar-footer { width: 100%; padding: 12px 0 2px; }
+    .app-api-health { justify-content: center; }
+    .app-api-dot { width: 10px; height: 10px; }
+    .app-api-label,
+    .app-api-version { display: none; }
+    .app-engine-badges { display: none; }
+  }
+
+  /* ---------- 降低动态效果 ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    .app-shell *,
+    .app-shell *::before,
+    .app-shell *::after { transition: none !important; }
+  }
+</style>
+
+<div class="app-shell">
+  <aside class="app-sidebar">
+    <div class="app-brand">
+      <svg class="app-brand-mark" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect class="app-brand-mark-bg" width="28" height="28" rx="8"/>
+        <circle cx="10.5" cy="17.5" r="1.7" fill="#fff"/>
+        <path d="M14 17.5a3.5 3.5 0 0 0-3.5-3.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M17 17.5a6.5 6.5 0 0 0-6.5-6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".85"/>
+        <path d="M20 17.5a9.5 9.5 0 0 0-9.5-9.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".7"/>
+      </svg>
+      <div class="app-brand-text">
+        <div class="app-brand-wordmark">Alpha Agent</div>
+        <div class="app-brand-caption">空投 Alpha 控制台</div>
+      </div>
+    </div>
+
+    <!-- SLOT: activeNavItem — leaf sets data-active="true" on its own nav item and removes that item's data-dom-id -->
+    <nav class="app-nav" aria-label="主导航">
+      <a href="#" class="app-nav-item" data-nav-key="index" data-dom-id="nav-index">
+        <i data-lucide="radar"></i>
+        <span class="app-nav-label">工作台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="discoveries" data-dom-id="nav-discoveries">
+        <i data-lucide="satellite-dish"></i>
+        <span class="app-nav-label">发现队列</span>
+        <span class="app-nav-badge">12</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="insights" data-dom-id="nav-insights">
+        <i data-lucide="chart-line"></i>
+        <span class="app-nav-label">洞察</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="portfolio" data-dom-id="nav-portfolio">
+        <i data-lucide="clipboard-check"></i>
+        <span class="app-nav-label">参与复盘</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="ops" data-active="true">
+        <i data-lucide="server-cog"></i>
+        <span class="app-nav-label">运维台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="notifications" data-dom-id="nav-notifications">
+        <i data-lucide="bell"></i>
+        <span class="app-nav-label">通知中心</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="archive" data-dom-id="nav-archive">
+        <i data-lucide="archive"></i>
+        <span class="app-nav-label">归档历史</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="collections" data-dom-id="nav-collections">
+        <i data-lucide="bookmark"></i>
+        <span class="app-nav-label">收藏关注</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="settings" data-dom-id="nav-settings">
+        <i data-lucide="settings"></i>
+        <span class="app-nav-label">系统设置</span>
+      </a>
+    </nav>
+
+    <div class="app-sidebar-spacer" aria-hidden="true"></div>
+
+    <div class="app-sidebar-footer">
+      <div class="app-api-health">
+        <span class="app-api-dot" aria-hidden="true"></span>
+        <span class="app-api-label">接口正常</span>
+        <span class="app-api-version">v1.4.2</span>
+      </div>
+      <div class="app-engine-badges">
+        <span class="app-engine-chip">score-v1.4 · 权威</span>
+        <span class="app-engine-chip">opportunity-v2.0 · 影子</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-topbar">
+      <div class="app-topbar-titles">
+        <!-- SLOT: pageTitle --><h1 class="app-page-title alpha-heading">运维台</h1><!-- /SLOT: pageTitle -->
+        <!-- SLOT: pageSubtitle --><p class="app-page-subtitle">采集源 · 隔离区 · 数据导入导出 · 系统健康</p><!-- /SLOT: pageSubtitle -->
+      </div>
+      <div class="app-topbar-right">
+        <label class="app-search">
+          <i data-lucide="search"></i>
+          <input type="text" placeholder="搜索项目 / 赛道…" aria-label="全局搜索">
+        </label>
+        <!-- SLOT: pageActions -->
+        <button type="button" class="ops-btn ops-btn-secondary">
+          <i data-lucide="heart-pulse"></i>
+          <span>健康检查</span>
+        </button>
+        <button type="button" class="ops-btn ops-btn-primary">
+          <i data-lucide="play"></i>
+          <span>触发全部采集</span>
+        </button>
+        <!-- /SLOT: pageActions -->
+      </div>
+    </header>
+
+    <main class="app-content">
+      <!-- SLOT: content -->
+      <!-- 1. 系统健康条 -->
+      <section class="ops-card ops-health" aria-label="系统健康">
+        <div class="ops-health-cell">
+          <span class="ops-caption">服务状态</span>
+          <span class="ops-health-value"><span class="ops-dot" style="background: var(--state-success);"></span>正常</span>
+        </div>
+        <div class="ops-health-cell">
+          <span class="ops-caption">数据库</span>
+          <span class="ops-health-value"><span class="ops-dot" style="background: var(--state-success);"></span>SQLite · 正常</span>
+        </div>
+        <div class="ops-health-cell">
+          <span class="ops-caption">版本</span>
+          <span class="ops-health-value ops-mono">v1.4.2</span>
+        </div>
+        <div class="ops-health-cell">
+          <span class="ops-caption">隔离队列</span>
+          <span class="ops-health-value"><span class="ops-dot" style="background: var(--state-warning);"></span>5 条</span>
+        </div>
+        <div class="ops-health-cell">
+          <span class="ops-caption">影子引擎</span>
+          <span class="ops-health-value"><span class="ops-dot" style="background: var(--state-info);"></span>采样 10%<span class="ops-chip ops-chip-shadow">影子</span></span>
+        </div>
+        <div class="ops-health-cell">
+          <span class="ops-caption">反馈系统</span>
+          <span class="ops-health-value"><span class="ops-dot" style="background: var(--state-success);"></span>已启用</span>
+        </div>
+      </section>
+
+      <!-- 2. 采集源网格 -->
+      <section class="ops-section" aria-label="采集源">
+        <div class="ops-section-head">
+          <h2 class="ops-section-title alpha-heading">采集源</h2>
+          <span class="ops-caption">10 个源 · 进程内 APScheduler 调度</span>
+        </div>
+        <div class="ops-sources-grid">
+          <!-- defillama -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">DefiLlama</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 DefiLlama"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">defillama</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">0 8 * * *</span></span>
+              <span class="ops-caption">今天 08:00 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">142 / 500</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 28%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- github -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">GitHub</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 GitHub"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">github</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">30 8 * * *</span></span>
+              <span class="ops-caption">今天 08:30 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">318 / 1000</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 32%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- coingecko -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">CoinGecko</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 CoinGecko"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">coingecko</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">0 9 * * *</span></span>
+              <span class="ops-caption">今天 09:00 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">96 / 400</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 24%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- cryptorank -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">CryptoRank</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 CryptoRank"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">cryptorank</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">15 9 * * *</span></span>
+              <span class="ops-caption ops-text-warning">昨天 09:15 · 部分失败</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">54 / 200</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 27%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- rootdata -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">RootData</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 RootData"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">rootdata</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">45 9 * * *</span></span>
+              <span class="ops-caption">今天 09:45 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">77 / 300</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 26%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- twitter_kol -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">Twitter KOL</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 Twitter KOL"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">twitter_kol</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">0 * * * *</span></span>
+              <span class="ops-caption">今天 10:00 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">402 / 600</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 67%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- twitter_keyword（在飞状态） -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">Twitter 关键词</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 Twitter 关键词"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">twitter_keyword</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">*/15 * * * *</span></span>
+              <span class="ops-caption">今天 10:15 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">511 / 800</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 64%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm" disabled><span class="ops-spinner" aria-hidden="true"></span><span>采集中</span></button>
+            </div>
+          </article>
+          <!-- etherscan -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">Etherscan</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 Etherscan"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">etherscan</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">0 */6 * * *</span></span>
+              <span class="ops-caption">今天 06:00 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">89 / 250</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 36%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- galxe -->
+          <article class="ops-card ops-source">
+            <div class="ops-source-top">
+              <span class="ops-source-name">Galxe</span>
+              <label class="ops-switch"><input type="checkbox" checked aria-label="启用 Galxe"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">galxe</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">0 10 * * *</span></span>
+              <span class="ops-caption">今天 10:00 · 成功</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">35 / 150</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 23%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+          <!-- layer3（关闭 · 未配置） -->
+          <article class="ops-card ops-source ops-source-off">
+            <div class="ops-source-top">
+              <span class="ops-source-name">Layer3</span>
+              <label class="ops-switch"><input type="checkbox" aria-label="启用 Layer3"><span class="ops-switch-track"></span></label>
+            </div>
+            <div class="ops-source-meta">
+              <span class="ops-caption ops-mono">layer3</span>
+              <span class="ops-chip">API</span>
+            </div>
+            <div class="ops-source-schedule">
+              <span class="ops-cron"><i data-lucide="clock"></i><span class="ops-mono">30 10 * * *</span></span>
+              <span class="ops-caption">未配置 API Key</span>
+            </div>
+            <div class="ops-source-foot">
+              <div class="ops-quota">
+                <span class="ops-mono">0 / 150</span>
+                <span class="ops-quota-bar"><span class="ops-quota-fill" style="width: 0%;"></span></span>
+              </div>
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="play"></i><span>立即采集</span></button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- 3. 隔离区 -->
+      <section class="ops-section" aria-label="隔离区">
+        <div class="ops-section-head">
+          <h2 class="ops-section-title alpha-heading">隔离区</h2>
+          <span class="ops-caption">脏数据人工隔离 · 释放后回到分析队列</span>
+        </div>
+        <div class="ops-card ops-table-card">
+          <table class="ops-table">
+            <thead>
+              <tr>
+                <th>raw_id</th>
+                <th>项目名</th>
+                <th>来源</th>
+                <th>发现分</th>
+                <th>隔离原因</th>
+                <th>隔离时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="ops-caption ops-mono">raw_8f2c…</span></td>
+                <td class="ops-cell-name">SpamCoin Airdrop</td>
+                <td><span class="ops-chip">twitter_keyword</span></td>
+                <td><span class="ops-mono">0.12</span></td>
+                <td><span class="ops-caption ops-ellipsis">明显营销号刷量</span></td>
+                <td><span class="ops-caption">08-09 14:22</span></td>
+                <td><button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="undo-2"></i><span>释放</span></button></td>
+              </tr>
+              <tr>
+                <td><span class="ops-caption ops-mono">raw_3a91…</span></td>
+                <td class="ops-cell-name">FakeL2 Official</td>
+                <td><span class="ops-chip">twitter_kol</span></td>
+                <td><span class="ops-mono">0.08</span></td>
+                <td><span class="ops-caption ops-ellipsis">仿冒官方账号</span></td>
+                <td><span class="ops-caption">08-09 11:05</span></td>
+                <td><button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="undo-2"></i><span>释放</span></button></td>
+              </tr>
+              <tr>
+                <td><span class="ops-caption ops-mono">raw_c74d…</span></td>
+                <td class="ops-cell-name">AirdropFarm Bot</td>
+                <td><span class="ops-chip">galxe</span></td>
+                <td><span class="ops-mono">0.15</span></td>
+                <td><span class="ops-caption ops-ellipsis">批量任务农场</span></td>
+                <td><span class="ops-caption">08-08 19:47</span></td>
+                <td><button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="undo-2"></i><span>释放</span></button></td>
+              </tr>
+              <tr>
+                <td><span class="ops-caption ops-mono">raw_5e0b…</span></td>
+                <td class="ops-cell-name">rugpull.fi</td>
+                <td><span class="ops-chip">etherscan</span></td>
+                <td><span class="ops-mono">0.22</span></td>
+                <td><span class="ops-caption ops-ellipsis">合约未开源且授权风险</span></td>
+                <td><span class="ops-caption">08-08 09:31</span></td>
+                <td><button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="undo-2"></i><span>释放</span></button></td>
+              </tr>
+              <tr>
+                <td><span class="ops-caption ops-mono">raw_d628…</span></td>
+                <td class="ops-cell-name">MoonToken</td>
+                <td><span class="ops-chip">coingecko</span></td>
+                <td><span class="ops-mono">0.18</span></td>
+                <td><span class="ops-caption ops-ellipsis">已 Rug，流动性归零</span></td>
+                <td><span class="ops-caption">08-07 16:12</span></td>
+                <td><button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="undo-2"></i><span>释放</span></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 4. 导入导出中心 -->
+      <section class="ops-section" aria-label="数据导入导出">
+        <div class="ops-section-head">
+          <h2 class="ops-section-title alpha-heading">数据导入导出</h2>
+        </div>
+        <div class="ops-io-grid">
+          <!-- 导出 -->
+          <article class="ops-card ops-io-card">
+            <span class="ops-caption">按当前筛选导出项目列表</span>
+            <div class="ops-io-actions">
+              <button type="button" class="ops-btn ops-btn-secondary"><i data-lucide="file-spreadsheet"></i><span>导出 Excel</span></button>
+              <button type="button" class="ops-btn ops-btn-secondary"><i data-lucide="file-text"></i><span>导出 CSV</span></button>
+            </div>
+            <span class="ops-caption ops-io-foot">支持 label / sector / stage / 最低分筛选参数</span>
+          </article>
+          <!-- 导入 -->
+          <article class="ops-card ops-io-card">
+            <span class="ops-caption">上传 xlsx / csv，自动校验并评分</span>
+            <div class="ops-upload" role="button" tabindex="0" aria-label="上传导入文件">
+              <i data-lucide="upload-cloud"></i>
+              <span class="ops-upload-title">拖拽文件到此处</span>
+              <span class="ops-upload-link">或点击选择</span>
+              <span class="ops-caption">≤10MB · ≤100 项</span>
+            </div>
+            <div class="ops-io-bottom">
+              <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm"><i data-lucide="download"></i><span>下载导入模板</span></button>
+              <span class="ops-caption">最近导入：08-02 · 24 项成功 / 2 项校验失败</span>
+            </div>
+          </article>
+          <!-- 调度信息 -->
+          <article class="ops-card ops-io-card">
+            <span class="ops-caption">进程内双调度模型</span>
+            <ul class="ops-sched-list">
+              <li><span class="ops-sched-key">采集调度</span><span class="ops-mono">按源 cron</span></li>
+              <li><span class="ops-sched-key">分析调度</span><span class="ops-mono">0 8 * * *</span></li>
+              <li><span class="ops-sched-key">在飞守卫</span><span class="ops-mono">队列排空全局单次</span></li>
+            </ul>
+            <span class="ops-caption ops-io-foot">重入返回 409 · misfire 自动补跑</span>
+          </article>
+        </div>
+      </section>
+
+
+      <!-- 定时跑批 · analysis_scheduler -->
+      <section class="ops-card" aria-label="定时跑批" data-dom-id="ops-scheduler">
+        <div class="alpha-card__header">
+          <h2 class="alpha-heading" style="font-size:16px;">定时跑批</h2>
+          <div class="alpha-card__actions">
+            <button type="button" class="ops-btn ops-btn-ghost ops-btn-sm">
+              <i data-lucide="history"></i>
+              <span>运行历史</span>
+            </button>
+            <button type="button" class="ops-btn ops-btn-secondary ops-btn-sm">
+              <i data-lucide="plus"></i>
+              <span>新建任务</span>
+            </button>
+          </div>
+        </div>
+        <div class="alpha-card__body">
+          <table class="ops-table">
+            <thead>
+              <tr>
+                <th>任务</th>
+                <th>cron</th>
+                <th>下次执行</th>
+                <th>上次结果</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="ops-proj-name">每日机会评分</div>
+                  <div class="ops-proj-key">job_daily_opportunity</div>
+                </td>
+                <td class="ops-mono">0 8 * * *</td>
+                <td>今天 08:00</td>
+                <td><span class="ops-state-ok">成功 · 182 条</span></td>
+                <td><span class="ops-toggle" data-on="true" role="switch" aria-checked="true" aria-label="启用每日机会评分"></span></td>
+                <td><button type="button" class="ops-text-btn">立即执行</button></td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="ops-proj-name">发现队列巡检</div>
+                  <div class="ops-proj-key">job_discovery_sweep</div>
+                </td>
+                <td class="ops-mono">*/30 * * * *</td>
+                <td>12 分钟后</td>
+                <td><span class="ops-state-ok">成功 · 24 条</span></td>
+                <td><span class="ops-toggle" data-on="true" role="switch" aria-checked="true" aria-label="启用发现队列巡检"></span></td>
+                <td><button type="button" class="ops-text-btn">立即执行</button></td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="ops-proj-name">AI 简报生成</div>
+                  <div class="ops-proj-key">job_ai_brief_daily</div>
+                </td>
+                <td class="ops-mono">30 7 * * *</td>
+                <td>明天 07:30</td>
+                <td><span class="ops-state-warn">超时 · 已重试</span></td>
+                <td><span class="ops-toggle" data-on="true" role="switch" aria-checked="true" aria-label="启用 AI 简报生成"></span></td>
+                <td><button type="button" class="ops-text-btn">立即执行</button></td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="ops-proj-name">链上快照归档</div>
+                  <div class="ops-proj-key">job_chain_archive</div>
+                </td>
+                <td class="ops-mono">0 3 * * 0</td>
+                <td>周日 03:00</td>
+                <td><span class="ops-state-muted">从未运行</span></td>
+                <td><span class="ops-toggle" data-on="false" role="switch" aria-checked="false" aria-label="启用链上快照归档"></span></td>
+                <td><button type="button" class="ops-text-btn">立即执行</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="ops-section-foot">由 analysis_scheduler 驱动 · 错过触发自动补跑 · 时区 Asia/Shanghai</p>
+        </div>
+      </section>
+
+      <!-- 6. 运维提示条 -->
+      <aside class="ops-notice" aria-label="运维提示">
+        <i data-lucide="info"></i>
+        <span>运行历史与采集日志的读取端点尚未开放，当前通过 logs / collection_logs 表落库，后续版本补充只读 API。</span>
+      </aside>
+      <!-- /SLOT: content -->
+    </main>
+
+    <footer class="app-footer">
+      <span>Alpha Agent · Web3 空投 Alpha 识别与决策支持</span>
+      <span>数据不构成投资建议 · score-v1.4</span>
+    </footer>
+  </div>
+</div>
+
+<style>
+  /* ===== page-ops · 页面局部样式（仅引用注入 token）===== */
+  .app-content > * + * { margin-top: 20px; }
+
+  .ops-caption {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+  .ops-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .ops-text-warning { color: var(--state-warning-foreground); }
+
+  .ops-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* ---------- 按钮 ---------- */
+  .ops-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: var(--radius-md);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 150ms var(--ease-default),
+                border-color 150ms var(--ease-default);
+  }
+  .ops-btn [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; }
+  .ops-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .ops-btn-primary {
+    border: 1px solid var(--primary);
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+  .ops-btn-primary:hover { background: var(--alpha-600); border-color: var(--alpha-600); }
+  .ops-btn-secondary {
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--foreground);
+  }
+  .ops-btn-secondary:hover { background: var(--muted); }
+  .ops-btn-sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-sm); }
+  .ops-btn:disabled {
+    cursor: not-allowed;
+    color: var(--muted-foreground);
+    background: var(--muted);
+  }
+
+  /* ---------- chip / 状态点 ---------- */
+  .ops-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: var(--radius-full);
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .ops-chip-shadow {
+    background: var(--state-info-subtle);
+    color: var(--state-info-foreground);
+    font-family: var(--font-sans);
+  }
+  .ops-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+  }
+
+  /* ---------- 系统健康条 ---------- */
+  .ops-health {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    padding: 16px 0;
+  }
+  .ops-health-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 20px;
+  }
+  .ops-health-cell + .ops-health-cell { border-left: 1px solid var(--border); }
+  .ops-health-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+
+  /* ---------- 区块标题 ---------- */
+  .ops-section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .ops-section-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+
+  /* ---------- 采集源网格 ---------- */
+  .ops-sources-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .ops-source {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+  }
+  .ops-source-off { opacity: 0.75; }
+  .ops-source-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .ops-source-name { font-size: 13.5px; font-weight: 600; color: var(--foreground); }
+  .ops-source-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .ops-source-schedule {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ops-cron {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--foreground);
+  }
+  .ops-cron [data-lucide] { width: 16px; height: 16px; color: var(--muted-foreground); }
+  .ops-source-foot {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .ops-quota {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .ops-quota-bar {
+    height: 4px;
+    border-radius: var(--radius-full);
+    background: var(--muted);
+    overflow: hidden;
+  }
+  .ops-quota-fill {
+    display: block;
+    height: 100%;
+    border-radius: var(--radius-full);
+    background: var(--primary);
+  }
+
+  /* ---------- 纯 CSS switch ---------- */
+  .ops-switch { position: relative; display: inline-flex; flex-shrink: 0; }
+  .ops-switch input {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+  }
+  .ops-switch-track {
+    width: 34px;
+    height: 20px;
+    border-radius: var(--radius-full);
+    background: var(--input);
+    transition: background-color 150ms var(--ease-default);
+  }
+  .ops-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-full);
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    transition: transform 150ms var(--ease-default);
+  }
+  .ops-switch input:checked + .ops-switch-track { background: var(--primary); }
+  .ops-switch input:checked + .ops-switch-track::after { transform: translateX(14px); }
+  .ops-switch input:focus-visible + .ops-switch-track { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  /* ---------- spinner（在飞采集） ---------- */
+  .ops-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-full);
+    border: 2px solid var(--input);
+    border-top-color: var(--primary);
+    animation: ops-spin 800ms linear infinite;
+  }
+  @keyframes ops-spin { to { transform: rotate(360deg); } }
+
+  /* ---------- 隔离区表格 ---------- */
+  .ops-table-card { overflow: hidden; }
+  .ops-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .ops-table th {
+    text-align: left;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--muted);
+    white-space: nowrap;
+  }
+  .ops-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .ops-table tbody tr:last-child td { border-bottom: 0; }
+  .ops-cell-name { font-weight: 500; color: var(--foreground); white-space: nowrap; }
+  .ops-ellipsis {
+    display: inline-block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* ---------- 导入导出 ---------- */
+  .ops-io-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .ops-io-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+  }
+  .ops-io-actions { display: flex; gap: 8px; }
+  .ops-io-foot { margin-top: auto; }
+  .ops-upload {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 24px;
+    border: 1px dashed var(--input);
+    border-radius: 12px;
+    background: var(--background);
+    text-align: center;
+    cursor: pointer;
+  }
+  .ops-upload [data-lucide] { width: 20px; height: 20px; color: var(--muted-foreground); }
+  .ops-upload-title { font-size: 13px; font-weight: 500; color: var(--foreground); }
+  .ops-upload-link { font-size: 12px; color: var(--alpha-brand-strong); }
+  .ops-io-bottom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: auto;
+  }
+  .ops-sched-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .ops-sched-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .ops-sched-list li:last-child { border-bottom: 0; }
+  .ops-sched-key { color: var(--foreground); }
+  .ops-sched-list .ops-mono { font-size: 11.5px; color: var(--muted-foreground); }
+
+  /* ---------- 运维提示条 ---------- */
+  .ops-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: var(--state-info-subtle);
+    color: var(--state-info-foreground);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  .ops-notice [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 1279px) {
+    .ops-sources-grid { grid-template-columns: repeat(3, 1fr); }
+    .ops-health { grid-template-columns: repeat(3, 1fr); row-gap: 16px; }
+    .ops-health-cell:nth-child(3n + 1) { border-left: 0; }
+    .ops-io-grid { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ops-spinner { animation: none; }
+  }
+
+  /* ---------- 定时跑批 section ---------- */
+  .ops-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+  }
+  .ops-table thead th {
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    color: var(--muted-foreground);
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .ops-table tbody td {
+    height: 52px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--foreground);
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .ops-table tbody tr:last-child td { border-bottom: 0; }
+  .ops-table tbody tr:hover { background: var(--muted); }
+  .ops-proj-name { font-size: 13.5px; font-weight: 500; line-height: 1.3; }
+  .ops-proj-key {
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted-foreground);
+  }
+  .ops-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .ops-state-ok { color: var(--state-success); font-size: 12.5px; }
+  .ops-state-warn { color: var(--state-warning); font-size: 12.5px; }
+  .ops-state-muted { color: var(--muted-foreground); font-size: 12.5px; }
+  .ops-text-btn {
+    border: 0;
+    background: transparent;
+    color: var(--primary);
+    font-size: 12.5px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .ops-text-btn:hover { text-decoration: underline; }
+  .ops-text-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .ops-toggle {
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+    border-radius: var(--radius-full);
+    background: var(--muted);
+    position: relative;
+    vertical-align: middle;
+    cursor: pointer;
+    transition: background-color 150ms var(--ease-default);
+  }
+  .ops-toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-full);
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    transition: transform 150ms var(--ease-default);
+  }
+  .ops-toggle[data-on="true"] { background: var(--primary); }
+  .ops-toggle[data-on="true"]::after { transform: translateX(14px); }
+  .ops-section-foot {
+    margin: 12px 14px 4px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+</style>
+<script>lucide.createIcons();</script>
+</body>
+</html>

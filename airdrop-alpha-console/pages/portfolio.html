@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>参与复盘</title>
+    <style id="theme-vars">
+/* Alpha Console — Web3 Airdrop Alpha Agent System 前端设计令牌
+ * 单一品牌色（信号靛 Signal Indigo）+ 状态语义色（FARM/WATCH/IGNORE）
+ * 字体：Inter + Noto Sans SC；数据：JetBrains Mono
+ * 亮/暗双主题变量；静态表面以边框/表面分层为主，阴影 alpha ≤ 0.05
+ */
+
+:root {
+  /* ---- solo-design 语义别名（apply-html-head-contract 消费） ---- */
+  --alpha-background: var(--background);
+  --alpha-foreground: var(--foreground);
+  --alpha-card: var(--card);
+  --alpha-card-foreground: var(--card-foreground);
+  --alpha-popover: var(--popover);
+  --alpha-popover-foreground: var(--popover-foreground);
+  --alpha-primary: var(--primary);
+  --alpha-primary-foreground: var(--primary-foreground);
+  --alpha-muted: var(--muted);
+  --alpha-muted-foreground: var(--muted-foreground);
+  --alpha-border: var(--border);
+  --alpha-input: var(--input);
+  --alpha-ring: var(--ring);
+  --alpha-destructive: var(--state-error);
+  --alpha-destructive-foreground: #ffffff;
+  --alpha-radius-small: var(--radius-sm);
+  --alpha-radius-medium: var(--radius-md);
+  --alpha-radius-large: var(--radius-lg);
+  --alpha-sidebar: var(--sidebar);
+  --alpha-sidebar-foreground: var(--sidebar-foreground);
+  --alpha-sidebar-primary: var(--sidebar-primary);
+  --alpha-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --alpha-sidebar-accent: var(--sidebar-accent);
+  --alpha-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --alpha-chart-1: var(--chart-1);
+  --alpha-chart-2: var(--chart-2);
+  --alpha-chart-3: var(--chart-3);
+  --alpha-chart-4: var(--chart-4);
+  --alpha-chart-5: var(--chart-5);
+
+  /* ---- 品牌色阶：信号靛（唯一品牌色相，h≈233°） ---- */
+  --alpha-50: #eef0fd;
+  --alpha-100: #e0e3fb;
+  --alpha-200: #c3c8f7;
+  --alpha-300: #9ba2f0;
+  --alpha-400: #6f77e6;
+  --alpha-500: #4d56dd;
+  --alpha-600: #3d44c8;
+  --alpha-700: #3339a6;
+  --alpha-800: #2c3185;
+  --alpha-900: #282d6b;
+  --alpha-brand-subtle: var(--alpha-100);
+  --alpha-brand-strong: var(--alpha-700);
+
+  /* ---- 表面 / 文本 / 边框 ---- */
+  --background: #f6f7fb;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #eef0f7;
+  --foreground: #11142c;
+  --card-foreground: #11142c;
+  --popover-foreground: #11142c;
+  --primary: #4d56dd;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #5c6278;
+  --border: #e2e5f0;
+  --input: #dfe3ef;
+  --ring: #4d56dd;
+
+  /* ---- 状态语义色（仅用于真实状态 / 标签徽章） ---- */
+  --state-success: #0f9d6e;
+  --state-success-subtle: #e2f5ee;
+  --state-success-foreground: #0a6b4c;
+  --state-warning: #d9870b;
+  --state-warning-subtle: #fbf1de;
+  --state-warning-foreground: #8a5a08;
+  --state-error: #e0483f;
+  --state-error-subtle: #fceaea;
+  --state-error-foreground: #a02a23;
+  --state-info: #4d56dd;
+  --state-info-subtle: #e0e3fb;
+  --state-info-foreground: #3339a6;
+
+  /* ---- 决策标签（FARM / WATCH / IGNORE 业务语义） ---- */
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #6b7280;
+  --label-ignore-bg: #eef0f4;
+  --label-ignore-foreground: #4b5261;
+
+  /* ---- 图表 ---- */
+  --chart-1: #4d56dd;
+  --chart-2: #6f77e6;
+  --chart-3: #9ba2f0;
+  --chart-4: #0f9d6e;
+  --chart-5: #d9870b;
+
+  /* ---- 侧边栏 ---- */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #11142c;
+  --sidebar-primary: #4d56dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef0f7;
+  --sidebar-accent-foreground: #3339a6;
+  --sidebar-border: #e2e5f0;
+  --sidebar-ring: #4d56dd;
+
+  /* ---- 字体 ---- */
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --tracking-normal: 0em;
+
+  /* ---- 间距基准 ---- */
+  --spacing: 0.25rem;
+
+  /* ---- 圆角（克制 4/8/12） ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ---- 阴影：静态表面 alpha ≤ 0.05；深层仅浮层 ---- */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 44, 0.05);
+  --shadow-md: 0 10px 24px -8px rgba(17, 20, 44, 0.18);
+  --shadow-lg: 0 24px 56px -20px rgba(17, 20, 44, 0.28);
+
+  /* ---- 动效 ---- */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --alpha-brand-subtle: #272c52;
+  --alpha-brand-strong: #b2b8f8;
+
+  --background: #0e1120;
+  --card: #161a2e;
+  --popover: #1c2138;
+  --muted: #22274a;
+  --foreground: #eceffa;
+  --card-foreground: #eceffa;
+  --popover-foreground: #eceffa;
+  --primary: #8b93f5;
+  --primary-foreground: #10122a;
+  --muted-foreground: #a3aacc;
+  --border: #303759;
+  --input: #3a4166;
+  --ring: #8b93f5;
+
+  --state-success: #34c491;
+  --state-success-subtle: #14382b;
+  --state-success-foreground: #6fe0b6;
+  --state-warning: #f0a93c;
+  --state-warning-subtle: #3f3014;
+  --state-warning-foreground: #f7c66f;
+  --state-error: #f06a62;
+  --state-error-subtle: #421d1b;
+  --state-error-foreground: #f79b95;
+  --state-info: #8b93f5;
+  --state-info-subtle: #272c52;
+  --state-info-foreground: #b2b8f8;
+
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #98a0b4;
+  --label-ignore-bg: #282e42;
+  --label-ignore-foreground: #c3c9d8;
+
+  --chart-1: #8b93f5;
+  --chart-2: #aab0f8;
+  --chart-3: #5f68d4;
+  --chart-4: #3ecf9b;
+  --chart-5: #f5b455;
+
+  --sidebar: #12152a;
+  --sidebar-foreground: #eceffa;
+  --sidebar-primary: #8b93f5;
+  --sidebar-primary-foreground: #10122a;
+  --sidebar-accent: #232850;
+  --sidebar-accent-foreground: #b2b8f8;
+  --sidebar-border: #2b3152;
+  --sidebar-ring: #8b93f5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 56px -20px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- 排版工具类 ---- */
+.alpha-display {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.alpha-heading {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.alpha-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.alpha-caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.alpha-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+    
+  /* 微调：标题旁图例 */
+  .pf-mx-legend--head { padding-top: 0; margin-left: auto; gap: 6px 14px; }
+  .pf-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+  .pf-card-head .pf-card-title { margin-right: 0; }
+  .pf-card-head .pf-card-caption { order: 3; width: 100%; }
+  
+</style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--alpha-background);
+    --color-foreground: var(--alpha-foreground);
+    --color-card: var(--alpha-card);
+    --color-card-foreground: var(--alpha-card-foreground);
+    --color-popover: var(--alpha-popover);
+    --color-popover-foreground: var(--alpha-popover-foreground);
+    --color-primary: var(--alpha-primary);
+    --color-primary-foreground: var(--alpha-primary-foreground);
+    --color-muted: var(--alpha-muted);
+    --color-muted-foreground: var(--alpha-muted-foreground);
+    --color-destructive: var(--alpha-destructive);
+    --color-destructive-foreground: var(--alpha-destructive-foreground);
+    --color-border: var(--alpha-border);
+    --color-input: var(--alpha-input);
+    --color-ring: var(--alpha-ring);
+    --color-chart-1: var(--alpha-chart-1);
+    --color-chart-2: var(--alpha-chart-2);
+    --color-chart-3: var(--alpha-chart-3);
+    --color-chart-4: var(--alpha-chart-4);
+    --color-chart-5: var(--alpha-chart-5);
+    --color-sidebar: var(--alpha-sidebar);
+    --color-sidebar-foreground: var(--alpha-sidebar-foreground);
+    --color-sidebar-primary: var(--alpha-sidebar-primary);
+    --color-sidebar-primary-foreground: var(--alpha-sidebar-primary-foreground);
+    --color-sidebar-accent: var(--alpha-sidebar-accent);
+    --color-sidebar-accent-foreground: var(--alpha-sidebar-accent-foreground);
+    --radius-sm: var(--alpha-radius-small);
+    --radius-md: var(--alpha-radius-medium);
+    --radius-lg: var(--alpha-radius-large);
+  }
+  @layer base {
+    body { background: var(--alpha-background); color: var(--alpha-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style id="semantic-token-fallback">
+      .bg-background { background-color: var(--alpha-background); }
+      .text-background { color: var(--alpha-background); }
+      .border-background { border-color: var(--alpha-background); }
+      .ring-background { --tw-ring-color: var(--alpha-background); }
+      .bg-foreground { background-color: var(--alpha-foreground); }
+      .text-foreground { color: var(--alpha-foreground); }
+      .border-foreground { border-color: var(--alpha-foreground); }
+      .ring-foreground { --tw-ring-color: var(--alpha-foreground); }
+      .bg-card { background-color: var(--alpha-card); }
+      .text-card { color: var(--alpha-card); }
+      .border-card { border-color: var(--alpha-card); }
+      .ring-card { --tw-ring-color: var(--alpha-card); }
+      .bg-card-foreground { background-color: var(--alpha-card-foreground); }
+      .text-card-foreground { color: var(--alpha-card-foreground); }
+      .border-card-foreground { border-color: var(--alpha-card-foreground); }
+      .ring-card-foreground { --tw-ring-color: var(--alpha-card-foreground); }
+      .bg-popover { background-color: var(--alpha-popover); }
+      .text-popover { color: var(--alpha-popover); }
+      .border-popover { border-color: var(--alpha-popover); }
+      .ring-popover { --tw-ring-color: var(--alpha-popover); }
+      .bg-popover-foreground { background-color: var(--alpha-popover-foreground); }
+      .text-popover-foreground { color: var(--alpha-popover-foreground); }
+      .border-popover-foreground { border-color: var(--alpha-popover-foreground); }
+      .ring-popover-foreground { --tw-ring-color: var(--alpha-popover-foreground); }
+      .bg-primary { background-color: var(--alpha-primary); }
+      .text-primary { color: var(--alpha-primary); }
+      .border-primary { border-color: var(--alpha-primary); }
+      .ring-primary { --tw-ring-color: var(--alpha-primary); }
+      .bg-primary-foreground { background-color: var(--alpha-primary-foreground); }
+      .text-primary-foreground { color: var(--alpha-primary-foreground); }
+      .border-primary-foreground { border-color: var(--alpha-primary-foreground); }
+      .ring-primary-foreground { --tw-ring-color: var(--alpha-primary-foreground); }
+      .bg-muted { background-color: var(--alpha-muted); }
+      .text-muted { color: var(--alpha-muted); }
+      .border-muted { border-color: var(--alpha-muted); }
+      .ring-muted { --tw-ring-color: var(--alpha-muted); }
+      .bg-muted-foreground { background-color: var(--alpha-muted-foreground); }
+      .text-muted-foreground { color: var(--alpha-muted-foreground); }
+      .border-muted-foreground { border-color: var(--alpha-muted-foreground); }
+      .ring-muted-foreground { --tw-ring-color: var(--alpha-muted-foreground); }
+      .bg-destructive { background-color: var(--alpha-destructive); }
+      .text-destructive { color: var(--alpha-destructive); }
+      .border-destructive { border-color: var(--alpha-destructive); }
+      .ring-destructive { --tw-ring-color: var(--alpha-destructive); }
+      .bg-destructive-foreground { background-color: var(--alpha-destructive-foreground); }
+      .text-destructive-foreground { color: var(--alpha-destructive-foreground); }
+      .border-destructive-foreground { border-color: var(--alpha-destructive-foreground); }
+      .ring-destructive-foreground { --tw-ring-color: var(--alpha-destructive-foreground); }
+      .bg-border { background-color: var(--alpha-border); }
+      .text-border { color: var(--alpha-border); }
+      .border-border { border-color: var(--alpha-border); }
+      .ring-border { --tw-ring-color: var(--alpha-border); }
+      .bg-input { background-color: var(--alpha-input); }
+      .text-input { color: var(--alpha-input); }
+      .border-input { border-color: var(--alpha-input); }
+      .ring-input { --tw-ring-color: var(--alpha-input); }
+      .bg-ring { background-color: var(--alpha-ring); }
+      .text-ring { color: var(--alpha-ring); }
+      .border-ring { border-color: var(--alpha-ring); }
+      .ring-ring { --tw-ring-color: var(--alpha-ring); }
+      .bg-chart-1 { background-color: var(--alpha-chart-1); }
+      .text-chart-1 { color: var(--alpha-chart-1); }
+      .border-chart-1 { border-color: var(--alpha-chart-1); }
+      .ring-chart-1 { --tw-ring-color: var(--alpha-chart-1); }
+      .bg-chart-2 { background-color: var(--alpha-chart-2); }
+      .text-chart-2 { color: var(--alpha-chart-2); }
+      .border-chart-2 { border-color: var(--alpha-chart-2); }
+      .ring-chart-2 { --tw-ring-color: var(--alpha-chart-2); }
+      .bg-chart-3 { background-color: var(--alpha-chart-3); }
+      .text-chart-3 { color: var(--alpha-chart-3); }
+      .border-chart-3 { border-color: var(--alpha-chart-3); }
+      .ring-chart-3 { --tw-ring-color: var(--alpha-chart-3); }
+      .bg-chart-4 { background-color: var(--alpha-chart-4); }
+      .text-chart-4 { color: var(--alpha-chart-4); }
+      .border-chart-4 { border-color: var(--alpha-chart-4); }
+      .ring-chart-4 { --tw-ring-color: var(--alpha-chart-4); }
+      .bg-chart-5 { background-color: var(--alpha-chart-5); }
+      .text-chart-5 { color: var(--alpha-chart-5); }
+      .border-chart-5 { border-color: var(--alpha-chart-5); }
+      .ring-chart-5 { --tw-ring-color: var(--alpha-chart-5); }
+      .bg-sidebar { background-color: var(--alpha-sidebar); }
+      .text-sidebar { color: var(--alpha-sidebar); }
+      .border-sidebar { border-color: var(--alpha-sidebar); }
+      .ring-sidebar { --tw-ring-color: var(--alpha-sidebar); }
+      .bg-sidebar-foreground { background-color: var(--alpha-sidebar-foreground); }
+      .text-sidebar-foreground { color: var(--alpha-sidebar-foreground); }
+      .border-sidebar-foreground { border-color: var(--alpha-sidebar-foreground); }
+      .ring-sidebar-foreground { --tw-ring-color: var(--alpha-sidebar-foreground); }
+      .bg-sidebar-primary { background-color: var(--alpha-sidebar-primary); }
+      .text-sidebar-primary { color: var(--alpha-sidebar-primary); }
+      .border-sidebar-primary { border-color: var(--alpha-sidebar-primary); }
+      .ring-sidebar-primary { --tw-ring-color: var(--alpha-sidebar-primary); }
+      .bg-sidebar-primary-foreground { background-color: var(--alpha-sidebar-primary-foreground); }
+      .text-sidebar-primary-foreground { color: var(--alpha-sidebar-primary-foreground); }
+      .border-sidebar-primary-foreground { border-color: var(--alpha-sidebar-primary-foreground); }
+      .ring-sidebar-primary-foreground { --tw-ring-color: var(--alpha-sidebar-primary-foreground); }
+      .bg-sidebar-accent { background-color: var(--alpha-sidebar-accent); }
+      .text-sidebar-accent { color: var(--alpha-sidebar-accent); }
+      .border-sidebar-accent { border-color: var(--alpha-sidebar-accent); }
+      .ring-sidebar-accent { --tw-ring-color: var(--alpha-sidebar-accent); }
+      .bg-sidebar-accent-foreground { background-color: var(--alpha-sidebar-accent-foreground); }
+      .text-sidebar-accent-foreground { color: var(--alpha-sidebar-accent-foreground); }
+      .border-sidebar-accent-foreground { border-color: var(--alpha-sidebar-accent-foreground); }
+      .ring-sidebar-accent-foreground { --tw-ring-color: var(--alpha-sidebar-accent-foreground); }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body class="min-h-screen font-sans antialiased">
+<style id="critical-layout">
+  /* ===== gen-project-shell · 关键布局（浅色专业主题 · 仅引用注入 token）===== */
+  .app-shell,
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after { box-sizing: border-box; }
+
+  .app-shell {
+    display: flex;
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  /* ---------- 侧边栏（240px · 固定） ---------- */
+  .app-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--sidebar-border);
+  }
+
+  .app-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px 20px;
+  }
+  .app-brand-mark { display: block; flex-shrink: 0; }
+  .app-brand-mark-bg { fill: var(--primary); }
+  .app-brand-text { min-width: 0; }
+  .app-brand-wordmark {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-brand-caption {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--muted-foreground);
+  }
+
+  .app-nav { display: flex; flex-direction: column; gap: 2px; }
+
+  .app-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    font-size: 13.5px;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-nav-item:hover { background: var(--muted); color: var(--foreground); }
+  .app-nav-item:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  .app-nav-item[data-active="true"] {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+    font-weight: 500;
+  }
+  .app-nav-item[data-active="true"]:hover {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+  }
+  .app-nav-item [data-lucide] { width: 20px; height: 20px; flex-shrink: 0; }
+  .app-nav-label { overflow: hidden; text-overflow: ellipsis; }
+
+  .app-nav-badge {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 7px;
+    border-radius: var(--radius-full);
+    background: var(--alpha-brand-subtle);
+    color: var(--alpha-brand-strong);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+    line-height: 1;
+  }
+
+  .app-sidebar-spacer { flex: 1; }
+
+  .app-sidebar-footer {
+    border-top: 1px solid var(--sidebar-border);
+    padding: 12px;
+  }
+  .app-api-health { display: flex; align-items: center; gap: 8px; }
+  .app-api-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--state-success);
+    flex-shrink: 0;
+  }
+  .app-api-label { font-size: 12px; color: var(--muted-foreground); }
+  .app-api-version {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .app-engine-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .app-engine-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 10.5px;
+    line-height: 1;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  /* ---------- 主区域 ---------- */
+  .app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin-left: 240px;
+  }
+
+  .app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+  }
+  .app-topbar-titles {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .app-page-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-page-subtitle {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--muted-foreground);
+  }
+
+  .app-topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .app-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 220px;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-search:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  .app-search [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; }
+  .app-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .app-search input::placeholder { color: var(--muted-foreground); }
+
+  .app-content {
+    flex: 1;
+    padding: 24px;
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+  /* ---------- 响应式：<960px 折叠为 64px 纯图标栏 ---------- */
+  @media (max-width: 959px) {
+    .app-sidebar { width: 64px; padding: 14px 10px; align-items: center; }
+    .app-main { margin-left: 64px; }
+    .app-brand { padding: 4px 0 18px; justify-content: center; }
+    .app-brand-text { display: none; }
+    .app-nav { width: 100%; align-items: center; gap: 4px; }
+    .app-nav-item {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+      gap: 0;
+      border-radius: var(--radius-md);
+    }
+    .app-nav-item[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--primary);
+    }
+    .app-nav-badge { display: none; }
+    .app-nav-label {
+      display: none;
+      position: absolute;
+      left: calc(100% + 14px);
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 6px 10px;
+      background: var(--popover, var(--card));
+      color: var(--popover-foreground, var(--foreground));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      font-size: 12.5px;
+      line-height: 1;
+      white-space: nowrap;
+      z-index: 60;
+      pointer-events: none;
+    }
+    .app-nav-item:hover .app-nav-label,
+    .app-nav-item:focus-visible .app-nav-label { display: block; }
+    .app-sidebar-footer { width: 100%; padding: 12px 0 2px; }
+    .app-api-health { justify-content: center; }
+    .app-api-dot { width: 10px; height: 10px; }
+    .app-api-label,
+    .app-api-version { display: none; }
+    .app-engine-badges { display: none; }
+  }
+
+  /* ---------- 降低动态效果 ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    .app-shell *,
+    .app-shell *::before,
+    .app-shell *::after { transition: none !important; }
+  }
+</style>
+
+<div class="app-shell">
+  <aside class="app-sidebar">
+    <div class="app-brand">
+      <svg class="app-brand-mark" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect class="app-brand-mark-bg" width="28" height="28" rx="8"/>
+        <circle cx="10.5" cy="17.5" r="1.7" fill="#fff"/>
+        <path d="M14 17.5a3.5 3.5 0 0 0-3.5-3.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M17 17.5a6.5 6.5 0 0 0-6.5-6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".85"/>
+        <path d="M20 17.5a9.5 9.5 0 0 0-9.5-9.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".7"/>
+      </svg>
+      <div class="app-brand-text">
+        <div class="app-brand-wordmark">Alpha Agent</div>
+        <div class="app-brand-caption">空投 Alpha 控制台</div>
+      </div>
+    </div>
+
+    <!-- SLOT: activeNavItem — leaf sets data-active="true" on its own nav item and removes that item's data-dom-id -->
+    <nav class="app-nav" aria-label="主导航">
+      <a href="#" class="app-nav-item" data-nav-key="index" data-dom-id="nav-index">
+        <i data-lucide="radar"></i>
+        <span class="app-nav-label">工作台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="discoveries" data-dom-id="nav-discoveries">
+        <i data-lucide="satellite-dish"></i>
+        <span class="app-nav-label">发现队列</span>
+        <span class="app-nav-badge">12</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="insights" data-dom-id="nav-insights">
+        <i data-lucide="chart-line"></i>
+        <span class="app-nav-label">洞察</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="portfolio" data-active="true">
+        <i data-lucide="clipboard-check"></i>
+        <span class="app-nav-label">参与复盘</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="ops" data-dom-id="nav-ops">
+        <i data-lucide="server-cog"></i>
+        <span class="app-nav-label">运维台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="notifications" data-dom-id="nav-notifications">
+        <i data-lucide="bell"></i>
+        <span class="app-nav-label">通知中心</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="archive" data-dom-id="nav-archive">
+        <i data-lucide="archive"></i>
+        <span class="app-nav-label">归档历史</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="collections" data-dom-id="nav-collections">
+        <i data-lucide="bookmark"></i>
+        <span class="app-nav-label">收藏关注</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="settings" data-dom-id="nav-settings">
+        <i data-lucide="settings"></i>
+        <span class="app-nav-label">系统设置</span>
+      </a>
+    </nav>
+
+    <div class="app-sidebar-spacer" aria-hidden="true"></div>
+
+    <div class="app-sidebar-footer">
+      <div class="app-api-health">
+        <span class="app-api-dot" aria-hidden="true"></span>
+        <span class="app-api-label">接口正常</span>
+        <span class="app-api-version">v1.4.2</span>
+      </div>
+      <div class="app-engine-badges">
+        <span class="app-engine-chip">score-v1.4 · 权威</span>
+        <span class="app-engine-chip">opportunity-v2.0 · 影子</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-topbar">
+      <div class="app-topbar-titles">
+        <!-- SLOT: pageTitle --><h1 class="app-page-title alpha-heading">参与复盘</h1><!-- /SLOT: pageTitle -->
+        <!-- SLOT: pageSubtitle --><p class="app-page-subtitle">投入产出总览 · 标签 × 结果校准矩阵</p><!-- /SLOT: pageSubtitle -->
+      </div>
+      <div class="app-topbar-right">
+        <label class="app-search">
+          <i data-lucide="search"></i>
+          <input type="text" placeholder="搜索项目 / 赛道…" aria-label="全局搜索">
+        </label>
+        <!-- SLOT: pageActions -->
+        <button type="button" class="pf-btn pf-btn-secondary">
+          <i data-lucide="download"></i>
+          <span>导出记录</span>
+        </button>
+        <button type="button" class="pf-btn pf-btn-primary">
+          <i data-lucide="plus"></i>
+          <span>新建记录</span>
+        </button>
+        <!-- /SLOT: pageActions -->
+      </div>
+    </header>
+
+    <main class="app-content">
+      <!-- SLOT: content -->
+      <div class="pf-stack">
+
+        <!-- 1. 汇总 KPI 条 -->
+        <section class="pf-kpi-grid" aria-label="投入产出汇总">
+          <div class="pf-card pf-kpi">
+            <span class="pf-kpi-label">总参与</span>
+            <span class="pf-kpi-value">34</span>
+            <span class="pf-kpi-caption">进行中 9 · 已完成 21 · 已放弃 4</span>
+          </div>
+          <div class="pf-card pf-kpi">
+            <span class="pf-kpi-label">净收益</span>
+            <span class="pf-kpi-value is-positive">+$12,480</span>
+            <span class="pf-kpi-caption">收益率 384%</span>
+          </div>
+          <div class="pf-card pf-kpi">
+            <span class="pf-kpi-label">总成本</span>
+            <span class="pf-kpi-value">$3,250</span>
+            <span class="pf-kpi-caption">硬成本 + Gas</span>
+          </div>
+          <div class="pf-card pf-kpi">
+            <span class="pf-kpi-label">总工时</span>
+            <span class="pf-kpi-value">186h</span>
+            <span class="pf-kpi-caption">平均 5.5h / 项目</span>
+          </div>
+        </section>
+
+        <!-- 2. 标签 × 结果校准矩阵 -->
+        <section class="pf-card" aria-label="标签 × 结果校准矩阵">
+          <div class="pf-card-head">
+            <h2 class="pf-card-title">标签 × 结果校准矩阵</h2>
+            <div class="pf-mx-legend pf-mx-legend--head">
+                <span class="pf-mx-legend-item"><span class="pf-mx-dot" style="background:var(--state-success)"></span>空投成功</span>
+                <span class="pf-mx-legend-item"><span class="pf-mx-dot" style="background:var(--label-ignore)"></span>未空投</span>
+                <span class="pf-mx-legend-item"><span class="pf-mx-dot" style="background:var(--state-info)"></span>上涨</span>
+                <span class="pf-mx-legend-item"><span class="pf-mx-dot" style="background:var(--state-error)"></span>下跌</span>
+                <span class="pf-mx-legend-item"><span class="pf-mx-dot" style="background:var(--alpha-300)"></span>进行中</span>
+            </div>
+            <p class="pf-card-caption">score-v1.4 标签在实际结果上的命中率 · 权重校准核心输入</p>
+          </div>
+          <div class="pf-card-body">
+            <div class="pf-mx">
+              <div class="pf-mx-row">
+                <div class="pf-mx-head">
+                  <span class="pf-badge pf-badge-farm">FARM</span>
+                  <span class="pf-mx-total">23 项</span>
+                </div>
+                <div class="pf-mx-track" role="img" aria-label="FARM 各结果分布"><span class="pf-mx-seg" style="width:34.8%;background:var(--state-success)" title="空投成功 8"></span><span class="pf-mx-seg" style="width:8.7%;background:var(--label-ignore)" title="未空投 2"></span><span class="pf-mx-seg" style="width:13%;background:var(--state-info)" title="上涨 3"></span><span class="pf-mx-seg" style="width:43.5%;background:var(--alpha-300)" title="进行中 10"></span></div>
+                <div class="pf-mx-side">
+                  <span class="pf-mx-ring" role="img" aria-label="FARM 命中率 62%">
+                  <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--border)" stroke-width="4"/>
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--label-farm)" stroke-width="4" stroke-linecap="round" stroke-dasharray="66.2 40.6" transform="rotate(-90 23 23)"/>
+                    <text x="23" y="23" text-anchor="middle" dominant-baseline="central" class="pf-mx-ring-text">62%</text>
+                  </svg>
+                </span>
+                  <span class="pf-mx-rate-note">命中率</span>
+                </div>
+              </div>
+              <div class="pf-mx-row">
+                <div class="pf-mx-head">
+                  <span class="pf-badge pf-badge-watch">WATCH</span>
+                  <span class="pf-mx-total">18 项</span>
+                </div>
+                <div class="pf-mx-track" role="img" aria-label="WATCH 各结果分布"><span class="pf-mx-seg" style="width:11.1%;background:var(--state-success)" title="空投成功 2"></span><span class="pf-mx-seg" style="width:33.3%;background:var(--label-ignore)" title="未空投 6"></span><span class="pf-mx-seg" style="width:11.1%;background:var(--state-info)" title="上涨 2"></span><span class="pf-mx-seg" style="width:5.6%;background:var(--state-error)" title="下跌 1"></span><span class="pf-mx-seg" style="width:38.9%;background:var(--alpha-300)" title="进行中 7"></span></div>
+                <div class="pf-mx-side">
+                  <span class="pf-mx-ring" role="img" aria-label="WATCH 命中率 18%">
+                  <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--border)" stroke-width="4"/>
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--label-watch)" stroke-width="4" stroke-linecap="round" stroke-dasharray="19.2 87.6" transform="rotate(-90 23 23)"/>
+                    <text x="23" y="23" text-anchor="middle" dominant-baseline="central" class="pf-mx-ring-text">18%</text>
+                  </svg>
+                </span>
+                  <span class="pf-mx-rate-note">命中率</span>
+                </div>
+              </div>
+              <div class="pf-mx-row">
+                <div class="pf-mx-head">
+                  <span class="pf-badge pf-badge-ignore">IGNORE</span>
+                  <span class="pf-mx-total">12 项</span>
+                </div>
+                <div class="pf-mx-track" role="img" aria-label="IGNORE 各结果分布"><span class="pf-mx-seg" style="width:75%;background:var(--label-ignore)" title="未空投 9"></span><span class="pf-mx-seg" style="width:8.3%;background:var(--state-error)" title="下跌 1"></span><span class="pf-mx-seg" style="width:16.7%;background:var(--alpha-300)" title="进行中 2"></span></div>
+                <div class="pf-mx-side">
+                  <span class="pf-mx-ring" role="img" aria-label="IGNORE 命中率 8%">
+                  <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--border)" stroke-width="4"/>
+                    <circle cx="23" cy="23" r="17" fill="none" style="stroke:var(--label-ignore)" stroke-width="4" stroke-linecap="round" stroke-dasharray="8.5 98.3" transform="rotate(-90 23 23)"/>
+                    <text x="23" y="23" text-anchor="middle" dominant-baseline="central" class="pf-mx-ring-text">8%</text>
+                  </svg>
+                </span>
+                  <span class="pf-mx-rate-note">命中率</span>
+                </div>
+              </div>
+            </div>
+            <p class="pf-matrix-foot"><strong>FARM 命中率 62%</strong> · WATCH 18% · IGNORE 8% — 标签区分度健康</p>
+          </div>
+        </section>
+
+        <!-- 3. 双栏分布行 -->
+        <div class="pf-dist-grid">
+          <section class="pf-card" aria-label="结果分布">
+            <div class="pf-card-head">
+              <h2 class="pf-card-title">结果分布</h2>
+              <p class="pf-card-caption">by_outcome · 53 条交互记录</p>
+            </div>
+            <div class="pf-card-body pf-bars">
+              <div class="pf-bar-row">
+                <span class="pf-bar-name is-mono">airdropped</span>
+                <span class="pf-bar-count">10</span>
+                <span class="pf-bar-track"><span class="pf-bar-fill is-success" style="width:53%"></span></span>
+              </div>
+              <div class="pf-bar-row">
+                <span class="pf-bar-name is-mono">not_airdropped</span>
+                <span class="pf-bar-count">17</span>
+                <span class="pf-bar-track"><span class="pf-bar-fill is-ignore" style="width:89%"></span></span>
+              </div>
+              <div class="pf-bar-row">
+                <span class="pf-bar-name is-mono">pumped</span>
+                <span class="pf-bar-count">5</span>
+                <span class="pf-bar-track"><span class="pf-bar-fill is-info" style="width:26%"></span></span>
+              </div>
+              <div class="pf-bar-row">
+                <span class="pf-bar-name is-mono">dumped</span>
+                <span class="pf-bar-count">2</span>
+                <span class="pf-bar-track"><span class="pf-bar-fill is-error" style="width:11%"></span></span>
+              </div>
+              <div class="pf-bar-row">
+                <span class="pf-bar-name">进行中</span>
+                <span class="pf-bar-count">19</span>
+                <span class="pf-bar-track"><span class="pf-bar-fill is-warning" style="width:100%"></span></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="pf-card" aria-label="状态分布">
+            <div class="pf-card-head">
+              <h2 class="pf-card-title">状态分布</h2>
+              <p class="pf-card-caption">by_status · 40 条管线项目</p>
+            </div>
+            <div class="pf-card-body">
+              <div class="pf-bars">
+                <div class="pf-bar-row">
+                  <span class="pf-bar-name is-mono">planned</span>
+                  <span class="pf-bar-count">6</span>
+                  <span class="pf-bar-track"><span class="pf-bar-fill" style="width:29%;opacity:1"></span></span>
+                </div>
+                <div class="pf-bar-row">
+                  <span class="pf-bar-name is-mono">active</span>
+                  <span class="pf-bar-count">9</span>
+                  <span class="pf-bar-track"><span class="pf-bar-fill" style="width:43%;opacity:.75"></span></span>
+                </div>
+                <div class="pf-bar-row">
+                  <span class="pf-bar-name is-mono">done</span>
+                  <span class="pf-bar-count">21</span>
+                  <span class="pf-bar-track"><span class="pf-bar-fill" style="width:100%;opacity:.55"></span></span>
+                </div>
+                <div class="pf-bar-row">
+                  <span class="pf-bar-name is-mono">abandoned</span>
+                  <span class="pf-bar-count">4</span>
+                  <span class="pf-bar-track"><span class="pf-bar-fill" style="width:19%;opacity:.4"></span></span>
+                </div>
+              </div>
+              <p class="pf-dist-foot">状态机：planned → active → done/abandoned，终态不可变</p>
+            </div>
+          </section>
+        </div>
+
+        <!-- 4. 参与记录表 -->
+        <section class="pf-card" aria-label="参与记录">
+          <div class="pf-card-head">
+            <h2 class="pf-card-title">参与记录</h2>
+            <p class="pf-card-caption">共 34 条 · 展示 8 条 · 金额以 USD 计</p>
+          </div>
+          <div class="pf-table-wrap">
+            <table class="pf-table">
+              <thead>
+                <tr>
+                  <th scope="col">项目</th>
+                  <th scope="col">状态</th>
+                  <th scope="col" class="num">成本</th>
+                  <th scope="col" class="num">收益</th>
+                  <th scope="col" class="num">净额</th>
+                  <th scope="col" class="num">工时</th>
+                  <th scope="col">结果</th>
+                  <th scope="col">日期</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="pf-row-clickable">
+                  <td>
+                    <div class="pf-proj">
+                      <a href="#" data-dom-id="link-project-detail" class="pf-row-link">Zephyr Protocol</a>
+                      <span class="pf-proj-sector">跨链互操作</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-info">active</span></td>
+                  <td class="num">$6.50</td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num">4.2h</td>
+                  <td><span class="pf-badge pf-badge-warning">待观察</span></td>
+                  <td><span class="pf-date">08-06</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Kite Network</span>
+                      <span class="pf-proj-sector">模块化 L2</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-info">active</span></td>
+                  <td class="num">$4.20</td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num">3.1h</td>
+                  <td><span class="pf-badge pf-badge-warning">待观察</span></td>
+                  <td><span class="pf-date">08-04</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Vaultara</span>
+                      <span class="pf-proj-sector">测试网基础设施</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-success">done</span></td>
+                  <td class="num">$12.00</td>
+                  <td class="num">$860.00</td>
+                  <td class="num"><span class="is-pos">+$848.00</span></td>
+                  <td class="num">9.5h</td>
+                  <td><span class="pf-badge pf-badge-success">airdropped</span></td>
+                  <td><span class="pf-date">07-28</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Lumen DEX</span>
+                      <span class="pf-proj-sector">DeFi · DEX</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-success">done</span></td>
+                  <td class="num">$8.00</td>
+                  <td class="num">$240.00</td>
+                  <td class="num"><span class="is-pos">+$232.00</span></td>
+                  <td class="num">5.0h</td>
+                  <td><span class="pf-badge pf-badge-info">pumped</span></td>
+                  <td><span class="pf-date">07-19</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Astrid AI</span>
+                      <span class="pf-proj-sector">AI Agent</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-ignore">planned</span></td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num">0h</td>
+                  <td><span class="pf-badge pf-badge-warning">待观察</span></td>
+                  <td><span class="pf-date">08-09</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Fathom Labs</span>
+                      <span class="pf-proj-sector">预言机</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-success">done</span></td>
+                  <td class="num">$15.00</td>
+                  <td class="num">$0.00</td>
+                  <td class="num"><span class="is-neg">−$15.00</span></td>
+                  <td class="num">6.0h</td>
+                  <td><span class="pf-badge pf-badge-ignore">not_airdropped</span></td>
+                  <td><span class="pf-date">07-11</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Rhea Chain</span>
+                      <span class="pf-proj-sector">L1 公链</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-error">abandoned</span></td>
+                  <td class="num">$5.00</td>
+                  <td class="num"><span class="is-dash">—</span></td>
+                  <td class="num"><span class="is-neg">−$5.00</span></td>
+                  <td class="num">1.5h</td>
+                  <td><span class="is-dash">—</span></td>
+                  <td><span class="pf-date">07-02</span></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="pf-proj">
+                      <span class="pf-proj-name">Nereus Finance</span>
+                      <span class="pf-proj-sector">DeFi 收益聚合</span>
+                    </div>
+                  </td>
+                  <td><span class="pf-badge pf-badge-success">done</span></td>
+                  <td class="num">$20.00</td>
+                  <td class="num">$1,240.00</td>
+                  <td class="num"><span class="is-pos">+$1,220.00</span></td>
+                  <td class="num">7.8h</td>
+                  <td><span class="pf-badge pf-badge-success">airdropped</span></td>
+                  <td><span class="pf-date">06-24</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 5. 复盘洞察条 -->
+        <section class="pf-insight" aria-label="复盘洞察">
+          <span class="pf-insight-icon"><i data-lucide="lightbulb"></i></span>
+          <div class="pf-insight-body">
+            <h2 class="pf-insight-title">复盘洞察</h2>
+            <ul class="pf-insight-list">
+              <li class="pf-insight-item"><span class="pf-insight-dot" aria-hidden="true"></span>FARM 标签命中率 62%，显著高于 WATCH 18%，评分区分度有效</li>
+              <li class="pf-insight-item"><span class="pf-insight-dot" aria-hidden="true"></span>单位工时收益最高的是 Vaultara（$90/h），测试网类任务性价比突出</li>
+              <li class="pf-insight-item"><span class="pf-insight-dot" aria-hidden="true"></span>4 次放弃均发生在首周内，建议在参与前完成「风险与门槛」清单</li>
+            </ul>
+          </div>
+        </section>
+
+      </div>
+      <!-- /SLOT: content -->
+    </main>
+
+    <footer class="app-footer">
+      <span>Alpha Agent · Web3 空投 Alpha 识别与决策支持</span>
+      <span>数据不构成投资建议 · score-v1.4</span>
+    </footer>
+  </div>
+</div>
+
+<style id="page-portfolio-local">
+  /* ===== page-portfolio · 页面局部样式（仅引用 token，颜色零硬编码）===== */
+
+  .pf-stack { display: flex; flex-direction: column; gap: 16px; }
+
+  /* ---------- 页头操作按钮 ---------- */
+  .pf-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 150ms var(--ease-default),
+                opacity 150ms var(--ease-default);
+  }
+  .pf-btn [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; }
+  .pf-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .pf-btn-secondary {
+    background: var(--card);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+  }
+  .pf-btn-secondary:hover { background: var(--muted); }
+  .pf-btn-primary {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border: 1px solid var(--primary);
+  }
+  .pf-btn-primary:hover { opacity: 0.92; }
+
+  /* ---------- 卡片基类 ---------- */
+  .pf-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+  .pf-card-head {
+    padding: 16px 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pf-card-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--foreground);
+  }
+  .pf-card-caption {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+  .pf-card-body { padding: 16px 20px 20px; }
+
+  /* ---------- 汇总 KPI 条 ---------- */
+  .pf-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .pf-kpi {
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pf-kpi-label { font-size: 12.5px; color: var(--muted-foreground); }
+  .pf-kpi-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    color: var(--foreground);
+  }
+  .pf-kpi-value.is-positive { color: var(--state-success-foreground); }
+  .pf-kpi-caption { font-size: 12px; line-height: 1.4; color: var(--muted-foreground); }
+
+  /* ---------- 徽章 pill ---------- */
+  .pf-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: var(--radius-full);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .pf-badge-farm { background: var(--label-farm-bg); color: var(--label-farm-foreground); }
+  .pf-badge-watch { background: var(--label-watch-bg); color: var(--label-watch-foreground); }
+  .pf-badge-ignore { background: var(--label-ignore-bg); color: var(--label-ignore-foreground); }
+  .pf-badge-success { background: var(--state-success-subtle); color: var(--state-success-foreground); }
+  .pf-badge-info { background: var(--state-info-subtle); color: var(--state-info-foreground); }
+  .pf-badge-warning { background: var(--state-warning-subtle); color: var(--state-warning-foreground); }
+  .pf-badge-error { background: var(--state-error-subtle); color: var(--state-error-foreground); }
+
+  /* ---------- 校准矩阵（标签行 + 堆叠条形 + 命中率环） ---------- */
+  .pf-mx { display: flex; flex-direction: column; gap: 12px; }
+  .pf-mx-row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) 96px;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--card);
+  }
+  .pf-mx-head { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .pf-mx-total { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted-foreground); }
+  .pf-mx-track {
+    display: flex;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--muted);
+  }
+  .pf-mx-seg { display: block; height: 100%; transition: opacity var(--duration-fast) var(--ease-default); }
+  .pf-mx-row:hover .pf-mx-seg { opacity: 0.88; }
+  .pf-mx-side { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .pf-mx-ring { display: inline-flex; }
+  .pf-mx-ring svg { display: block; }
+  .pf-mx-ring-text { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 700; fill: var(--foreground); }
+  .pf-mx-rate-note { font-size: 11px; color: var(--muted-foreground); }
+  .pf-mx-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .pf-mx-legend--head { margin-left: auto; }
+  .pf-mx-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); }
+  .pf-mx-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .pf-matrix-foot { margin: 14px 0 0; text-align: right; font-size: 12px; line-height: 1.5; color: var(--muted-foreground); }
+  .pf-matrix-foot strong { color: var(--foreground); font-weight: 600; }
+  @media (max-width: 720px) { .pf-mx-row { grid-template-columns: 1fr; } .pf-mx-side { flex-direction: row; } }
+
+
+  /* ---------- 双栏分布 ---------- */
+  .pf-dist-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .pf-bars { display: flex; flex-direction: column; gap: 12px; }
+  .pf-bar-row { display: flex; align-items: center; gap: 12px; }
+  .pf-bar-name {
+    width: 118px;
+    flex-shrink: 0;
+    font-size: 12.5px;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .pf-bar-name.is-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  .pf-bar-count {
+    width: 28px;
+    flex-shrink: 0;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    color: var(--foreground);
+  }
+  .pf-bar-track {
+    flex: 1;
+    min-width: 0;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--muted);
+    overflow: hidden;
+  }
+  .pf-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: var(--radius-full);
+    background: var(--primary);
+  }
+  .pf-bar-fill.is-success { background: var(--state-success); }
+  .pf-bar-fill.is-ignore { background: var(--label-ignore); }
+  .pf-bar-fill.is-info { background: var(--state-info); }
+  .pf-bar-fill.is-error { background: var(--state-error); }
+  .pf-bar-fill.is-warning { background: var(--state-warning); }
+  .pf-dist-foot {
+    margin: 14px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+
+  /* ---------- 参与记录表（行高 52px） ---------- */
+  .pf-table-wrap { overflow-x: auto; padding: 8px 0 10px; }
+  .pf-table { width: 100%; border-collapse: collapse; }
+  .pf-table thead th {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pf-table tbody td {
+    height: 52px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    vertical-align: middle;
+  }
+  .pf-table tbody tr:last-child td { border-bottom: 0; }
+  .pf-table th:first-child, .pf-table td:first-child { padding-left: 20px; }
+  .pf-table th:last-child, .pf-table td:last-child { padding-right: 20px; }
+  .pf-table .num {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .is-pos { color: var(--state-success-foreground); }
+  .is-neg { color: var(--state-error-foreground); }
+  .is-dash { color: var(--muted-foreground); }
+
+  .pf-proj { display: flex; flex-direction: column; gap: 2px; }
+  .pf-proj-name { font-weight: 500; color: var(--foreground); }
+  .pf-proj-sector { font-size: 11.5px; line-height: 1.3; color: var(--muted-foreground); }
+  .pf-date {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+  /* 整行链接（Zephyr Protocol → 项目详情） */
+  .pf-row-clickable { position: relative; }
+  .pf-row-clickable:hover { background: var(--muted); }
+  .pf-row-link {
+    color: var(--foreground);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .pf-row-link:hover { text-decoration: underline; }
+  .pf-row-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .pf-row-link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+
+  /* ---------- 复盘洞察条 ---------- */
+  .pf-insight {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    background: var(--alpha-brand-subtle);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px;
+  }
+  .pf-insight-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--card);
+    color: var(--alpha-brand-strong);
+    box-shadow: var(--shadow-sm);
+  }
+  .pf-insight-icon [data-lucide] { width: 20px; height: 20px; }
+  .pf-insight-body { min-width: 0; }
+  .pf-insight-title {
+    margin: 4px 0 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--alpha-brand-strong);
+  }
+  .pf-insight-list {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pf-insight-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--foreground);
+  }
+  .pf-insight-dot {
+    width: 5px;
+    height: 5px;
+    flex-shrink: 0;
+    border-radius: var(--radius-full);
+    background: var(--alpha-brand-strong);
+    transform: translateY(-2px);
+  }
+
+  /* ---------- 窄视口兜底（桌面目标下不触发） ---------- */
+  @media (max-width: 1100px) {
+    .pf-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pf-dist-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pf-btn { transition: none; }
+  }
+</style>
+<script>lucide.createIcons();</script>
+</body>
+</html>

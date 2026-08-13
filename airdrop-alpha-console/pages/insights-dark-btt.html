@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>洞察</title>
+    <style id="theme-vars">
+/* Alpha Console — Web3 Airdrop Alpha Agent System 前端设计令牌
+ * 单一品牌色（信号靛 Signal Indigo）+ 状态语义色（FARM/WATCH/IGNORE）
+ * 字体：Inter + Noto Sans SC；数据：JetBrains Mono
+ * 亮/暗双主题变量；静态表面以边框/表面分层为主，阴影 alpha ≤ 0.05
+ */
+
+:root {
+  /* ---- solo-design 语义别名（apply-html-head-contract 消费） ---- */
+  --alpha-background: var(--background);
+  --alpha-foreground: var(--foreground);
+  --alpha-card: var(--card);
+  --alpha-card-foreground: var(--card-foreground);
+  --alpha-popover: var(--popover);
+  --alpha-popover-foreground: var(--popover-foreground);
+  --alpha-primary: var(--primary);
+  --alpha-primary-foreground: var(--primary-foreground);
+  --alpha-muted: var(--muted);
+  --alpha-muted-foreground: var(--muted-foreground);
+  --alpha-border: var(--border);
+  --alpha-input: var(--input);
+  --alpha-ring: var(--ring);
+  --alpha-destructive: var(--state-error);
+  --alpha-destructive-foreground: #ffffff;
+  --alpha-radius-small: var(--radius-sm);
+  --alpha-radius-medium: var(--radius-md);
+  --alpha-radius-large: var(--radius-lg);
+  --alpha-sidebar: var(--sidebar);
+  --alpha-sidebar-foreground: var(--sidebar-foreground);
+  --alpha-sidebar-primary: var(--sidebar-primary);
+  --alpha-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --alpha-sidebar-accent: var(--sidebar-accent);
+  --alpha-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --alpha-chart-1: var(--chart-1);
+  --alpha-chart-2: var(--chart-2);
+  --alpha-chart-3: var(--chart-3);
+  --alpha-chart-4: var(--chart-4);
+  --alpha-chart-5: var(--chart-5);
+
+  /* ---- 品牌色阶：信号靛（唯一品牌色相，h≈233°） ---- */
+  --alpha-50: #eef0fd;
+  --alpha-100: #e0e3fb;
+  --alpha-200: #c3c8f7;
+  --alpha-300: #9ba2f0;
+  --alpha-400: #6f77e6;
+  --alpha-500: #4d56dd;
+  --alpha-600: #3d44c8;
+  --alpha-700: #3339a6;
+  --alpha-800: #2c3185;
+  --alpha-900: #282d6b;
+  --alpha-brand-subtle: var(--alpha-100);
+  --alpha-brand-strong: var(--alpha-700);
+
+  /* ---- 表面 / 文本 / 边框 ---- */
+  --background: #f6f7fb;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #eef0f7;
+  --foreground: #11142c;
+  --card-foreground: #11142c;
+  --popover-foreground: #11142c;
+  --primary: #4d56dd;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #5c6278;
+  --border: #e2e5f0;
+  --input: #dfe3ef;
+  --ring: #4d56dd;
+
+  /* ---- 状态语义色（仅用于真实状态 / 标签徽章） ---- */
+  --state-success: #0f9d6e;
+  --state-success-subtle: #e2f5ee;
+  --state-success-foreground: #0a6b4c;
+  --state-warning: #d9870b;
+  --state-warning-subtle: #fbf1de;
+  --state-warning-foreground: #8a5a08;
+  --state-error: #e0483f;
+  --state-error-subtle: #fceaea;
+  --state-error-foreground: #a02a23;
+  --state-info: #4d56dd;
+  --state-info-subtle: #e0e3fb;
+  --state-info-foreground: #3339a6;
+
+  /* ---- 决策标签（FARM / WATCH / IGNORE 业务语义） ---- */
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #6b7280;
+  --label-ignore-bg: #eef0f4;
+  --label-ignore-foreground: #4b5261;
+
+  /* ---- 图表 ---- */
+  --chart-1: #4d56dd;
+  --chart-2: #6f77e6;
+  --chart-3: #9ba2f0;
+  --chart-4: #0f9d6e;
+  --chart-5: #d9870b;
+
+  /* ---- 侧边栏 ---- */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #11142c;
+  --sidebar-primary: #4d56dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef0f7;
+  --sidebar-accent-foreground: #3339a6;
+  --sidebar-border: #e2e5f0;
+  --sidebar-ring: #4d56dd;
+
+  /* ---- 字体 ---- */
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --tracking-normal: 0em;
+
+  /* ---- 间距基准 ---- */
+  --spacing: 0.25rem;
+
+  /* ---- 圆角（克制 4/8/12） ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ---- 阴影：静态表面 alpha ≤ 0.05；深层仅浮层 ---- */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 44, 0.05);
+  --shadow-md: 0 10px 24px -8px rgba(17, 20, 44, 0.18);
+  --shadow-lg: 0 24px 56px -20px rgba(17, 20, 44, 0.28);
+
+  /* ---- 动效 ---- */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --alpha-brand-subtle: #272c52;
+  --alpha-brand-strong: #b2b8f8;
+
+  --background: #0e1120;
+  --card: #161a2e;
+  --popover: #1c2138;
+  --muted: #22274a;
+  --foreground: #eceffa;
+  --card-foreground: #eceffa;
+  --popover-foreground: #eceffa;
+  --primary: #8b93f5;
+  --primary-foreground: #10122a;
+  --muted-foreground: #a3aacc;
+  --border: #303759;
+  --input: #3a4166;
+  --ring: #8b93f5;
+
+  --state-success: #34c491;
+  --state-success-subtle: #14382b;
+  --state-success-foreground: #6fe0b6;
+  --state-warning: #f0a93c;
+  --state-warning-subtle: #3f3014;
+  --state-warning-foreground: #f7c66f;
+  --state-error: #f06a62;
+  --state-error-subtle: #421d1b;
+  --state-error-foreground: #f79b95;
+  --state-info: #8b93f5;
+  --state-info-subtle: #272c52;
+  --state-info-foreground: #b2b8f8;
+
+  --label-farm: var(--state-success);
+  --label-farm-bg: var(--state-success-subtle);
+  --label-farm-foreground: var(--state-success-foreground);
+  --label-watch: var(--state-warning);
+  --label-watch-bg: var(--state-warning-subtle);
+  --label-watch-foreground: var(--state-warning-foreground);
+  --label-ignore: #98a0b4;
+  --label-ignore-bg: #282e42;
+  --label-ignore-foreground: #c3c9d8;
+
+  --chart-1: #8b93f5;
+  --chart-2: #aab0f8;
+  --chart-3: #5f68d4;
+  --chart-4: #3ecf9b;
+  --chart-5: #f5b455;
+
+  --sidebar: #12152a;
+  --sidebar-foreground: #eceffa;
+  --sidebar-primary: #8b93f5;
+  --sidebar-primary-foreground: #10122a;
+  --sidebar-accent: #232850;
+  --sidebar-accent-foreground: #b2b8f8;
+  --sidebar-border: #2b3152;
+  --sidebar-ring: #8b93f5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 56px -20px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- 排版工具类 ---- */
+.alpha-display {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.alpha-heading {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-wrap: balance;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.alpha-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.alpha-caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.alpha-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--alpha-background);
+    --color-foreground: var(--alpha-foreground);
+    --color-card: var(--alpha-card);
+    --color-card-foreground: var(--alpha-card-foreground);
+    --color-popover: var(--alpha-popover);
+    --color-popover-foreground: var(--alpha-popover-foreground);
+    --color-primary: var(--alpha-primary);
+    --color-primary-foreground: var(--alpha-primary-foreground);
+    --color-muted: var(--alpha-muted);
+    --color-muted-foreground: var(--alpha-muted-foreground);
+    --color-destructive: var(--alpha-destructive);
+    --color-destructive-foreground: var(--alpha-destructive-foreground);
+    --color-border: var(--alpha-border);
+    --color-input: var(--alpha-input);
+    --color-ring: var(--alpha-ring);
+    --color-chart-1: var(--alpha-chart-1);
+    --color-chart-2: var(--alpha-chart-2);
+    --color-chart-3: var(--alpha-chart-3);
+    --color-chart-4: var(--alpha-chart-4);
+    --color-chart-5: var(--alpha-chart-5);
+    --color-sidebar: var(--alpha-sidebar);
+    --color-sidebar-foreground: var(--alpha-sidebar-foreground);
+    --color-sidebar-primary: var(--alpha-sidebar-primary);
+    --color-sidebar-primary-foreground: var(--alpha-sidebar-primary-foreground);
+    --color-sidebar-accent: var(--alpha-sidebar-accent);
+    --color-sidebar-accent-foreground: var(--alpha-sidebar-accent-foreground);
+    --radius-sm: var(--alpha-radius-small);
+    --radius-md: var(--alpha-radius-medium);
+    --radius-lg: var(--alpha-radius-large);
+  }
+  @layer base {
+    body { background: var(--alpha-background); color: var(--alpha-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style id="semantic-token-fallback">
+      .bg-background { background-color: var(--alpha-background); }
+      .text-background { color: var(--alpha-background); }
+      .border-background { border-color: var(--alpha-background); }
+      .ring-background { --tw-ring-color: var(--alpha-background); }
+      .bg-foreground { background-color: var(--alpha-foreground); }
+      .text-foreground { color: var(--alpha-foreground); }
+      .border-foreground { border-color: var(--alpha-foreground); }
+      .ring-foreground { --tw-ring-color: var(--alpha-foreground); }
+      .bg-card { background-color: var(--alpha-card); }
+      .text-card { color: var(--alpha-card); }
+      .border-card { border-color: var(--alpha-card); }
+      .ring-card { --tw-ring-color: var(--alpha-card); }
+      .bg-card-foreground { background-color: var(--alpha-card-foreground); }
+      .text-card-foreground { color: var(--alpha-card-foreground); }
+      .border-card-foreground { border-color: var(--alpha-card-foreground); }
+      .ring-card-foreground { --tw-ring-color: var(--alpha-card-foreground); }
+      .bg-popover { background-color: var(--alpha-popover); }
+      .text-popover { color: var(--alpha-popover); }
+      .border-popover { border-color: var(--alpha-popover); }
+      .ring-popover { --tw-ring-color: var(--alpha-popover); }
+      .bg-popover-foreground { background-color: var(--alpha-popover-foreground); }
+      .text-popover-foreground { color: var(--alpha-popover-foreground); }
+      .border-popover-foreground { border-color: var(--alpha-popover-foreground); }
+      .ring-popover-foreground { --tw-ring-color: var(--alpha-popover-foreground); }
+      .bg-primary { background-color: var(--alpha-primary); }
+      .text-primary { color: var(--alpha-primary); }
+      .border-primary { border-color: var(--alpha-primary); }
+      .ring-primary { --tw-ring-color: var(--alpha-primary); }
+      .bg-primary-foreground { background-color: var(--alpha-primary-foreground); }
+      .text-primary-foreground { color: var(--alpha-primary-foreground); }
+      .border-primary-foreground { border-color: var(--alpha-primary-foreground); }
+      .ring-primary-foreground { --tw-ring-color: var(--alpha-primary-foreground); }
+      .bg-muted { background-color: var(--alpha-muted); }
+      .text-muted { color: var(--alpha-muted); }
+      .border-muted { border-color: var(--alpha-muted); }
+      .ring-muted { --tw-ring-color: var(--alpha-muted); }
+      .bg-muted-foreground { background-color: var(--alpha-muted-foreground); }
+      .text-muted-foreground { color: var(--alpha-muted-foreground); }
+      .border-muted-foreground { border-color: var(--alpha-muted-foreground); }
+      .ring-muted-foreground { --tw-ring-color: var(--alpha-muted-foreground); }
+      .bg-destructive { background-color: var(--alpha-destructive); }
+      .text-destructive { color: var(--alpha-destructive); }
+      .border-destructive { border-color: var(--alpha-destructive); }
+      .ring-destructive { --tw-ring-color: var(--alpha-destructive); }
+      .bg-destructive-foreground { background-color: var(--alpha-destructive-foreground); }
+      .text-destructive-foreground { color: var(--alpha-destructive-foreground); }
+      .border-destructive-foreground { border-color: var(--alpha-destructive-foreground); }
+      .ring-destructive-foreground { --tw-ring-color: var(--alpha-destructive-foreground); }
+      .bg-border { background-color: var(--alpha-border); }
+      .text-border { color: var(--alpha-border); }
+      .border-border { border-color: var(--alpha-border); }
+      .ring-border { --tw-ring-color: var(--alpha-border); }
+      .bg-input { background-color: var(--alpha-input); }
+      .text-input { color: var(--alpha-input); }
+      .border-input { border-color: var(--alpha-input); }
+      .ring-input { --tw-ring-color: var(--alpha-input); }
+      .bg-ring { background-color: var(--alpha-ring); }
+      .text-ring { color: var(--alpha-ring); }
+      .border-ring { border-color: var(--alpha-ring); }
+      .ring-ring { --tw-ring-color: var(--alpha-ring); }
+      .bg-chart-1 { background-color: var(--alpha-chart-1); }
+      .text-chart-1 { color: var(--alpha-chart-1); }
+      .border-chart-1 { border-color: var(--alpha-chart-1); }
+      .ring-chart-1 { --tw-ring-color: var(--alpha-chart-1); }
+      .bg-chart-2 { background-color: var(--alpha-chart-2); }
+      .text-chart-2 { color: var(--alpha-chart-2); }
+      .border-chart-2 { border-color: var(--alpha-chart-2); }
+      .ring-chart-2 { --tw-ring-color: var(--alpha-chart-2); }
+      .bg-chart-3 { background-color: var(--alpha-chart-3); }
+      .text-chart-3 { color: var(--alpha-chart-3); }
+      .border-chart-3 { border-color: var(--alpha-chart-3); }
+      .ring-chart-3 { --tw-ring-color: var(--alpha-chart-3); }
+      .bg-chart-4 { background-color: var(--alpha-chart-4); }
+      .text-chart-4 { color: var(--alpha-chart-4); }
+      .border-chart-4 { border-color: var(--alpha-chart-4); }
+      .ring-chart-4 { --tw-ring-color: var(--alpha-chart-4); }
+      .bg-chart-5 { background-color: var(--alpha-chart-5); }
+      .text-chart-5 { color: var(--alpha-chart-5); }
+      .border-chart-5 { border-color: var(--alpha-chart-5); }
+      .ring-chart-5 { --tw-ring-color: var(--alpha-chart-5); }
+      .bg-sidebar { background-color: var(--alpha-sidebar); }
+      .text-sidebar { color: var(--alpha-sidebar); }
+      .border-sidebar { border-color: var(--alpha-sidebar); }
+      .ring-sidebar { --tw-ring-color: var(--alpha-sidebar); }
+      .bg-sidebar-foreground { background-color: var(--alpha-sidebar-foreground); }
+      .text-sidebar-foreground { color: var(--alpha-sidebar-foreground); }
+      .border-sidebar-foreground { border-color: var(--alpha-sidebar-foreground); }
+      .ring-sidebar-foreground { --tw-ring-color: var(--alpha-sidebar-foreground); }
+      .bg-sidebar-primary { background-color: var(--alpha-sidebar-primary); }
+      .text-sidebar-primary { color: var(--alpha-sidebar-primary); }
+      .border-sidebar-primary { border-color: var(--alpha-sidebar-primary); }
+      .ring-sidebar-primary { --tw-ring-color: var(--alpha-sidebar-primary); }
+      .bg-sidebar-primary-foreground { background-color: var(--alpha-sidebar-primary-foreground); }
+      .text-sidebar-primary-foreground { color: var(--alpha-sidebar-primary-foreground); }
+      .border-sidebar-primary-foreground { border-color: var(--alpha-sidebar-primary-foreground); }
+      .ring-sidebar-primary-foreground { --tw-ring-color: var(--alpha-sidebar-primary-foreground); }
+      .bg-sidebar-accent { background-color: var(--alpha-sidebar-accent); }
+      .text-sidebar-accent { color: var(--alpha-sidebar-accent); }
+      .border-sidebar-accent { border-color: var(--alpha-sidebar-accent); }
+      .ring-sidebar-accent { --tw-ring-color: var(--alpha-sidebar-accent); }
+      .bg-sidebar-accent-foreground { background-color: var(--alpha-sidebar-accent-foreground); }
+      .text-sidebar-accent-foreground { color: var(--alpha-sidebar-accent-foreground); }
+      .border-sidebar-accent-foreground { border-color: var(--alpha-sidebar-accent-foreground); }
+      .ring-sidebar-accent-foreground { --tw-ring-color: var(--alpha-sidebar-accent-foreground); }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body>
+<style id="critical-layout">
+  /* ===== gen-project-shell · 关键布局（浅色专业主题 · 仅引用注入 token）===== */
+  .app-shell,
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after { box-sizing: border-box; }
+
+  .app-shell {
+    display: flex;
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  /* ---------- 侧边栏（240px · 固定） ---------- */
+  .app-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--sidebar-border);
+  }
+
+  .app-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px 20px;
+  }
+  .app-brand-mark { display: block; flex-shrink: 0; }
+  .app-brand-mark-bg { fill: var(--primary); }
+  .app-brand-text { min-width: 0; }
+  .app-brand-wordmark {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-brand-caption {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--muted-foreground);
+  }
+
+  .app-nav { display: flex; flex-direction: column; gap: 2px; }
+
+  .app-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    font-size: 13.5px;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-nav-item:hover { background: var(--muted); color: var(--foreground); }
+  .app-nav-item:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  .app-nav-item[data-active="true"] {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+    font-weight: 500;
+  }
+  .app-nav-item[data-active="true"]:hover {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+  }
+  .app-nav-item [data-lucide] { width: 20px; height: 20px; flex-shrink: 0; }
+  .app-nav-label { overflow: hidden; text-overflow: ellipsis; }
+
+  .app-nav-badge {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 7px;
+    border-radius: var(--radius-full);
+    background: var(--alpha-brand-subtle);
+    color: var(--alpha-brand-strong);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+    line-height: 1;
+  }
+
+  .app-sidebar-spacer { flex: 1; }
+
+  .app-sidebar-footer {
+    border-top: 1px solid var(--sidebar-border);
+    padding: 12px;
+  }
+  .app-api-health { display: flex; align-items: center; gap: 8px; }
+  .app-api-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--state-success);
+    flex-shrink: 0;
+  }
+  .app-api-label { font-size: 12px; color: var(--muted-foreground); }
+  .app-api-version {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .app-engine-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .app-engine-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 10.5px;
+    line-height: 1;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  /* ---------- 主区域 ---------- */
+  .app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin-left: 240px;
+  }
+
+  .app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+  }
+  .app-topbar-titles {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .app-page-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .app-page-subtitle {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--muted-foreground);
+  }
+
+  .app-topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .app-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 220px;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    transition: background-color 150ms var(--ease-default),
+                color 150ms var(--ease-default);
+  }
+  .app-search:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  .app-search [data-lucide] { width: 16px; height: 16px; flex-shrink: 0; }
+  .app-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .app-search input::placeholder { color: var(--muted-foreground); }
+
+  .app-content {
+    flex: 1;
+    padding: 24px;
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+  /* ---------- 响应式：<960px 折叠为 64px 纯图标栏 ---------- */
+  @media (max-width: 959px) {
+    .app-sidebar { width: 64px; padding: 14px 10px; align-items: center; }
+    .app-main { margin-left: 64px; }
+    .app-brand { padding: 4px 0 18px; justify-content: center; }
+    .app-brand-text { display: none; }
+    .app-nav { width: 100%; align-items: center; gap: 4px; }
+    .app-nav-item {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+      gap: 0;
+      border-radius: var(--radius-md);
+    }
+    .app-nav-item[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--primary);
+    }
+    .app-nav-badge { display: none; }
+    .app-nav-label {
+      display: none;
+      position: absolute;
+      left: calc(100% + 14px);
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 6px 10px;
+      background: var(--popover, var(--card));
+      color: var(--popover-foreground, var(--foreground));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      font-size: 12.5px;
+      line-height: 1;
+      white-space: nowrap;
+      z-index: 60;
+      pointer-events: none;
+    }
+    .app-nav-item:hover .app-nav-label,
+    .app-nav-item:focus-visible .app-nav-label { display: block; }
+    .app-sidebar-footer { width: 100%; padding: 12px 0 2px; }
+    .app-api-health { justify-content: center; }
+    .app-api-dot { width: 10px; height: 10px; }
+    .app-api-label,
+    .app-api-version { display: none; }
+    .app-engine-badges { display: none; }
+  }
+
+  /* ---------- 降低动态效果 ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    .app-shell *,
+    .app-shell *::before,
+    .app-shell *::after { transition: none !important; }
+  }
+</style>
+
+<div class="app-shell">
+  <aside class="app-sidebar">
+    <div class="app-brand">
+      <svg class="app-brand-mark" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect class="app-brand-mark-bg" width="28" height="28" rx="8"/>
+        <circle cx="10.5" cy="17.5" r="1.7" fill="#fff"/>
+        <path d="M14 17.5a3.5 3.5 0 0 0-3.5-3.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M17 17.5a6.5 6.5 0 0 0-6.5-6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".85"/>
+        <path d="M20 17.5a9.5 9.5 0 0 0-9.5-9.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".7"/>
+      </svg>
+      <div class="app-brand-text">
+        <div class="app-brand-wordmark">Alpha Agent</div>
+        <div class="app-brand-caption">空投 Alpha 控制台</div>
+      </div>
+    </div>
+
+    <!-- SLOT: activeNavItem — leaf sets data-active="true" on its own nav item and removes that item's data-dom-id -->
+    <nav class="app-nav" aria-label="主导航">
+      <a href="#" class="app-nav-item" data-nav-key="index" data-dom-id="nav-index">
+        <i data-lucide="radar"></i>
+        <span class="app-nav-label">工作台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="discoveries" data-dom-id="nav-discoveries">
+        <i data-lucide="satellite-dish"></i>
+        <span class="app-nav-label">发现队列</span>
+        <span class="app-nav-badge">12</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="insights" data-active="true">
+        <i data-lucide="chart-line"></i>
+        <span class="app-nav-label">洞察</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="portfolio" data-dom-id="nav-portfolio">
+        <i data-lucide="clipboard-check"></i>
+        <span class="app-nav-label">参与复盘</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="ops" data-dom-id="nav-ops">
+        <i data-lucide="server-cog"></i>
+        <span class="app-nav-label">运维台</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="notifications" data-dom-id="nav-notifications">
+        <i data-lucide="bell"></i>
+        <span class="app-nav-label">通知中心</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="archive" data-dom-id="nav-archive">
+        <i data-lucide="archive"></i>
+        <span class="app-nav-label">归档历史</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="collections" data-dom-id="nav-collections">
+        <i data-lucide="bookmark"></i>
+        <span class="app-nav-label">收藏关注</span>
+      </a>
+      <a href="#" class="app-nav-item" data-nav-key="settings" data-dom-id="nav-settings">
+        <i data-lucide="settings"></i>
+        <span class="app-nav-label">系统设置</span>
+      </a>
+    </nav>
+
+    <div class="app-sidebar-spacer" aria-hidden="true"></div>
+
+    <div class="app-sidebar-footer">
+      <div class="app-api-health">
+        <span class="app-api-dot" aria-hidden="true"></span>
+        <span class="app-api-label">接口正常</span>
+        <span class="app-api-version">v1.4.2</span>
+      </div>
+      <div class="app-engine-badges">
+        <span class="app-engine-chip">score-v1.4 · 权威</span>
+        <span class="app-engine-chip">opportunity-v2.0 · 影子</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-topbar">
+      <div class="app-topbar-titles">
+        <!-- SLOT: pageTitle --><h1 class="app-page-title alpha-heading">洞察</h1><!-- /SLOT: pageTitle -->
+        <!-- SLOT: pageSubtitle --><p class="app-page-subtitle">赛道叙事热度 · 风险团队 · 决策标签分布</p><!-- /SLOT: pageSubtitle -->
+      </div>
+      <div class="app-topbar-right">
+        <label class="app-search">
+          <i data-lucide="search"></i>
+          <input type="text" placeholder="搜索项目 / 赛道…" aria-label="全局搜索">
+        </label>
+        <!-- SLOT: pageActions -->
+        <div class="page-actions">
+          <button type="button" class="btn-secondary">
+            <i data-lucide="download"></i>
+            <span>导出洞察</span>
+          </button>
+          <a href="#" class="btn-secondary" data-dom-id="shortcut-portfolio">
+            <i data-lucide="clipboard-check"></i>
+            <span>查看复盘</span>
+          </a>
+        </div>
+        <!-- /SLOT: pageActions -->
+      </div>
+    </header>
+
+    <main class="app-content">
+      <span id="page-top" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden;" aria-hidden="true"></span>
+      <!-- SLOT: content -->
+      <div class="insights-grid">
+
+        <!-- 1. 最热叙事卡（7 列） -->
+        <section class="ins-card span-7" aria-labelledby="narratives-title">
+          <header class="ins-card-head">
+            <h2 class="ins-card-title" id="narratives-title">最热叙事</h2>
+            <p class="ins-card-caption">按赛道聚合 · 热度 = avg_heat_score</p>
+          </header>
+          <ol class="narr-list">
+            <li class="narr-row">
+              <span class="narr-rank top">01</span>
+              <div class="narr-main">
+                <div class="narr-line1">
+                  <span class="narr-name">跨链互操作</span>
+                  <span class="narr-trend up"><i data-lucide="trending-up"></i><span>上升</span></span>
+                </div>
+                <div class="narr-bar">
+                  <div class="narr-bar-fill fill-1" style="width:86%"></div>
+                </div>
+                <div class="narr-line3">
+                  <span class="narr-count">23 个项目</span>
+                </div>
+              </div>
+              <span class="narr-value">0.86</span>
+            </li>
+            <li class="narr-row">
+              <span class="narr-rank top">02</span>
+              <div class="narr-main">
+                <div class="narr-line1">
+                  <span class="narr-name">Restaking</span>
+                  <span class="narr-trend up"><i data-lucide="trending-up"></i><span>上升</span></span>
+                </div>
+                <div class="narr-bar">
+                  <div class="narr-bar-fill fill-2" style="width:78%"></div>
+                </div>
+                <div class="narr-line3">
+                  <span class="narr-count">18 个项目</span>
+                </div>
+              </div>
+              <span class="narr-value">0.78</span>
+            </li>
+            <li class="narr-row">
+              <span class="narr-rank top">03</span>
+              <div class="narr-main">
+                <div class="narr-line1">
+                  <span class="narr-name">DePIN</span>
+                  <span class="narr-trend flat"><i data-lucide="minus"></i><span>持平</span></span>
+                </div>
+                <div class="narr-bar">
+                  <div class="narr-bar-fill fill-2" style="width:71%"></div>
+                </div>
+                <div class="narr-line3">
+                  <span class="narr-count">15 个项目</span>
+                </div>
+              </div>
+              <span class="narr-value">0.71</span>
+            </li>
+            <li class="narr-row">
+              <span class="narr-rank">04</span>
+              <div class="narr-main">
+                <div class="narr-line1">
+                  <span class="narr-name">AI+Crypto</span>
+                  <span class="narr-trend up"><i data-lucide="trending-up"></i><span>上升</span></span>
+                </div>
+                <div class="narr-bar">
+                  <div class="narr-bar-fill fill-3" style="width:64%"></div>
+                </div>
+                <div class="narr-line3">
+                  <span class="narr-count">12 个项目</span>
+                </div>
+              </div>
+              <span class="narr-value">0.64</span>
+            </li>
+            <li class="narr-row">
+              <span class="narr-rank">05</span>
+              <div class="narr-main">
+                <div class="narr-line1">
+                  <span class="narr-name">GameFi</span>
+                  <span class="narr-trend down"><i data-lucide="trending-down"></i><span>下降</span></span>
+                </div>
+                <div class="narr-bar">
+                  <div class="narr-bar-fill fill-3" style="width:38%"></div>
+                </div>
+                <div class="narr-line3">
+                  <span class="narr-count">9 个项目</span>
+                </div>
+              </div>
+              <span class="narr-value">0.38</span>
+            </li>
+          </ol>
+        </section>
+
+        <!-- 2. 决策标签分布卡（5 列） -->
+        <section class="ins-card span-5" aria-labelledby="labels-title">
+          <header class="ins-card-head">
+            <h2 class="ins-card-title" id="labels-title">决策标签分布</h2>
+            <p class="ins-card-caption">label_counts · 共 128 个项目</p>
+          </header>
+          <div class="donut-wrap">
+            <div class="donut-canvas">
+              <canvas id="labelDonut" height="180" aria-label="决策标签分布环形图"></canvas>
+              <div class="donut-center">
+                <span class="donut-total">128</span>
+                <span class="donut-sub">项目总数</span>
+              </div>
+            </div>
+            <ul class="donut-legend">
+              <li>
+                <span class="legend-dot dot-farm"></span>
+                <span class="legend-name">FARM</span>
+                <span class="legend-val">23</span>
+                <span class="legend-pct">18%</span>
+              </li>
+              <li>
+                <span class="legend-dot dot-watch"></span>
+                <span class="legend-name">WATCH</span>
+                <span class="legend-val">41</span>
+                <span class="legend-pct">32%</span>
+              </li>
+              <li>
+                <span class="legend-dot dot-ignore"></span>
+                <span class="legend-name">IGNORE</span>
+                <span class="legend-val">64</span>
+                <span class="legend-pct">50%</span>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- 3. 高风险团队卡（5 列） -->
+        <section class="ins-card span-5" aria-labelledby="risk-title">
+          <header class="ins-card-head">
+            <h2 class="ins-card-title" id="risk-title">高风险团队</h2>
+            <p class="ins-card-caption">team_score 低或触发风险旗标</p>
+          </header>
+          <ul class="risk-list">
+            <li class="risk-row">
+              <div class="risk-topline">
+                <div class="risk-id">
+                  <span class="risk-name">Nereus Finance</span>
+                  <span class="risk-sector">DeFi</span>
+                </div>
+                <div class="risk-meta">
+                  <span class="risk-badge risk-high">high</span>
+                  <span class="risk-score">0.21</span>
+                </div>
+              </div>
+              <div class="risk-flags">
+                <span class="flag-chip">匿名团队</span>
+                <span class="flag-chip">无公开仓库</span>
+              </div>
+            </li>
+            <li class="risk-row">
+              <div class="risk-topline">
+                <div class="risk-id">
+                  <span class="risk-name">Rhea Chain</span>
+                  <span class="risk-sector">跨链互操作</span>
+                </div>
+                <div class="risk-meta">
+                  <span class="risk-badge risk-high">high</span>
+                  <span class="risk-score">0.34</span>
+                </div>
+              </div>
+              <div class="risk-flags">
+                <span class="flag-chip">解锁集中</span>
+                <span class="flag-chip">VC 占比 48%</span>
+              </div>
+            </li>
+            <li class="risk-row">
+              <div class="risk-topline">
+                <div class="risk-id">
+                  <span class="risk-name">Tidelift</span>
+                  <span class="risk-sector">社交</span>
+                </div>
+                <div class="risk-meta">
+                  <span class="risk-badge risk-medium">medium</span>
+                  <span class="risk-score">0.52</span>
+                </div>
+              </div>
+              <div class="risk-flags">
+                <span class="flag-chip">推特注册不足 3 个月</span>
+              </div>
+            </li>
+            <li class="risk-row">
+              <div class="risk-topline">
+                <div class="risk-id">
+                  <span class="risk-name">Copperline</span>
+                  <span class="risk-sector">GameFi</span>
+                </div>
+                <div class="risk-meta">
+                  <span class="risk-badge risk-medium">medium</span>
+                  <span class="risk-score">0.58</span>
+                </div>
+              </div>
+              <div class="risk-flags">
+                <span class="flag-chip">文档缺失</span>
+              </div>
+            </li>
+          </ul>
+        </section>
+
+        <!-- 4. 重点参与榜卡（7 列） -->
+        <section class="ins-card span-7" aria-labelledby="farm-title">
+          <header class="ins-card-head">
+            <h2 class="ins-card-title" id="farm-title">重点参与榜</h2>
+            <p class="ins-card-caption">FARM 按评分降序</p>
+          </header>
+          <ol class="farm-list">
+            <li>
+              <a href="#" class="farm-row farm-row-link" data-dom-id="link-project-detail">
+                <span class="farm-rank">01</span>
+                <span class="farm-name">Zephyr Protocol</span>
+                <span class="farm-sector">Restaking</span>
+                <span class="farm-right">
+                  <span class="farm-score">86</span>
+                  <span class="farm-badge">FARM</span>
+                </span>
+              </a>
+            </li>
+            <li>
+              <div class="farm-row">
+                <span class="farm-rank">02</span>
+                <span class="farm-name">Kite Network</span>
+                <span class="farm-sector">跨链互操作</span>
+                <span class="farm-right">
+                  <span class="farm-score">81</span>
+                  <span class="farm-badge">FARM</span>
+                </span>
+              </div>
+            </li>
+            <li>
+              <div class="farm-row">
+                <span class="farm-rank">03</span>
+                <span class="farm-name">Vaultara</span>
+                <span class="farm-sector">DeFi</span>
+                <span class="farm-right">
+                  <span class="farm-score">74</span>
+                  <span class="farm-badge">FARM</span>
+                </span>
+              </div>
+            </li>
+            <li>
+              <div class="farm-row">
+                <span class="farm-rank">04</span>
+                <span class="farm-name">Orbital Quest</span>
+                <span class="farm-sector">DePIN</span>
+                <span class="farm-right">
+                  <span class="farm-score">71</span>
+                  <span class="farm-badge">FARM</span>
+                </span>
+              </div>
+            </li>
+            <li>
+              <div class="farm-row">
+                <span class="farm-rank">05</span>
+                <span class="farm-name">Cinder Protocol</span>
+                <span class="farm-sector">模块化基础设施</span>
+                <span class="farm-right">
+                  <span class="farm-score">69</span>
+                  <span class="farm-badge">FARM</span>
+                </span>
+              </div>
+            </li>
+          </ol>
+        </section>
+
+        <!-- 5. 赛道分布卡（12 列通栏） -->
+        <section class="ins-card span-12" aria-labelledby="sector-title">
+          <header class="ins-card-head">
+            <h2 class="ins-card-title" id="sector-title">赛道分布</h2>
+            <p class="ins-card-caption">sector_counts · 按项目数排序</p>
+          </header>
+          <div class="sector-canvas">
+            <canvas id="sectorBar" height="220" aria-label="赛道分布横向柱状图"></canvas>
+          </div>
+        </section>
+
+      </div>
+      <!-- /SLOT: content -->
+          <style>
+/* 回到顶部 · 可用性增强 */
+.btt-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  border: 0;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: transform var(--duration-fast) var(--ease-default), background-color var(--duration-fast) var(--ease-default);
+}
+.btt-fab:hover { transform: translateY(-3px); }
+.btt-fab:active { transform: translateY(0); }
+.btt-fab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.btt-fab [data-lucide] { width: 16px; height: 16px; }
+@media (prefers-reduced-motion: reduce) { .btt-fab { transition: none; } }
+@media (max-width: 959px) { .btt-fab { right: 20px; bottom: 20px; height: 40px; padding: 0 14px; } }
+</style>
+      <a href="#page-top" class="btt-fab" aria-label="回到顶部"><i data-lucide="arrow-up"></i><span>回到顶部</span></a>
+    </main>
+
+    <footer class="app-footer">
+      <span>Alpha Agent · Web3 空投 Alpha 识别与决策支持</span>
+      <span>数据不构成投资建议 · score-v1.4</span>
+    </footer>
+  </div>
+</div>
+
+<style>
+  /* ===== page-insights · 页面局部样式（仅引用语义 token）===== */
+  .page-actions { display: flex; align-items: center; gap: 8px; }
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--foreground);
+    font-size: 13px;
+    line-height: 1;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 150ms var(--ease-default),
+                border-color 150ms var(--ease-default);
+  }
+  .btn-secondary:hover { background: var(--muted); }
+  .btn-secondary:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  .btn-secondary [data-lucide] { width: 16px; height: 16px; }
+
+  /* ---------- 12 列网格 ---------- */
+  .insights-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .span-7 { grid-column: span 7; }
+  .span-5 { grid-column: span 5; }
+  .span-12 { grid-column: span 12; }
+  @media (max-width: 1199px) {
+    .span-7, .span-5 { grid-column: span 12; }
+  }
+
+  /* ---------- 卡片基座 ---------- */
+  .ins-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px 20px;
+    min-width: 0;
+  }
+  .ins-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .ins-card-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--foreground);
+  }
+  .ins-card-caption {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--muted-foreground);
+  }
+
+  /* ---------- 1. 最热叙事 ---------- */
+  .narr-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .narr-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .narr-row:first-child { border-top: 0; padding-top: 2px; }
+  .narr-rank {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    width: 22px;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  .narr-rank.top { color: var(--primary); font-weight: 600; }
+  .narr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .narr-line1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .narr-name { font-size: 13.5px; font-weight: 500; color: var(--foreground); }
+  .narr-trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    line-height: 1;
+  }
+  .narr-trend [data-lucide] { width: 16px; height: 16px; }
+  .narr-trend.up { color: var(--state-success); }
+  .narr-trend.flat { color: var(--muted-foreground); }
+  .narr-trend.down { color: var(--state-error); }
+  .narr-bar {
+    height: 6px;
+    background: var(--muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .narr-bar-fill { height: 100%; border-radius: var(--radius-full); }
+  .narr-bar-fill.fill-1 { background: var(--chart-1); }
+  .narr-bar-fill.fill-2 { background: var(--chart-2); }
+  .narr-bar-fill.fill-3 { background: var(--chart-3); }
+  .narr-line3 { display: flex; }
+  .narr-count { font-size: 11.5px; color: var(--muted-foreground); }
+  .narr-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--foreground);
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+
+  /* ---------- 2. 决策标签分布 ---------- */
+  .donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .donut-canvas { position: relative; width: 180px; height: 180px; }
+  .donut-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    pointer-events: none;
+  }
+  .donut-total {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--foreground);
+    line-height: 1;
+  }
+  .donut-sub { font-size: 11.5px; color: var(--muted-foreground); }
+  .donut-legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .donut-legend li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+  }
+  .legend-dot.dot-farm { background: var(--label-farm); }
+  .legend-dot.dot-watch { background: var(--label-watch); }
+  .legend-dot.dot-ignore { background: var(--label-ignore); }
+  .legend-name { color: var(--foreground); font-weight: 500; }
+  .legend-val {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--muted-foreground);
+  }
+  .legend-pct {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground);
+  }
+
+  /* ---------- 3. 高风险团队 ---------- */
+  .risk-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .risk-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .risk-row:first-child { border-top: 0; padding-top: 2px; }
+  .risk-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .risk-id { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .risk-name {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .risk-sector { font-size: 11.5px; color: var(--muted-foreground); flex-shrink: 0; }
+  .risk-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .risk-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+  }
+  .risk-badge.risk-high {
+    background: var(--state-error-subtle);
+    color: var(--state-error-foreground);
+  }
+  .risk-badge.risk-medium {
+    background: var(--state-warning-subtle);
+    color: var(--state-warning-foreground);
+  }
+  .risk-score {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .risk-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .flag-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    background: var(--muted);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    line-height: 1;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  /* ---------- 4. 重点参与榜 ---------- */
+  .farm-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .farm-list > li { border-top: 1px solid var(--border); }
+  .farm-list > li:first-child { border-top: 0; }
+  .farm-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 8px;
+    margin: 0 -8px;
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    transition: background-color 150ms var(--ease-default);
+  }
+  .farm-row-link:hover { background: var(--muted); }
+  .farm-row-link:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  .farm-rank {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    width: 22px;
+    flex-shrink: 0;
+  }
+  .farm-name { font-size: 13.5px; font-weight: 500; color: var(--foreground); }
+  .farm-sector {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    line-height: 1;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+  .farm-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .farm-score {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--label-farm);
+  }
+  .farm-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    background: var(--label-farm-bg);
+    color: var(--label-farm-foreground);
+    border-radius: var(--radius-full);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: .03em;
+  }
+
+  /* ---------- 5. 赛道分布 ---------- */
+  .sector-canvas { width: 100%; }
+</style>
+
+<script>lucide.createIcons();</script>
+<script>
+(function () {
+  var css = getComputedStyle(document.documentElement);
+  function tok(name) { return css.getPropertyValue(name).trim(); }
+
+  var chartColors = {
+    farm: tok('--label-farm'),
+    watch: tok('--label-watch'),
+    ignore: tok('--label-ignore'),
+    c1: tok('--chart-1'),
+    border: tok('--border'),
+    muted: tok('--muted-foreground'),
+    fg: tok('--foreground')
+  };
+
+  var baseFont = { family: css.getPropertyValue('--font-sans'), size: 12 };
+
+  /* ---------- 决策标签分布 doughnut ---------- */
+  new Chart(document.getElementById('labelDonut'), {
+    type: 'doughnut',
+    data: {
+      labels: ['FARM', 'WATCH', 'IGNORE'],
+      datasets: [{
+        data: [23, 41, 64],
+        backgroundColor: [chartColors.farm, chartColors.watch, chartColors.ignore],
+        borderWidth: 0,
+        hoverOffset: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      cutout: '72%',
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function (ctx) {
+              var total = 128;
+              var pct = Math.round((ctx.parsed / total) * 100);
+              return ' ' + ctx.label + '：' + ctx.parsed + '（' + pct + '%）';
+            }
+          }
+        }
+      }
+    }
+  });
+
+  /* ---------- 赛道分布横向 bar ---------- */
+  new Chart(document.getElementById('sectorBar'), {
+    type: 'bar',
+    data: {
+      labels: ['跨链互操作', 'DeFi', 'DePIN', 'Restaking', 'AI+Crypto', 'GameFi', '模块化基础设施', '社交'],
+      datasets: [{
+        data: [23, 21, 18, 15, 12, 9, 8, 6],
+        backgroundColor: chartColors.c1,
+        borderRadius: 4,
+        barThickness: 16
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      scales: {
+        x: {
+          grid: { color: chartColors.border },
+          ticks: { color: chartColors.muted, font: baseFont, precision: 0 },
+          border: { display: false }
+        },
+        y: {
+          grid: { display: false },
+          ticks: { color: chartColors.fg, font: baseFont },
+          border: { display: false }
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function (ctx) { return ' ' + ctx.parsed.x + ' 个项目'; }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
+</body>
+</html>
