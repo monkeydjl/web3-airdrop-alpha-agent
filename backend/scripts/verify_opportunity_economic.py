@@ -385,6 +385,13 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         def persist_collection_result(self, *a: Any, **k: Any) -> None:  # noqa: ARG002
             persist_n["n"] += 1
 
+        def _get_conn(self) -> None:
+            # 与真实 CollectionRepository 对齐；无连接返回 None 以跳过 operator 门禁。
+            return None
+
+        def _should_close(self) -> bool:
+            return False
+
     prev_env = main_module.settings.app_env
     prev_auto = main_module.settings.collection_auto_run_enabled
     try:
@@ -450,6 +457,13 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
 
         def persist_collection_result(self, res: CollectorResult, **k: Any) -> None:  # noqa: ARG002
             persisted.append(res)
+
+        def _get_conn(self) -> None:
+            # 与真实 CollectionRepository 对齐；无连接返回 None 以跳过 operator 门禁。
+            return None
+
+        def _should_close(self) -> bool:
+            return False
 
     prev_auto_c = coll_mod.settings.collection_auto_run_enabled
     try:
