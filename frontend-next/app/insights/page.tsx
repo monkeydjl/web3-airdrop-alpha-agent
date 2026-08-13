@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
@@ -105,7 +105,7 @@ export default function InsightsPage() {
       </div>
 
       {error ? (
-        <div className="card flex items-center justify-between gap-3 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
+        <div className="dash-card flex items-center justify-between gap-3 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
           <span>{error}</span>
           <button type="button" className="underline" onClick={load}>
             重试
@@ -126,7 +126,7 @@ export default function InsightsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="card p-5 lg:col-span-4">
+        <div className="ins-card lg:col-span-4">
           <SectionTitle title="标签占比" />
           <LabelDoughnut counts={labelCounts} />
           <div className="mt-4 space-y-2">
@@ -145,14 +145,14 @@ export default function InsightsPage() {
           </div>
         </div>
 
-        <div className="card p-5 lg:col-span-8">
+        <div className="ins-card lg:col-span-8">
           <SectionTitle title="赛道分布" />
           <SectorBars sectors={sectorList} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="card p-5">
+        <div className="ins-card">
           <SectionTitle
             title="重点参与榜"
             action={
@@ -187,7 +187,7 @@ export default function InsightsPage() {
           )}
         </div>
 
-        <div className="card p-5">
+        <div className="ins-card">
           <SectionTitle title="观察列表精选" />
           {topWatch.length === 0 ? (
             <p className="py-8 text-center text-sm text-ink-faint">暂无观察中的项目</p>
@@ -215,7 +215,7 @@ export default function InsightsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="card p-5">
+        <div className="ins-card">
           <SectionTitle title="最热叙事" />
           {(insights?.hottest_narratives || []).length === 0 ? (
             <p className="py-8 text-center text-sm text-ink-faint">暂无叙事热度数据</p>
@@ -241,7 +241,7 @@ export default function InsightsPage() {
           )}
         </div>
 
-        <div className="card p-5">
+        <div className="ins-card">
           <SectionTitle title="高风险团队" />
           {(insights?.risky_teams || []).length === 0 ? (
             <p className="py-8 text-center text-sm text-ink-faint">暂无高风险团队标记</p>

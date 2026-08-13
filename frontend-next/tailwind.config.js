@@ -51,11 +51,15 @@ module.exports = {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       boxShadow: {
-        card: '0 1px 2px rgb(0 0 0 / 0.04), 0 0 0 1px rgb(0 0 0 / 0.02)',
-        lift: '0 4px 16px rgb(0 0 0 / 0.07)',
+        card: '0 1px 2px rgba(17, 20, 44, 0.05)',
+        lift: '0 10px 24px -8px rgba(17, 20, 44, 0.18)',
         glow: '0 0 0 1px rgb(16 185 129 / 0.12)',
+        popover: '0 24px 56px -20px rgba(17, 20, 44, 0.28)',
       },
       borderRadius: {
+        sm: '4px',
+        md: '8px',
+        lg: '12px',
         xl: '0.5rem',
         '2xl': '0.625rem',
       },

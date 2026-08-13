@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { EmptyState, Switch, Toast } from '@/components/ui';
 import { apiFetch, fetchHealth } from '@/lib/api';
@@ -62,7 +62,7 @@ function Metric({
         ? 'text-watch dark:text-watch'
         : 'text-ink';
   return (
-    <div className="border border-line bg-surface px-4 py-3.5 shadow-card">
+    <div className="ops-card px-4 py-3.5">
       <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-muted">
         {label}
       </div>
@@ -307,7 +307,7 @@ export default function OpsPage() {
       {/* main grid: sources | cost + health */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.25fr_0.75fr]">
         {/* sources panel */}
-        <section className="border border-line bg-surface shadow-card">
+        <section className="ops-card">
           <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
             <h2 className="text-sm font-semibold text-ink">采集源</h2>
             <span className="font-mono text-[11px] text-ink-faint">
@@ -397,7 +397,7 @@ export default function OpsPage() {
 
         {/* right rail */}
         <div className="flex flex-col gap-3">
-          <section className="border border-line bg-surface p-4 shadow-card sm:p-5">
+          <section className="ops-card p-4 sm:p-5">
             <h2 className="mb-3 text-sm font-semibold text-ink">交互成本汇总</h2>
             <Kv k="记录数" v={ixSummary?.total ?? 0} />
             <Kv k="总成本" v={formatUsd(ixSummary?.total_cost_usd)} />
@@ -406,7 +406,7 @@ export default function OpsPage() {
             <Kv k="总工时" v={`${(ixSummary?.total_hours ?? 0).toFixed(1)} h`} />
           </section>
 
-          <section className="border border-line bg-surface p-4 shadow-card sm:p-5">
+          <section className="ops-card p-4 sm:p-5">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-ink">健康检查</h2>
               <button
@@ -441,7 +441,7 @@ export default function OpsPage() {
       </div>
 
       {/* quarantine table full width */}
-      <section className="mt-3 border border-line bg-surface shadow-card">
+      <section className="mt-3 ops-card">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
           <h2 className="text-sm font-semibold text-ink">隔离区 Quarantine</h2>
           <span className="font-mono text-[11px] text-ink-faint">

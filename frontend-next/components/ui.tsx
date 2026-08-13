@@ -14,6 +14,32 @@ export function LabelBadge({ label, className = '' }: { label: string; className
   );
 }
 
+type CardVariant = 'dash' | 'ins' | 'ops' | 'pd';
+
+const cardVariantClass: Record<CardVariant, string> = {
+  dash: 'dash-card',
+  ins: 'ins-card',
+  ops: 'ops-card',
+  pd: 'pd-card',
+};
+
+export function Card({
+  children,
+  variant = 'dash',
+  className = '',
+  ...rest
+}: {
+  children: ReactNode;
+  variant?: CardVariant;
+  className?: string;
+} & React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={`${cardVariantClass[variant]} ${className}`} {...rest}>
+      {children}
+    </div>
+  );
+}
+
 export function StatCard({
   label,
   value,
@@ -43,7 +69,7 @@ export function StatCard({
           : 'text-farm dark:text-farm';
 
   return (
-    <div className={`card relative overflow-hidden p-4 sm:p-5`}>
+    <div className={`dash-card relative overflow-hidden p-4 sm:p-5`}>
       <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${ring}`} />
       <div className="relative">
         <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{label}</div>
@@ -150,7 +176,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="card flex flex-col items-center justify-center border-dashed px-6 py-16 text-center animate-fade-in">
+    <div className="dash-card flex flex-col items-center justify-center border-dashed px-6 py-16 text-center animate-fade-in">
       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-farm-soft text-farm dark:bg-farm-soft0/15 dark:text-farm">
         <Inbox className="h-6 w-6" strokeWidth={1.5} />
       </div>
@@ -165,7 +191,7 @@ export function SkeletonGrid({ n = 8 }: { n?: number }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className="card p-4 space-y-3">
+        <div key={i} className="dash-card p-4 space-y-3">
           <div className="skeleton h-4 w-2/3" />
           <div className="skeleton h-3 w-1/2" />
           <div className="skeleton h-8 w-16" />

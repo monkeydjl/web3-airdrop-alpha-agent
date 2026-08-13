@@ -114,7 +114,7 @@ export default function DashboardPage() {
 
       {/* Running status */}
       {running && runStatus && (
-        <div className="card flex items-center gap-3 border-farm/30 bg-farm-soft/50 px-4 py-3 text-sm text-farm dark:border-farm/20 dark:bg-farm/10 dark:text-farm">
+        <div className="dash-card flex items-center gap-3 border-farm/30 bg-farm-soft/50 px-4 py-3 text-sm text-farm dark:border-farm/20 dark:bg-farm/10 dark:text-farm">
           <span className="h-2 w-2 animate-pulse rounded-full bg-farm" />
           {runStatus}
         </div>
@@ -122,7 +122,7 @@ export default function DashboardPage() {
 
       {/* Error */}
       {error && (
-        <div className="card flex flex-wrap items-center justify-between gap-3 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+        <div className="dash-card flex flex-wrap items-center justify-between gap-3 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
           <span>加载失败：{error}</span>
           <button type="button" className="btn-secondary !py-1" onClick={loadProjects}>重试</button>
         </div>
@@ -138,7 +138,7 @@ export default function DashboardPage() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="card p-5 lg:col-span-4">
+        <div className="dash-card p-5 lg:col-span-4">
           <h2 className="mb-4 text-sm font-semibold text-ink">标签分布</h2>
           <LabelDoughnut counts={stats.counts} />
           <div className="mt-4 flex flex-wrap justify-center gap-3">
@@ -151,14 +151,14 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
-        <div className="card p-5 lg:col-span-8">
+        <div className="dash-card p-5 lg:col-span-8">
           <h2 className="mb-2 text-sm font-semibold text-ink">赛道分布（前 8）</h2>
           <SectorBars sectors={sectors} />
         </div>
       </div>
 
       {/* Toolbar */}
-      <div className="card p-3">
+      <div className="dash-card p-3">
         <div className="toolbar">
           <select className="select" value={labelFilter} onChange={(e) => setLabelFilter(e.target.value as Label | '')}>
             <option value="">全部标签</option>
@@ -222,7 +222,7 @@ export default function DashboardPage() {
           {filtered.map((p, i) => <ProjectCard key={p.id} project={p} rank={i + 1} />)}
         </div>
       ) : (
-        <div className="card overflow-hidden">
+        <div className="dash-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="data-table">
               <thead>
