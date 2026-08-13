@@ -1,6 +1,7 @@
 'use client';
 
 import { EmptyState, Switch, Toast } from '@/components/ui';
+import { TopBar } from '@/components/TopBar';
 import { apiFetch, fetchHealth } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
@@ -236,21 +237,19 @@ export default function OpsPage() {
   const net = ixSummary?.net_usd ?? 0;
 
   return (
-    <div className="animate-fade-in">
+    <>
       {toast ? <Toast message={toast.message} type={toast.type} /> : null}
 
-      {/* header — match design: title left, one primary CTA right */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-farm dark:text-farm">
-            运营
-          </p>
-          <h1 className="page-title">运维台</h1>
-          <p className="page-sub max-w-[54ch]">
-            每个采集源可单独启用 / 禁用；禁用后不参与定时与「触发全部」。开关写入{' '}
-            <code className="font-mono text-[11px]">data_sources.enabled</code>。
-          </p>
-        </div>
+      {/* topbar — unified header */}
+      <TopBar
+        title="运维台"
+        subtitle={
+          <>
+            采集源管理 · 隔离区 · 健康检查 · 开关写入{' '}
+            <code className="font-mono text-[11px]">data_sources.enabled</code>
+          </>
+        }
+      >
         <button
           type="button"
           className="btn-primary"
@@ -260,7 +259,9 @@ export default function OpsPage() {
         >
           {busy === 'all' ? '触发中…' : '触发全部已启用源'}
         </button>
-      </div>
+      </TopBar>
+
+    <div className="app-content animate-fade-in">
 
       {error ? (
         <div className="mt-4 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
@@ -501,5 +502,6 @@ export default function OpsPage() {
         )}
       </section>
     </div>
+    </>
   );
 }

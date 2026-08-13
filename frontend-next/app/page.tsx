@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
 import { LABEL_ORDER, LABEL_ZH, sortProjects, stageZh } from '@/lib/format';
@@ -11,13 +11,23 @@ import type { CollectionSourceApi, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { ProjectCard } from '@/components/ProjectCard';
+import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/components/ui';
 
 type SortBy = 'score' | 'name' | 'confidence';
 type ViewMode = 'grid' | 'table';
 
 export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
+function DashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [labelFilter, setLabelFilter] = useState<Label | ''>('');
   const [sectorFilter, setSectorFilter] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -29,6 +39,12 @@ export default function DashboardPage() {
   const [runStatus, setRunStatus] = useState('');
   const [view, setView] = useState<ViewMode>('grid');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // 顶栏搜索 → ?keyword=xxx → 同步到本地筛选
+  useEffect(() => {
+    const q = searchParams.get('keyword');
+    if (q != null) setKeyword(q);
+  }, [searchParams]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -94,23 +110,17 @@ export default function DashboardPage() {
   }, [projects, hideIgnore, labelFilter, sectorFilter, keyword, hasFundingOnly, sortBy, sortOrder]);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <>
       {toast && <Toast message={toast.message} type={toast.type} />}
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.2em] text-farm dark:text-farm">指挥中心</p>
-          <h1 className="page-title">项目雷达</h1>
-          <p className="page-sub">自动发现 · 六维评分 · 重点参与 / 观察 / 忽略 · 共 {stats.total} 个项目</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={loadProjects} className="btn-secondary" disabled={loading || running}>刷新</button>
-          <button type="button" onClick={runPipeline} className="btn-primary" disabled={running}>
-            {running ? <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />运行中</> : <>▶ 采集并评分</>}
-          </button>
-        </div>
-      </div>
+      <TopBar title="项目雷达" subtitle={`自动发现 · 六维评分 · 重点参与 / 观察 / 忽略 · 共 ${stats.total} 个项目`}>
+        <button type="button" onClick={loadProjects} className="btn-secondary" disabled={loading || running}>刷新</button>
+        <button type="button" onClick={runPipeline} className="btn-primary" disabled={running}>
+          {running ? <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />运行中</> : <>▶ 采集并评分</>}
+        </button>
+      </TopBar>
+
+    <div className="app-content space-y-6 animate-fade-in">
 
       {/* Running status */}
       {running && runStatus && (
@@ -246,5 +256,6 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -21,9 +21,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <Nav />
           <div className="app-main">
-            <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
-            <footer className="mx-auto max-w-7xl px-4 pb-10 pt-2 text-center text-[11px] text-ink-faint sm:px-6">
-              空投阿尔法 · 输出仅供研究参考，不构成投资建议
+            <main className="flex-1">{children}</main>
+            <footer className="app-footer">
+              <span>空投阿尔法 · Web3 空投 Alpha 识别与决策支持</span>
+              <span>数据不构成投资建议 · score-v1.4</span>
             </footer>
           </div>
         </ThemeProvider>

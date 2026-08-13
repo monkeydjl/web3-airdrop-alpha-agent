@@ -1,6 +1,7 @@
 'use client';
 
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
+import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { LABEL_ORDER, LABEL_ZH } from '@/lib/format';
@@ -79,30 +80,28 @@ export default function InsightsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4 animate-fade-in">
-        <div className="skeleton h-8 w-48" />
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="skeleton h-64" />
-          <div className="skeleton h-64" />
+      <>
+        <TopBar title="洞察" subtitle="标签分布 · 赛道热度 · 风险团队 · 机会榜" />
+        <div className="app-content space-y-4 animate-fade-in">
+          <div className="skeleton h-8 w-48" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="skeleton h-64" />
+            <div className="skeleton h-64" />
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.2em] text-farm dark:text-farm">
-            数据分析
-          </p>
-          <h1 className="page-title">洞察</h1>
-          <p className="page-sub">标签分布 · 赛道热度 · 风险团队 · 机会榜</p>
-        </div>
+    <>
+      <TopBar title="洞察" subtitle="标签分布 · 赛道热度 · 风险团队 · 机会榜">
         <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
           {loading ? '加载中…' : '刷新'}
         </button>
-      </div>
+      </TopBar>
+
+    <div className="app-content space-y-6 animate-fade-in">
 
       {error ? (
         <div className="dash-card flex items-center justify-between gap-3 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
@@ -267,5 +266,6 @@ export default function InsightsPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

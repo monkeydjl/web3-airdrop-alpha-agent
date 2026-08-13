@@ -5,6 +5,7 @@ import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
 import { ParticipationTasks } from '@/components/ParticipationTasks';
+import { TopBar } from '@/components/TopBar';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
 import { ArrowLeft } from 'lucide-react';
@@ -221,7 +222,10 @@ export default function ProjectPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-[1080px] space-y-4 animate-fade-in py-2">
+      <>
+        <TopBar title="加载中…" subtitle="正在获取项目数据" />
+        <div className="app-content animate-fade-in">
+          <div className="mx-auto max-w-[1080px] space-y-4 py-2">
         <div className="skeleton h-3 w-24" />
         <div className="skeleton h-9 w-1/2" />
         <div className="skeleton h-4 w-2/5" />
@@ -237,13 +241,18 @@ export default function ProjectPage() {
             <div className="skeleton h-20 w-full" />
           </div>
         </div>
-      </div>
+          </div>
+        </div>
+      </>
     );
   }
 
   if (error) {
     return (
-      <div className="mx-auto max-w-lg border-t border-line py-12">
+      <>
+        <TopBar title="加载失败" subtitle={error} />
+        <div className="app-content animate-fade-in">
+          <div className="mx-auto max-w-lg border-t border-line py-12">
         <h1 className="text-xl font-semibold text-ink" style={{ lineHeight: 1.35 }}>
           加载失败
         </h1>
@@ -258,21 +267,28 @@ export default function ProjectPage() {
             回工作台
           </Link>
         </div>
-      </div>
+          </div>
+        </div>
+      </>
     );
   }
 
   if (!project) {
     return (
-      <div className="mx-auto max-w-lg border-t border-line py-12">
-        <h1 className="text-xl font-semibold text-ink" style={{ lineHeight: 1.35 }}>
-          没有这条项目
-        </h1>
-        <p className="mt-2 text-sm text-ink-muted">ID 无效或库中不存在。从工作台列表重新点开即可。</p>
-        <Link href="/" className="btn-primary mt-4 inline-flex">
-          回工作台
-        </Link>
-      </div>
+      <>
+        <TopBar title="未找到项目" subtitle="ID 无效或库中不存在" />
+        <div className="app-content animate-fade-in">
+          <div className="mx-auto max-w-lg border-t border-line py-12">
+            <h1 className="text-xl font-semibold text-ink" style={{ lineHeight: 1.35 }}>
+              没有这条项目
+            </h1>
+            <p className="mt-2 text-sm text-ink-muted">ID 无效或库中不存在。从工作台列表重新点开即可。</p>
+            <Link href="/" className="btn-primary mt-4 inline-flex">
+              回工作台
+            </Link>
+          </div>
+        </div>
+      </>
     );
   }
 
@@ -292,33 +308,30 @@ export default function ProjectPage() {
   const score = project.score ?? 0;
 
   return (
-    <div className="mx-auto max-w-[1080px] animate-fade-in">
+    <>
       {toast ? <Toast message={toast.message} type={toast.type} /> : null}
 
-      {/* top bar */}
-      <div className="mb-7 flex flex-wrap items-baseline justify-between gap-3 border-b border-line pb-4">
+      <TopBar
+        title={project.name}
+        subtitle={`${sourceZh(project.source)} · ${relativeTime(project.updated_at)}`}
+      >
         <Link
           href="/"
-          className="flex items-center gap-1 text-[13px] text-ink-muted transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-farm"
+          className="btn-secondary"
+          aria-label="返回工作台"
         >
-          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
-          工作台
+          <ArrowLeft className="h-4 w-4" strokeWidth={2} />
+          <span className="hidden sm:inline">返回</span>
         </Link>
-        <span className="font-mono text-[11px] tracking-wide text-ink-faint">
-          {sourceZh(project.source)} · {relativeTime(project.updated_at)}
-        </span>
-      </div>
+      </TopBar>
+
+    <div className="app-content animate-fade-in">
+      <div className="mx-auto max-w-[1080px]">
 
       {/* masthead */}
       <header className="mb-9 grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
-          <h1
-            className="m-0 text-[clamp(1.75rem,3.5vw,2.25rem)] font-semibold tracking-tight text-ink"
-            style={{ lineHeight: 1.3 }}
-          >
-            {project.name}
-          </h1>
-          <p className="mt-2.5 max-w-[52ch] text-sm text-ink-muted" style={{ lineHeight: 1.65 }}>
+          <p className="m-0 max-w-[52ch] text-sm text-ink-muted" style={{ lineHeight: 1.65 }}>
             {project.sector || '未分赛道'} · {stageZh(project.stage)}
             {project.funding?.funding_tier &&
             project.funding.funding_tier !== 'none' &&
@@ -677,5 +690,7 @@ export default function ProjectPage() {
         </aside>
       </div>
     </div>
+    </div>
+    </>
   );
 }
