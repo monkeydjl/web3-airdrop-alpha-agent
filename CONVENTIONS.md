@@ -119,6 +119,21 @@ backend/app/
 
 > JSON 字段统一 `snake_case`，与 Python 数据模型一致，无需 camelCase 转换。
 
+### 3.5 领域术语
+
+评分子系统相关表述按下表统一（完整定义见 [docs/GLOSSARY.md §2](docs/GLOSSARY.md)），勿混用：
+
+| 术语 | 含义 | 使用场景 |
+|---|---|---|
+| **评分决策引擎**（Scoring Decision Engine） | 评分子系统总称：评分权重（Σ=1.0 启动断言，ADR-006）+ LLM 增强（ADR-001）+ 质量阈值 | 指代整个评分子系统（架构图、能力表、章节标题、设置页引擎层） |
+| **规则引擎**（rule-based） | LLM 关闭时的默认打分路径（ADR-001） | 描述默认打分路径、LLM fallback 回退目标、成本对比基线 |
+| **LLM 增强** | 可选插件层，配置 `OPENAI_API_KEY` 且开启开关后叠加 | 描述可选增强，不作默认路径 |
+| **旁路机会引擎**（Opportunity Engine） | 独立于评分决策引擎的非权威对照引擎（v2.0） | 指 v2.0 Opportunity 子系统 |
+
+**边界**：「评分决策引擎」是整个评分子系统（含 LLM 增强与阈值），「规则引擎」仅是默认打分路径；指代整个子系统时必须用「评分决策引擎」，不得写成「规则引擎」。
+
+新术语先在 [docs/GLOSSARY.md](docs/GLOSSARY.md) 立词条，再在其它文档引用。
+
 ---
 
 ## 4. 导入规范
@@ -659,6 +674,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 | [DATA_SCORING_DICT.md](docs/DATA_SCORING_DICT.md) | 评分算法与数据字典 |
 | [DATABASE_DDL.md](docs/DATABASE_DDL.md) | 数据库完整 DDL |
 | [TASK_BREAKDOWN.md](docs/TASK_BREAKDOWN.md) | 按周任务分解 |
+| [docs/GLOSSARY.md](docs/GLOSSARY.md) | 术语唯一权威定义 |
 | [docs/adr/](docs/adr/) | 架构决策记录（ADR-001~011） |
 
 ---

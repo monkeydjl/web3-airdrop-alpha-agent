@@ -9,7 +9,7 @@
 
 改动分两条独立链路，互不影响：
 
-**主评分引擎（`score-v1.4`，用户可见分数）** — 264 项语料中 224 项分数变化，80 项跨越标签边界。FARM 数量由 95 增至 172（+81%）。变化的方向是**单向的**：几乎全部是"分数上升"，因为修复的三处缺陷都在系统性地惩罚证据更充分的项目。
+**主评分决策引擎（`score-v1.4`，用户可见分数）** — 264 项语料中 224 项分数变化，80 项跨越标签边界。FARM 数量由 95 增至 172（+81%）。变化的方向是**单向的**：几乎全部是"分数上升"，因为修复的三处缺陷都在系统性地惩罚证据更充分的项目。
 
 **旁路机会引擎（`opportunity-v2.0`，不影响主分）** — 270 项语料中 94 项决策变化。其中 90 项由"证据不足，请补充证据"更正为"成本超预算，判定不合适"；4 项由 WATCH 升为 FARM。
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 二、主评分引擎
+## 二、主评分决策引擎
 
 语料 264 项 = 12 个 Golden 用例 + 192 项信号空间网格 + 60 项走真实跨源合并路径的项目。全部确定性，无随机。
 
@@ -230,7 +230,7 @@ confidence.overall          : 均值 -0.0200   区间 -0.0375 .. +0.0000
 ```bash
 cd backend
 
-# 主评分引擎
+# 主评分决策引擎
 git stash && python scripts/dual_run_compare.py dump /tmp/before.json && git stash pop
 python scripts/dual_run_compare.py dump /tmp/after.json
 python scripts/dual_run_compare.py diff /tmp/before.json /tmp/after.json

@@ -6,7 +6,7 @@
 
 ## 背景
 
-评分引擎的 6 个子分权重（airdrop_signal / narrative_timing / team_reputation / risk / tokenomics / competition）初值如何确定，以及后续能否、何时、如何调整，是直接影响评分可信度与可解释性的架构级决策。MVP 阶段没有任何真实反馈数据，权重若频繁变动会导致：
+评分决策引擎的 6 个子分权重（airdrop_signal / narrative_timing / team_reputation / risk / tokenomics / competition）初值如何确定，以及后续能否、何时、如何调整，是直接影响评分可信度与可解释性的架构级决策。MVP 阶段没有任何真实反馈数据，权重若频繁变动会导致：
 
 - 历史评分不可比（同一项目昨天 FARM 今天 IGNORE，无法回溯）；
 - golden 回归集（§14.6）失去锚点，隐性评分漂移无法发现；

@@ -229,7 +229,7 @@
 
 ---
 
-# 📊 3.6 Scoring Engine（核心决策）
+# 📊 3.6 评分决策引擎（核心决策）
 
 ## 🎯 输出统一评分
 
@@ -406,7 +406,7 @@ POST /re-score/{id}
 2. Collector 拉取项目
 3. 每个项目进入 agent pipeline
 4. 所有 agent 并行分析
-5. Scoring engine 汇总
+5. Scoring Decision Engine 汇总
 6. 排序输出
 7. API + dashboard 更新
 ```

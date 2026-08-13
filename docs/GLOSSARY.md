@@ -96,6 +96,9 @@ Collector 从各源采集的未加工证据：`has_points`（是否有点积分�
 
 ## 2. 技术术语（架构/工程）
 
+### 评分决策引擎（Scoring Decision Engine）
+本系统的评分子系统总称：由评分权重（Σ=1.0 启动断言，见 ADR-006）、LLM 增强（ADR-001 分级使用）与质量阈值（分析/置信度/缺字段降级）共同构成，决定项目如何被打分。默认打分路径为规则引擎；LLM 仅在配置 `OPENAI_API_KEY` 且开启功能开关后作为增强层叠加，失败自动回退规则引擎（ADR-001）。
+
 ### Agent（智能体）
 本系统中指 pipeline 的一个处理节点，封装单一职责（Collector/Narrative/Team/Risk/Tokenomics/Scorer）。非 AI agent；MVP 为规则引擎，LLM 仅可选增强。
 

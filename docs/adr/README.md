@@ -23,7 +23,7 @@
 | [ADR-011](ADR-011-mvp-chart-library.md) | MVP Dashboard 图表库选型 | Accepted | 2026-07-08 | MVP 用 Chart.js 4.x CDN，三种图表类型；国内访问问题走降级方案 | 前端、图表、CDN |
 | [ADR-012](ADR-012-system-direction-auto-scan.md) | 系统方向反转为自动扫描全网发现平台 | Accepted | 2026-07-09 | 手动输入→自动扫描；双调度器；4 张采集表；LLM 分级使用 | 数据源、调度、数据库、API、安全、成本 |
 | [ADR-013](ADR-013-nextjs-primary-frontend.md) | 主前端演进为 Next.js（App Router） | Accepted | 2026-07-13 | `frontend-next` 为主路径；ADR-003 HTML 保留为原型 | 前端、部署、CORS/代理 |
-| [ADR-014](ADR-014-engine-spec-conformance.md) | 评分引擎回归规范 + 旁路机会引擎区间算法修正 | Accepted | 2026-07-26 | 按规范修正实现而非改规范迁就实现；跨源合并不再丢信号，低置信降档与 TOO_EXPENSIVE 由死规则变为可达 | 评分算法、旁路决策、Golden、DB 写入列 |
+| [ADR-014](ADR-014-engine-spec-conformance.md) | 评分决策引擎回归规范 + 旁路机会引擎区间算法修正 | Accepted | 2026-07-26 | 按规范修正实现而非改规范迁就实现；跨源合并不再丢信号，低置信降档与 TOO_EXPENSIVE 由死规则变为可达 | 评分算法、旁路决策、Golden、DB 写入列 |
 
 ## 按主题快速导航
 

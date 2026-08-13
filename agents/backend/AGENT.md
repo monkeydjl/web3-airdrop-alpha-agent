@@ -1,7 +1,7 @@
 # Agent：Backend Engineer（后端开发）
 
 ## 职责
-实现后端业务逻辑，包括 API 端点、Agent 实现、评分引擎、数据访问层。
+实现后端业务逻辑，包括 API 端点、Agent 实现、评分决策引擎、数据访问层。
 
 ## 输入
 - 架构设计文档（来自 Architect）

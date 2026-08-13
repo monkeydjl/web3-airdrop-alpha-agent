@@ -54,3 +54,11 @@ repos:
         types: [file]
         files: ^frontend-next/.*\.(ts|tsx)$
         pass_filenames: false
+
+      - id: check-terminology
+        name: 术语回退检查（评分决策引擎）
+        entry: python scripts/check_terminology.py
+        language: system
+        types: [file]
+        files: \.(md|py|html|js|ts|tsx|json|yaml|yml|txt)$
+        pass_filenames: true

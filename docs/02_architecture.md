@@ -32,7 +32,7 @@ C4Context
 | 原则 | 说明 | 体现 |
 |-----|------|------|
 | **Agent First** | 每个功能由独立 Agent 完成 | 15 个 Agent 定义 |
-| **数据驱动** | 决策基于结构化评分 | 6 维评分引擎 |
+| **数据驱动** | 决策基于结构化评分 | 6 维评分决策引擎 |
 | **渐进式复杂度** | MVP 简单，V2 扩展 | SQLite → PostgreSQL |
 | **可观测优先** | 内建日志 + 指标 | structlog + Prometheus |
 | **安全默认** | 默认关闭外部依赖 | ADR-001: LLM 默认关闭 |
@@ -98,7 +98,7 @@ backend/app/
 │   ├── scorer.py        # 评分 Agent
 │   └── narrative.py     # Reason 生成 Agent
 ├── services/            # 业务逻辑
-│   ├── scoring.py       # 评分引擎
+│   ├── scoring.py       # 评分决策引擎
 │   └── cache.py         # 竞争度缓存 (V2)
 └── utils/               # 工具类
     ├── logger.py        # structlog 配置
@@ -111,7 +111,7 @@ backend/app/
 |-----|------|------|
 | **Orchestrator** | 编排 Agent 执行流 | ADR-002 |
 | **CollectorAgent** | 从数据源抓取原始数据 | 外部 API |
-| **ScorerAgent** | 计算 6 维评分 + 总分 | 评分引擎 |
+| **ScorerAgent** | 计算 6 维评分 + 总分 | 评分决策引擎 |
 | **NarrativeAgent** | 生成 reason 文本 | 规则模板 / LLM (V2) |
 | **ScoringService** | 封装评分逻辑 | `DATA_SCORING_DICT.md` |
 | **CacheService** | 竞争度缓存 | ADR-010 (V2) |

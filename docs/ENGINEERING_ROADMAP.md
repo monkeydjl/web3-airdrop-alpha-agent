@@ -904,7 +904,7 @@ APScheduler 触发时若前一次 run 未完成（§6.9.11），则跳过本轮�
 
 ---
 
-## 7. 评分引擎算法（详细数学）
+## 7. 评分决策引擎算法（详细数学）
 
 ### 7.1 子分（0–100）汇总
 | 子项 | 权重 | 来源 | 计算 |
@@ -1324,7 +1324,7 @@ def get_sector_count(db, sector: str) -> int:
 2. Collector 拉取项目（真实/V2）
 3. 去重 + enrich
 4. 每个项目进入 agent pipeline（analyze 并行）
-5. Scoring engine 汇总
+5. 评分决策引擎汇总
 6. 排序输出，写库
 7. API + Dashboard 更新（V2 加 Telegram 推送）
 
@@ -2336,7 +2336,7 @@ Alpha（内部预览）→ Stable（正式发布）→ Deprecated（弃用期）
 
 1. **Schema 突破兼容性**: 新功能需要修改响应结构且无法通过追加可选字段实现。
 2. **安全加固**: 需要改变认证方式或加密协议。
-3. **架构重构**: Agent/评分引擎重写导致响应语义变化。
+3. **架构重构**: Agent/评分决策引擎重写导致响应语义变化。
 4. **定期规划**: 按文档演进路线（§12）进入下一阶段。
 
 #### 26.5.2 弃用流程（标准）
@@ -2517,7 +2517,7 @@ class APIVersionConfig:
 | 版本类型 | 表示方式 | 变更节奏 | 消费者 |
 | --- | --- | --- | --- |
 | **API 版本** | `/api/v1`、`/api/v2` | ~年级 | 外部 API 消费者 |
-| **评分权重版本** | `weight_version` (projects 表) | 灰度→周级 | 内部 backtest + 评分引擎 |
+| **评分权重版本** | `weight_version` (projects 表) | 灰度→周级 | 内部 backtest + 评分决策引擎 |
 | **数据模型版本** | SQL schema（Alembic 迁移） | 季度级 | 内部 DB 迁移 |
 | **LLM Prompt 版本** | `prompt_version` (logs 表) | 迭代级 | 内部 agent |
 | **应用版本** | Docker image tag (`v1.2.3`) | 发布级 | 运维 |

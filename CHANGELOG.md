@@ -43,7 +43,7 @@
 - **失败请求不再渲染成空数据成功**；Nav 的接口状态改为三态（检测中/在线/异常），并改探 `/health`
 - **项目详情页加代次守卫**：重评后的刷新可能被慢的旧响应覆盖，把分数写回重评之前
 
-### Fixed — 评分引擎回归规范（ADR-014，2026-07-26）
+### Fixed — 评分决策引擎回归规范（ADR-014，2026-07-26）
 - **跨源合并不再丢信号**（`utils/normalize.py`）：原按来源优先级整条择一，落选来源的 23 个信号字段被清空、`source_count` 恒为 1，导致「多发现一个来源分数反而下降」。改为按字段类合并（存在性布尔 OR / 数值 max·min / 列表并集 / 标量取最高可信已知值），并给 `manual`/`api` 显式取值以否决权（唯二能主张否定的来源）；合并结果与输入顺序、与 `PYTHONHASHSEED` 均无关。见 `DATA_SCORING_DICT.md §5.8`
 - **Risk Agent 改用 `tokenomics.risk`**（`agents/risk.py`）：原误取 `unlock_penalty`，与 `DATA_SCORING_DICT.md §5.7.2` 不符，方向与模型意图相反（高解锁压力少扣 31.5 分、VC 集中反加 12 分）
 - **`airdrop_signal` 子分统一到 `agents/airdrop_signal.py`**：原在 scorer 与 risk 各有一份实现，2304 种信号组合中 666 种结果不一致

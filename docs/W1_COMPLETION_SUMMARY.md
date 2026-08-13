@@ -188,7 +188,7 @@ $ pytest tests/unit/test_fetcher.py -v
 - BaseAgent 基类
 - 7 个 Agent 实现
 - Orchestrator 编排器
-- Scorer 评分引擎
+- Scorer 评分决策引擎
 
 ### 已具备的能力
 
