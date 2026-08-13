@@ -1,4 +1,4 @@
-﻿import type { Metadata } from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
 import { Nav } from '@/components/Nav';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -20,10 +20,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen">
         <ThemeProvider>
           <Nav />
-          <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
-          <footer className="mx-auto max-w-7xl px-4 pb-10 pt-2 text-center text-[11px] text-ink-faint sm:px-6">
-            空投阿尔法 · 输出仅供研究参考，不构成投资建议
-          </footer>
+          <div className="app-main">
+            <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
+            <footer className="mx-auto max-w-7xl px-4 pb-10 pt-2 text-center text-[11px] text-ink-faint sm:px-6">
+              空投阿尔法 · 输出仅供研究参考，不构成投资建议
+            </footer>
+          </div>
         </ThemeProvider>
       </body>
     </html>

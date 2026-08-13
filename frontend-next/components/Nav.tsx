@@ -3,16 +3,25 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Radar, Sun, Moon, LineChart, ServerCog } from 'lucide-react';
+import {
+  Radar, SatelliteDish, LineChart, ClipboardCheck, ServerCog,
+  Bell, Archive, Bookmark, Settings, Sun, Moon,
+} from 'lucide-react';
 import { fetchHealth } from '@/lib/api';
 import type { HealthData } from '@/lib/types';
 import { useTheme } from './ThemeProvider';
 
 /** 导航项：icon 对齐设计稿 data-lucide 属性 */
-const links = [
+const navItems = [
   { href: '/', label: '工作台', icon: Radar },
+  { href: '/discoveries', label: '发现队列', icon: SatelliteDish },
   { href: '/insights', label: '洞察', icon: LineChart },
-  { href: '/ops', label: '运维', icon: ServerCog },
+  { href: '/portfolio', label: '参与复盘', icon: ClipboardCheck },
+  { href: '/ops', label: '运维台', icon: ServerCog },
+  { href: '/notifications', label: '通知中心', icon: Bell },
+  { href: '/archive', label: '归档历史', icon: Archive },
+  { href: '/collections', label: '收藏关注', icon: Bookmark },
+  { href: '/settings', label: '系统设置', icon: Settings },
 ];
 
 export function Nav() {
@@ -37,92 +46,71 @@ export function Nav() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-line/80 bg-surface/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="group flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-farm text-white">
-              <Radar className="h-[18px] w-[18px]" strokeWidth={2.2} />
-            </span>
-            <div className="leading-tight">
-              <div className="text-sm font-semibold tracking-tight text-ink group-hover:text-farm dark:group-hover:text-farm">
-                空投阿尔法
-              </div>
-              <div className="hidden font-mono text-[10px] tracking-wide text-ink-faint sm:block">
-                早期项目雷达
-              </div>
-            </div>
-          </Link>
-
-          <nav className="hidden items-center gap-1 sm:flex">
-            {links.map((l) => {
-              const active = pathname === l.href || (l.href !== '/' && pathname.startsWith(l.href));
-              const Icon = l.icon;
-              return (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                    active
-                      ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm'
-                      : 'text-ink-muted hover:bg-surface-2 hover:text-ink'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" strokeWidth={2} />
-                  {l.label}
-                </Link>
-              );
-            })}
-          </nav>
+    <aside className="app-sidebar">
+      {/* ── 品牌 ── */}
+      <Link href="/" className="app-sidebar-brand">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-farm text-white">
+          <Radar className="h-[18px] w-[18px]" strokeWidth={2.2} />
+        </span>
+        <div className="app-sidebar-brand-text leading-tight">
+          <div className="text-sm font-semibold tracking-tight text-ink">空投阿尔法</div>
+          <div className="font-mono text-[10px] tracking-wide text-ink-faint">早期项目雷达</div>
         </div>
+      </Link>
 
-        <div className="flex items-center gap-2">
-          <div
-            className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium sm:flex ${
-              health?.ok
-                ? 'border-farm/30 bg-farm-soft/60 text-farm dark:bg-farm/10 dark:text-farm'
-                : 'border-line bg-surface-2 text-ink-faint'
-            }`}
-            title="接口状态"
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                health === null ? 'bg-ink-faint' : health.ok ? 'bg-farm' : 'bg-red-500'
-              }`}
-            />
-            {health === null ? '接口检测中…' : health.ok ? '接口在线' : '接口异常'}
-          </div>
-
-          <button
-            type="button"
-            onClick={toggle}
-            className="btn-ghost h-9 w-9 !p-0"
-            aria-label="切换主题"
-            title="切换主题"
-          >
-            {theme === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex gap-1 overflow-x-auto border-t border-line/60 px-3 py-1.5 sm:hidden">
-        {links.map((l) => {
-          const active = pathname === l.href || (l.href !== '/' && pathname.startsWith(l.href));
-          const Icon = l.icon;
+      {/* ── 导航 ── */}
+      <nav className="app-sidebar-nav" aria-label="主导航">
+        {navItems.map((item) => {
+          const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+          const Icon = item.icon;
           return (
             <Link
-              key={l.href}
-              href={l.href}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ${
-                active ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm' : 'text-ink-muted'
-              }`}
+              key={item.href}
+              href={item.href}
+              className={`app-sidebar-nav-item ${active ? 'active' : ''}`}
             >
-              <Icon className="h-3.5 w-3.5" strokeWidth={2} />
-              {l.label}
+              <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+              <span className="app-sidebar-nav-label">{item.label}</span>
             </Link>
           );
         })}
+      </nav>
+
+      {/* ── 主题切换 ── */}
+      <button
+        type="button"
+        onClick={toggle}
+        className="app-sidebar-nav-item"
+        aria-label="切换主题"
+        title="切换主题"
+      >
+        {theme === 'dark'
+          ? <Sun className="h-5 w-5 shrink-0" strokeWidth={2} />
+          : <Moon className="h-5 w-5 shrink-0" strokeWidth={2} />}
+        <span className="app-sidebar-nav-label">{theme === 'dark' ? '浅色模式' : '深色模式'}</span>
+      </button>
+
+      {/* ── 弹性间隔 ── */}
+      <div className="flex-1" />
+
+      {/* ── 底部：接口状态 + 引擎徽章 ── */}
+      <div className="app-sidebar-footer">
+        <div className="app-sidebar-api">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              health === null ? 'bg-ink-faint' : health.ok ? 'bg-farm' : 'bg-red-500'
+            }`}
+          />
+          <span className="app-sidebar-footer-text text-xs text-ink-muted">
+            {health === null ? '检测中…' : health.ok ? '接口在线' : '接口异常'}
+          </span>
+          <span className="app-sidebar-footer-text ml-auto font-mono text-[11px] text-ink-faint">v1.4.2</span>
+        </div>
+        <div className="app-sidebar-engine-badges">
+          <span className="app-sidebar-engine-chip">score-v1.4 · 权威</span>
+          <span className="app-sidebar-engine-chip">opportunity-v2.0 · 影子</span>
+        </div>
       </div>
-    </header>
+    </aside>
   );
 }
