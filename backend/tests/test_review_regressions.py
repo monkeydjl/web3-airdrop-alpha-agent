@@ -105,6 +105,7 @@ class TestRepositoryUpsertPreservesColumns:
         # 要求每条分数带权重版本；§4.3 step 1 的离线重加权需要子分快照）
         assert row["weight_version"] == "v1.2"
         assert "airdrop_signal" in (row["sub_scores"] or "")
+        conn.close()
 
     def test_failed_scoring_does_not_erase_previous_snapshot(self):
         """评分失败（sub_scores 为空）不得把上一次的好快照抹成空壳。"""
@@ -130,6 +131,7 @@ class TestRepositoryUpsertPreservesColumns:
         row = dict(raw.execute("SELECT * FROM projects WHERE id='p'").fetchone())
         assert row["weight_version"] == "v1.2"
         assert "airdrop_signal" in (row["sub_scores"] or "")
+        conn.close()
 
 
 class TestSecretRedaction:
