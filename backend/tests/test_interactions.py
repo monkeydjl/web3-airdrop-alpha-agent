@@ -1543,9 +1543,7 @@ def test_init_db_adds_outcome_columns_to_existing_interactions_table(tmp_path):
     } <= columns
 
 
-_COHORT_UUID4 = re.compile(
-    r"^cohort-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-)
+_COHORT_UUID4 = re.compile(r"^cohort-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _SENSITIVE_RESPONSE_KEYS = frozenset(
     {
         "wallet_address",
@@ -1784,9 +1782,7 @@ def test_outcome_fields_round_trip_through_create_and_patch(client: TestClient):
     data = created.json()["data"]
     for key, value in create_payload.items():
         if key == "outcome_observed_at":
-            assert datetime.fromisoformat(data[key]).astimezone(UTC) == datetime(
-                2026, 7, 15, 12, 30, tzinfo=UTC
-            )
+            assert datetime.fromisoformat(data[key]).astimezone(UTC) == datetime(2026, 7, 15, 12, 30, tzinfo=UTC)
         else:
             assert data[key] == value
     assert _COHORT_UUID4.fullmatch(data["wallet_cohort_id"])
@@ -1809,9 +1805,7 @@ def test_outcome_fields_round_trip_through_create_and_patch(client: TestClient):
     outcome = patched.json()["data"]
     for key, value in patch_payload.items():
         if key == "outcome_observed_at":
-            assert datetime.fromisoformat(outcome[key]).astimezone(UTC) == datetime(
-                2026, 7, 16, 9, 0, tzinfo=UTC
-            )
+            assert datetime.fromisoformat(outcome[key]).astimezone(UTC) == datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
         else:
             assert outcome[key] == value
     assert outcome["opportunity_assessment_id"] == assessment_id

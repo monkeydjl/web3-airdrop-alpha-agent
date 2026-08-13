@@ -206,9 +206,7 @@ class RootDataCollector(DataCollector):
         token_status = str(item.get("token_status") or "").lower()
         tge_val = item.get("tge")
         no_token = bool(
-            item.get("no_token")
-            or token_status in ("no", "none", "unissued")
-            or tge_val in (False, "false", 0, "0")
+            item.get("no_token") or token_status in ("no", "none", "unissued") or tge_val in (False, "false", 0, "0")
         )
 
         investors = funding.get("funding_investors") or []

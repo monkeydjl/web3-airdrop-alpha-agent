@@ -369,11 +369,12 @@ def test_hash_string_array_order_non_str_and_lowercase_64():
     assert len(digest) == 64
     assert digest == digest.lower()
     assert all(c in "0123456789abcdef" for c in digest)
-    assert digest == hashlib.sha256(
-        json.dumps(["schema", "run", "source"], ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+    assert (
+        digest
+        == hashlib.sha256(
+            json.dumps(["schema", "run", "source"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
     # fixed order: reordering inputs must change digest
     assert hash_string_array(["a", "b"]) != hash_string_array(["b", "a"])
     with pytest.raises((TypeError, ValueError)):
@@ -448,9 +449,7 @@ def test_build_snapshot_and_evidence_id_array_framing():
         project_id="proj-1",
         factor_key="tvl_usd",
     )
-    assert evidence_id == hash_string_array(
-        [SCHEMA_VERSION, snapshot_id, "proj-1", "tvl_usd"]
-    )
+    assert evidence_id == hash_string_array([SCHEMA_VERSION, snapshot_id, "proj-1", "tvl_usd"])
     assert len(evidence_id) == 64
     assert evidence_id == evidence_id.lower()
     # component order is fixed: different argument order cannot silently match

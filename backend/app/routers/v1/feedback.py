@@ -47,13 +47,9 @@ class FeedbackRequest(BaseModel):
     # WEIGHT_CALIBRATION §3.1 本就规定了这两个枚举。
     project_id: str = Field(..., min_length=1, max_length=64, description="项目 ID")
     user_id: str | None = Field(None, max_length=64, description="用户匿名标识（可选）")
-    signal: Literal["useful", "useless", "wrong_label", "correct_outcome"] = Field(
-        ..., description="反馈信号"
-    )
+    signal: Literal["useful", "useless", "wrong_label", "correct_outcome"] = Field(..., description="反馈信号")
     note: str | None = Field(None, max_length=2000, description="用户备注")
-    outcome: Literal["airdropped", "not_airdropped", "pumped", "dumped"] | None = Field(
-        None, description="实际结果"
-    )
+    outcome: Literal["airdropped", "not_airdropped", "pumped", "dumped"] | None = Field(None, description="实际结果")
 
 
 class EventRequest(BaseModel):

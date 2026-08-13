@@ -145,9 +145,7 @@ class EconomicEvidenceEmitter:
         record_opportunity_economic_identity(source=source, result="linked")
 
         allowed = _PROVIDER_FACTOR_WHITELIST.get(source, frozenset())
-        source_type, independence_group = _SOURCE_META.get(
-            source, ("public_market_data", "market-aggregators")
-        )
+        source_type, independence_group = _SOURCE_META.get(source, ("public_market_data", "market-aggregators"))
         collected = observation.collected_at
         expires_at = collected + _TTL
 
@@ -172,9 +170,7 @@ class EconomicEvidenceEmitter:
                 expires_at=expires_at,
             )
             try:
-                _stored, inserted = self._evidence_repository.add_economic_evidence_if_absent(
-                    evidence
-                )
+                _stored, inserted = self._evidence_repository.add_economic_evidence_if_absent(evidence)
             except EconomicEvidenceContentConflict:
                 conflicts += 1
                 record_opportunity_economic_evidence(source=source, result="content_conflict")

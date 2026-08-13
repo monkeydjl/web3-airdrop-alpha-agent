@@ -94,9 +94,7 @@ def create_app(db_override=None) -> FastAPI:
                     snap_repo = EconomicSnapshotRepository(app_conn)
                     opp_repo = OpportunityRepository(app_conn)
                     economic_writer = EconomicSnapshotWriter(snap_repo)
-                    economic_emitter = EconomicEvidenceEmitter(
-                        app_conn, snap_repo, opp_repo
-                    )
+                    economic_emitter = EconomicEvidenceEmitter(app_conn, snap_repo, opp_repo)
                 except Exception as exc:
                     logger.error(
                         "app.economic_stack_construction_failed",

@@ -309,9 +309,7 @@ def build_workflow_projection(
     validation = ValidationSection(
         current=current_validation,
         history_summary=_history_summary(linked_interactions),
-        allowed_transitions={
-            status: list(targets) for status, targets in ALLOWED_TRANSITIONS.items()
-        },
+        allowed_transitions={status: list(targets) for status, targets in ALLOWED_TRANSITIONS.items()},
         can_start_validation=state == "ACTIONABLE",
     )
 
@@ -432,10 +430,7 @@ def _derive_next_action(
             can_start_validation=False,
         )
     if state == "ACTIONABLE":
-        open_current = (
-            current_validation is not None
-            and str(current_validation.get("status") or "") in _OPEN_STATUSES
-        )
+        open_current = current_validation is not None and str(current_validation.get("status") or "") in _OPEN_STATUSES
         if open_current:
             return NextActionProjection(
                 key="continue_validation",
@@ -543,9 +538,7 @@ def _build_action_plan(
                 "phase": "validation",
                 "title": "1-2 钱包小样本验证",
                 "description": (
-                    assessment.recommended_action
-                    if assessment is not None
-                    else "用 1-2 个钱包记录真实成本与时间。"
+                    assessment.recommended_action if assessment is not None else "用 1-2 个钱包记录真实成本与时间。"
                 ),
                 "required": True,
                 "source": "workflow",
@@ -676,10 +669,7 @@ def _build_upgrade_conditions(
     for key in missing_factor_keys:
         conditions[f"MISSING_{key}"] = f"Provide verified evidence for critical factor {key}."
 
-    return tuple(
-        UpgradeConditionProjection(code=code, message=conditions[code])
-        for code in sorted(conditions)
-    )
+    return tuple(UpgradeConditionProjection(code=code, message=conditions[code]) for code in sorted(conditions))
 
 
 def _project_evidence(
@@ -705,9 +695,7 @@ def _project_evidence(
     for record in ordered:
         expires_at = record.expires_at
         freshness: Literal["CURRENT", "EXPIRED"] = (
-            "EXPIRED"
-            if expires_at is not None and current >= _as_utc(expires_at)
-            else "CURRENT"
+            "EXPIRED" if expires_at is not None and current >= _as_utc(expires_at) else "CURRENT"
         )
         age_seconds = (current - _as_utc(record.observed_at)).total_seconds()
         age_days = max(0, int(age_seconds // 86400))
@@ -763,11 +751,7 @@ def _linked_interactions(
     if assessment is None or not assessment.assessment_id:
         return []
     assessment_id = assessment.assessment_id
-    return [
-        item
-        for item in interactions
-        if str(item.get("opportunity_assessment_id") or "") == assessment_id
-    ]
+    return [item for item in interactions if str(item.get("opportunity_assessment_id") or "") == assessment_id]
 
 
 def _interaction_sort_key(item: Mapping[str, Any]) -> tuple[datetime, str]:
@@ -792,14 +776,8 @@ def _select_current_validation(
 ) -> dict[str, Any] | None:
     if not linked_interactions:
         return None
-    open_items = [
-        item for item in linked_interactions if str(item.get("status") or "") in _OPEN_STATUSES
-    ]
-    pool = open_items or [
-        item
-        for item in linked_interactions
-        if str(item.get("status") or "") in _TERMINAL_STATUSES
-    ]
+    open_items = [item for item in linked_interactions if str(item.get("status") or "") in _OPEN_STATUSES]
+    pool = open_items or [item for item in linked_interactions if str(item.get("status") or "") in _TERMINAL_STATUSES]
     if not pool:
         pool = list(linked_interactions)
     selected = max(pool, key=_interaction_sort_key)

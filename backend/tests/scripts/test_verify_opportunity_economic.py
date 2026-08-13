@@ -167,13 +167,9 @@ def test_case_17_1_02_same_run_duplicate_writer_no_row_growth(verifier) -> None:
     from app.metrics import OPPORTUNITY_ECONOMIC_SNAPSHOTS, metric_sample_value
 
     # Sample helper (not bare labels) must be the production verification surface.
-    before = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-    )
+    before = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
     assert verifier._case_17_1_02() is True
-    after = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-    )
+    after = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
     assert after - before == 1.0
 
 
@@ -215,9 +211,7 @@ def test_case_17_1_03_post_link_replay_zero_then_stable_evidence(verifier) -> No
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: observed)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = observed
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         assert summary.snapshots_inserted == 1
         snapshot_id = summary.observations[0].snapshot_id
         verifier._seed_raw_project(
@@ -228,9 +222,7 @@ def test_case_17_1_03_post_link_replay_zero_then_stable_evidence(verifier) -> No
             project_id=project_id,
         )
         assert snap_repo.find_linked_project_id("defillama", item.dedup_key) is None
-        orphan = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        orphan = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         assert orphan is not None
         assert orphan.emitted == 0
         assert orphan.unlinked >= 1
@@ -238,9 +230,7 @@ def test_case_17_1_03_post_link_replay_zero_then_stable_evidence(verifier) -> No
 
         verifier._seed_project(conn, project_id, name=str(meta["name"]))
         assert snap_repo.find_linked_project_id("defillama", item.dedup_key) == project_id
-        linked = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        linked = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         assert linked is not None and linked.emitted >= 1
         rows = evid_repo.list_evidence(project_id)
         assert rows
@@ -249,9 +239,7 @@ def test_case_17_1_03_post_link_replay_zero_then_stable_evidence(verifier) -> No
             snapshot_id=snapshot_id, project_id=project_id, factor_key="tvl_usd"
         )
         count = len(rows)
-        again = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        again = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         assert again is not None and again.emitted == 0 and again.duplicates >= 1
         assert len(evid_repo.list_evidence(project_id)) == count
     finally:
@@ -272,9 +260,7 @@ def test_case_17_1_04_unlinked_no_fuzzy_branch(verifier) -> None:
     from app.opportunity.economic_repository import EconomicSnapshotRepository
 
     source = inspect.getsource(EconomicSnapshotRepository.find_linked_project_id)
-    sql_match = re.search(
-        r'"""\s*(SELECT[\s\S]*?)\s*"""', source, flags=re.IGNORECASE
-    )
+    sql_match = re.search(r'"""\s*(SELECT[\s\S]*?)\s*"""', source, flags=re.IGNORECASE)
     assert sql_match is not None
     sql_body = " ".join(sql_match.group(1).split()).lower()
     assert "inner join projects" in sql_body
@@ -316,9 +302,7 @@ def test_case_17_1_04_unlinked_no_fuzzy_branch(verifier) -> None:
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: observed)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = observed
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         assert summary.snapshots_inserted == 1
         verifier._seed_project(conn, "proj-name-only-04", name=shared)
         verifier._seed_raw_project(
@@ -329,9 +313,7 @@ def test_case_17_1_04_unlinked_no_fuzzy_branch(verifier) -> None:
             project_id="proj-missing-auth-04",
         )
         assert snap_repo.find_linked_project_id("defillama", item.dedup_key) is None
-        emit = EconomicEvidenceEmitter(conn, snap_repo, evid_repo).emit(
-            summary.observations[0], enabled=True
-        )
+        emit = EconomicEvidenceEmitter(conn, snap_repo, evid_repo).emit(summary.observations[0], enabled=True)
         assert emit.unlinked == 1 and emit.emitted == 0
         assert raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
     finally:
@@ -388,9 +370,7 @@ def test_case_17_1_05_two_day_price_resolver_latest_non_expired(verifier) -> Non
             )
         records = [
             EvidenceRecord(
-                evidence_id=build_evidence_id(
-                    snapshot_id=snap1, project_id=project_id, factor_key="price_usd"
-                ),
+                evidence_id=build_evidence_id(snapshot_id=snap1, project_id=project_id, factor_key="price_usd"),
                 project_id=project_id,
                 factor_key="price_usd",
                 value="1.10000000",
@@ -407,9 +387,7 @@ def test_case_17_1_05_two_day_price_resolver_latest_non_expired(verifier) -> Non
                 raw_snapshot_ref=f"econ-snapshot:{snap1}",
             ),
             EvidenceRecord(
-                evidence_id=build_evidence_id(
-                    snapshot_id=snap2, project_id=project_id, factor_key="price_usd"
-                ),
+                evidence_id=build_evidence_id(snapshot_id=snap2, project_id=project_id, factor_key="price_usd"),
                 project_id=project_id,
                 factor_key="price_usd",
                 value="2.50000000",
@@ -430,9 +408,7 @@ def test_case_17_1_05_two_day_price_resolver_latest_non_expired(verifier) -> Non
         factor = projection.factors["price_usd"]
         assert factor.conflicted is False
         assert factor.value == "2.50000000"
-        assert factor.evidence_id == build_evidence_id(
-            snapshot_id=snap2, project_id=project_id, factor_key="price_usd"
-        )
+        assert factor.evidence_id == build_evidence_id(snapshot_id=snap2, project_id=project_id, factor_key="price_usd")
         assert factor.value != "1.10000000"
     finally:
         snap_repo.close()
@@ -697,9 +673,7 @@ def test_case_17_1_08_six_flags_default_false_canonical_bytes(verifier) -> None:
         },
     )
     result = CollectorResult(source_id="defillama", items=[item])
-    result.finished_at = __import__("datetime").datetime(
-        2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc
-    )
+    result.finished_at = __import__("datetime").datetime(2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc)
     out = process_persisted_collection(
         result,
         run_id="daily:2026-07-22:defillama",
@@ -746,9 +720,7 @@ def test_case_17_1_08_six_flags_default_false_canonical_bytes(verifier) -> None:
         evidence=(),
         participation_tasks=(),
         interactions=(),
-        now=__import__("datetime").datetime(
-            2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc
-        ),
+        now=__import__("datetime").datetime(2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc),
     )
     pure_bytes = canonical_json_bytes(pure.model_dump(mode="json"))
     assert b"economic_proxy" not in pure_bytes
@@ -771,21 +743,16 @@ def test_case_17_1_09_sqlite_and_recording_pg_ddl_idempotent(verifier) -> None:
     try:
         init_db(conn)
         init_db(conn)
-        cols = [
-            row["name"]
-            for row in raw.execute("PRAGMA table_info(opportunity_economic_snapshots)")
-        ]
+        cols = [row["name"] for row in raw.execute("PRAGMA table_info(opportunity_economic_snapshots)")]
         assert cols == list(verifier._EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS)
         table_sql = raw.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' "
-            "AND name='opportunity_economic_snapshots'"
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='opportunity_economic_snapshots'"
         ).fetchone()[0]
         assert "check(length(trim(dedup_key))>0)" in verifier._compact_sql(table_sql)
         index_names = {
             row[0]
             for row in raw.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
             )
             if row[0]
         }
@@ -823,12 +790,8 @@ def test_case_17_1_10_frozen_raw_replay_schema_hash_mode_no_double_count(verifie
         "DIRECT_AVAILABLE",
         "UNKNOWN",
     }
-    observed = __import__("datetime").datetime(
-        2026, 7, 22, 12, 0, 0, tzinfo=__import__("datetime").timezone.utc
-    )
-    expires = __import__("datetime").datetime(
-        2026, 7, 24, 12, 0, 0, tzinfo=__import__("datetime").timezone.utc
-    )
+    observed = __import__("datetime").datetime(2026, 7, 22, 12, 0, 0, tzinfo=__import__("datetime").timezone.utc)
+    expires = __import__("datetime").datetime(2026, 7, 24, 12, 0, 0, tzinfo=__import__("datetime").timezone.utc)
     cg = normalize_provider_payload(
         source_id="coingecko",
         raw_data={
@@ -913,9 +876,7 @@ def test_case_17_1_12_coingecko_percentage_only(verifier) -> None:
             expires_at=expires,
         )
     }
-    expected = normalize_ratio_string(
-        raw["price_change_percentage_24h"], divisor=Decimal("100")
-    )
+    expected = normalize_ratio_string(raw["price_change_percentage_24h"], divisor=Decimal("100"))
     assert factors["price_change_24h_ratio"].value == expected
     assert "price_change_24h" not in canonical_provider_payload("coingecko", raw)
 
@@ -961,9 +922,7 @@ def test_case_17_1_14_defillama_unit_contract(verifier) -> None:
     )
 
     fixture = json.loads((FIXTURE_DIR / "defillama.json").read_text(encoding="utf-8"))
-    assert fixture["unit_contract"]["accepted_change_7d_unit"] == (
-        DEFILLAMA_CHANGE_7D_PROVIDER_UNIT
-    )
+    assert fixture["unit_contract"]["accepted_change_7d_unit"] == (DEFILLAMA_CHANGE_7D_PROVIDER_UNIT)
     ok = canonical_provider_payload("defillama", fixture["samples"]["happy"])
     assert ok["change_7d_unit"] == "ratio"
     with pytest.raises(EconomicNormalizationError):
@@ -1025,9 +984,7 @@ def test_case_17_1_15_evidence_id_content_conflict_no_overwrite(verifier) -> Non
         conflicting = first.model_copy(update={"value": "9999999.00000000"})
         with pytest.raises(EconomicEvidenceContentConflict):
             evid_repo.add_economic_evidence_if_absent(conflicting)
-        rows = [
-            r for r in evid_repo.list_evidence(project_id) if r.evidence_id == evidence_id
-        ]
+        rows = [r for r in evid_repo.list_evidence(project_id) if r.evidence_id == evidence_id]
         assert len(rows) == 1
         assert rows[0].value == "1000000.00000000"
         assert rows[0].value != "9999999.00000000"
@@ -1131,9 +1088,7 @@ def test_case_17_1_17_gray_release_layered_flags(verifier) -> None:
         )
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = now
-        before_skip = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-        )
+        before_skip = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
         summary = process_persisted_collection(
             result,
             run_id="daily:2026-07-22:defillama",
@@ -1146,9 +1101,7 @@ def test_case_17_1_17_gray_release_layered_flags(verifier) -> None:
         assert raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] >= 1
         assert raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-            )
+            metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
             >= before_skip + 1
         )
         assert (
@@ -1327,9 +1280,7 @@ def test_case_17_1_18_source_and_provider_dual_true(verifier) -> None:
                 emitter=EconomicEvidenceEmitter(conn, snap, evid),
                 settings_obj=settings,
             )
-            snap_n = raw.execute(
-                "SELECT COUNT(*) FROM opportunity_economic_snapshots"
-            ).fetchone()[0]
+            snap_n = raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0]
             if expected:
                 assert summary is not None
                 assert snap_n >= 1
@@ -1398,12 +1349,8 @@ def test_case_17_1_20_payload_json_whitelist_omit_none_keep_zero_defi_unit_hash(
     )
 
     fixture = json.loads((FIXTURE_DIR / "defillama.json").read_text(encoding="utf-8"))
-    none_payload = canonical_provider_payload(
-        "defillama", fixture["samples"]["with_none"]
-    )
-    zero_payload = canonical_provider_payload(
-        "defillama", fixture["samples"]["with_zero"]
-    )
+    none_payload = canonical_provider_payload("defillama", fixture["samples"]["with_none"])
+    zero_payload = canonical_provider_payload("defillama", fixture["samples"]["with_zero"])
     happy = canonical_provider_payload("defillama", fixture["samples"]["happy"])
     assert "tvl" not in none_payload
     assert zero_payload["tvl"] == 0
@@ -1428,9 +1375,7 @@ def test_case_17_1_21_manual_run_id_vs_daily_namespace(verifier) -> None:
     from app.opportunity.economic_integration import daily_run_id, manual_run_id
 
     fixed = UUID("550e8400-e29b-41d4-a716-446655440000")
-    assert manual_run_id(uuid_factory=lambda: fixed) == (
-        "manual:550e8400-e29b-41d4-a716-446655440000"
-    )
+    assert manual_run_id(uuid_factory=lambda: fixed) == ("manual:550e8400-e29b-41d4-a716-446655440000")
     a = manual_run_id()
     b = manual_run_id()
     assert a.startswith("manual:") and b.startswith("manual:")
@@ -1502,12 +1447,8 @@ def test_case_17_1_22_replay_enabled_false_zero_side_effects(verifier) -> None:
             ),
         )
         conn.commit()
-        before_ev = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
-        before_id = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-        )
+        before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
+        before_id = metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
         execute_calls: list[str] = []
         real_execute = conn.execute
 
@@ -1535,9 +1476,7 @@ def test_case_17_1_22_replay_enabled_false_zero_side_effects(verifier) -> None:
             ) as add_spy,
         ):
             conn.execute = tracking_execute  # type: ignore[method-assign]
-            out = replay_economic_snapshots_for_project(
-                "proj-noop-22", conn=conn, enabled=False
-            )
+            out = replay_economic_snapshots_for_project("proj-noop-22", conn=conn, enabled=False)
             conn.execute = real_execute  # type: ignore[method-assign]
             assert out is None
             assert list_spy.call_count == 0
@@ -1545,12 +1484,7 @@ def test_case_17_1_22_replay_enabled_false_zero_side_effects(verifier) -> None:
             assert add_spy.call_count == 0
             assert not any("opportunity_economic_snapshots" in s for s in execute_calls)
             assert not any("raw_projects" in s for s in execute_calls)
-        assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-            )
-            == before_ev
-        )
+        assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
         assert (
             metric_sample_value(
                 OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION,
@@ -1685,25 +1619,22 @@ def test_case_17_1_24_internal_projection_no_workflow_v1_fields_four_layer(
         evidence=(),
         participation_tasks=(),
         interactions=(),
-        now=__import__("datetime").datetime(
-            2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc
-        ),
+        now=__import__("datetime").datetime(2026, 7, 22, 12, 0, tzinfo=__import__("datetime").timezone.utc),
     )
     dump = pure.model_dump(mode="json")
     assert tuple(dump.keys()) == verifier._BASELINE_WORKFLOW_FIELDS
     assert "economic_proxy" not in dump
     assert "economics_data_mode" not in dump
-    ser_bytes = __import__("json").dumps(
-        dump, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
+    ser_bytes = (
+        __import__("json").dumps(dump, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
     assert b"economic_proxy" not in ser_bytes
     assert b"economics_data_mode" not in ser_bytes
 
     # Layer 4 — router source (no HTTP): model_dump path, no economic tokens
     router_source = inspect.getsource(opportunity_router.get_opportunity_workflow)
     assert (
-        'projection.model_dump(mode="json")' in router_source
-        or "projection.model_dump(mode='json')" in router_source
+        'projection.model_dump(mode="json")' in router_source or "projection.model_dump(mode='json')" in router_source
     )
     for token in (
         "economic_proxy",
@@ -1739,24 +1670,16 @@ def test_case_17_1_25_metrics_sample_value_label_helper_not_bare_labels(verifier
 
     sig = inspect.signature(metric_sample_value)
     assert next(iter(sig.parameters)) == "metric"
-    assert any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
+    assert any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
     assert list(inspect.signature(metric_label_sets).parameters) == ["metric"]
 
     # Bare labels existence alone is not verification.
-    child = OPPORTUNITY_ECONOMIC_SNAPSHOTS.labels(
-        source="cryptorank", result="duplicate"
-    )
+    child = OPPORTUNITY_ECONOMIC_SNAPSHOTS.labels(source="cryptorank", result="duplicate")
     assert child is not None
 
-    before = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="cryptorank", result="duplicate"
-    )
+    before = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="cryptorank", result="duplicate")
     record_opportunity_economic_snapshot(source="cryptorank", result="duplicate")
-    after = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="cryptorank", result="duplicate"
-    )
+    after = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="cryptorank", result="duplicate")
     assert after - before == 1.0
 
     label_sets = metric_label_sets(OPPORTUNITY_ECONOMIC_SNAPSHOTS)
@@ -1812,9 +1735,7 @@ def test_case_17_1_26_connection_ownership_close_and_construct_process_isolation
     assert verifier._case_17_1_26() is True
 
     main_src = (BACKEND / "app" / "main.py").read_text(encoding="utf-8")
-    collections_src = (
-        BACKEND / "app" / "routers" / "v1" / "collections.py"
-    ).read_text(encoding="utf-8")
+    collections_src = (BACKEND / "app" / "routers" / "v1" / "collections.py").read_text(encoding="utf-8")
     assert "app_owns_conn = False" in main_src
     assert "app.economic_stack_construction_failed" in main_src
     assert "process_persisted_collection" in main_src
@@ -1885,9 +1806,7 @@ def test_case_17_1_26_connection_ownership_close_and_construct_process_isolation
         failing.process.side_effect = RuntimeError("process boom")
         out = process_persisted_collection(
             result,
-            run_id=manual_run_id(
-                uuid_factory=lambda: UUID("550e8400-e29b-41d4-a716-446655440099")
-            ),
+            run_id=manual_run_id(uuid_factory=lambda: UUID("550e8400-e29b-41d4-a716-446655440099")),
             writer=failing,
             emitter=EconomicEvidenceEmitter(conn, snap, evid),
             settings_obj=settings,
@@ -1895,21 +1814,12 @@ def test_case_17_1_26_connection_ownership_close_and_construct_process_isolation
         assert out is None
         failing.process.assert_called_once()
         assert close_calls["n"] == 0
-        snap_n_before = int(
-            raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0]
-        )
+        snap_n_before = int(raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0])
         assert snap_n_before >= 1
 
         # Real production construction failure (scheduled + manual ownership stacks).
         assert verifier._prove_construction_failure_isolation(result) is True
-        assert (
-            int(
-                raw.execute(
-                    "SELECT COUNT(*) FROM opportunity_economic_snapshots"
-                ).fetchone()[0]
-            )
-            == snap_n_before
-        )
+        assert int(raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0]) == snap_n_before
         assert close_calls["n"] == 0
     finally:
         with suppress(Exception):
@@ -1918,7 +1828,6 @@ def test_case_17_1_26_connection_ownership_close_and_construct_process_isolation
             snap.close()
         if close_calls["n"] == 0:
             conn.close()
-
 
 
 def test_ast_import_denylist_on_verifier_script() -> None:
@@ -2016,10 +1925,7 @@ def test_main_hash_fixture_mismatch_returns_1(verifier) -> None:
 
 def test_main_exception_bounded_type_only(verifier) -> None:
     def _boom():
-        raise RuntimeError(
-            "CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK secret "
-            f"path={FIXTURE_DIR / 'defillama.json'}"
-        )
+        raise RuntimeError(f"CANARY_DL_API_KEY_TASK9_SYNTH_NEVER_LEAK secret path={FIXTURE_DIR / 'defillama.json'}")
 
     buf = io.StringIO()
     with patch.object(verifier, "run_verification", _boom), redirect_stdout(buf):

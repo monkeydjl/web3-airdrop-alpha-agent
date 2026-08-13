@@ -49,13 +49,17 @@ def _discovery(
     url: str | None = "https://api.llama.fi/protocol/example",
     raw_data: dict[str, Any] | None = None,
 ) -> RawDiscovery:
-    body = raw_data if raw_data is not None else {
-        "tvl": 1_000_000,
-        "change_7d": 0.05,
-        "change_7d_unit": "ratio",
-        "chains": ["Ethereum", "Arbitrum"],
-        "no_token_yet": False,
-    }
+    body = (
+        raw_data
+        if raw_data is not None
+        else {
+            "tvl": 1_000_000,
+            "change_7d": 0.05,
+            "change_7d_unit": "ratio",
+            "chains": ["Ethereum", "Arbitrum"],
+            "no_token_yet": False,
+        }
+    )
     return RawDiscovery(
         source_id=source_id,
         raw_id=raw_id,
@@ -171,9 +175,7 @@ def test_manual_run_id_exact_form_and_uniqueness() -> None:
     from app.opportunity.economic_integration import manual_run_id
 
     fixed = UUID("550e8400-e29b-41d4-a716-446655440000")
-    assert manual_run_id(uuid_factory=lambda: fixed) == (
-        "manual:550e8400-e29b-41d4-a716-446655440000"
-    )
+    assert manual_run_id(uuid_factory=lambda: fixed) == ("manual:550e8400-e29b-41d4-a716-446655440000")
 
     a = manual_run_id()
     b = manual_run_id()
@@ -304,9 +306,7 @@ def test_process_gate_true_writer_once_then_same_emitter_per_observation() -> No
         settings_obj=settings_obj,
     )
     assert out is summary
-    writer.process.assert_called_once_with(
-        result, run_id="daily:2026-07-22:defillama", enabled=True
-    )
+    writer.process.assert_called_once_with(result, run_id="daily:2026-07-22:defillama", enabled=True)
     assert emitter.emit.call_count == 2
     assert emitter.emit.call_args_list == [
         call(o1, enabled=True),
@@ -322,9 +322,7 @@ def test_evidence_flag_false_still_writes_then_emit_enabled_false() -> None:
     writer = MagicMock()
     writer.process.return_value = summary
     emitter = MagicMock()
-    emitter.emit.return_value = SimpleNamespace(
-        skipped_flag_off=1, emitted=0, duplicates=0, unlinked=0, conflicts=0
-    )
+    emitter.emit.return_value = SimpleNamespace(skipped_flag_off=1, emitted=0, duplicates=0, unlinked=0, conflicts=0)
 
     settings_obj = _settings(
         opportunity_economic_snapshot_enabled=True,
@@ -340,9 +338,7 @@ def test_evidence_flag_false_still_writes_then_emit_enabled_false() -> None:
         settings_obj=settings_obj,
     )
     assert out is summary
-    writer.process.assert_called_once_with(
-        result, run_id="daily:2026-07-22:defillama", enabled=True
-    )
+    writer.process.assert_called_once_with(result, run_id="daily:2026-07-22:defillama", enabled=True)
     assert writer.process.call_args.kwargs["enabled"] is True
     emitter.emit.assert_called_once_with(o1, enabled=False)
 
@@ -538,9 +534,7 @@ def test_real_linked_identity_immediate_evidence_and_unlinked_retains_snapshot()
         )
         assert summary2 is not None
         assert summary2.snapshots_inserted >= 1
-        snap_count = raw.execute(
-            "SELECT COUNT(*) FROM opportunity_economic_snapshots"
-        ).fetchone()[0]
+        snap_count = raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0]
         assert snap_count >= 2
         # no project for unlinked identity
         unlinked_project = unlinked.project_id
@@ -568,9 +562,7 @@ def test_evidence_off_real_writer_still_snapshots_skipped_flag_off() -> None:
             opportunity_economic_source_defillama_enabled=True,
             opportunity_economic_evidence_emit_enabled=False,
         )
-        before = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-        )
+        before = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
         summary = process_persisted_collection(
             _result([_discovery()]),
             run_id="daily:2026-07-22:defillama",
@@ -580,13 +572,9 @@ def test_evidence_off_real_writer_still_snapshots_skipped_flag_off() -> None:
         )
         assert summary is not None
         assert summary.snapshots_inserted >= 1
-        assert raw.execute(
-            "SELECT COUNT(*) FROM opportunity_economic_snapshots"
-        ).fetchone()[0] >= 1
+        assert raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] >= 1
         assert raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
-        after = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-        )
+        after = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
         assert after >= before + 1
     finally:
         raw.close()

@@ -198,16 +198,18 @@ class TestDefiLlamaEconomicOptionA:
 
     def test_always_writes_change_7d_unit_ratio(self, collector: DefiLlamaCollector) -> None:
         for change in (0.25, 0, None):
-            protocol = sample_protocol(change_7d=change) if change is not None else {
-                **sample_protocol(),
-                "change_7d": None,
-            }
+            protocol = (
+                sample_protocol(change_7d=change)
+                if change is not None
+                else {
+                    **sample_protocol(),
+                    "change_7d": None,
+                }
+            )
             discovery = collector._build_discovery(protocol)
             assert discovery.raw_data["change_7d_unit"] == "ratio"
 
-    def test_legacy_score_and_signal_unchanged_for_present_values(
-        self, collector: DefiLlamaCollector
-    ) -> None:
+    def test_legacy_score_and_signal_unchanged_for_present_values(self, collector: DefiLlamaCollector) -> None:
         protocol = sample_protocol(tvl=10_000_000, change_7d=0.5, chains=["A", "B", "C", "D", "E"])
         discovery = collector._build_discovery(protocol)
         # Pre-Option-A score formula on same inputs
@@ -218,9 +220,7 @@ class TestDefiLlamaEconomicOptionA:
         assert tvl_signal.signal_data["tvl"] == 10_000_000
         assert tvl_signal.signal_data["change_7d"] == 0.5
 
-    def test_legacy_score_uses_zero_fallback_when_change_missing(
-        self, collector: DefiLlamaCollector
-    ) -> None:
+    def test_legacy_score_uses_zero_fallback_when_change_missing(self, collector: DefiLlamaCollector) -> None:
         protocol = sample_protocol(tvl=5_000_000, change_7d=0.25)
         del protocol["change_7d"]
         score_missing = collector._calculate_discovery_score(protocol)

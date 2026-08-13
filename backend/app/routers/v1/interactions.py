@@ -367,10 +367,7 @@ def _validate_status_transition(current_status: str | None, new_status: str) -> 
             status_code=422,
             detail={
                 "code": "INVALID_STATUS_TRANSITION",
-                "message": (
-                    f"Cannot transition interaction status from "
-                    f"{current_status!r} to {new_status!r}"
-                ),
+                "message": (f"Cannot transition interaction status from {current_status!r} to {new_status!r}"),
             },
         )
 

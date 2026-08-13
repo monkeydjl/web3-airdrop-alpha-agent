@@ -398,9 +398,7 @@ def test_borrowed_override_never_closed_on_startup_failure(monkeypatch) -> None:
     init_db(conn)
     borrowed = _TrackingConn(conn)
 
-    get_conn = MagicMock(
-        side_effect=AssertionError("must not call get_connection when override set")
-    )
+    get_conn = MagicMock(side_effect=AssertionError("must not call get_connection when override set"))
     monkeypatch.setattr(main_module, "get_connection", get_conn)
     monkeypatch.setattr(
         "app.opportunity.economic_repository.EconomicSnapshotRepository",
@@ -612,6 +610,7 @@ def test_flags_all_false_on_collection_zero_economic_calls(monkeypatch) -> None:
     # process is called once after persist (gate lives inside process → zero writer/emitter)
     process_mock.assert_called_once()
 
+
 def _make_observation(snapshot_id: str, source_id: str = "defillama") -> Any:
     from datetime import timedelta
 
@@ -659,9 +658,7 @@ def _make_write_summary(source_id: str, observations: tuple[Any, ...]) -> Any:
 
 @pytest.mark.parametrize("source_id", ["defillama", "coingecko", "cryptorank"])
 @pytest.mark.parametrize("fail_stage", ["construction", "process", "emit"])
-def test_scheduled_failure_isolation_per_provider(
-    monkeypatch, source_id: str, fail_stage: str
-) -> None:
+def test_scheduled_failure_isolation_per_provider(monkeypatch, source_id: str, fail_stage: str) -> None:
     """Construction/process/emit failures cannot rollback persist, suppress analysis, or leak conn.
 
     process/emit stages run real process_persisted_collection with injected writer/emitter

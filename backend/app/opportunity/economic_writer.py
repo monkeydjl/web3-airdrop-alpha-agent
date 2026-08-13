@@ -82,9 +82,7 @@ def observation_from_snapshot(
     touch identity metrics. Raises on any validation failure.
     """
     if snapshot.schema_version != SCHEMA_VERSION:
-        raise EconomicReconstructionError(
-            f"schema_version mismatch: {snapshot.schema_version!r} != {SCHEMA_VERSION!r}"
-        )
+        raise EconomicReconstructionError(f"schema_version mismatch: {snapshot.schema_version!r} != {SCHEMA_VERSION!r}")
 
     # Thaw MappingProxyType / nested freezes to plain JSON-like structures.
     raw_payload = _thaw_mapping(snapshot.payload_json)
@@ -102,18 +100,14 @@ def observation_from_snapshot(
     if stored_digest != snapshot.payload_sha256:
         raise EconomicReconstructionError("payload_sha256 mismatch with payload_json")
     if canonical_json_bytes(rebuilt) != canonical_json_bytes(raw_payload):
-        raise EconomicReconstructionError(
-            "payload_json is not equivalent to provider-native whitelist reconstruction"
-        )
+        raise EconomicReconstructionError("payload_json is not equivalent to provider-native whitelist reconstruction")
     if payload_sha256(rebuilt) != snapshot.payload_sha256:
         raise EconomicReconstructionError("rebuilt payload hash mismatch")
 
     if snapshot.source_id == "defillama":
         unit = rebuilt.get("change_7d_unit")
         if unit != DEFILLAMA_CHANGE_7D_PROVIDER_UNIT:
-            raise EconomicReconstructionError(
-                "defillama change_7d_unit must be exact literal 'ratio'"
-            )
+            raise EconomicReconstructionError("defillama change_7d_unit must be exact literal 'ratio'")
 
     try:
         clean_url = sanitize_source_url(snapshot.source_url)
@@ -201,12 +195,8 @@ class EconomicSnapshotWriter:
             if not enabled:
                 for _item in result.items:
                     skipped_flag_off += 1
-                    record_opportunity_economic_snapshot(
-                        source=source_id, result="skipped_flag_off"
-                    )
-                    record_opportunity_economic_observation(
-                        source=source_id, result="skipped_no_snapshot"
-                    )
+                    record_opportunity_economic_snapshot(source=source_id, result="skipped_flag_off")
+                    record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
                 return EconomicWriteSummary(
                     source_id=source_id,
                     run_id=run_id,
@@ -270,10 +260,7 @@ class EconomicSnapshotWriter:
         source_id: str,
         run_id: str,
         collected_at: datetime,
-    ) -> (
-        str
-        | tuple[str, NormalizedObservation | None]
-    ):
+    ) -> str | tuple[str, NormalizedObservation | None]:
         """Process one discovery. Returns summary token or (snap_result, obs|None)."""
         try:
             return self._process_item_inner(
@@ -289,9 +276,7 @@ class EconomicSnapshotWriter:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            record_opportunity_economic_observation(
-                source=source_id, result="skipped_no_snapshot"
-            )
+            record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
             return ("error", None)
 
     def _process_item_inner(
@@ -335,12 +320,8 @@ class EconomicSnapshotWriter:
                 source_id=source_id,
                 error=str(exc),
             )
-            record_opportunity_economic_snapshot(
-                source=source_id, result="schema_invalid"
-            )
-            record_opportunity_economic_observation(
-                source=source_id, result="skipped_no_snapshot"
-            )
+            record_opportunity_economic_snapshot(source=source_id, result="schema_invalid")
+            record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
             return "schema_invalid"
 
         digest = payload_sha256(payload)
@@ -372,9 +353,7 @@ class EconomicSnapshotWriter:
                 snapshot_id=snapshot_id,
                 error=str(exc),
             )
-            record_opportunity_economic_observation(
-                source=source_id, result="skipped_no_snapshot"
-            )
+            record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
             return ("error", None)
         except Exception as exc:
             logger.warning(
@@ -384,9 +363,7 @@ class EconomicSnapshotWriter:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            record_opportunity_economic_observation(
-                source=source_id, result="skipped_no_snapshot"
-            )
+            record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
             return ("error", None)
 
         snap_result = "inserted" if inserted else "duplicate"
@@ -404,9 +381,7 @@ class EconomicSnapshotWriter:
             )
             # Snapshot retained; observation not built. Not schema_invalid
             # (snapshot already persisted successfully).
-            record_opportunity_economic_observation(
-                source=source_id, result="skipped_no_snapshot"
-            )
+            record_opportunity_economic_observation(source=source_id, result="skipped_no_snapshot")
             return (snap_result, None)
 
         record_opportunity_economic_observation(source=source_id, result="built")

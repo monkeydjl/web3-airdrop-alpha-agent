@@ -147,18 +147,11 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         assert summary_off.unlinked == 0
         assert summary_off.conflicts == 0
         assert raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
-        assert (
-            _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
-            == before_ev + 1
-        )
+        assert _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off") == before_ev + 1
 
         # unlinked: no dual-condition identity → zero Evidence, snapshot retained concept
-        before_unlinked = _metric(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="unlinked"
-        )
-        before_skip_proj = _metric(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_no_project"
-        )
+        before_unlinked = _metric(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="unlinked")
+        before_skip_proj = _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_no_project")
         summary_unlinked = emitter.emit(_observation(dedup_key="protocol:nolink"), enabled=True)
         assert summary_unlinked.unlinked == 1
         assert summary_unlinked.emitted == 0
@@ -181,12 +174,8 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
             dedup_key="protocol:example",
             project_id="proj-1",
         )
-        before_linked = _metric(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-        )
-        before_emitted = _metric(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
+        before_linked = _metric(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
+        before_emitted = _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
         obs = _observation(snapshot_id="snap-dl-1")
         # Inject a non-whitelisted factor that must be ignored
         bad_factor = _factor(factor_key="not_a_factor", value="x", value_type="string")
@@ -197,13 +186,9 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         assert summary.unlinked == 0
         assert summary.conflicts == 0
         assert (
-            _metric(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
-            == before_linked + 1
+            _metric(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked") == before_linked + 1
         )
-        assert (
-            _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
-            == before_emitted + 4
-        )
+        assert _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_emitted + 4
 
         rows = evid_repo.list_evidence("proj-1")
         assert len(rows) == 4
@@ -224,9 +209,7 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
             assert record.independence_group == "defillama-protocols"
             assert record.raw_snapshot_ref == "econ-snapshot:snap-dl-1"
             assert record.project_id == "proj-1"
-            expected_id = build_evidence_id(
-                snapshot_id="snap-dl-1", project_id="proj-1", factor_key=key
-            )
+            expected_id = build_evidence_id(snapshot_id="snap-dl-1", project_id="proj-1", factor_key=key)
             assert record.evidence_id == expected_id
             assert len(record.evidence_id) == 64
             assert all(c in "0123456789abcdef" for c in record.evidence_id)
@@ -246,17 +229,12 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         assert summary_dup.duplicates == 4
         assert summary_dup.emitted == 0
         assert raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 4
-        assert (
-            _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="duplicate")
-            == before_dup + 4
-        )
+        assert _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="duplicate") == before_dup + 4
 
         # content conflict: same evidence_id different content → conflicts++
         from app.opportunity.models import EvidenceRecord
 
-        conflict_id = build_evidence_id(
-            snapshot_id="snap-conflict", project_id="proj-1", factor_key="tvl_usd"
-        )
+        conflict_id = build_evidence_id(snapshot_id="snap-conflict", project_id="proj-1", factor_key="tvl_usd")
         first = EvidenceRecord(
             evidence_id=conflict_id,
             project_id="proj-1",
@@ -278,9 +256,7 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         # Force conflict via direct second insert path through emit by pre-seeding
         # different content under same id is exercised by repository; emitter maps
         # EconomicEvidenceContentConflict → conflicts + content_conflict metric.
-        before_cc = _metric(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="content_conflict"
-        )
+        before_cc = _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="content_conflict")
         # Build observation that would emit same evidence_id with different value
         # by using same snapshot/project/factor but different factor value; evidence_id
         # is derived from snapshot+project+factor only — so conflict needs pre-seeded
@@ -291,14 +267,9 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         )
         summary_cc = emitter.emit(conflict_obs, enabled=True)
         assert summary_cc.conflicts == 1
-        assert (
-            _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="content_conflict")
-            == before_cc + 1
-        )
+        assert _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="content_conflict") == before_cc + 1
         # row content never overwritten
-        stored = next(
-            r for r in evid_repo.list_evidence("proj-1") if r.evidence_id == conflict_id
-        )
+        stored = next(r for r in evid_repo.list_evidence("proj-1") if r.evidence_id == conflict_id)
         assert stored.value == "1.00000000"
 
         # CG whitelist subset (market_cap/price/volume/circulating/rank/24h)
@@ -379,11 +350,7 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         )
         cg_summary = emitter.emit(cg_obs, enabled=True)
         assert cg_summary.emitted == 6
-        cg_rows = [
-            r
-            for r in evid_repo.list_evidence("proj-1")
-            if r.raw_snapshot_ref == "econ-snapshot:snap-cg-1"
-        ]
+        cg_rows = [r for r in evid_repo.list_evidence("proj-1") if r.raw_snapshot_ref == "econ-snapshot:snap-cg-1"]
         assert {r.factor_key for r in cg_rows} == {
             "market_cap_usd",
             "price_usd",
@@ -489,11 +456,7 @@ def test_economic_evidence_emitter_factors_whitelist_ref_id_flag_metrics() -> No
         )
         cr_summary = emitter.emit(cr_obs, enabled=True)
         assert cr_summary.emitted == 8
-        cr_rows = [
-            r
-            for r in evid_repo.list_evidence("proj-1")
-            if r.raw_snapshot_ref == "econ-snapshot:snap-cr-1"
-        ]
+        cr_rows = [r for r in evid_repo.list_evidence("proj-1") if r.raw_snapshot_ref == "econ-snapshot:snap-cr-1"]
         assert {r.factor_key for r in cr_rows} == {
             "market_cap_usd",
             "price_usd",
@@ -540,9 +503,7 @@ def test_replay_economic_snapshots_for_project_enabled_false_is_immediate_noop()
             )
         }
         before_id = {
-            result: _metric(
-                OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result=result
-            )
+            result: _metric(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result=result)
             for result in ("linked", "unlinked")
         }
 
@@ -590,10 +551,7 @@ def test_replay_economic_snapshots_for_project_enabled_false_is_immediate_noop()
             assert not any("raw_projects" in s for s in execute_calls)
 
         for result_name, before in before_ev.items():
-            assert (
-                _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=result_name)
-                == before
-            )
+            assert _metric(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=result_name) == before
         for result_name, before in before_id.items():
             assert (
                 _metric(
@@ -682,9 +640,7 @@ def test_replay_reconstructs_and_emits_with_row_isolation() -> None:
         count = raw.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0]
         assert count >= 1
         # Snapshots unchanged (2 rows)
-        assert (
-            raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] == 2
-        )
+        assert raw.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] == 2
         # No HTTP — module must not import/use requests; smoke via no network side effects
     finally:
         snap_repo.close()

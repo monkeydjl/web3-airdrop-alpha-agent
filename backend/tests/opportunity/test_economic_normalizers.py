@@ -170,9 +170,7 @@ def test_sanitize_source_url_strips_query_fragment_rejects_bad():
         sanitize_source_url,
     )
 
-    clean = sanitize_source_url(
-        "https://api.example.com/v1/coin?api_key=SECRET&token=tok#frag"
-    )
+    clean = sanitize_source_url("https://api.example.com/v1/coin?api_key=SECRET&token=tok#frag")
     assert clean == "https://api.example.com/v1/coin"
     assert "api_key" not in clean
     assert "token" not in clean
@@ -248,13 +246,9 @@ def test_canonical_defillama_requires_change_7d_unit_ratio():
     with pytest.raises(EconomicNormalizationError):
         canonical_provider_payload("defillama", {"tvl": 1, "change_7d": 0.1})
     with pytest.raises(EconomicNormalizationError):
-        canonical_provider_payload(
-            "defillama", {"tvl": 1, "change_7d": 0.1, "change_7d_unit": None}
-        )
+        canonical_provider_payload("defillama", {"tvl": 1, "change_7d": 0.1, "change_7d_unit": None})
     with pytest.raises(EconomicNormalizationError):
-        canonical_provider_payload(
-            "defillama", {"tvl": 1, "change_7d": 0.1, "change_7d_unit": "percent"}
-        )
+        canonical_provider_payload("defillama", {"tvl": 1, "change_7d": 0.1, "change_7d_unit": "percent"})
 
 
 # ── normalize_provider_payload factor mapping ───────────────────

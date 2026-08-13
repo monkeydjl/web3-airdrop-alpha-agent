@@ -276,13 +276,11 @@ class Settings(BaseSettings):
         """Upstream economic rollout gates: evidence_emit⇒snapshot, resolver⇒evidence."""
         if self.opportunity_economic_evidence_emit_enabled and not self.opportunity_economic_snapshot_enabled:
             raise ValueError(
-                "opportunity_economic_evidence_emit_enabled requires "
-                "opportunity_economic_snapshot_enabled"
+                "opportunity_economic_evidence_emit_enabled requires opportunity_economic_snapshot_enabled"
             )
         if self.opportunity_economic_resolver_enabled and not self.opportunity_economic_evidence_emit_enabled:
             raise ValueError(
-                "opportunity_economic_resolver_enabled requires "
-                "opportunity_economic_evidence_emit_enabled"
+                "opportunity_economic_resolver_enabled requires opportunity_economic_evidence_emit_enabled"
             )
         return self
 

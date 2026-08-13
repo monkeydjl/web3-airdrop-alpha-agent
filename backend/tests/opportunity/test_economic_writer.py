@@ -99,61 +99,35 @@ def test_economic_metric_contracts() -> None:
         set_opportunity_economic_last_success(source="bad", unixtime=1.0)
 
     # Sample value / delta / closed label sets (not bare .labels())
-    before = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-    )
+    before = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted")
     record_opportunity_economic_snapshot(source="defillama", result="inserted")
-    after = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-    )
+    after = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted")
     assert after - before == 1.0
 
-    before_obs = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="coingecko", result="built"
-    )
+    before_obs = metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="coingecko", result="built")
     record_opportunity_economic_observation(source="coingecko", result="built")
     assert (
-        metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="coingecko", result="built")
-        - before_obs
-        == 1.0
+        metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="coingecko", result="built") - before_obs == 1.0
     )
 
-    before_ev = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_EVIDENCE, source="cryptorank", result="emitted"
-    )
+    before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="cryptorank", result="emitted")
     record_opportunity_economic_evidence(source="cryptorank", result="emitted")
-    assert (
-        metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="cryptorank", result="emitted")
-        - before_ev
-        == 1.0
-    )
+    assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="cryptorank", result="emitted") - before_ev == 1.0
 
-    before_id = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-    )
+    before_id = metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
     record_opportunity_economic_identity(source="defillama", result="linked")
     assert (
-        metric_sample_value(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-        )
-        - before_id
+        metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked") - before_id
         == 1.0
     )
 
-    before_count = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama"
-    )
+    before_count = metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama")
     observe_opportunity_economic_duration(source="defillama", duration_seconds=0.25)
-    after_count = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama"
-    )
+    after_count = metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama")
     assert after_count - before_count == 1.0  # histogram _count delta
 
     set_opportunity_economic_last_success(source="defillama", unixtime=1_721_664_000.0)
-    assert (
-        metric_sample_value(OPPORTUNITY_ECONOMIC_LAST_SUCCESS, source="defillama")
-        == 1_721_664_000.0
-    )
+    assert metric_sample_value(OPPORTUNITY_ECONOMIC_LAST_SUCCESS, source="defillama") == 1_721_664_000.0
 
     # Closed label sets from samples
     snap_sets = metric_label_sets(OPPORTUNITY_ECONOMIC_SNAPSHOTS)
@@ -202,14 +176,18 @@ def _discovery(
     url: str | None = "https://api.llama.fi/protocol/example?key=secret#frag",
     raw_data: dict[str, Any] | None = None,
 ) -> RawDiscovery:
-    body = raw_data if raw_data is not None else {
-        "tvl": 1_000_000,
-        "change_7d": 0.05,
-        "change_7d_unit": "ratio",
-        "chains": ["Ethereum", "Arbitrum"],
-        "no_token_yet": False,
-        "extra_noise": "ignored",
-    }
+    body = (
+        raw_data
+        if raw_data is not None
+        else {
+            "tvl": 1_000_000,
+            "change_7d": 0.05,
+            "change_7d_unit": "ratio",
+            "chains": ["Ethereum", "Arbitrum"],
+            "no_token_yet": False,
+            "extra_noise": "ignored",
+        }
+    )
     return RawDiscovery(
         source_id=source_id,
         raw_id=raw_id,
@@ -244,13 +222,17 @@ def _make_snapshot_row(
     schema_version: str = SCHEMA_VERSION,
     payload_sha256_override: str | None = None,
 ) -> EconomicSnapshotRow:
-    body = payload if payload is not None else {
-        "tvl": 1_000_000,
-        "change_7d": 0.05,
-        "change_7d_unit": "ratio",
-        "chains": ["Ethereum", "Arbitrum"],
-        "no_token_yet": False,
-    }
+    body = (
+        payload
+        if payload is not None
+        else {
+            "tvl": 1_000_000,
+            "change_7d": 0.05,
+            "change_7d_unit": "ratio",
+            "chains": ["Ethereum", "Arbitrum"],
+            "no_token_yet": False,
+        }
+    )
     digest = payload_sha256_override if payload_sha256_override is not None else payload_sha256(body)
     snapshot_id = build_snapshot_id(
         run_id=run_id,
@@ -331,9 +313,7 @@ def test_writer_process_contract() -> None:
     assert params == ["self", "result", "run_id", "enabled"]
     assert sig.parameters["run_id"].kind == inspect.Parameter.KEYWORD_ONLY
     assert sig.parameters["enabled"].kind == inspect.Parameter.KEYWORD_ONLY
-    assert not hasattr(EconomicSnapshotWriter, "write") or not callable(
-        getattr(EconomicSnapshotWriter, "write", None)
-    )
+    assert not hasattr(EconomicSnapshotWriter, "write") or not callable(getattr(EconomicSnapshotWriter, "write", None))
     assert not hasattr(EconomicSnapshotWriter, "write")
 
     # utc_now returns UTC aware
@@ -364,9 +344,7 @@ def test_writer_process_contract() -> None:
                 source="defillama",
                 result="skipped_no_snapshot",
             )
-            before_ev = metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-            )
+            before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
             before_id = metric_sample_value(
                 OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
             )
@@ -384,9 +362,7 @@ def test_writer_process_contract() -> None:
             assert repo_spy.get.call_count == 0
             assert recon_spy.call_count == 0
             assert (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="skipped_flag_off"
-                )
+                metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="skipped_flag_off")
                 - before_skip
                 == 2.0
             )
@@ -400,16 +376,9 @@ def test_writer_process_contract() -> None:
                 == 2.0
             )
             # No evidence / identity metrics from writer
+            assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
             assert (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-                )
-                == before_ev
-            )
-            assert (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-                )
+                metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
                 == before_id
             )
     finally:
@@ -423,21 +392,11 @@ def test_writer_process_contract() -> None:
         item = _discovery()
         result = _result([item], finished_at=fixed_now)
 
-        before_ins = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-        )
-        before_built = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built"
-        )
-        before_dur = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama"
-        )
-        before_ev = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
-        before_id = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-        )
+        before_ins = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted")
+        before_built = metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built")
+        before_dur = metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama")
+        before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
+        before_id = metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
 
         with patch(
             "app.opportunity.economic_writer.observation_from_snapshot",
@@ -474,53 +433,31 @@ def test_writer_process_contract() -> None:
         assert stored.payload_sha256 == payload_sha256(payload_dict)
 
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-            )
-            - before_ins
+            metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted") - before_ins
             == 1.0
         )
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built"
-            )
-            - before_built
+            metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built") - before_built
             == 1.0
         )
-        assert (
-            metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama")
-            - before_dur
-            == 1.0
-        )
+        assert metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama") - before_dur == 1.0
         # last-success set when ≥1 observation
         assert metric_sample_value(OPPORTUNITY_ECONOMIC_LAST_SUCCESS, source="defillama") > 0
+        assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-            )
-            == before_ev
-        )
-        assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-            )
+            metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
             == before_id
         )
 
         # duplicate path: same run/items again → duplicate + built
-        before_dup = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-        )
+        before_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
         summary2 = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         assert summary2.snapshots_inserted == 0
         assert summary2.snapshots_duplicate == 1
         assert len(summary2.observations) == 1
         assert summary2.observations[0].snapshot_id == obs.snapshot_id
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-            )
-            - before_dup
+            metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate") - before_dup
             == 1.0
         )
     finally:
@@ -563,18 +500,14 @@ def test_writer_process_contract() -> None:
             url="ftp://not-allowed.example/x",
         )
         result = _result([bad, good], finished_at=fixed_now)
-        before_inv = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid"
-        )
+        before_inv = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid")
         summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         assert summary.schema_invalid == 1
         assert summary.snapshots_inserted == 1
         assert len(summary.observations) == 1
         assert summary.observations[0].provider_entity_id == "good-1"
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid"
-            )
+            metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid")
             - before_inv
             == 1.0
         )
@@ -616,9 +549,7 @@ def test_writer_process_contract() -> None:
             assert summary.snapshots_inserted == 0
             assert summary.observations == ()
             assert (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid"
-                )
+                metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="schema_invalid")
                 == before_inv
             )
             assert (
@@ -838,9 +769,7 @@ def test_reconstruction_per_row_isolation_no_evidence(
 
         monkeypatch.setattr(writer_mod, "observation_from_snapshot", selective_recon)
 
-        before_ev = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
+        before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
         summary = writer.process(
             _result([bad, good], finished_at=fixed_now),
             run_id="daily:2026-07-22:defillama",
@@ -851,12 +780,7 @@ def test_reconstruction_per_row_isolation_no_evidence(
         assert all(o.provider_entity_id != "iso-bad" for o in summary.observations)
         assert any(o.provider_entity_id == "iso-good" for o in summary.observations)
         # No Evidence metrics
-        assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-            )
-            == before_ev
-        )
+        assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
         # Bad snapshot row retained if insert succeeded before recon failure
         rows = raw.execute("SELECT provider_entity_id FROM opportunity_economic_snapshots").fetchall()
         entity_ids = {r["provider_entity_id"] for r in rows}
@@ -896,9 +820,7 @@ def test_writer_retry_later_finished_at_is_duplicate_preserves_collected_at() ->
         assert stored_after_first is not None
         assert stored_after_first.collected_at == first_finished
 
-        before_dup = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-        )
+        before_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
         summary2 = writer.process(
             _result([item], finished_at=later_finished),
             run_id=run_id,
@@ -913,10 +835,7 @@ def test_writer_retry_later_finished_at_is_duplicate_preserves_collected_at() ->
         assert second_obs.collected_at == first_finished
         assert second_obs.collected_at != later_finished
         assert (
-            metric_sample_value(
-                OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-            )
-            - before_dup
+            metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate") - before_dup
             == 1.0
         )
 

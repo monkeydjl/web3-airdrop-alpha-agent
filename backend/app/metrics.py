@@ -114,9 +114,7 @@ COLLECTION_DUPLICATES = Counter(
 
 # ── Opportunity Economic metrics (closed vocabularies) ─────────────
 OPPORTUNITY_ECONOMIC_SOURCES = frozenset({"defillama", "coingecko", "cryptorank"})
-OPPORTUNITY_ECONOMIC_SNAPSHOT_RESULTS = frozenset(
-    {"inserted", "duplicate", "schema_invalid", "skipped_flag_off"}
-)
+OPPORTUNITY_ECONOMIC_SNAPSHOT_RESULTS = frozenset({"inserted", "duplicate", "schema_invalid", "skipped_flag_off"})
 OPPORTUNITY_ECONOMIC_OBSERVATION_RESULTS = frozenset({"built", "skipped_no_snapshot"})
 OPPORTUNITY_ECONOMIC_EVIDENCE_RESULTS = frozenset(
     {"emitted", "skipped_no_project", "duplicate", "skipped_flag_off", "content_conflict"}

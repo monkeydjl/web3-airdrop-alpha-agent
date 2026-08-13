@@ -199,10 +199,7 @@ def test_sqlite_init_db_creates_idempotent_opportunity_economic_snapshots_schema
         init_db(conn)
         init_db(conn)
 
-        tables = {
-            row[0]
-            for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        tables = {row[0] for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "opportunity_economic_snapshots" in tables
 
         columns = list(raw.execute("PRAGMA table_info(opportunity_economic_snapshots)"))
@@ -217,26 +214,21 @@ def test_sqlite_init_db_creates_idempotent_opportunity_economic_snapshots_schema
                 assert row["type"].upper() == "TIMESTAMP"
 
         table_sql = raw.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' "
-            "AND name='opportunity_economic_snapshots'"
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='opportunity_economic_snapshots'"
         ).fetchone()[0]
         assert "check(length(trim(dedup_key))>0)" in _compact_sql(table_sql)
 
         index_names = {
             row[0]
             for row in raw.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
             )
             if row[0]
         }
         source_ddl = _sqlite_ddl()
         for index_name, columns_sql in _EXPECTED_ECONOMIC_SNAPSHOT_INDEXES.items():
             assert index_name in index_names
-            expected_create = (
-                f"CREATE INDEX IF NOT EXISTS {index_name} "
-                f"ON opportunity_economic_snapshots{columns_sql}"
-            )
+            expected_create = f"CREATE INDEX IF NOT EXISTS {index_name} ON opportunity_economic_snapshots{columns_sql}"
             assert _compact_sql(expected_create) in _compact_sql(source_ddl)
     finally:
         conn.close()
@@ -257,9 +249,7 @@ def test_postgres_init_db_emits_opportunity_economic_snapshots_ddl_parity() -> N
     # Scope column/type/NOT NULL parity to the economic table CREATE only
     # (other tables already emit TIMESTAMPTZ / shared column names).
     economic_create = next(
-        sql
-        for sql in sqls
-        if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in str(sql)
+        sql for sql in sqls if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in str(sql)
     )
     economic_compact = _compact_sql(str(economic_create))
     for column in _EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS:
@@ -268,10 +258,7 @@ def test_postgres_init_db_emits_opportunity_economic_snapshots_ddl_parity() -> N
         if column == "snapshot_id":
             continue
         # Non-PK columns must be NOT NULL inside this table's CREATE.
-        assert (
-            f"{column}textnotnull" in economic_compact
-            or f"{column}timestamptznotnull" in economic_compact
-        )
+        assert f"{column}textnotnull" in economic_compact or f"{column}timestamptznotnull" in economic_compact
     assert "check(length(trim(dedup_key))>0)" in economic_compact
     assert "collected_attimestamptznotnull" in economic_compact
     for index_name, columns_sql in _EXPECTED_ECONOMIC_SNAPSHOT_INDEXES.items():

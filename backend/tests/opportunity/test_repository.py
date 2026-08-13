@@ -796,9 +796,7 @@ class _PgEvidenceFakeRaw:
         if "select supersedes_evidence_id from opportunity_evidence" in sql_n:
             store = self._pending if self._pending is not None else self._rows
             row = store.get(params[0]) if store else None
-            self._last_fetch = (
-                {"supersedes_evidence_id": row["supersedes_evidence_id"]} if row else None
-            )
+            self._last_fetch = {"supersedes_evidence_id": row["supersedes_evidence_id"]} if row else None
             return self
         raise AssertionError(f"unexpected SQL in PG evidence fake: {sql!r}")
 
@@ -877,9 +875,7 @@ def test_add_economic_evidence_if_absent_postgres_recording_ambiguous_rowcount()
         assert after_dup is not None
         assert after_dup["factor_key"] == "tvl_usd"
 
-        conflict = _economic_evidence(
-            evidence_id="d" * 64, factor_key="market_cap_usd", value="9.00000000"
-        )
+        conflict = _economic_evidence(evidence_id="d" * 64, factor_key="market_cap_usd", value="9.00000000")
         with pytest.raises(EconomicEvidenceContentConflict):
             repo.add_economic_evidence_if_absent(conflict)
         after_conflict = raw_fetch(record.evidence_id)

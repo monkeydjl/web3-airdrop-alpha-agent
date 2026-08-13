@@ -27,16 +27,12 @@ class OpportunityWorkflowService:
         self._project_repo = ProjectRepository(self._conn)
         self._opportunity_repo = OpportunityRepository(self._conn)
 
-    def get_project_workflow(
-        self, project_id: str, now: datetime
-    ) -> OpportunityWorkflowProjection:
+    def get_project_workflow(self, project_id: str, now: datetime) -> OpportunityWorkflowProjection:
         project = self._project_repo.get_by_id(project_id)
         if project is None:
             raise LookupError(project_id)
 
-        assessment = self._opportunity_repo.latest_assessment(
-            project_id, DEFAULT_PROFILE.profile_id
-        )
+        assessment = self._opportunity_repo.latest_assessment(project_id, DEFAULT_PROFILE.profile_id)
         evidence = self._opportunity_repo.list_evidence(project_id, include_invalid=True)
         participation = generate_participation_tasks(project)
         participation_tasks = participation.get("tasks") or []

@@ -322,9 +322,7 @@ class _FakeRegistry:
 
 
 class TestManualTriggerEconomicIntegration:
-    def test_request_scoped_conn_closed_once_and_manual_run_id(
-        self, client: TestClient, monkeypatch
-    ) -> None:
+    def test_request_scoped_conn_closed_once_and_manual_run_id(self, client: TestClient, monkeypatch) -> None:
         import app.routers.v1.collections as coll_mod
 
         close_calls = {"n": 0}
@@ -399,17 +397,11 @@ class TestManualTriggerEconomicIntegration:
             emit_factory_conns.append(c)
             return MagicMock()
 
-        monkeypatch.setattr(
-            "app.opportunity.economic_repository.EconomicSnapshotRepository", snap_factory
-        )
+        monkeypatch.setattr("app.opportunity.economic_repository.EconomicSnapshotRepository", snap_factory)
         monkeypatch.setattr("app.opportunity.repository.OpportunityRepository", opp_factory)
         monkeypatch.setattr("app.opportunity.economic_writer.EconomicSnapshotWriter", writer_factory)
-        monkeypatch.setattr(
-            "app.opportunity.economic_evidence.EconomicEvidenceEmitter", emitter_factory
-        )
-        monkeypatch.setattr(
-            "app.opportunity.economic_integration.process_persisted_collection", fake_process
-        )
+        monkeypatch.setattr("app.opportunity.economic_evidence.EconomicEvidenceEmitter", emitter_factory)
+        monkeypatch.setattr("app.opportunity.economic_integration.process_persisted_collection", fake_process)
         monkeypatch.setattr(
             "app.opportunity.economic_integration.manual_run_id",
             lambda **kw: "manual:550e8400-e29b-41d4-a716-446655440000",
@@ -459,9 +451,7 @@ class TestManualTriggerEconomicIntegration:
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
         monkeypatch.setattr(coll_mod, "CollectionRepository", FailingRepo)
         monkeypatch.setattr(coll_mod, "get_connection", lambda: TrackingConn())
-        monkeypatch.setattr(
-            "app.opportunity.economic_integration.process_persisted_collection", process_mock
-        )
+        monkeypatch.setattr("app.opportunity.economic_integration.process_persisted_collection", process_mock)
 
         with contextlib.suppress(Exception):
             client.post("/api/v1/collections/defillama/trigger")
@@ -534,9 +524,7 @@ class TestManualTriggerEconomicIntegration:
             "app.opportunity.economic_repository.EconomicSnapshotRepository",
             lambda *a, **k: MagicMock(),
         )
-        monkeypatch.setattr(
-            "app.opportunity.repository.OpportunityRepository", lambda *a, **k: MagicMock()
-        )
+        monkeypatch.setattr("app.opportunity.repository.OpportunityRepository", lambda *a, **k: MagicMock())
         monkeypatch.setattr(
             "app.opportunity.economic_writer.EconomicSnapshotWriter",
             lambda *a, **k: mock_writer,
@@ -594,9 +582,7 @@ class TestManualTriggerEconomicIntegration:
         monkeypatch.setattr(settings, "opportunity_economic_source_defillama_enabled", False)
         monkeypatch.setattr(settings, "opportunity_economic_source_coingecko_enabled", False)
         monkeypatch.setattr(settings, "opportunity_economic_source_cryptorank_enabled", False)
-        monkeypatch.setattr(
-            settings, f"opportunity_economic_source_{source_id}_enabled", True
-        )
+        monkeypatch.setattr(settings, f"opportunity_economic_source_{source_id}_enabled", True)
         monkeypatch.setattr(settings, f"{source_id}_enabled", True)
         monkeypatch.setattr(settings, "opportunity_economic_evidence_emit_enabled", True)
         monkeypatch.setattr(settings, "collection_auto_run_enabled", True)
@@ -638,16 +624,8 @@ class TestManualTriggerEconomicIntegration:
                 "items_collected": len(expected_result.items),
                 "items_new": expected_result.items_new,
                 "items_duplicate": expected_result.items_duplicate,
-                "started_at": (
-                    expected_result.started_at.isoformat()
-                    if expected_result.started_at
-                    else None
-                ),
-                "finished_at": (
-                    expected_result.finished_at.isoformat()
-                    if expected_result.finished_at
-                    else None
-                ),
+                "started_at": (expected_result.started_at.isoformat() if expected_result.started_at else None),
+                "finished_at": (expected_result.finished_at.isoformat() if expected_result.finished_at else None),
                 "auto_run": {"project_count": 0, "status": "completed"},
                 "auto_run_skipped": None,
             },
@@ -657,18 +635,14 @@ class TestManualTriggerEconomicIntegration:
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: registry)
         monkeypatch.setattr(coll_mod, "CollectionRepository", Repo)
         monkeypatch.setattr(coll_mod, "get_connection", lambda: TrackingConn())
-        monkeypatch.setattr(
-            "app.pipeline_run.execute_analysis_pipeline", fake_pipeline
-        )
+        monkeypatch.setattr("app.pipeline_run.execute_analysis_pipeline", fake_pipeline)
 
         if fail_stage == "construction":
 
             def boom(*a, **k):
                 raise RuntimeError("construction boom")
 
-            monkeypatch.setattr(
-                "app.opportunity.economic_repository.EconomicSnapshotRepository", boom
-            )
+            monkeypatch.setattr("app.opportunity.economic_repository.EconomicSnapshotRepository", boom)
         else:
             mock_writer = MagicMock(name="writer")
             mock_emitter = MagicMock(name="emitter")

@@ -295,9 +295,7 @@ def _run_coro_sync(coro: Any) -> Any:
                 if await_meth is not None:
                     stack.append(await_meth())
                 else:
-                    raise RuntimeError(
-                        f"unsupported awaitable in _run_coro_sync: {type(yielded)!r}"
-                    )
+                    raise RuntimeError(f"unsupported awaitable in _run_coro_sync: {type(yielded)!r}")
         except StopIteration as stop:
             stack.pop()
             in_value = stop.value
@@ -393,18 +391,10 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         main_module.settings.app_env = "development"
         main_module.settings.collection_auto_run_enabled = False
         with contextlib.ExitStack() as stack:
-            stack.enter_context(
-                patch.object(main_module, "get_default_registry", lambda: _Reg())
-            )
-            stack.enter_context(
-                patch.object(main_module, "CollectionScheduler", _CollSched)
-            )
-            stack.enter_context(
-                patch.object(main_module, "AnalysisScheduler", _AnalSched)
-            )
-            stack.enter_context(
-                patch.object(main_module, "CollectionRepository", _PersistRepo)
-            )
+            stack.enter_context(patch.object(main_module, "get_default_registry", lambda: _Reg()))
+            stack.enter_context(patch.object(main_module, "CollectionScheduler", _CollSched))
+            stack.enter_context(patch.object(main_module, "AnalysisScheduler", _AnalSched))
+            stack.enter_context(patch.object(main_module, "CollectionRepository", _PersistRepo))
             stack.enter_context(patch.object(main_module, "init_db", lambda: None))
             stack.enter_context(
                 patch(
@@ -473,9 +463,7 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
                 boom_ctor,
             ),
         ):
-            response = _run_coro_sync(
-                coll_mod.trigger_collection(source_id="defillama")
-            )
+            response = _run_coro_sync(coll_mod.trigger_collection(source_id="defillama"))
         if response.ok is not True:
             return False
         data = response.model_dump().get("data") or {}
@@ -662,9 +650,7 @@ def _check_hash_framing() -> bool:
         project_id="proj-stage-a",
         factor_key="tvl_usd",
     )
-    expected_evidence = hash_string_array(
-        [SCHEMA_VERSION, snap, "proj-stage-a", "tvl_usd"]
-    )
+    expected_evidence = hash_string_array([SCHEMA_VERSION, snap, "proj-stage-a", "tvl_usd"])
     return not (evidence != expected_evidence or not _is_lower_hex64(evidence))
 
 
@@ -816,9 +802,7 @@ def _check_dedup_and_raw_id_preserved() -> bool:
         writer = EconomicSnapshotWriter(repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted != 1 or len(summary.observations) != 1:
             return False
         obs = summary.observations[0]
@@ -850,9 +834,7 @@ def section_17_2_checks() -> dict[str, bool]:
         "provider_native_whitelist_strips_unknown_and_canary": _check_whitelist_and_canary_strip(),
         "credentials_never_in_payload_hash_stdout": _check_credentials_absent(),
         "missing_fields_not_filled_with_zero": _check_missing_not_zero(),
-        "coingecko_cryptorank_same_independence_group_no_double_count": (
-            _check_cg_cr_independence_group()
-        ),
+        "coingecko_cryptorank_same_independence_group_no_double_count": (_check_cg_cr_independence_group()),
         "mode_closed_set": _check_mode_closed_set(),
         "dedup_key_and_raw_id_preserved": _check_dedup_and_raw_id_preserved(),
         "value_type_closed_set_and_specialized_types": _check_value_type_closed_and_specialized(),
@@ -921,9 +903,7 @@ def _case_17_1_01() -> bool:
         if id2 != expected_day2 or id1 == id2:
             return False
 
-        count = raw_conn.execute(
-            "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-        ).fetchone()["c"]
+        count = raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"]
         if count != 2:
             return False
         stored1 = repo.get(id1)
@@ -967,15 +947,13 @@ def _case_17_1_02() -> bool:
         if len(summary1.observations) != 1:
             return False
         first_id = summary1.observations[0].snapshot_id
-        count_after_insert = raw_conn.execute(
-            "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-        ).fetchone()["c"]
+        count_after_insert = raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()[
+            "c"
+        ]
         if count_after_insert != 1:
             return False
 
-        before_dup = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-        )
+        before_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
         summary2 = writer.process(result, run_id=run_id, enabled=True)
         if summary2.snapshots_inserted != 0 or summary2.snapshots_duplicate != 1:
             return False
@@ -983,14 +961,10 @@ def _case_17_1_02() -> bool:
             return False
         if summary2.observations[0].snapshot_id != first_id:
             return False
-        count_after_dup = raw_conn.execute(
-            "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-        ).fetchone()["c"]
+        count_after_dup = raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"]
         if count_after_dup != 1:
             return False
-        after_dup = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-        )
+        after_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
         if after_dup - before_dup != 1.0:
             return False
         # Bare labels() existence is not verification; sample delta must prove record.
@@ -1021,9 +995,7 @@ def _case_17_1_03() -> bool:
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted != 1 or len(summary.observations) != 1:
             return False
         snapshot_id = summary.observations[0].snapshot_id
@@ -1039,9 +1011,7 @@ def _case_17_1_03() -> bool:
         if snap_repo.find_linked_project_id("defillama", dedup_key) is not None:
             return False
 
-        orphan = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        orphan = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         if orphan is None:
             return False
         if orphan.emitted != 0 or orphan.unlinked < 1:
@@ -1054,9 +1024,7 @@ def _case_17_1_03() -> bool:
         if snap_repo.find_linked_project_id("defillama", dedup_key) != project_id:
             return False
 
-        linked = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        linked = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         if linked is None or linked.emitted < 1 or linked.unlinked != 0:
             return False
         rows = evid_repo.list_evidence(project_id)
@@ -1079,9 +1047,7 @@ def _case_17_1_03() -> bool:
             return False
 
         # Repeated replay is insert-if-absent: no new rows, duplicates only.
-        again = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=True
-        )
+        again = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=True)
         if again is None or again.emitted != 0 or again.duplicates < 1:
             return False
         if _evidence_count(raw_conn) != count_after_first:
@@ -1147,9 +1113,7 @@ def _case_17_1_04() -> bool:
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted != 1:
             return False
 
@@ -1179,9 +1143,7 @@ def _case_17_1_04() -> bool:
             return False
 
         # Replay against orphan project_id also yields zero Evidence.
-        replay = replay_economic_snapshots_for_project(
-            orphan_project_id, conn=conn, enabled=True
-        )
+        replay = replay_economic_snapshots_for_project(orphan_project_id, conn=conn, enabled=True)
         if replay is None or replay.emitted != 0:
             return False
         return _evidence_count(raw_conn) == 0
@@ -1276,18 +1238,14 @@ def _case_17_1_05() -> bool:
                 # TTL is collected_at+48h from emitter; force-check via resolver window.
                 pass
 
-        projection = EconomicResolver(snap_repo).resolve(
-            project_id, records, now=now
-        )
+        projection = EconomicResolver(snap_repo).resolve(project_id, records, now=now)
         factor = projection.factors["price_usd"]
         if factor.conflicted is not False:
             return False
         if factor.value is None:
             return False
         # Latest day (day2 / snap2) must win among same independence group.
-        expected_latest_id = build_evidence_id(
-            snapshot_id=snap2, project_id=project_id, factor_key="price_usd"
-        )
+        expected_latest_id = build_evidence_id(snapshot_id=snap2, project_id=project_id, factor_key="price_usd")
         if factor.evidence_id != expected_latest_id:
             return False
         # Value must match day2 price, not day1.
@@ -1333,9 +1291,7 @@ def _case_17_1_06() -> bool:
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted != 1 or not summary.observations:
             return False
 
@@ -1373,11 +1329,7 @@ def _case_17_1_06() -> bool:
         if projection.economics_data_mode not in _MODE_CLOSED:
             return False
         # Usable proxy factor present (closed-set PROXY_ONLY semantics).
-        usable = [
-            f
-            for f in projection.factors.values()
-            if f.value is not None and f.conflicted is False
-        ]
+        usable = [f for f in projection.factors.values() if f.value is not None and f.conflicted is False]
         if not usable:
             return False
         if projection.factors["tvl_usd"].value is None:
@@ -1500,11 +1452,7 @@ def _case_17_1_07() -> bool:
             raw_snapshot_ref=None,
         )
         evid_repo.add_evidence(manual_evidence)
-        stored_manual = [
-            r
-            for r in evid_repo.list_evidence(project_id)
-            if r.evidence_id == "manual-direct-farm-07"
-        ]
+        stored_manual = [r for r in evid_repo.list_evidence(project_id) if r.evidence_id == "manual-direct-farm-07"]
         if len(stored_manual) != 1:
             return False
         if stored_manual[0].source_type != "manual":
@@ -1538,28 +1486,18 @@ def _case_17_1_07() -> bool:
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = now
         # Snapshot write disabled (flag closed for economic snapshot path).
-        write_off = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=False
-        )
+        write_off = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=False)
         if write_off.snapshots_inserted != 0 or write_off.observations:
             return False
 
         # Replay disabled is immediate None with zero side effects on manual evidence.
-        replay_off = replay_economic_snapshots_for_project(
-            project_id, conn=conn, enabled=False
-        )
+        replay_off = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=False)
         if replay_off is not None:
             return False
-        after_closed = [
-            r
-            for r in evid_repo.list_evidence(project_id)
-            if r.evidence_id == "manual-direct-farm-07"
-        ]
+        after_closed = [r for r in evid_repo.list_evidence(project_id) if r.evidence_id == "manual-direct-farm-07"]
         if len(after_closed) != 1:
             return False
-        if after_closed[0].model_dump(mode="json") != stored_manual[0].model_dump(
-            mode="json"
-        ):
+        if after_closed[0].model_dump(mode="json") != stored_manual[0].model_dump(mode="json"):
             return False
         # No economic proxy Evidence rows were created under closed flags.
         econ_rows = [
@@ -1639,11 +1577,7 @@ def _case_17_1_15() -> bool:
         except EconomicEvidenceContentConflict:
             pass
 
-        rows = [
-            r
-            for r in evid_repo.list_evidence(project_id)
-            if r.evidence_id == evidence_id
-        ]
+        rows = [r for r in evid_repo.list_evidence(project_id) if r.evidence_id == evidence_id]
         if len(rows) != 1:
             return False
         if rows[0].value != "1000000.00000000":
@@ -1693,11 +1627,7 @@ def _case_17_1_15() -> bool:
             return False
         if emit_summary.emitted != 0:
             return False
-        final = next(
-            r
-            for r in evid_repo.list_evidence(project_id)
-            if r.evidence_id == evidence_id
-        )
+        final = next(r for r in evid_repo.list_evidence(project_id) if r.evidence_id == evidence_id)
         return final.value == "1000000.00000000"
     finally:
         evid_repo.close()
@@ -1715,10 +1645,7 @@ def _case_17_1_09() -> bool:
         init_db(conn)
         init_db(conn)
 
-        tables = {
-            row[0]
-            for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        tables = {row[0] for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "opportunity_economic_snapshots" not in tables:
             return False
 
@@ -1737,8 +1664,7 @@ def _case_17_1_09() -> bool:
                 return False
 
         table_sql = raw.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' "
-            "AND name='opportunity_economic_snapshots'"
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='opportunity_economic_snapshots'"
         ).fetchone()[0]
         if "check(length(trim(dedup_key))>0)" not in _compact_sql(table_sql):
             return False
@@ -1746,8 +1672,7 @@ def _case_17_1_09() -> bool:
         index_names = {
             row[0]
             for row in raw.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='opportunity_economic_snapshots'"
             )
             if row[0]
         }
@@ -1795,11 +1720,7 @@ def _case_17_1_09() -> bool:
     if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" not in all_sql:
         return False
     economic_create = next(
-        (
-            sql
-            for sql in sqls
-            if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in str(sql)
-        ),
+        (sql for sql in sqls if "CREATE TABLE IF NOT EXISTS opportunity_economic_snapshots" in str(sql)),
         None,
     )
     if economic_create is None:
@@ -1811,10 +1732,7 @@ def _case_17_1_09() -> bool:
     for column in _EXPECTED_ECONOMIC_SNAPSHOT_COLUMNS:
         if column == "snapshot_id":
             continue
-        if not (
-            f"{column}textnotnull" in economic_compact
-            or f"{column}timestamptznotnull" in economic_compact
-        ):
+        if not (f"{column}textnotnull" in economic_compact or f"{column}timestamptznotnull" in economic_compact):
             return False
     if "check(length(trim(dedup_key))>0)" not in economic_compact:
         return False
@@ -1864,9 +1782,7 @@ def _case_17_1_10() -> bool:
         )
         if not _is_lower_hex64(snap_id):
             return False
-        if snap_id != hash_string_array(
-            [SCHEMA_VERSION, run_id, source_id, raw_id, digest]
-        ):
+        if snap_id != hash_string_array([SCHEMA_VERSION, run_id, source_id, raw_id, digest]):
             return False
         url = sanitize_source_url(str(meta["url"]))
         factors = normalize_provider_payload(
@@ -1888,9 +1804,7 @@ def _case_17_1_10() -> bool:
             )
             if not _is_lower_hex64(evidence_id):
                 return False
-            if evidence_id != hash_string_array(
-                [SCHEMA_VERSION, snap_id, project_id, factor.factor_key]
-            ):
+            if evidence_id != hash_string_array([SCHEMA_VERSION, snap_id, project_id, factor.factor_key]):
                 return False
         identities.append((source_id, raw_id, snap_id))
 
@@ -1924,9 +1838,7 @@ def _case_17_1_10() -> bool:
             )
             result = CollectorResult(source_id=source_id, items=[item])
             result.finished_at = _OBSERVED
-            summary = writer.process(
-                result, run_id=f"{run_id}:{source_id}", enabled=True
-            )
+            summary = writer.process(result, run_id=f"{run_id}:{source_id}", enabled=True)
             if summary.schema_invalid != 0 or summary.snapshots_inserted != 1:
                 return False
             if len(summary.observations) != 1:
@@ -1969,16 +1881,12 @@ def _case_17_1_11() -> bool:
         writer = EconomicSnapshotWriter(repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.schema_invalid != 1:
             return False
         if summary.snapshots_inserted != 0 or summary.observations:
             return False
-        count = raw_conn.execute(
-            "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-        ).fetchone()["c"]
+        count = raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"]
         return count == 0
     finally:
         repo.close()
@@ -2111,14 +2019,10 @@ def _case_17_1_14() -> bool:
         )
         result = CollectorResult(source_id="defillama", items=[bad])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.schema_invalid != 1 or summary.snapshots_inserted != 0:
             return False
-        count = raw_conn.execute(
-            "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-        ).fetchone()["c"]
+        count = raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"]
         return count == 0
     finally:
         repo.close()
@@ -2400,9 +2304,7 @@ def _case_17_1_20() -> bool:
     zero_payload = canonical_provider_payload("defillama", zero_raw)
     if zero_payload.get("tvl") != 0 or zero_payload.get("change_7d") != 0:
         return False
-    if payload_sha256(zero_payload) == payload_sha256(
-        {k: v for k, v in zero_payload.items() if k != "tvl"}
-    ):
+    if payload_sha256(zero_payload) == payload_sha256({k: v for k, v in zero_payload.items() if k != "tvl"}):
         return False
 
     # CoinGecko / CryptoRank None omit + zero keep.
@@ -2440,9 +2342,7 @@ def _case_17_1_20() -> bool:
         )
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted != 1 or not summary.observations:
             return False
         stored = repo.get(summary.observations[0].snapshot_id)
@@ -2685,11 +2585,7 @@ def _case_17_1_08() -> bool:
         )
         if real_out is not None:
             return False
-        snap_n = int(
-            raw_conn.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
-        )
+        snap_n = int(raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
         evid_n = _evidence_count(raw_conn)
         if snap_n != 0 or evid_n != 0:
             return False
@@ -2785,9 +2681,7 @@ def _case_17_1_17() -> bool:
             return False
         result1 = CollectorResult(source_id="defillama", items=[item1])
         result1.finished_at = finished
-        before_skip = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-        )
+        before_skip = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
         summary1 = process_persisted_collection(
             result1,
             run_id=daily_run_id("defillama", finished),
@@ -2797,17 +2691,11 @@ def _case_17_1_17() -> bool:
         )
         if summary1 is None or summary1.snapshots_inserted < 1:
             return False
-        snap_n1 = int(
-            raw1.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
-        )
+        snap_n1 = int(raw1.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
         evid_n1 = _evidence_count(raw1)
         if snap_n1 < 1 or evid_n1 != 0:
             return False
-        after_skip = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off"
-        )
+        after_skip = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="skipped_flag_off")
         if after_skip < before_skip + 1:
             return False
         proj_l1 = project_economics_data(
@@ -2858,9 +2746,7 @@ def _case_17_1_17() -> bool:
         )
         result2 = CollectorResult(source_id="defillama", items=[item2])
         result2.finished_at = finished
-        before_emitted = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
+        before_emitted = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
         summary2 = process_persisted_collection(
             result2,
             run_id=daily_run_id("defillama", finished),
@@ -2870,17 +2756,11 @@ def _case_17_1_17() -> bool:
         )
         if summary2 is None or summary2.snapshots_inserted < 1:
             return False
-        snap_n2 = int(
-            raw2.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
-        )
+        snap_n2 = int(raw2.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
         evid_n2 = _evidence_count(raw2)
         if snap_n2 < 1 or evid_n2 < 1:
             return False
-        after_emitted = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-        )
+        after_emitted = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
         if after_emitted < before_emitted + 1:
             return False
         # Resolver still closed → projection None despite Evidence rows.
@@ -3040,11 +2920,7 @@ def _case_17_1_18() -> bool:
                 emitter=emitter,
                 settings_obj=settings_obj,
             )
-            snap_n = int(
-                raw.execute(
-                    "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-                ).fetchone()["c"]
-            )
+            snap_n = int(raw.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
             if expected_write:
                 if summary is None or summary.snapshots_inserted < 1 or snap_n < 1:
                     return False
@@ -3100,11 +2976,7 @@ def _case_17_1_18() -> bool:
                     emitter=emitter,
                     settings_obj=settings_obj,
                 )
-                snap_n = int(
-                    raw.execute(
-                        "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-                    ).fetchone()["c"]
-                )
+                snap_n = int(raw.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
                 if expected:
                     if summary is None or snap_n < 1:
                         return False
@@ -3209,9 +3081,7 @@ def _case_17_1_22() -> bool:
         writer = EconomicSnapshotWriter(snap_repo, now_factory=lambda: _OBSERVED)
         result = CollectorResult(source_id="defillama", items=[item_linked])
         result.finished_at = _OBSERVED
-        summary = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary.snapshots_inserted < 1:
             return False
 
@@ -3224,21 +3094,15 @@ def _case_17_1_22() -> bool:
         )
         identity_results = ("linked", "unlinked")
         before_ev = {
-            r: metric_sample_value(
-                OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=r
-            )
+            r: metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=r)
             for r in evidence_results
         }
         before_id = {
-            r: metric_sample_value(
-                OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result=r
-            )
+            r: metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result=r)
             for r in identity_results
         }
         before_snap = {
-            r: metric_sample_value(
-                OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result=r
-            )
+            r: metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result=r)
             for r in ("inserted", "duplicate", "schema_invalid", "skipped_flag_off")
         }
         evid_before = _evidence_count(raw)
@@ -3270,9 +3134,7 @@ def _case_17_1_22() -> bool:
             ) as add_spy,
         ):
             conn.execute = tracking_execute  # type: ignore[method-assign]
-            out = replay_economic_snapshots_for_project(
-                project_id, conn=conn, enabled=False
-            )
+            out = replay_economic_snapshots_for_project(project_id, conn=conn, enabled=False)
             conn.execute = real_execute  # type: ignore[method-assign]
 
             if out is not None:
@@ -3293,12 +3155,7 @@ def _case_17_1_22() -> bool:
         if _evidence_count(raw) != evid_before:
             return False
         for r, before in before_ev.items():
-            if (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=r
-                )
-                != before
-            ):
+            if metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result=r) != before:
                 return False
         for r, before in before_id.items():
             if (
@@ -3311,12 +3168,7 @@ def _case_17_1_22() -> bool:
             ):
                 return False
         for r, before in before_snap.items():
-            if (
-                metric_sample_value(
-                    OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result=r
-                )
-                != before
-            ):
+            if metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result=r) != before:
                 return False
         # observation_from_snapshot remains callable for non-noop paths (sanity).
         stored = snap_repo.list_by_identity("defillama", item_linked.dedup_key)
@@ -3349,12 +3201,8 @@ _FORBIDDEN_ECONOMIC_WORKFLOW_KEYS: frozenset[str] = frozenset(
         "project_economics_data",
     }
 )
-_ECONOMIC_SNAPSHOT_RESULTS: frozenset[str] = frozenset(
-    {"inserted", "duplicate", "schema_invalid", "skipped_flag_off"}
-)
-_ECONOMIC_SOURCES_CLOSED: frozenset[str] = frozenset(
-    {"defillama", "coingecko", "cryptorank"}
-)
+_ECONOMIC_SNAPSHOT_RESULTS: frozenset[str] = frozenset({"inserted", "duplicate", "schema_invalid", "skipped_flag_off"})
+_ECONOMIC_SOURCES_CLOSED: frozenset[str] = frozenset({"defillama", "coingecko", "cryptorank"})
 
 
 def _collect_keys(value: Any) -> set[str]:
@@ -3465,9 +3313,7 @@ def _case_17_1_23() -> bool:
     try:
         _seed_project(conn, project_id, name="Isolation23")
         # Commit is already done by _seed_project; capture project presence.
-        before_project = raw_conn.execute(
-            "SELECT id, name FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
+        before_project = raw_conn.execute("SELECT id, name FROM projects WHERE id = ?", (project_id,)).fetchone()
         if before_project is None or before_project["name"] != "Isolation23":
             return False
 
@@ -3500,9 +3346,7 @@ def _case_17_1_23() -> bool:
         result = CollectorResult(source_id="defillama", items=[bad_item, good_item])
         result.finished_at = _OBSERVED
         with patch.object(economic_writer_mod, "observation_from_snapshot", selective_recon):
-            summary = writer.process(
-                result, run_id="daily:2026-07-22:defillama", enabled=True
-            )
+            summary = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
 
         if summary.snapshots_inserted + summary.snapshots_duplicate < 1:
             return False
@@ -3515,9 +3359,7 @@ def _case_17_1_23() -> bool:
             return False
 
         # Already-committed project is intact (no rollback of projects row).
-        after_project = raw_conn.execute(
-            "SELECT id, name FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
+        after_project = raw_conn.execute("SELECT id, name FROM projects WHERE id = ?", (project_id,)).fetchone()
         if after_project is None:
             return False
         if after_project["name"] != before_project["name"]:
@@ -3547,10 +3389,7 @@ def _case_17_1_24() -> bool:
         return False
     if set(field_names) & _FORBIDDEN_ECONOMIC_WORKFLOW_KEYS:
         return False
-    annotations = " ".join(
-        str(field.annotation)
-        for field in OpportunityWorkflowProjection.model_fields.values()
-    )
+    annotations = " ".join(str(field.annotation) for field in OpportunityWorkflowProjection.model_fields.values())
     for banned in (
         "economic_proxy",
         "economics_data_mode",
@@ -3688,7 +3527,7 @@ def _case_17_1_24() -> bool:
         # Layer 4 — router: production handler serializes via model_dump only;
         # source has no economic surface tokens / resolver imports.
         router_source = inspect.getsource(opportunity_router.get_opportunity_workflow)
-        if "projection.model_dump(mode=\"json\")" not in router_source and (
+        if 'projection.model_dump(mode="json")' not in router_source and (
             "projection.model_dump(mode='json')" not in router_source
         ):
             return False
@@ -3726,12 +3565,8 @@ def _case_17_1_24() -> bool:
             if hasattr(internal, "model_dump"):
                 internal_keys = set(internal.model_dump().keys())
             else:
-                internal_keys = {
-                    k for k in dir(internal) if not k.startswith("_") and k.isidentifier()
-                }
-        if "economics_data_mode" not in internal_keys and not hasattr(
-            internal, "economics_data_mode"
-        ):
+                internal_keys = {k for k in dir(internal) if not k.startswith("_") and k.isidentifier()}
+        if "economics_data_mode" not in internal_keys and not hasattr(internal, "economics_data_mode"):
             return False
         return "economics_data_mode" not in field_names
     finally:
@@ -3754,22 +3589,14 @@ def _case_17_1_25() -> bool:
         return False
 
     # Bare labels() existence is NOT verification — sample delta must prove write.
-    bare_child = OPPORTUNITY_ECONOMIC_SNAPSHOTS.labels(
-        source="defillama", result="inserted"
-    )
+    bare_child = OPPORTUNITY_ECONOMIC_SNAPSHOTS.labels(source="defillama", result="inserted")
     if bare_child is None:
         return False
     # Calling .labels alone must not be treated as a pass condition below.
 
-    before_ins = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-    )
-    before_dup = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-    )
-    before_built = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built"
-    )
+    before_ins = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted")
+    before_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
+    before_built = metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built")
 
     dl = _load_fixture("defillama.json")
     meta = _discovery_meta(dl)
@@ -3786,30 +3613,20 @@ def _case_17_1_25() -> bool:
         )
         result = CollectorResult(source_id="defillama", items=[item])
         result.finished_at = _OBSERVED
-        summary1 = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary1 = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary1.snapshots_inserted != 1 or not summary1.observations:
             return False
-        after_ins = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted"
-        )
-        after_built = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built"
-        )
+        after_ins = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="inserted")
+        after_built = metric_sample_value(OPPORTUNITY_ECONOMIC_OBSERVATIONS, source="defillama", result="built")
         if after_ins - before_ins != 1.0:
             return False
         if after_built - before_built != 1.0:
             return False
 
-        summary2 = writer.process(
-            result, run_id="daily:2026-07-22:defillama", enabled=True
-        )
+        summary2 = writer.process(result, run_id="daily:2026-07-22:defillama", enabled=True)
         if summary2.snapshots_duplicate != 1:
             return False
-        after_dup = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate"
-        )
+        after_dup = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="defillama", result="duplicate")
         if after_dup - before_dup != 1.0:
             return False
 
@@ -3840,27 +3657,17 @@ def _case_17_1_25() -> bool:
             return False
 
         # record_* path also only verifiable via sample helper (not labels).
-        before_rec = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="coingecko", result="schema_invalid"
-        )
-        record_opportunity_economic_snapshot(
-            source="coingecko", result="schema_invalid"
-        )
-        after_rec = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="coingecko", result="schema_invalid"
-        )
+        before_rec = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="coingecko", result="schema_invalid")
+        record_opportunity_economic_snapshot(source="coingecko", result="schema_invalid")
+        after_rec = metric_sample_value(OPPORTUNITY_ECONOMIC_SNAPSHOTS, source="coingecko", result="schema_invalid")
         if after_rec - before_rec != 1.0:
             return False
         # Histogram/gauge helpers exist and are sample-readable.
-        before_hist = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama"
-        )
+        before_hist = metric_sample_value(OPPORTUNITY_ECONOMIC_RUN_DURATION, source="defillama")
         if before_hist < 0:
             return False
         # Gauge may be zero if never set; sample helper must return float.
-        gauge_val = metric_sample_value(
-            OPPORTUNITY_ECONOMIC_LAST_SUCCESS, source="defillama"
-        )
+        gauge_val = metric_sample_value(OPPORTUNITY_ECONOMIC_LAST_SUCCESS, source="defillama")
         return isinstance(gauge_val, float)
     finally:
         snap_repo.close()
@@ -3939,9 +3746,7 @@ def _case_17_1_26() -> bool:
             dedup_key=item.dedup_key,
             project_id=project_id,
         )
-        legacy_raw_count = int(
-            raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]
-        )
+        legacy_raw_count = int(raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"])
         if legacy_raw_count < 1:
             return False
 
@@ -4000,22 +3805,14 @@ def _case_17_1_26() -> bool:
         failing_writer.process.assert_called_once()
         if close_calls["n"] != 0:
             return False
-        after_raw = int(
-            raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]
-        )
+        after_raw = int(raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"])
         if after_raw != legacy_raw_count:
             return False
-        after_proj = raw_conn.execute(
-            "SELECT id FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
+        after_proj = raw_conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
         if after_proj is None:
             return False
         # Snapshots from prior successful persist remain (no rollback of success).
-        snap_n = int(
-            raw_conn.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
-        )
+        snap_n = int(raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
         if snap_n < 1:
             return False
 
@@ -4085,18 +3882,14 @@ def _case_17_1_26() -> bool:
             return False
         if close_calls["n"] != 0:
             return False
-        if int(
-            raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]
-        ) != legacy_raw_count:
+        if int(raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]) != legacy_raw_count:
             return False
 
         # Construction failure isolation via real production ownership stacks
         # (scheduled create_app lifespan + manual trigger_collection). Patch only
         # EconomicSnapshotRepository ctor; no local always-raise/catch tautology.
         snap_n_before_construction = int(
-            raw_conn.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
+            raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"]
         )
         if snap_n_before_construction < 1:
             return False
@@ -4107,21 +3900,14 @@ def _case_17_1_26() -> bool:
         # Prior successful process/emit persist on main borrowed conn remains.
         if close_calls["n"] != 0:
             return False
-        if int(
-            raw_conn.execute(
-                "SELECT COUNT(*) AS c FROM opportunity_economic_snapshots"
-            ).fetchone()["c"]
-        ) != snap_n_before_construction:
+        if (
+            int(raw_conn.execute("SELECT COUNT(*) AS c FROM opportunity_economic_snapshots").fetchone()["c"])
+            != snap_n_before_construction
+        ):
             return False
-        if int(
-            raw_conn.execute(
-                "SELECT COUNT(*) AS c FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()["c"]
-        ) != 1:
+        if int(raw_conn.execute("SELECT COUNT(*) AS c FROM projects WHERE id = ?", (project_id,)).fetchone()["c"]) != 1:
             return False
-        if int(
-            raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]
-        ) != legacy_raw_count:
+        if int(raw_conn.execute("SELECT COUNT(*) AS c FROM raw_projects").fetchone()["c"]) != legacy_raw_count:
             return False
         if int(conn.execute("SELECT 1").fetchone()[0]) != 1:
             return False

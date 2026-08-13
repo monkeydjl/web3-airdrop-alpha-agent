@@ -83,8 +83,7 @@ def _ten_fields_equal(existing: EconomicSnapshotRow, incoming: EconomicSnapshotR
         and existing.provider_entity_id == incoming.provider_entity_id
         and existing.payload_sha256 == incoming.payload_sha256
         and existing.source_url == incoming.source_url
-        and canonical_json_bytes(existing.payload_json)
-        == canonical_json_bytes(incoming.payload_json)
+        and canonical_json_bytes(existing.payload_json) == canonical_json_bytes(incoming.payload_json)
     )
 
 
@@ -170,9 +169,7 @@ class EconomicSnapshotRepository:
         text = str(project_id).strip()
         return text if text else None
 
-    def list_by_identity(
-        self, source_id: str, dedup_key: str
-    ) -> tuple[EconomicSnapshotRow, ...]:
+    def list_by_identity(self, source_id: str, dedup_key: str) -> tuple[EconomicSnapshotRow, ...]:
         """Return all snapshots for exact ``(source_id, dedup_key)`` identity only."""
         rows = self._db.execute(
             "SELECT snapshot_id, schema_version, run_id, source_id, dedup_key, "
@@ -210,7 +207,6 @@ class EconomicSnapshotRepository:
             if _ten_fields_equal(existing, snapshot):
                 return existing, False
             raise EconomicSnapshotContentConflict(
-                f"opportunity_economic_snapshots content conflict for "
-                f"snapshot_id={snapshot.snapshot_id!r}"
+                f"opportunity_economic_snapshots content conflict for snapshot_id={snapshot.snapshot_id!r}"
             ) from exc
         return snapshot, True

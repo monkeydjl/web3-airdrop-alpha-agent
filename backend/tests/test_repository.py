@@ -714,9 +714,7 @@ def test_project_save_replays_economic_snapshots_stable_id_no_http_on_error(db_c
     # Before save: project may not exist yet → zero evidence
     assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
 
-    before_emitted = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-    )
+    before_emitted = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
 
     # Ensure no network: patch urllib if anything tries HTTP during save/replay
     with patch("urllib.request.urlopen", side_effect=AssertionError("no network")):
@@ -729,15 +727,11 @@ def test_project_save_replays_economic_snapshots_stable_id_no_http_on_error(db_c
 
     count = db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0]
     assert count >= 1
-    after_emitted = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-    )
+    after_emitted = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
     assert after_emitted > before_emitted
 
     # Stable evidence_id for tvl_usd
-    expected = build_evidence_id(
-        snapshot_id=snapshot_id, project_id=project_id, factor_key="tvl_usd"
-    )
+    expected = build_evidence_id(snapshot_id=snapshot_id, project_id=project_id, factor_key="tvl_usd")
     row = db_conn.execute(
         "SELECT evidence_id FROM opportunity_evidence WHERE evidence_id = ?",
         (expected,),
@@ -768,12 +762,8 @@ def test_project_save_replay_enabled_false_noop(db_conn, sample_state):
     project_id = sample_state.project.id
     _seed_economic_link_for_project(db_conn, project_id)
 
-    before_ev = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted"
-    )
-    before_id = metric_sample_value(
-        OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-    )
+    before_ev = metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
+    before_id = metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked")
 
     with (
         patch("app.repository.replay_economic_snapshots_for_project", return_value=None) as replay_spy,
@@ -790,24 +780,15 @@ def test_project_save_replay_enabled_false_noop(db_conn, sample_state):
 
     assert saved["id"] == project_id
     assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
+    assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
     assert (
-        metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
-        == before_ev
-    )
-    assert (
-        metric_sample_value(
-            OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked"
-        )
-        == before_id
+        metric_sample_value(OPPORTUNITY_ECONOMIC_IDENTITY_RESOLUTION, source="defillama", result="linked") == before_id
     )
 
     # Explicit False — real no-op path (no spy): zero Evidence / zero metric delta
     ProjectRepository(db_conn, economic_replay_enabled=False).save(sample_state)
     assert db_conn.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0] == 0
-    assert (
-        metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted")
-        == before_ev
-    )
+    assert metric_sample_value(OPPORTUNITY_ECONOMIC_EVIDENCE, source="defillama", result="emitted") == before_ev
 
 
 def test_project_save_replay_connection_borrow_and_own_close_semantics(db_conn, sample_state, monkeypatch):

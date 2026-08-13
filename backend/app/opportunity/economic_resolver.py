@@ -40,23 +40,21 @@ ECONOMIC_FACTOR_KEYS: Final[tuple[str, ...]] = (
     "price_change_7d_ratio",
 )
 
-_FACTOR_VALUE_TYPE: Final[Mapping[str, Literal["bool", "number", "string", "json"]]] = (
-    MappingProxyType(
-        {
-            "tvl_usd": "string",
-            "tvl_change_7d_ratio": "string",
-            "chains_json": "json",
-            "token_unlisted_proxy": "bool",
-            "market_cap_usd": "string",
-            "price_usd": "string",
-            "volume_24h_usd": "string",
-            "circulating_supply": "string",
-            "total_supply": "string",
-            "market_rank": "number",
-            "price_change_24h_ratio": "string",
-            "price_change_7d_ratio": "string",
-        }
-    )
+_FACTOR_VALUE_TYPE: Final[Mapping[str, Literal["bool", "number", "string", "json"]]] = MappingProxyType(
+    {
+        "tvl_usd": "string",
+        "tvl_change_7d_ratio": "string",
+        "chains_json": "json",
+        "token_unlisted_proxy": "bool",
+        "market_cap_usd": "string",
+        "price_usd": "string",
+        "volume_24h_usd": "string",
+        "circulating_supply": "string",
+        "total_supply": "string",
+        "market_rank": "number",
+        "price_change_24h_ratio": "string",
+        "price_change_7d_ratio": "string",
+    }
 )
 
 _DEFILLAMA_CLASS: Final[frozenset[str]] = frozenset(
@@ -293,9 +291,7 @@ class EconomicResolver:
         # Inter-group value agreement; disagreement → conflict (no average / bias).
         for i in range(len(group_winners)):
             for j in range(i + 1, len(group_winners)):
-                if not _values_agree(
-                    factor_key, group_winners[i].value, group_winners[j].value
-                ):
+                if not _values_agree(factor_key, group_winners[i].value, group_winners[j].value):
                     return _conflicted(factor_key)
 
         # Values agree: stable winner among group winners.
@@ -313,9 +309,7 @@ class EconomicResolver:
             return None
 
         def sort_key(record: EvidenceRecord) -> tuple[Any, ...]:
-            effective = _as_utc(record.effective_at) if record.effective_at else datetime.min.replace(
-                tzinfo=UTC
-            )
+            effective = _as_utc(record.effective_at) if record.effective_at else datetime.min.replace(tzinfo=UTC)
             sid = _snapshot_id_from_ref(record.raw_snapshot_ref)
             provider: str | None = None
             if sid is not None:
@@ -361,9 +355,7 @@ def project_economics_data(
         return None
 
     records = evidence_repository.list_evidence(project_id)
-    projection = EconomicResolver(snapshot_repository).resolve(
-        project_id, records, now=now
-    )
+    projection = EconomicResolver(snapshot_repository).resolve(project_id, records, now=now)
     if direct_available:
         return replace(projection, economics_data_mode="DIRECT_AVAILABLE")
     return projection

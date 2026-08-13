@@ -111,23 +111,14 @@ def client(conn):
 
 
 def _table_names(connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
-    }
+    return {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")}
 
 
 def _row_counts(connection) -> dict[str, int]:
     return {
         "projects": connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
-        "opportunity_assessments": connection.execute(
-            "SELECT COUNT(*) FROM opportunity_assessments"
-        ).fetchone()[0],
-        "opportunity_evidence": connection.execute(
-            "SELECT COUNT(*) FROM opportunity_evidence"
-        ).fetchone()[0],
+        "opportunity_assessments": connection.execute("SELECT COUNT(*) FROM opportunity_assessments").fetchone()[0],
+        "opportunity_evidence": connection.execute("SELECT COUNT(*) FROM opportunity_evidence").fetchone()[0],
         "interactions": connection.execute("SELECT COUNT(*) FROM interactions").fetchone()[0],
     }
 
@@ -755,9 +746,7 @@ def test_workflow_uses_latest_assessment_ordering(client, conn):
     _assert_workflow_privacy(data)
 
 
-def test_workflow_review_and_expiry_precedence_uses_current_time(
-    client, conn, monkeypatch
-):
+def test_workflow_review_and_expiry_precedence_uses_current_time(client, conn, monkeypatch):
     OpportunityRepository(conn).save_assessment(
         _assessment(
             assessment_id="assess-review",
@@ -1150,9 +1139,7 @@ def test_workflow_api_all_economic_flags_false_exact_baseline_body(client, conn,
     assert b"raw_snapshot_ref" not in baseline_bytes
 
 
-def test_workflow_api_resolver_flag_true_still_has_no_economic_surface(
-    client, conn, monkeypatch
-):
+def test_workflow_api_resolver_flag_true_still_has_no_economic_surface(client, conn, monkeypatch):
     # Valid Settings: resolver requires evidence_emit requires snapshot.
     _set_economic_flags(
         monkeypatch,
@@ -1243,7 +1230,7 @@ def test_workflow_router_returns_projection_model_dump_path(client, conn, monkey
 
     # Router source still serializes via model_dump (supplemental static check).
     router_source = Path(opportunity_router.__file__).read_text(encoding="utf-8")
-    assert "projection.model_dump(mode=\"json\")" in router_source or (
+    assert 'projection.model_dump(mode="json")' in router_source or (
         "projection.model_dump(mode='json')" in router_source
     )
     for token in (

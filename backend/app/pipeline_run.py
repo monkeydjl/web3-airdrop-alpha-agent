@@ -149,9 +149,7 @@ def mark_successful_raw_projects(
     else:
         persisted_ids = {str(row.get("id")) for row in persisted_rows if row.get("id") is not None}
         success_ids = {
-            s.project.id
-            for s in states
-            if getattr(s, "score", None) is not None and s.project.id in persisted_ids
+            s.project.id for s in states if getattr(s, "score", None) is not None and s.project.id in persisted_ids
         }
     marked = 0
     for raw_project in raw_projects:
@@ -381,7 +379,7 @@ def _build_top_projects(states) -> list[dict]:
     # 按分数降序取前 10（原实现取输入前 10，与 API 文档“按分数排序”不符）
     ranked = sorted(
         states,
-        key=lambda s: (s.score if getattr(s, "score", None) is not None else float("-inf")),
+        key=lambda s: s.score if getattr(s, "score", None) is not None else float("-inf"),
         reverse=True,
     )
     for state in ranked[:10]:

@@ -123,9 +123,7 @@ class OpportunityRepository:
             raise
         return stored
 
-    def add_economic_evidence_if_absent(
-        self, evidence: EvidenceRecord
-    ) -> tuple[EvidenceRecord, bool]:
+    def add_economic_evidence_if_absent(self, evidence: EvidenceRecord) -> tuple[EvidenceRecord, bool]:
         """Append-only insert-if-absent for economic Evidence. Never overwrites.
 
         Returns ``(record, True)`` only on new insert. Equivalent existing row
@@ -168,8 +166,7 @@ class OpportunityRepository:
             if existing_row is None:
                 self._conn.rollback()
                 raise RuntimeError(
-                    f"economic evidence ON CONFLICT DO NOTHING with missing row for "
-                    f"evidence_id={stored.evidence_id!r}"
+                    f"economic evidence ON CONFLICT DO NOTHING with missing row for evidence_id={stored.evidence_id!r}"
                 )
             existing = _row_to_evidence(existing_row)
             if existing.model_dump(mode="json") == stored.model_dump(mode="json"):

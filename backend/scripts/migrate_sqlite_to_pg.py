@@ -63,8 +63,15 @@ TIMESTAMPTZ_COLUMNS: dict[str, set[str]] = {
 }
 
 # REAL → DOUBLE PRECISION（无需转换，仅记录）
-REAL_TABLES = {"projects", "raw_projects", "raw_projects_archive", "project_signals",
-               "project_signals_archive", "interactions", "opportunity_assessments"}
+REAL_TABLES = {
+    "projects",
+    "raw_projects",
+    "raw_projects_archive",
+    "project_signals",
+    "project_signals_archive",
+    "interactions",
+    "opportunity_assessments",
+}
 
 
 def get_sqlite_tables(conn: sqlite3.Connection) -> list[str]:
@@ -74,8 +81,7 @@ def get_sqlite_tables(conn: sqlite3.Connection) -> list[str]:
 
 def get_sqlite_columns(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     cur = conn.execute(f"PRAGMA table_info([{table}])")
-    return [{"name": r[1], "type": r[2], "notnull": r[3], "default": r[4], "pk": r[5]}
-            for r in cur.fetchall()]
+    return [{"name": r[1], "type": r[2], "notnull": r[3], "default": r[4], "pk": r[5]} for r in cur.fetchall()]
 
 
 def get_sqlite_row_count(conn: sqlite3.Connection, table: str) -> int:
@@ -117,7 +123,9 @@ def create_pg_table(pg: psycopg.Connection, table: str, columns: list[dict[str, 
             default = col["default"]
             if default.upper() == "CURRENT_TIMESTAMP":
                 parts.append("DEFAULT CURRENT_TIMESTAMP")
-            elif (default.startswith("'") and default.endswith("'")) or default.replace(".", "").replace("-", "").isdigit():
+            elif (default.startswith("'") and default.endswith("'")) or default.replace(".", "").replace(
+                "-", ""
+            ).isdigit():
                 parts.append(f"DEFAULT {default}")
         col_defs.append(" ".join(parts))
 
@@ -216,7 +224,7 @@ def migrate_table(
         with pg.cursor() as cur2:
             cur2.execute(
                 f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "  # noqa: S608
-                f"COALESCE((SELECT MAX(id) FROM \"{table}\"), 1))"
+                f'COALESCE((SELECT MAX(id) FROM "{table}"), 1))'
             )
         pg.commit()
 
@@ -274,15 +282,16 @@ def main() -> None:
             continue
         stats = migrate_table(sqlite_conn, pg, table, dry_run=args.dry_run)
         status = "OK" if stats["errors"] == 0 else f"ERRORS={stats['errors']}"
-        print(f"  {table}: total={stats['total']} inserted={stats['inserted']} "
-              f"skipped={stats['skipped']} [{status}]")
+        print(f"  {table}: total={stats['total']} inserted={stats['inserted']} skipped={stats['skipped']} [{status}]")
         for k in total_stats:
             total_stats[k] += stats[k]
 
-    print(f"\nTotal: {total_stats['total']} rows, "
-          f"inserted={total_stats['inserted']}, "
-          f"skipped={total_stats['skipped']}, "
-          f"errors={total_stats['errors']}")
+    print(
+        f"\nTotal: {total_stats['total']} rows, "
+        f"inserted={total_stats['inserted']}, "
+        f"skipped={total_stats['skipped']}, "
+        f"errors={total_stats['errors']}"
+    )
 
     if not args.dry_run and total_stats["errors"] == 0:
         print("\nMigration complete. Run verify_postgres.py to validate.")

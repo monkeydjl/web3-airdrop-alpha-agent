@@ -21,9 +21,7 @@ _EIGHT_PLACES = Decimal("0.00000001")
 
 PROVIDER_RAW_FIELD_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
-        "defillama": frozenset(
-            {"tvl", "change_7d", "change_7d_unit", "chains", "no_token_yet"}
-        ),
+        "defillama": frozenset({"tvl", "change_7d", "change_7d_unit", "chains", "no_token_yet"}),
         "coingecko": frozenset(
             {
                 "market_cap",
@@ -176,9 +174,7 @@ def canonical_provider_payload(source_id: str, raw_data: Mapping[str, Any]) -> d
         unit = payload.get("change_7d_unit")
         if unit != DEFILLAMA_CHANGE_7D_PROVIDER_UNIT:
             # Missing / None (already omitted) / other value → whole-row invalid.
-            raise EconomicNormalizationError(
-                "defillama change_7d_unit must be exact literal 'ratio'"
-            )
+            raise EconomicNormalizationError("defillama change_7d_unit must be exact literal 'ratio'")
 
     return payload
 
@@ -332,9 +328,7 @@ def _map_coingecko(
         factors.append(
             _factor(
                 factor_key="price_change_24h_ratio",
-                value=normalize_ratio_string(
-                    payload["price_change_percentage_24h"], divisor=Decimal("100")
-                ),
+                value=normalize_ratio_string(payload["price_change_percentage_24h"], divisor=Decimal("100")),
                 value_type="string",
                 unit="ratio",
                 source_id="coingecko",
@@ -407,9 +401,7 @@ def _map_cryptorank(
         factors.append(
             _factor(
                 factor_key="price_change_24h_ratio",
-                value=normalize_ratio_string(
-                    payload["percent_change_24h"], divisor=Decimal("100")
-                ),
+                value=normalize_ratio_string(payload["percent_change_24h"], divisor=Decimal("100")),
                 value_type="string",
                 unit="ratio",
                 source_id="cryptorank",
@@ -422,9 +414,7 @@ def _map_cryptorank(
         factors.append(
             _factor(
                 factor_key="price_change_7d_ratio",
-                value=normalize_ratio_string(
-                    payload["percent_change_7d"], divisor=Decimal("100")
-                ),
+                value=normalize_ratio_string(payload["percent_change_7d"], divisor=Decimal("100")),
                 value_type="string",
                 unit="ratio",
                 source_id="cryptorank",

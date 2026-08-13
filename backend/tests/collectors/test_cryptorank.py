@@ -214,7 +214,4 @@ class TestCryptoRankEconomicOptionA:
             market_cap=50_000_000.0,
         )
         assert discovery.discovery_score == expected
-        assert (
-            discovery.raw_data.get("percent_change_7d") is None
-            or "percent_change_7d" not in discovery.raw_data
-        )
+        assert discovery.raw_data.get("percent_change_7d") is None or "percent_change_7d" not in discovery.raw_data

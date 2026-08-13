@@ -473,11 +473,7 @@ def test_actionable_next_action_start_vs_continue():
     assert start.workflow.next_action.key == "start_validation"
     assert start.workflow.next_action.label == "开始验证"
 
-    cont = _build(
-        interactions=[
-            _interaction("ix-open", status="planned", created_at=NOW - timedelta(hours=1))
-        ]
-    )
+    cont = _build(interactions=[_interaction("ix-open", status="planned", created_at=NOW - timedelta(hours=1))])
     assert cont.workflow.next_action.key == "continue_validation"
     assert cont.workflow.next_action.label == "继续验证"
     assert cont.validation.can_start_validation is True
@@ -718,10 +714,7 @@ def test_opportunity_workflow_projection_model_has_no_economic_surface_fields():
     assert not forbidden
     assert "economic_proxy" not in field_names
     assert "economics_data_mode" not in field_names
-    annotations = {
-        name: str(field.annotation)
-        for name, field in OpportunityWorkflowProjection.model_fields.items()
-    }
+    annotations = {name: str(field.annotation) for name, field in OpportunityWorkflowProjection.model_fields.items()}
     joined = " ".join(annotations.values())
     assert "EconomicProxyProjection" not in joined
     assert "economics_data_mode" not in joined
@@ -756,10 +749,7 @@ def test_build_workflow_projection_signature_and_output_shape_unchanged():
 
     signature = inspect.signature(build_workflow_projection)
     assert tuple(signature.parameters) == BASELINE_BUILDER_PARAMS
-    assert all(
-        parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        for parameter in signature.parameters.values()
-    )
+    assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in signature.parameters.values())
     assert signature.return_annotation is not inspect.Signature.empty
 
     projection = build_workflow_projection(
@@ -856,28 +846,14 @@ def test_workflow_service_never_calls_economic_resolver_or_projection_helpers(
             )
             if resolver_enabled:
                 # Valid Settings rollout chain when resolver is on.
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_snapshot_enabled", True
-                )
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_evidence_emit_enabled", True
-                )
+                monkeypatch.setattr("app.config.settings.opportunity_economic_snapshot_enabled", True)
+                monkeypatch.setattr("app.config.settings.opportunity_economic_evidence_emit_enabled", True)
             else:
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_snapshot_enabled", False
-                )
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_evidence_emit_enabled", False
-                )
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_source_defillama_enabled", False
-                )
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_source_coingecko_enabled", False
-                )
-                monkeypatch.setattr(
-                    "app.config.settings.opportunity_economic_source_cryptorank_enabled", False
-                )
+                monkeypatch.setattr("app.config.settings.opportunity_economic_snapshot_enabled", False)
+                monkeypatch.setattr("app.config.settings.opportunity_economic_evidence_emit_enabled", False)
+                monkeypatch.setattr("app.config.settings.opportunity_economic_source_defillama_enabled", False)
+                monkeypatch.setattr("app.config.settings.opportunity_economic_source_coingecko_enabled", False)
+                monkeypatch.setattr("app.config.settings.opportunity_economic_source_cryptorank_enabled", False)
 
             service = OpportunityWorkflowService(connection)
             projection = service.get_project_workflow("proj-alpha", NOW)

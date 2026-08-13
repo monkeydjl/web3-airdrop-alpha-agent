@@ -141,9 +141,7 @@ async def test_coingecko_health_check(coingecko_collector: CoinGeckoCollector) -
 class TestCoinGeckoEconomicOptionA:
     """Option A: economic raw_data keeps provider None; legacy signal uses local 0."""
 
-    def test_missing_economic_fields_are_none_not_zero(
-        self, coingecko_collector: CoinGeckoCollector
-    ) -> None:
+    def test_missing_economic_fields_are_none_not_zero(self, coingecko_collector: CoinGeckoCollector) -> None:
         coin = {
             "id": "sparse-coin",
             "symbol": "spc",
@@ -206,9 +204,7 @@ class TestCoinGeckoEconomicOptionA:
         assert raw["market_cap_rank"] == 0
         assert raw["price_change_percentage_24h"] == 0
 
-    def test_legacy_signal_strength_unchanged_for_present_rank(
-        self, coingecko_collector: CoinGeckoCollector
-    ) -> None:
+    def test_legacy_signal_strength_unchanged_for_present_rank(self, coingecko_collector: CoinGeckoCollector) -> None:
         coin = {
             "id": "bitcoin",
             "symbol": "btc",
@@ -230,9 +226,7 @@ class TestCoinGeckoEconomicOptionA:
         assert signal.signal_data["market_cap"] == 1_000_000_000_000
         assert signal.signal_data["market_cap_rank"] == 1
 
-    def test_legacy_signal_strength_fallback_when_rank_missing(
-        self, coingecko_collector: CoinGeckoCollector
-    ) -> None:
+    def test_legacy_signal_strength_fallback_when_rank_missing(self, coingecko_collector: CoinGeckoCollector) -> None:
         coin = {
             "id": "no-rank",
             "symbol": "nrk",

@@ -665,9 +665,7 @@ async def test_empty_run_logs_zero_shadow_completion(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_wires_economic_replay_enabled_from_settings(
-    monkeypatch, repo_conn
-):
+async def test_orchestrator_wires_economic_replay_enabled_from_settings(monkeypatch, repo_conn):
     """Production constructs ProjectRepository(economic_replay_enabled=settings field)."""
     import inspect
 
@@ -677,20 +675,14 @@ async def test_orchestrator_wires_economic_replay_enabled_from_settings(
 
     class TrackingProjectRepository(ProjectRepository):
         def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
-            captured.append(
-                {"conn": conn, "economic_replay_enabled": economic_replay_enabled}
-            )
-            super().__init__(
-                conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled
-            )
+            captured.append({"conn": conn, "economic_replay_enabled": economic_replay_enabled})
+            super().__init__(conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled)
 
         def save_batch_with_rows(self, states):
             return [{"id": s.project.id, "score": s.score} for s in states]
 
     monkeypatch.setattr(orch_mod, "ProjectRepository", TrackingProjectRepository)
-    monkeypatch.setattr(
-        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True
-    )
+    monkeypatch.setattr(orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True)
 
     project = RawProject(id="proj-wire-1", name="Wire Test")
     state = PipelineState(
@@ -706,9 +698,7 @@ async def test_orchestrator_wires_economic_replay_enabled_from_settings(
         return state
 
     monkeypatch.setattr(orchestrator, "_run_single_project", return_state)
-    await orchestrator.run_pipeline(
-        [project], AgentContext(run_id="run-wire"), save_to_db=True
-    )
+    await orchestrator.run_pipeline([project], AgentContext(run_id="run-wire"), save_to_db=True)
 
     assert captured, "ProjectRepository must be constructed"
     assert captured[0]["economic_replay_enabled"] is True
@@ -721,9 +711,7 @@ async def test_orchestrator_replay_flag_off_matches_baseline(monkeypatch, repo_c
     """Flag-off serialized pipeline dict equals frozen baseline shape."""
     import app.agents.orchestrator_simple as orch_mod
 
-    monkeypatch.setattr(
-        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", False
-    )
+    monkeypatch.setattr(orch_mod.settings, "opportunity_economic_evidence_emit_enabled", False)
 
     class LocalRepo(ProjectRepository):
         def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
@@ -731,10 +719,7 @@ async def test_orchestrator_replay_flag_off_matches_baseline(monkeypatch, repo_c
             super().__init__(conn=conn or repo_conn, economic_replay_enabled=False)
 
         def save_batch_with_rows(self, states):
-            return [
-                {"id": s.project.id, "score": s.score, "name": s.project.name}
-                for s in states
-            ]
+            return [{"id": s.project.id, "score": s.score, "name": s.project.name} for s in states]
 
     monkeypatch.setattr(orch_mod, "ProjectRepository", LocalRepo)
 
@@ -752,9 +737,7 @@ async def test_orchestrator_replay_flag_off_matches_baseline(monkeypatch, repo_c
         return state
 
     monkeypatch.setattr(orchestrator, "_run_single_project", return_state)
-    response = await orchestrator.run_pipeline(
-        [project], AgentContext(run_id="run-base"), save_to_db=True
-    )
+    response = await orchestrator.run_pipeline([project], AgentContext(run_id="run-base"), save_to_db=True)
     payload = response.model_dump()
     # Frozen serialized baseline equality (dynamic run_id / elapsed_ms taken from payload)
     frozen_baseline = {
@@ -772,9 +755,7 @@ async def test_orchestrator_replay_flag_off_matches_baseline(monkeypatch, repo_c
 
 
 @pytest.mark.asyncio
-async def test_post_link_offline_replay_uses_existing_snapshots_no_http(
-    monkeypatch, repo_conn
-) -> None:
+async def test_post_link_offline_replay_uses_existing_snapshots_no_http(monkeypatch, repo_conn) -> None:
     """After authoritative project save, evidence comes from existing snapshots without HTTP."""
     import app.agents.orchestrator_simple as orch_mod
     from app.opportunity.economic_models import (
@@ -840,15 +821,11 @@ async def test_post_link_offline_replay_uses_existing_snapshots_no_http(
     )
     repo_conn.commit()
 
-    monkeypatch.setattr(
-        orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True
-    )
+    monkeypatch.setattr(orch_mod.settings, "opportunity_economic_evidence_emit_enabled", True)
 
     class WiredRepo(ProjectRepository):
         def __init__(self, conn=None, *, economic_replay_enabled: bool = False):
-            super().__init__(
-                conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled
-            )
+            super().__init__(conn=conn or repo_conn, economic_replay_enabled=economic_replay_enabled)
 
     monkeypatch.setattr(orch_mod, "ProjectRepository", WiredRepo)
 
@@ -871,9 +848,7 @@ async def test_post_link_offline_replay_uses_existing_snapshots_no_http(
         patch("httpx.Client") as http_c,
         patch("httpx.AsyncClient") as http_a,
     ):
-        await orchestrator.run_pipeline(
-            [project], AgentContext(run_id="run-replay"), save_to_db=True
-        )
+        await orchestrator.run_pipeline([project], AgentContext(run_id="run-replay"), save_to_db=True)
     http_c.assert_not_called()
     http_a.assert_not_called()
 
