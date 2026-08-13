@@ -1,6 +1,6 @@
 # 项目记忆：Web3 Airdrop Alpha Agent System
 
-> 更新：2026-08-06 · P0+P1+P2+经济分支+CI+文档+前端+mypy+GitHub ✅ · 15 commits on master · 2,155 测试 · mypy 0 errors
+> 更新：2026-08-13 · V2 落地启动：数据源开关/设计工程入库/CI 转绿/V2 任务清单/A1 Alembic 进行中 · master 与 origin 同步 · CI 全绿
 
 ## 开发环境端口约定
 - 前端：**3002**（`frontend-next`；旧 `frontend/` 非主入口）
@@ -228,3 +228,46 @@ scorer / team / tokenomics 读 funding_quality / funding_tier
 - 最终复审：Critical 0、Important 0、Minor 5、Ready to merge = Yes。初审两项 Important 经聚焦复核均驳回：同步 DB 临界段无 `await`，不存在所述 asyncio 交错；`raw_snapshot_ref` 限制只适用于 workflow，修改 evidence API 会越过冻结合同。
 - 交付策略：按用户选择保留本地 feature 分支和 worktree；不 merge、不 push、不删除 worktree。
 - 协作约束：主代理负责架构、调度与验收；实现代码交给 Grok Agent；Git 仅本地 commit，绝不主动 push。
+
+## 2026-08-13 会话记忆（V2 落地启动 + Alembic A1）
+
+### 本次会话已完成
+1. 数据源开关那批改动单独提交（语义化 commit）。
+2. `airdrop-alpha-console` 设计工程纳入版本管理并推送到 `origin/master`。
+3. CI 查状态并修到转绿：Lint & Format ✓、Full Backend Test Suite ✓、Type Check (mypy) ✓、Frontend Lint & Build ✓、Docker Build ✓（`gh run view 31675805195` 全绿）。
+4. V2 未实现项拆解为可执行任务清单 → `docs/V2_TASKS.md`（A1 Alembic 为关键路径第一环）。
+
+### CI 修复明细（均已解决）
+- ruff lint 12 错 + ruff format 37 文件
+- mypy `app.openapi` method-assign
+- 前端 `globals.css` UTF-8 BOM
+- `verify_opportunity_economic` mock 缺 `_get_conn()`（17.1.26）
+- `review_regressions` 未关 sqlite 连接（用户选「修脚本关闭连接」）
+- `deploy.sh` 丢失 +x 位
+- ruff 本地 0.16.1 vs CI 0.16.2（本地用 backend venv）
+
+### A1 Alembic（进行中，未写任何 alembic 代码）
+- 任务来源：`docs/V2_TASKS.md` 的 A1 项
+- 验收标准：`alembic upgrade head` 在空库建出与现状一致的 schema；`alembic downgrade base` 可回滚；CI 加迁移冒烟步骤
+- 子任务：a1-1 摸清 schema（✅ 已读完 sqlite + postgres 两套 DDL 全量）→ a1-2 装 alembic + init 脚手架 → a1-3 baseline 迁移复刻 16 表+索引 → a1-4 接 env.py → a1-5 验证 upgrade/downgrade → a1-6 CI 冒烟
+
+### Schema 现状（db.py · A1 baseline 必须完整复刻）
+- 双后端 DDL：`_sqlite_ddl()`（L238-493）、`_postgres_ddl()`（L496-751）
+- 16 张表：projects, logs, data_sources, raw_projects, project_signals, collection_logs, raw_projects_archive, project_signals_archive, feedback, events, interactions, opportunity_evidence, opportunity_assessments, opportunity_economic_snapshots
+- `init_db()`（L768）后续 `_add_column_if_not_exists` 补列：projects 的 discovery_source/discovered_at/auto_discovered/signal_count/sub_scores；raw_projects 的 quarantined/quarantine_reason；interactions 的 12 个钱包/经济列；opportunity_evidence.supersedes_evidence_id
+- 40+ 索引，含部分索引（`idx_raw_projects_unprocessed ... WHERE processed=0`、`idx_feedback_outcome ... WHERE outcome IS NOT NULL`）与 CHECK 约束（`opportunity_economic_snapshots.dedup_key CHECK(length(trim(dedup_key))>0)`）——baseline 迁移必须保留
+- baseline 建议直接复用 `db.py` 的 DDL 字符串以保证「与现状一致」
+- 关键辅助：`get_connection()`（L156）、`is_postgres()`（L33）、`_add_column_if_not_exists`（L228）
+
+### 关键约定（本次会话确认）
+- 后端 pytest 用 `backend\venv\Scripts\python.exe`（系统 PATH 的 python 无 pytest）；ruff 本地用同一 venv（0.16.1，CI 0.16.2）
+- PowerShell 语法：`npm run build` 而非 `npm build`；单引号包裹路径；`;` 分隔命令而非 `&&`
+- A1 需支持双后端：SQLite 默认 + PostgreSQL 当 `DATABASE_URL` 设置时
+- 仓库分支 `master`，与 `origin/master` 同步，工作区干净（仅 `backend/.pytest_tmp/` 报 Permission denied，无害）
+
+### V2 半成品模块（`docs/V2_TASKS.md` 标注🟡，非 A1 阻塞）
+- `backend/app/utils/fetcher.py`（195 行）、`backend/app/auth.py`（48 行）、`backend/app/collectors/scheduler.py`（185 行）
+- 不存在：`app/cache.py`、`app/backtest.py`、`app/seed.py`、`middleware/`、alembic 目录
+
+### 下一步
+完成 a1-2：在 `backend\venv` 安装 alembic 并 `alembic init` 生成脚手架；随后 a1-3 写 baseline 迁移复刻 16 表 + 全部索引（含部分索引与 CHECK 约束）。
