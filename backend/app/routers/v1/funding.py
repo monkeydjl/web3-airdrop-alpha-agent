@@ -73,7 +73,7 @@ def get_funding(project_id: str = Path(...)):
 @router.patch("/projects/{project_id}/funding")
 async def patch_funding(
     project_id: str = Path(...),
-    body: FundingUpdate = Body(...),
+    body: FundingUpdate = Body(...),  # noqa: B008 - FastAPI 惯用写法
     rescore: bool = Query(True, description="保存后是否立即重算评分"),
 ):
     """Save manual funding fields into meta.signals and optionally rescore."""

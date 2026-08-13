@@ -270,7 +270,6 @@ class RiskAgent(BaseAgent):
 if __name__ == "__main__":
     # Test risk agent
     import asyncio
-
     from typing import Any
 
     from app.agents.base import AgentContext, RawProject

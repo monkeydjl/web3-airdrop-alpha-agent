@@ -580,7 +580,7 @@ def list_project_interactions(
 @router.patch("/interactions/{interaction_id}")
 def update_interaction(
     interaction_id: int = Path(...),
-    body: InteractionUpdate = Body(...),
+    body: InteractionUpdate = Body(...),  # noqa: B008 - FastAPI 惯用写法
 ):
     fields = body.model_dump(exclude_unset=True, mode="json")
     if not fields:

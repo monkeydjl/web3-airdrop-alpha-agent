@@ -20,10 +20,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 try:
@@ -80,7 +79,7 @@ def get_sqlite_columns(conn: sqlite3.Connection, table: str) -> list[dict[str, A
 
 
 def get_sqlite_row_count(conn: sqlite3.Connection, table: str) -> int:
-    return conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+    return conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]  # noqa: S608
 
 
 def pg_type_for(sqlite_type: str, col_name: str, table: str) -> str:
@@ -118,9 +117,7 @@ def create_pg_table(pg: psycopg.Connection, table: str, columns: list[dict[str, 
             default = col["default"]
             if default.upper() == "CURRENT_TIMESTAMP":
                 parts.append("DEFAULT CURRENT_TIMESTAMP")
-            elif default.startswith("'") and default.endswith("'"):
-                parts.append(f"DEFAULT {default}")
-            elif default.replace(".", "").replace("-", "").isdigit():
+            elif (default.startswith("'") and default.endswith("'")) or default.replace(".", "").replace("-", "").isdigit():
                 parts.append(f"DEFAULT {default}")
         col_defs.append(" ".join(parts))
 
@@ -136,7 +133,7 @@ def normalize_timestamp(val: Any) -> Any:
         return None
     if isinstance(val, datetime):
         if val.tzinfo is None:
-            return val.replace(tzinfo=timezone.utc)
+            return val.replace(tzinfo=UTC)
         return val
     s = str(val).strip()
     if not s:
@@ -147,7 +144,7 @@ def normalize_timestamp(val: Any) -> Any:
     # Naive timestamp — assume UTC
     try:
         dt = datetime.fromisoformat(s)
-        return dt.replace(tzinfo=timezone.utc).isoformat()
+        return dt.replace(tzinfo=UTC).isoformat()
     except ValueError:
         return s
 
@@ -173,7 +170,7 @@ def migrate_table(
 
     # Migrate rows
     sqlite_conn.row_factory = sqlite3.Row
-    cur = sqlite_conn.execute(f"SELECT * FROM [{table}]")
+    cur = sqlite_conn.execute(f"SELECT * FROM [{table}]")  # noqa: S608
 
     tz_cols = TIMESTAMPTZ_COLUMNS.get(table, set())
     pk_cols = [c["name"] for c in columns if c["pk"]]
@@ -191,7 +188,7 @@ def migrate_table(
     elif has_serial:
         conflict_clause = " ON CONFLICT DO NOTHING"
 
-    insert_sql = f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}'
+    insert_sql = f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}'  # noqa: S608
 
     with pg.cursor() as pg_cur:
         for row in cur:
@@ -218,7 +215,7 @@ def migrate_table(
     if has_serial:
         with pg.cursor() as cur2:
             cur2.execute(
-                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "  # noqa: S608
                 f"COALESCE((SELECT MAX(id) FROM \"{table}\"), 1))"
             )
         pg.commit()
