@@ -100,7 +100,9 @@ echo.
 
 REM Start frontend (Next.js dev server)
 echo [6/6] Starting frontend service...
-start "Frontend UI" cmd /k "cd /d "%~dp0frontend-next" && echo [OK] Frontend starting... && npm run dev"
+REM Force NODE_ENV=development: a machine-wide NODE_ENV=production makes Next
+REM serve stale production assets and HMR will not pick up UI changes.
+start "Frontend UI" cmd /k "cd /d "%~dp0frontend-next" && set NODE_ENV=development&& set NEXT_TELEMETRY_DISABLED=1&& echo [OK] Frontend starting (NODE_ENV=development)... && npm run dev"
 
 timeout /t 4 /nobreak >nul
 echo [OK] Frontend service started

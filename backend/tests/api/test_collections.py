@@ -66,6 +66,43 @@ class TestCollectionsEndpoints:
         assert response.status_code == 200
         sources = response.json()["data"]["sources"]
         assert any(s["source_id"] == "defillama" for s in sources)
+        sample = next(s for s in sources if s["source_id"] == "defillama")
+        assert "operator_enabled" in sample
+        assert "config_ready" in sample
+        assert "is_enabled" in sample
+
+    def test_patch_collection_source_toggle(self, client: TestClient) -> None:
+        """运营商开关写入 data_sources.enabled，并阻止 trigger。"""
+        off = client.patch(
+            "/api/v1/collections/defillama",
+            json={"enabled": False},
+        )
+        assert off.status_code == 200
+        body = off.json()["data"]
+        assert body["operator_enabled"] is False
+        assert body["status"]["enabled"] is False
+        assert body["is_enabled"] is False
+
+        blocked = client.post("/api/v1/collections/defillama/trigger")
+        assert blocked.status_code == 400
+        # main.py 把 HTTPException.detail 包进统一 {ok,error} 信封
+        err = blocked.json().get("error") or blocked.json().get("detail") or {}
+        assert err.get("code") == "SOURCE_DISABLED"
+
+        on = client.patch(
+            "/api/v1/collections/defillama",
+            json={"enabled": True},
+        )
+        assert on.status_code == 200
+        assert on.json()["data"]["operator_enabled"] is True
+        assert on.json()["data"]["status"]["enabled"] is True
+
+    def test_patch_unknown_source_404(self, client: TestClient) -> None:
+        response = client.patch(
+            "/api/v1/collections/not-a-real-source",
+            json={"enabled": False},
+        )
+        assert response.status_code == 404
 
     def test_list_discoveries_empty(self, client: TestClient) -> None:
         """空发现列表。"""
@@ -410,6 +447,13 @@ class TestManualTriggerEconomicIntegration:
             def persist_collection_result(self, *a, **k) -> None:
                 raise RuntimeError("persist failed")
 
+            def _get_conn(self):
+                # 与真实 CollectionRepository 接口对齐；无连接时返回 None。
+                return None
+
+            def _should_close(self) -> bool:
+                return False
+
         process_mock = MagicMock()
         collector = _FakeCollector("defillama")
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
@@ -454,6 +498,13 @@ class TestManualTriggerEconomicIntegration:
 
             def persist_collection_result(self, *a, **k) -> None:
                 return None
+
+            def _get_conn(self):
+                # 与真实 CollectionRepository 接口对齐；无连接时返回 None。
+                return None
+
+            def _should_close(self) -> bool:
+                return False
 
         writer_process = MagicMock()
         emitter_emit = MagicMock()
@@ -565,6 +616,13 @@ class TestManualTriggerEconomicIntegration:
 
             def persist_collection_result(self, *a, **k) -> None:
                 return None
+
+            def _get_conn(self):
+                # 与真实 CollectionRepository 接口对齐；无连接时返回 None。
+                return None
+
+            def _should_close(self) -> bool:
+                return False
 
         async def fake_pipeline(**kwargs):
             analysis_calls["n"] += 1

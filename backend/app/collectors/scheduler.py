@@ -115,6 +115,32 @@ class CollectionScheduler:
             self._logger.warning("collection_scheduler.skip_disabled", source_id=source_id)
             return
 
+        # Honor operator toggle in data_sources.enabled (default on if no row).
+        try:
+            from app.db import get_connection
+
+            conn = get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT enabled FROM data_sources WHERE source_id = ?",
+                    (source_id,),
+                ).fetchone()
+                if row is not None and not bool(row["enabled"]):
+                    self._logger.info(
+                        "collection_scheduler.skip_operator_disabled",
+                        source_id=source_id,
+                    )
+                    return
+            finally:
+                conn.close()
+        except Exception as exc:
+            self._logger.warning(
+                "collection_scheduler.operator_flag_check_failed",
+                source_id=source_id,
+                error_type=type(exc).__name__,
+                error=str(exc)[:160],
+            )
+
         started_at = datetime.now(UTC)
         self._logger.info(
             "collection_scheduler.run_started",

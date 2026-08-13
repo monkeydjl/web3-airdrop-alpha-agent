@@ -47,6 +47,19 @@ class CollectionTriggerResponse(BaseModel):
     data: dict = Field(..., description="包含 source_id / status / items_collected")
 
 
+class CollectionSourcePatchRequest(BaseModel):
+    """更新采集源运行时开关。"""
+
+    enabled: bool = Field(..., description="是否启用（写入 data_sources.enabled）")
+
+
+class CollectionSourcePatchResponse(BaseModel):
+    """采集源开关更新响应。"""
+
+    ok: bool = True
+    data: dict = Field(..., description="包含 source_id / enabled / config_ready / is_enabled")
+
+
 def _build_registry() -> CollectorRegistry:
     """返回共享的默认注册表。
 
@@ -138,6 +151,54 @@ def list_discoveries(
             conn.close()
 
 
+def _operator_enabled(conn, source_id: str) -> bool:
+    """Runtime toggle from data_sources.enabled; missing row means enabled."""
+    row = conn.execute(
+        "SELECT enabled FROM data_sources WHERE source_id = ?",
+        (source_id,),
+    ).fetchone()
+    if row is None:
+        return True
+    return bool(row["enabled"])
+
+
+def _source_payload(conn, collector) -> dict:
+    """Build list/patch payload: config_ready ∧ operator_enabled → is_enabled."""
+    source_id = collector.source_id
+    config_ready = bool(collector.is_enabled())
+    row = conn.execute(
+        "SELECT enabled, sync_status, last_sync, api_calls_today FROM data_sources WHERE source_id = ?",
+        (source_id,),
+    ).fetchone()
+
+    if row:
+        operator_enabled = bool(row["enabled"])
+        status = {
+            "enabled": operator_enabled,
+            "sync_status": row["sync_status"],
+            "last_sync": row["last_sync"],
+            "api_calls_today": row["api_calls_today"],
+        }
+    else:
+        operator_enabled = True
+        status = {
+            "enabled": True,
+            "sync_status": "not_registered",
+            "last_sync": None,
+            "api_calls_today": 0,
+        }
+
+    return {
+        "source_id": source_id,
+        "source_name": collector.source_name,
+        "source_type": collector.source_type,
+        "config_ready": config_ready,
+        "operator_enabled": operator_enabled,
+        "is_enabled": config_ready and operator_enabled,
+        "status": status,
+    }
+
+
 @router.get("/collections/sources", response_model=CollectionSourcesResponse)
 def list_collection_sources() -> CollectionSourcesResponse:
     """列出已注册的采集源及其状态。"""
@@ -145,44 +206,55 @@ def list_collection_sources() -> CollectionSourcesResponse:
     repo = CollectionRepository()
     conn = repo._get_conn()
     try:
-        sources = []
-        for collector in registry.list_all():
-            source_id = collector.source_id
-            # 查询 data_sources 表状态
-            row = conn.execute(
-                "SELECT enabled, sync_status, last_sync, api_calls_today FROM data_sources WHERE source_id = ?",
-                (source_id,),
-            ).fetchone()
-
-            if row:
-                status = {
-                    "enabled": bool(row["enabled"]),
-                    "sync_status": row["sync_status"],
-                    "last_sync": row["last_sync"],
-                    "api_calls_today": row["api_calls_today"],
-                }
-            else:
-                status = {
-                    "enabled": collector.is_enabled(),
-                    "sync_status": "not_registered",
-                    "last_sync": None,
-                    "api_calls_today": 0,
-                }
-
-            sources.append(
-                {
-                    "source_id": source_id,
-                    "source_name": collector.source_name,
-                    "source_type": collector.source_type,
-                    "is_enabled": collector.is_enabled(),
-                    "status": status,
-                }
-            )
-
+        sources = [_source_payload(conn, collector) for collector in registry.list_all()]
         return CollectionSourcesResponse(
             ok=True,
             data={"sources": sources},
         )
+    finally:
+        if repo._should_close():
+            conn.close()
+
+
+@router.patch(
+    "/collections/{source_id}",
+    response_model=CollectionSourcePatchResponse,
+)
+def patch_collection_source(
+    body: CollectionSourcePatchRequest,
+    source_id: str = Path(..., description="数据源 ID, 如 defillama"),
+) -> CollectionSourcePatchResponse:
+    """启用或禁用采集源（写入 data_sources.enabled，不影响 .env 配置能力位）。"""
+    registry = _build_registry()
+    collector = registry.get(source_id)
+    if not collector:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "SOURCE_NOT_FOUND", "message": f"Unknown source: {source_id}"},
+        )
+
+    repo = CollectionRepository()
+    # Register row if missing (default enabled=1 via table default).
+    repo.ensure_source(source_id, collector.source_type, collector.source_name)
+    conn = repo._get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE data_sources
+            SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE source_id = ?
+            """,
+            (1 if body.enabled else 0, source_id),
+        )
+        conn.commit()
+        payload = _source_payload(conn, collector)
+        logger.info(
+            "collections.source_toggled",
+            source_id=source_id,
+            enabled=body.enabled,
+            is_enabled=payload["is_enabled"],
+        )
+        return CollectionSourcePatchResponse(ok=True, data=payload)
     finally:
         if repo._should_close():
             conn.close()
@@ -204,8 +276,29 @@ async def trigger_collection(
     if not collector.is_enabled():
         raise HTTPException(
             status_code=400,
-            detail={"code": "SOURCE_DISABLED", "message": f"Source {source_id} is disabled"},
+            detail={
+                "code": "SOURCE_CONFIG_DISABLED",
+                "message": f"Source {source_id} is disabled in configuration (env/key)",
+            },
         )
+
+    repo_gate = CollectionRepository()
+    conn_gate = repo_gate._get_conn()
+    try:
+        if conn_gate is None:
+            # 测试桩可能只实现持久化接口而不返回连接，此时跳过运营商开关检查。
+            pass
+        elif not _operator_enabled(conn_gate, source_id):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SOURCE_DISABLED",
+                    "message": f"Source {source_id} is disabled by operator",
+                },
+            )
+    finally:
+        if repo_gate._should_close() and conn_gate is not None:
+            conn_gate.close()
 
     # 同一数据源同时只允许一次采集在飞：重复 POST（前端连点/重试）否则会各自
     # 发出真实出站请求、各自 persist。不同源之间不互斥。
