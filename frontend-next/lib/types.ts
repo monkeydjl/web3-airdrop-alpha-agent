@@ -1,4 +1,4 @@
-﻿export type Label = 'FARM' | 'WATCH' | 'IGNORE';
+export type Label = 'FARM' | 'WATCH' | 'IGNORE';
 
 export interface FundingInfo {
   funding_total_usd?: number | null;
@@ -372,3 +372,24 @@ export interface InteractionLifecyclePatch {
 }
 
 export interface InteractionOutcomePatch extends Partial<ValidationOutcomeFields> {}
+
+/** GET /discoveries 返回的单条原始发现。 */
+export interface DiscoveryItem {
+  raw_id: string;
+  source_id: string;
+  dedup_key: string;
+  project_id: string | null;
+  name: string;
+  sector: string | null;
+  stage: string | null;
+  discovery_score: number;
+  processed: boolean;
+  discovered_at: string;
+}
+
+export interface DiscoveriesResponse {
+  items: DiscoveryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
