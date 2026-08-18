@@ -33,6 +33,17 @@ _EXPECTED_TABLES = {
     "opportunity_evidence",
     "opportunity_assessments",
     "opportunity_economic_snapshots",
+    "watchlist",
+    "weight_changelog",
+    # V2 新表（§5.4，迁移 0002）
+    "quarantine",
+    "project_history",
+    "audit_logs",
+    "llm_eval_changelog",
+    "metrics",
+    "narratives",
+    "dedup_keys",
+    "prompt_versions",
 }
 
 
@@ -88,7 +99,7 @@ def _dump_schema(db_path: Path) -> tuple[dict, dict]:
 
 
 def test_alembic_upgrade_creates_all_tables(tmp_path: Path) -> None:
-    """upgrade head 在空库建出全部 14 张表。"""
+    """upgrade head 在空库建出全部 24 张表（16 baseline + 8 V2 新表）。"""
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     tables = _get_user_tables(db_path)
@@ -133,10 +144,10 @@ def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:
 
 
 def test_alembic_version_recorded(tmp_path: Path) -> None:
-    """upgrade head 后 alembic_version 表记录版本 0001。"""
+    """upgrade head 后 alembic_version 表记录最新版本 0002。"""
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     conn = sqlite3.connect(str(db_path))
     ver = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     conn.close()
-    assert ver is not None and ver[0] == "0001"
+    assert ver is not None and ver[0] == "0002"

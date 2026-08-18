@@ -39,7 +39,7 @@ def test_economic_flags_default_false():
 
 
 def test_economic_flag_defaults_are_false_when_omitted():
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.opportunity_economic_snapshot_enabled is False
     assert settings.opportunity_economic_source_defillama_enabled is False
     assert settings.opportunity_economic_source_coingecko_enabled is False

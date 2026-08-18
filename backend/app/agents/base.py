@@ -301,13 +301,55 @@ class BaseAgent(ABC):
             return None
 
         try:
-            # TODO: Implement LLM call in V2
-            # For MVP, just return None (rule-based only)
-            self.logger.info("llm.skipped", agent=self.name, project_id=state.project.id, reason="MVP: rule-based only")
+            from app.llm.client import llm_chat_simple
+
+            # E3 (§5.4.9): 尝试从 prompt_versions 表获取当前 agent 的默认版本
+            prompt_version = self._resolve_prompt_version()
+
+            content = await llm_chat_simple(
+                messages=[
+                    {"role": "system", "content": f"You are the {self.name} analysis agent."},
+                    {"role": "user", "content": _prompt},
+                ],
+                temperature=0.3,
+                max_tokens=512,
+                prompt_version=prompt_version,
+            )
+            if content:
+                self.logger.info(
+                    "llm.success",
+                    agent=self.name,
+                    project_id=state.project.id,
+                    prompt_version=prompt_version,
+                )
+                return content
+
+            self.logger.info("llm.no_response", agent=self.name, project_id=state.project.id)
             return None
 
         except Exception as e:
             self.logger.error("llm.failed", agent=self.name, project_id=state.project.id, error=str(e))
+            return None
+
+    def _resolve_prompt_version(self, prompt_key: str = "analysis") -> str | None:
+        """E3 (§5.4.9): 从 prompt_versions 表查询当前 agent 的默认 prompt 版本。
+
+        查询失败或无默认版本时返回 None（不影响 LLM 调用）。
+        """
+        try:
+            from app.db import get_connection
+            from app.repositories.v2 import PromptVersionsRepository
+
+            conn = get_connection()
+            try:
+                repo = PromptVersionsRepository(conn)
+                row = repo.get_default(self.name, prompt_key)
+                if row:
+                    return f"{row.get('version', 'unknown')}"
+                return None
+            finally:
+                conn.close()
+        except Exception:
             return None
 
     def _log_start(self, state: PipelineState):

@@ -309,6 +309,44 @@ DB_COLLECTION_LOGS_24H = Gauge(
     "Collection logs emitted in the last 24 hours.",
 )
 
+# ── Competition cache metrics (ADR-010) ───────────────────────────
+COMPETITION_CACHE_HITS = Counter(
+    "airdrop_competition_cache_hits_total",
+    "Competition sector count cache hits.",
+)
+
+COMPETITION_CACHE_MISSES = Counter(
+    "airdrop_competition_cache_misses_total",
+    "Competition sector count cache misses (triggers DB COUNT).",
+)
+
+COMPETITION_CACHE_DB_DURATION = Histogram(
+    "airdrop_competition_cache_db_duration_seconds",
+    "Time spent on DB COUNT(*) when cache misses.",
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
+)
+
+# ── Fetcher metrics (§10.1) ──────────────────────────────────────
+FETCHER_CACHE_HITS = Counter(
+    "airdrop_fetcher_cache_hits_total",
+    "HTTP fetcher cache hits (in-memory or disk).",
+)
+
+FETCHER_CACHE_MISSES = Counter(
+    "airdrop_fetcher_cache_misses_total",
+    "HTTP fetcher cache misses (triggers network request).",
+)
+
+FETCHER_SEMAPHORE_USAGE = Gauge(
+    "airdrop_concurrency_fetcher_semaphore_usage",
+    "Current number of in-flight HTTP requests holding a fetcher semaphore slot.",
+)
+
+FETCHER_CIRCUIT_BREAKER_STATE = Gauge(
+    "airdrop_fetcher_circuit_breaker_state",
+    "Circuit breaker state: 0=CLOSED, 1=HALF_OPEN, 2=OPEN.",
+)
+
 
 class MetricsExporter:
     """Render Prometheus metrics if metrics are enabled in settings."""

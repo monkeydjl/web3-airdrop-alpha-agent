@@ -228,6 +228,38 @@ class ProjectRepository:
             if saved_row is None:
                 raise RuntimeError(f"Saved project row not found: {project.id}")
             snapshot = deepcopy(dict_from_row(saved_row))
+
+            # E4 (§6.9.12 / §6.11): 在同一事务内写 project_history 快照行。
+            # 事务回滚时两表一致（projects + project_history 同时撤销）。
+            run_id = getattr(state.context, "run_id", None) or "unknown"
+            weight_version = getattr(state, "weight_version", None) or None
+            history_snapshot = json.dumps(
+                {
+                    "project_name": project.name,
+                    "url": project.url,
+                    "sector": project.sector,
+                    "source": project.source,
+                    "confidence": state.confidence,
+                    "reason": state.reason,
+                    "narrative": state.narrative.model_dump() if state.narrative else None,
+                    "team": state.team.model_dump() if state.team else None,
+                    "risk": state.risk.model_dump() if state.risk else None,
+                    "tokenomics": state.tokenomics.model_dump() if state.tokenomics else None,
+                    "sub_scores": getattr(state, "sub_scores", None),
+                    "meta": json.loads(meta_json) if meta_json else None,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            conn.execute(
+                """
+                INSERT INTO project_history
+                    (project_id, run_id, score, label, stage, weight_version, snapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (project.id, run_id, state.score, state.label, project.stage, weight_version, history_snapshot),
+            )
+
             conn.commit()
 
             logger.info(
@@ -236,6 +268,11 @@ class ProjectRepository:
                 name=project.name,
                 score=state.score,
             )
+
+            # ADR-010 写时失效：项目落库后使对应 sector 缓存失效
+            if project.sector:
+                with suppress(Exception):
+                    self.invalidate_sector_cache(project.sector)
 
             # Post-commit, pre-return economic Evidence replay on the same conn.
             # Failures warn only — never roll back the committed project.
@@ -362,6 +399,60 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
+    def count_by_sector(self, sector: str) -> int:
+        """统计指定赛道的项目数（ADR-010 读时重建的数据源）。
+
+        直接走 DB COUNT(*)，调用方应优先通过 SectorCountCache 间接调用。
+        """
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM projects WHERE sector = ?",
+                (sector,),
+            ).fetchone()
+            return int(row["n"]) if row else 0
+        finally:
+            if self._should_close():
+                conn.close()
+
+    def global_sector_counts(self, sectors: set[str] | None = None) -> dict[str, int]:
+        """全库 sector 计数（经 SectorCountCache 缓存，ADR-010 V2）。
+
+        Args:
+            sectors: 需要查询的 sector 集合；None 表示查全库所有 sector。
+
+        Returns:
+            sector → count 字典
+        """
+        from app.cache import get_sector_count_cache
+
+        cache = get_sector_count_cache()
+
+        if sectors is None:
+            # 全量查询，直接走 aggregate_counts（一次性查完比逐个缓存更高效）
+            all_counts = self.aggregate_counts("sector")
+            for s, n in all_counts.items():
+                cache.put(s, n)
+            return all_counts
+
+        result: dict[str, int] = {}
+        for sector in sectors:
+            result[sector] = cache.get_or_compute(
+                sector,
+                lambda s=sector: self.count_by_sector(s),
+            )
+        return result
+
+    def invalidate_sector_cache(self, sector: str | None = None) -> None:
+        """写时失效：写入项目后使对应 sector 缓存项失效（ADR-010）。"""
+        from app.cache import get_sector_count_cache
+
+        cache = get_sector_count_cache()
+        if sector:
+            cache.invalidate(sector)
+        else:
+            cache.invalidate_all()
+
     def list_insight_rows(self) -> list[dict[str, Any]]:
         """只取洞察聚合真正需要的窄投影。
 
@@ -404,6 +495,7 @@ class ProjectRepository:
         min_score: int | None = None,
         sort_by: str = "score",
         sort_order: str = "desc",
+        auto_discovered: bool | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -416,6 +508,7 @@ class ProjectRepository:
             min_score: 最低分数筛选
             sort_by: 排序字段
             sort_order: 排序顺序
+            auto_discovered: 仅查自动发现的项目 (True) 或手动录入 (False)
 
         Returns:
             (项目列表, 总数量)
@@ -441,6 +534,10 @@ class ProjectRepository:
             if min_score is not None:
                 conditions.append("score >= ?")
                 params.append(min_score)
+
+            if auto_discovered is not None:
+                conditions.append("auto_discovered = ?")
+                params.append(1 if auto_discovered else 0)
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

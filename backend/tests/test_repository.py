@@ -252,8 +252,10 @@ class TestProjectRepository:
         writes = [sql for sql in statements if sql.upper().startswith("INSERT")]
         assert row["score"] == sample_state.score
         assert project_selects == []
-        assert len(writes) == 1
+        # E4: save() now writes projects UPSERT + project_history snapshot = 2 INSERTs
+        assert len(writes) == 2
         assert "RETURNING *" in writes[0].upper()
+        assert "project_history" in writes[1].lower()
 
     def test_same_id_concurrent_overwrite_keeps_each_save_snapshot(self, tmp_path, sample_state):
         db_path = tmp_path / "returning-concurrency.db"

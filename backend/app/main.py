@@ -21,21 +21,22 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from app.analysis_scheduler import AnalysisScheduler
 from app.collectors.base import CollectorResult
 from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
-from app.collectors.scheduler import CollectionScheduler
 from app.config import settings
 from app.db import get_connection, init_db
 from app.inflight import QueueDrainInProgressError
 from app.metrics import MetricsExporter
 from app.pipeline_run import execute_analysis_pipeline
+from app.scheduler import UnifiedScheduler
+from app.tracing import instrument_fastapi_app, setup_tracing
 from app.utils.redact import configure_logging
 
 # 进程启动即安装脱敏 processor（SECURITY.md §3.3）。放在模块层而非 lifespan：
 # 采集器与脚本可能在应用启动前就开始打日志。
 configure_logging()
+setup_tracing()
 
 logger = structlog.get_logger(__name__)
 
@@ -173,41 +174,31 @@ def create_app(db_override=None) -> FastAPI:
                                 error=str(exc),
                             )
 
-                collection_scheduler = CollectionScheduler(
+                unified_scheduler = UnifiedScheduler(
                     registry,
                     on_collection=on_collection,
                 )
-                collection_scheduler.start()
-                try:
-                    analysis_scheduler = AnalysisScheduler()
-                    analysis_scheduler.start()
-                except Exception:
-                    # 第二个调度器启动失败时回收已启动的第一个，避免孤儿调度线程
-                    collection_scheduler.shutdown(wait=False)
-                    raise
+                unified_scheduler.start()
 
                 application.state.collector_registry = registry
-                application.state.collection_scheduler = collection_scheduler
-                application.state.analysis_scheduler = analysis_scheduler
+                application.state.unified_scheduler = unified_scheduler
             else:
                 application.state.collector_registry = None
-                application.state.collection_scheduler = None
-                application.state.analysis_scheduler = None
+                application.state.unified_scheduler = None
 
             yield
         finally:
             logger.info("app.shutdown")
-            for attr in ("collection_scheduler", "analysis_scheduler"):
-                scheduler = getattr(application.state, attr, None)
-                if scheduler:
-                    try:
-                        scheduler.shutdown(wait=True)
-                    except Exception as exc:
-                        logger.error(
-                            "app.shutdown.scheduler_error",
-                            component=attr,
-                            error=str(exc),
-                        )
+            unified_scheduler = getattr(application.state, "unified_scheduler", None)
+            if unified_scheduler:
+                try:
+                    unified_scheduler.shutdown(wait=True)
+                except Exception as exc:
+                    logger.error(
+                        "app.shutdown.scheduler_error",
+                        component="unified_scheduler",
+                        error=str(exc),
+                    )
             if app_owns_conn:
                 try:
                     app_conn.close()
@@ -460,17 +451,21 @@ def create_app(db_override=None) -> FastAPI:
     # ── 注册路由 ────────────────────────────────
     from app.routers.v1 import (
         ai_brief,
+        auth,
         collections,
         export_import,
         feedback,
         funding,
         insights,
         interactions,
+        llm,
         opportunity,
         participation,
         projects,
         quarantine,
         run,
+        watchlist,
+        webhook,
     )
 
     app.include_router(run.router, prefix="/api/v1", tags=["v1"])
@@ -481,10 +476,17 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(insights.router, prefix="/api/v1", tags=["v1"])
     app.include_router(quarantine.router, prefix="/api/v1", tags=["v1"])
     app.include_router(ai_brief.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(auth.router, prefix="/api/v1", tags=["v1"])
     app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
     app.include_router(funding.router, prefix="/api/v1", tags=["v1"])
     app.include_router(opportunity.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(llm.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(webhook.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
+
+    # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
+    instrument_fastapi_app(app)
 
     return app
 

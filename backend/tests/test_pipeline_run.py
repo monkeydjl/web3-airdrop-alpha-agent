@@ -639,6 +639,8 @@ async def test_empty_run_logs_zero_shadow_completion(monkeypatch):
         "app.pipeline_run.CollectorAgent.collect_from_repository",
         lambda self, repo, **kwargs: [],
     )
+    # Disable seed fallback to test the "truly empty" path (B2 adds fallback)
+    monkeypatch.setattr("app.pipeline_run.settings.seed_fallback_enabled", False)
     monkeypatch.setattr(
         "app.pipeline_run.logger.info",
         lambda event, **kwargs: events.append((event, kwargs)),
@@ -701,7 +703,10 @@ async def test_orchestrator_wires_economic_replay_enabled_from_settings(monkeypa
     await orchestrator.run_pipeline([project], AgentContext(run_id="run-wire"), save_to_db=True)
 
     assert captured, "ProjectRepository must be constructed"
-    assert captured[0]["economic_replay_enabled"] is True
+    # ProjectRepository is called twice: once for sector counts (no flag),
+    # once for save (with flag from settings). Check the save call.
+    save_calls = [c for c in captured if c["economic_replay_enabled"] is True]
+    assert save_calls, f"save path must pass economic_replay_enabled=True, got: {captured}"
     src = inspect.getsource(ProjectRepository.__init__)
     assert "get_settings" not in src
 
@@ -1012,6 +1017,8 @@ class TestQueueDrainGuard:
             "app.pipeline_run.CollectorAgent.collect_from_repository",
             lambda self, repo, **kwargs: [],
         )
+        # Disable seed fallback to test the "truly empty" path (B2 adds fallback)
+        monkeypatch.setattr("app.pipeline_run.settings.seed_fallback_enabled", False)
 
         result = await execute_analysis_pipeline(projects=None)
 

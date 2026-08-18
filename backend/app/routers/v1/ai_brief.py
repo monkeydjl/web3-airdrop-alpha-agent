@@ -47,7 +47,7 @@ async def project_ai_brief(
             "project_id": project_id,
             "project_name": project.get("name"),
             "mode": brief.get("mode"),
-            "llm_available": bool((settings.openai_api_key or "").strip()),
+            "llm_available": settings.is_llm_enabled,
             "headline": brief.get("headline"),
             "summary": brief.get("summary"),
             "bullets": brief.get("bullets") or [],

@@ -33,12 +33,22 @@ depends_on: str | Sequence[str] | None = None
 
 # downgrade 时按依赖逆序删除（无外键约束，顺序仅作保险）
 _TABLES = [
+    "prompt_versions",
+    "dedup_keys",
+    "narratives",
+    "metrics",
+    "llm_eval_changelog",
+    "audit_logs",
+    "project_history",
+    "quarantine",
     "opportunity_economic_snapshots",
     "opportunity_assessments",
     "opportunity_evidence",
     "interactions",
     "events",
     "feedback",
+    "weight_changelog",
+    "watchlist",
     "project_signals_archive",
     "raw_projects_archive",
     "collection_logs",

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
 import structlog
 
 from app.config import settings
@@ -319,9 +318,12 @@ def build_rule_brief(project: dict[str, Any]) -> dict[str, Any]:
 
 
 async def try_llm_brief(project: dict[str, Any], rule_brief: dict[str, Any]) -> str | None:
-    """Optional LLM polish. Returns markdown/plain text or None."""
-    api_key = (settings.openai_api_key or "").strip()
-    if not api_key:
+    """Optional LLM polish. Returns markdown/plain text or None.
+
+    使用多接口/多模型故障转移客户端：接口1连不上切接口2，模型1失败切模型2。
+    所有接口都失败时返回 None，调用方回退到 rule-based brief。
+    """
+    if not settings.is_llm_enabled:
         return None
 
     name = project.get("name")
@@ -348,32 +350,21 @@ async def try_llm_brief(project: dict[str, Any], rule_brief: dict[str, Any]) -> 
     )
     user = f"请解读以下项目评分结果：\n```json\n{json.dumps(payload_ctx, ensure_ascii=False, indent=2)}\n```"
 
-    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
-    body = {
-        "model": settings.llm_model,
-        "temperature": min(0.5, float(settings.llm_temperature) + 0.1),
-        "max_tokens": max(400, int(settings.llm_max_tokens)),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
 
     try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content")
-            if content and str(content).strip():
-                return str(content).strip()
+        from app.llm.client import llm_chat_simple
+
+        content = await llm_chat_simple(
+            messages=messages,
+            temperature=min(0.5, float(settings.llm_temperature) + 0.1),
+            max_tokens=max(400, int(settings.llm_max_tokens)),
+        )
+        if content and str(content).strip():
+            return str(content).strip()
     except Exception as e:
         logger.warning("ai_brief.llm_failed", error=str(e), project=name)
     return None

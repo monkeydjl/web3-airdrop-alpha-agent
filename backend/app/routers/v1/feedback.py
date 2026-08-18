@@ -245,3 +245,104 @@ def submit_event(request: EventRequest) -> FeedbackResponse:
             status_code=500,
             detail={"code": "DB_ERROR", "message": "Failed to save event"},
         ) from e
+
+
+# ═══════════════════════════════════════════════════════════════
+# Calibration Status Endpoint
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/calibration/status",
+    response_model=FeedbackResponse,
+    summary="校准状态",
+    description=(
+        "返回权重校准的当前状态：权重版本、反馈样本数与门禁阈值、"
+        "信号分布、以及最近的 weight_changelog 记录。"
+        "\n\nReference: WEIGHT_CALIBRATION.md §3.3 / §7"
+    ),
+)
+def get_calibration_status() -> FeedbackResponse:
+    """获取权重校准状态。"""
+    min_samples = 200  # WEIGHT_CALIBRATION.md §3.3
+
+    try:
+        with get_connection() as conn:
+            # 反馈总数
+            total_row = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()
+            total_feedback = int(total_row[0]) if total_row else 0
+
+            # 强监督样本数（wrong_label + outcome 非空）
+            strong_row = conn.execute(
+                "SELECT COUNT(*) FROM feedback WHERE signal = 'wrong_label' OR outcome IS NOT NULL"
+            ).fetchone()
+            strong_samples = int(strong_row[0]) if strong_row else 0
+
+            # 信号分布
+            signal_rows = conn.execute(
+                "SELECT signal, COUNT(*) as cnt FROM feedback GROUP BY signal"
+            ).fetchall()
+            signal_counts = {row["signal"]: row["cnt"] for row in signal_rows}
+
+            # outcome 分布
+            outcome_rows = conn.execute(
+                "SELECT outcome, COUNT(*) as cnt FROM feedback WHERE outcome IS NOT NULL GROUP BY outcome"
+            ).fetchall()
+            outcome_counts = {row["outcome"]: row["cnt"] for row in outcome_rows}
+
+            # 最近 weight_changelog 记录
+            changelog_rows = conn.execute(
+                """
+                SELECT from_version, to_version, weights_json, sample_size,
+                       metrics_json, triggered_by, status, created_at
+                FROM weight_changelog
+                ORDER BY created_at DESC
+                LIMIT 5
+                """
+            ).fetchall()
+
+            import json as _json
+
+            changelog = []
+            for row in changelog_rows:
+                metrics = {}
+                try:
+                    metrics = _json.loads(row["metrics_json"]) if row["metrics_json"] else {}
+                except (ValueError, TypeError):
+                    pass
+                changelog.append(
+                    {
+                        "from_version": row["from_version"],
+                        "to_version": row["to_version"],
+                        "sample_size": row["sample_size"],
+                        "metrics": metrics,
+                        "triggered_by": row["triggered_by"],
+                        "status": row["status"],
+                        "created_at": str(row["created_at"]) if row["created_at"] else None,
+                    }
+                )
+
+        # 当前权重版本
+        from app.config import settings
+
+        ready = total_feedback >= min_samples
+
+        return FeedbackResponse(
+            data={
+                "weight_version": settings.weight_version,
+                "min_samples_gate": min_samples,
+                "total_feedback": total_feedback,
+                "strong_samples": strong_samples,
+                "calibration_ready": ready,
+                "samples_needed": max(0, min_samples - total_feedback),
+                "signal_counts": signal_counts,
+                "outcome_counts": outcome_counts,
+                "changelog": changelog,
+            }
+        )
+    except Exception as e:
+        logger.error("calibration.status_failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "DB_ERROR", "message": "Failed to get calibration status"},
+        ) from e

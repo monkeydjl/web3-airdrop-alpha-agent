@@ -134,3 +134,41 @@ def is_noise_raw_project(name: str, sector: str | None = None, raw_data: dict | 
         parent=str(raw.get("parentProtocol") or raw.get("parent") or ""),
         sector=str(sector or raw.get("sector") or ""),
     )
+
+
+def is_listed_token_no_airdrop_signals(
+    *,
+    no_token_yet: bool,
+    has_testnet: bool = False,
+    has_points_program: bool = False,
+    has_task_portal: bool = False,
+    explicit_airdrop_mention: bool = False,
+    source_id: str = "",
+) -> bool:
+    """Return True if the project already has a listed token and zero airdrop signals.
+
+    These projects have no airdrop alpha value — the token is already trading and
+    there are no testnet, points, quest, or airdrop mentions to suggest an upcoming
+    distribution.
+
+    Signal supplement sources (coingecko, cryptorank, etherscan) are exempt:
+    their job is to provide token-listed corroboration for projects discovered by
+    other sources. Filtering them would break cross-source merge.
+    """
+    # Signal supplement sources are never filtered here
+    if source_id in ("coingecko", "cryptorank", "etherscan", "alchemy_webhook"):
+        return False
+
+    # If token not yet listed, it's potential alpha — keep it
+    if no_token_yet:
+        return False
+
+    # Token is listed. Check for any airdrop-related signals
+    has_any_airdrop_signal = (
+        has_testnet
+        or has_points_program
+        or has_task_portal
+        or explicit_airdrop_mention
+    )
+
+    return not has_any_airdrop_signal

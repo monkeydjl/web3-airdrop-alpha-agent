@@ -1,4 +1,4 @@
-"""Unit tests for calibrate_weights helpers."""
+"""Unit tests for calibration helpers."""
 
 from __future__ import annotations
 
@@ -9,20 +9,28 @@ BACKEND = Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from scripts.calibrate_weights import (  # noqa: E402
-    FeedbackSample,
-    metric_j,
-    score_to_label,
-    total_from_subscores,
+from app.agents.scorer import LABEL_THRESHOLDS  # noqa: E402
+from app.calibration import (  # noqa: E402
+    CalibrationSample,
+    compute_j,
+    recompute_score,
 )
 
 
+def _score_to_label(score: int) -> str:
+    """Map a 0-100 score to its label using the v1.1 thresholds."""
+    for threshold, label in LABEL_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "IGNORE"
+
+
 def test_score_to_label_v11():
-    assert score_to_label(70) == "FARM"
-    assert score_to_label(65) == "FARM"
-    assert score_to_label(64) == "WATCH"
-    assert score_to_label(50) == "WATCH"
-    assert score_to_label(49) == "IGNORE"
+    assert _score_to_label(70) == "FARM"
+    assert _score_to_label(65) == "FARM"
+    assert _score_to_label(64) == "WATCH"
+    assert _score_to_label(50) == "WATCH"
+    assert _score_to_label(49) == "IGNORE"
 
 
 def test_total_from_subscores_v1_weights():
@@ -42,15 +50,45 @@ def test_total_from_subscores_v1_weights():
         "tokenomics": 0.15,
         "competition": 0.15,
     }
-    assert total_from_subscores(subs, weights) == 100
+    assert recompute_score(subs, weights) == 100
 
 
 def test_metric_j_perfect_farm():
+    farm_subs = {k: 100.0 for k in (
+        "airdrop_signal", "narrative_timing", "team_reputation",
+        "risk", "tokenomics", "competition",
+    )}
+    ignore_subs = {k: 0.0 for k in (
+        "airdrop_signal", "narrative_timing", "team_reputation",
+        "risk", "tokenomics", "competition",
+    )}
+    weights = {
+        "airdrop_signal": 0.2,
+        "narrative_timing": 0.2,
+        "team_reputation": 0.15,
+        "risk": 0.15,
+        "tokenomics": 0.15,
+        "competition": 0.15,
+    }
     samples = [
-        FeedbackSample("a", "wrong_label", None, "FARM", "FARM", 1.0),
-        FeedbackSample("b", "wrong_label", None, "WATCH", "WATCH", 1.0),
+        CalibrationSample(
+            project_id="a",
+            subscores=farm_subs,
+            true_label="FARM",
+            current_label="FARM",
+            signal="wrong_label",
+            outcome=None,
+        ),
+        CalibrationSample(
+            project_id="b",
+            subscores=ignore_subs,
+            true_label="WATCH",
+            current_label="WATCH",
+            signal="wrong_label",
+            outcome=None,
+        ),
     ]
-    m = metric_j(samples)
+    m = compute_j(samples, weights)
     assert m["recall_farm"] == 1.0
     assert m["fpr_farm"] == 0.0
-    assert m["J"] == 1.0
+    assert m["j"] == 1.0

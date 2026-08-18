@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from app.agents.base import AgentError, BaseAgent, PipelineState, RawProject
-from app.collectors.noise import is_noise_raw_project
+from app.collectors.noise import is_listed_token_no_airdrop_signals, is_noise_raw_project
 from app.utils.normalize import (
     create_dedup_key,
     generate_deterministic_id,
@@ -684,6 +684,59 @@ class CollectorAgent(BaseAgent):
                 continue
 
             flags = self._infer_airdrop_flags(source_id, raw_data)
+
+            # Quality filter: skip projects that already have a listed token
+            # and zero airdrop-related signals (no testnet, no points, no quest,
+            # no airdrop mention). These have no airdrop alpha value.
+            if is_listed_token_no_airdrop_signals(
+                no_token_yet=flags["no_token_yet"],
+                has_testnet=flags["has_testnet"],
+                has_points_program=flags["has_points_program"],
+                has_task_portal=flags.get("has_task_portal", False),
+                explicit_airdrop_mention=flags.get("explicit_airdrop_mention", False),
+                source_id=source_id,
+            ):
+                noise_skipped += 1
+                # Quarantine same as noise
+                repo_conn = getattr(repo, "_conn", None)
+                try:
+                    from app.quarantine import quarantine_raw
+
+                    ok = quarantine_raw(
+                        row["raw_id"],
+                        f"listed_token_no_airdrop:{source_id}:{name[:80]}",
+                        conn=repo_conn,
+                    )
+                    if not ok:
+                        repo.mark_raw_project_processed(
+                            raw_id=row["raw_id"],
+                            project_id=row.get("project_id"),
+                        )
+                except Exception as e:
+                    try:
+                        repo.mark_raw_project_processed(
+                            raw_id=row["raw_id"],
+                            project_id=row.get("project_id"),
+                        )
+                    except Exception as e2:
+                        logger.warning(
+                            "collector.listed_token_mark_failed",
+                            raw_id=row.get("raw_id"),
+                            error=str(e2),
+                        )
+                    logger.warning(
+                        "collector.listed_token_quarantine_failed",
+                        raw_id=row.get("raw_id"),
+                        error=str(e),
+                    )
+                logger.info(
+                    "collector.listed_token_filtered",
+                    name=name,
+                    source_id=source_id,
+                    raw_id=row.get("raw_id"),
+                )
+                continue
+
             dedup = create_dedup_key(name, sector)
             project_id = row.get("project_id") or generate_deterministic_id(dedup)
             accepted_keys.add(row_key)
@@ -725,7 +778,7 @@ class CollectorAgent(BaseAgent):
                     "funding_quality": flags.get("funding_quality") or 0,
                     "discovery_score": row["discovery_score"],
                     "auto_discovered": True,
-                    "discovered_at": datetime.fromisoformat(row["discovered_at"]) if row["discovered_at"] else None,
+                    "discovered_at": datetime.fromisoformat(row["discovered_at"]) if isinstance(row["discovered_at"], str) else row["discovered_at"],
                     "_dedup_key": dedup,
                 }
             )

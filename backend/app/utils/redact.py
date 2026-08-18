@@ -24,6 +24,7 @@ _SECRET_ATTRS = (
     "alchemy_api_key",
     "dune_api_key",
     "openai_api_key",
+    "llm_api_keys",
     "api_key",
     "database_url",
 )
@@ -93,17 +94,56 @@ def redact_processor(_logger, _method_name, event_dict):
     return event_dict
 
 
+class _TeeWriter:
+    """把同一行渲染结果同时转发到多个流（stdout + 日志文件）。
+
+    structlog 的 WriteLogger 只依赖 write()/flush()，因此可用它把
+    每条日志同时写入控制台与文件，两条路径共用同一条 processor 链（含脱敏）。
+    """
+
+    def __init__(self, *streams) -> None:
+        self._streams = list(streams)
+
+    def write(self, text: str) -> int:
+        for stream in self._streams:
+            stream.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self._streams:
+            stream.flush()
+
+
 def configure_logging() -> None:
-    """安装脱敏 processor。幂等，可重复调用。"""
+    """安装脱敏 processor。幂等，可重复调用。
+
+    当 settings.log_file 非空时追加文件输出（UTF-8 追加写，进程存活期间保持打开）：
+    - 与 stdout 共用同一 processor 链，文件行同样经过脱敏，不会引入第二条渲染路径；
+    - 落盘时强制 JSON 渲染——console 渲染带 ANSI 颜色与对齐补全，会污染文件行，
+      且 JSON 行可直接被 Promtail/Loki 解析（按字段过滤）。
+    """
+    import sys
+    from pathlib import Path
+
     import structlog
 
     from app.config import settings
 
+    log_file = (getattr(settings, "log_file", "") or "").strip()
+
+    # 落盘时强制 JSON；否则跟随 settings.log_format（json/console）
     renderer = (
         structlog.processors.JSONRenderer()
-        if getattr(settings, "log_format", "console") == "json"
+        if log_file or getattr(settings, "log_format", "console") == "json"
         else structlog.dev.ConsoleRenderer()
     )
+
+    streams: list = [sys.stdout]
+    if log_file:
+        path = Path(log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        streams.append(path.open("a", encoding="utf-8"))
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -117,5 +157,6 @@ def configure_logging() -> None:
             redact_processor,
             renderer,
         ],
+        logger_factory=structlog.WriteLoggerFactory(file=_TeeWriter(*streams)),
         cache_logger_on_first_use=True,
     )

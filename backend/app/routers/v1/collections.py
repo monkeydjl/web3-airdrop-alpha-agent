@@ -76,7 +76,7 @@ def list_discoveries(
     processed: bool | None = None,
     min_score: float = Query(0.0, ge=0.0),
 ) -> DiscoveriesResponse:
-    """查询自动发现项目 (raw_projects 表)."""
+    """查询自动发现项目 (raw_projects 表), LEFT JOIN projects 展示评分."""
     repo = CollectionRepository()
     conn = repo._get_conn()
     try:
@@ -84,11 +84,14 @@ def list_discoveries(
             count_query = "SELECT COUNT(*) FROM raw_projects WHERE discovery_score >= ?"
             count_params = [min_score]
             query = """
-                SELECT raw_id, source_id, dedup_key, raw_data, discovered_at,
-                       discovery_score, processed, project_id
-                FROM raw_projects
-                WHERE discovery_score >= ?
-                ORDER BY discovery_score DESC, discovered_at DESC
+                SELECT r.raw_id, r.source_id, r.dedup_key, r.raw_data, r.discovered_at,
+                       r.discovery_score, r.processed, r.project_id,
+                       p.score AS score, p.label AS label, p.confidence AS confidence,
+                       p.sector AS scored_sector, p.stage AS scored_stage
+                FROM raw_projects r
+                LEFT JOIN projects p ON p.id = r.project_id
+                WHERE r.discovery_score >= ?
+                ORDER BY r.discovery_score DESC, r.discovered_at DESC
                 LIMIT ? OFFSET ?
             """
             query_params = [min_score]
@@ -97,11 +100,14 @@ def list_discoveries(
             count_query = "SELECT COUNT(*) FROM raw_projects WHERE discovery_score >= ? AND processed = ?"
             count_params = [min_score, processed_flag]
             query = """
-                SELECT raw_id, source_id, dedup_key, raw_data, discovered_at,
-                       discovery_score, processed, project_id
-                FROM raw_projects
-                WHERE discovery_score >= ? AND processed = ?
-                ORDER BY discovery_score DESC, discovered_at DESC
+                SELECT r.raw_id, r.source_id, r.dedup_key, r.raw_data, r.discovered_at,
+                       r.discovery_score, r.processed, r.project_id,
+                       p.score AS score, p.label AS label, p.confidence AS confidence,
+                       p.sector AS scored_sector, p.stage AS scored_stage
+                FROM raw_projects r
+                LEFT JOIN projects p ON p.id = r.project_id
+                WHERE r.discovery_score >= ? AND r.processed = ?
+                ORDER BY r.discovery_score DESC, r.discovered_at DESC
                 LIMIT ? OFFSET ?
             """
             query_params = [min_score, processed_flag]
@@ -134,6 +140,9 @@ def list_discoveries(
                     "discovery_score": row["discovery_score"],
                     "processed": bool(row["processed"]),
                     "discovered_at": row["discovered_at"],
+                    "score": row["score"] if "score" in row.keys() else None,
+                    "label": row["label"] if "label" in row.keys() else None,
+                    "confidence": row["confidence"] if "confidence" in row.keys() else None,
                 }
             )
 
