@@ -217,18 +217,32 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 -- ============================================
 CREATE TABLE IF NOT EXISTS weight_changelog (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_version    TEXT NOT NULL,              -- 旧版本
-    to_version      TEXT NOT NULL,              -- 新版本
-    old_weights     TEXT NOT NULL,              -- 旧权重 JSON
-    new_weights     TEXT NOT NULL,              -- 新权重 JSON
-    trigger_samples INTEGER,                    -- 触发样本数
-    metrics_before  TEXT,                       -- 变更前指标 JSON
-    metrics_after   TEXT,                       -- 变更后指标 JSON
-    changed_by      TEXT NOT NULL,              -- 变更触发者
-    created_at      TIMESTAMP DEFAULT (datetime('now'))
+    from_version    TEXT,                         -- 旧版本
+    to_version      TEXT,                         -- 新版本
+    weights_json    TEXT NOT NULL,                -- 权重 JSON（与 calibrate_weights.py 一致）
+    sample_size     INTEGER,                      -- 触发样本数
+    metrics_json    TEXT,                         -- 指标 JSON（J / recall / FPR）
+    triggered_by    TEXT,                         -- 变更触发者
+    status          TEXT DEFAULT 'candidate',     -- candidate / baseline / active
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_weight_changelog_created ON weight_changelog(created_at DESC);
+
+-- ============================================
+-- 2.8b watchlist 表（用户关注列表，ADR-008 V2）
+-- ============================================
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,                   -- 关联项目
+    user_id     TEXT,                             -- 用户标识（MVP 缺省 default）
+    note        TEXT,                             -- 用户备注
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_project ON watchlist(project_id);
+CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
 
 -- ============================================

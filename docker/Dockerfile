@@ -42,7 +42,6 @@ ENV PATH="/venv/bin:$PATH"
 
 # 复制应用代码
 COPY backend/ ./backend/
-COPY frontend/ ./frontend/
 
 # 创建数据目录并设置权限
 RUN mkdir -p /app/data/cache /app/backups && \

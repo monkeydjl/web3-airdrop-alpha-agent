@@ -101,6 +101,8 @@ log/
 data/cache/
 data/tmp/
 data/processed/
+# fetcher 磁盘缓存（§10.1）
+backend/cache/
 backups/
 !backups/.gitkeep
 

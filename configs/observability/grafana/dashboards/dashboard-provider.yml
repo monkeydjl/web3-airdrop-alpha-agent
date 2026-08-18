@@ -1,0 +1,11 @@
+# Grafana 面板自动预置配置
+apiVersion: 1
+providers:
+  - name: 'System Overview'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/

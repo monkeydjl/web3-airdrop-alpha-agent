@@ -1,0 +1,905 @@
+{
+    "kind": "Dashboard",
+    "apiVersion": "dashboard.grafana.app/v2",
+    "metadata": {
+        "name": "apdxtf",
+        "namespace": "default",
+        "uid": "0c94be24-0771-4718-8483-ddd81f5dc5c2",
+        "resourceVersion": "1786976538765996",
+        "generation": 1,
+        "creationTimestamp": "2026-08-17T14:22:18Z",
+        "labels": {
+            "grafana.app/deprecatedInternalID": "4190527470047232"
+        },
+        "annotations": {
+            "grafana.app/createdBy": "user:cfvglzbqt3x8ga"
+        },
+        "managedFields": [
+            {
+                "manager": "grafana",
+                "operation": "Update",
+                "apiVersion": "dashboard.grafana.app/v0alpha1",
+                "time": "2026-08-17T14:22:18Z",
+                "fieldsType": "FieldsV1",
+                "fieldsV1": {
+                    "f:metadata": {
+                        "f:annotations": {
+                            ".": {},
+                            "f:grafana.app/grant-permissions": {}
+                        },
+                        "f:generateName": {}
+                    },
+                    "f:spec": {
+                        "f:panels": {},
+                        "f:refresh": {},
+                        "f:schemaVersion": {},
+                        "f:tags": {},
+                        "f:templating": {
+                            ".": {},
+                            "f:list": {}
+                        },
+                        "f:time": {
+                            ".": {},
+                            "f:from": {},
+                            "f:to": {}
+                        },
+                        "f:timezone": {},
+                        "f:title": {}
+                    }
+                }
+            }
+        ]
+    },
+    "spec": {
+        "annotations": [
+            {
+                "kind": "AnnotationQuery",
+                "spec": {
+                    "query": {
+                        "kind": "DataQuery",
+                        "group": "grafana",
+                        "version": "v0",
+                        "datasource": {
+                            "name": "-- Grafana --"
+                        },
+                        "spec": {}
+                    },
+                    "enable": true,
+                    "hide": true,
+                    "iconColor": "rgba(0, 211, 255, 1)",
+                    "name": "Annotations & Alerts",
+                    "builtIn": true,
+                    "legacyOptions": {
+                        "type": "dashboard"
+                    }
+                }
+            }
+        ],
+        "cursorSync": "Off",
+        "editable": true,
+        "elements": {
+            "panel-1": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 1,
+                    "title": "Pipeline Run Rate",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(rate(airdrop_pipeline_runs_total[5m])) by (trigger)",
+                                                "legendFormat": "{{trigger}}"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "timeseries",
+                        "version": "",
+                        "spec": {
+                            "options": {},
+                            "fieldConfig": {
+                                "defaults": {
+                                    "unit": "ops"
+                                },
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-2": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 2,
+                    "title": "Error Rate",
+                    "description": "LLM request rate, error rate, and error percentage",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(rate(airdrop_llm_requests_total[5m]))",
+                                                "legendFormat": "requests"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                },
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(rate(airdrop_llm_errors_total[5m]))",
+                                                "legendFormat": "errors"
+                                            }
+                                        },
+                                        "refId": "B",
+                                        "hidden": false
+                                    }
+                                },
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "(sum(rate(airdrop_llm_errors_total[5m])) / sum(rate(airdrop_llm_requests_total[5m]))) * 100",
+                                                "legendFormat": "error %"
+                                            }
+                                        },
+                                        "refId": "C",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "timeseries",
+                        "version": "",
+                        "spec": {
+                            "options": {},
+                            "fieldConfig": {
+                                "defaults": {
+                                    "unit": "ops"
+                                },
+                                "overrides": [
+                                    {
+                                        "matcher": {
+                                            "id": "byRefId",
+                                            "options": "C"
+                                        },
+                                        "properties": [
+                                            {
+                                                "id": "unit",
+                                                "value": "percent"
+                                            },
+                                            {
+                                                "id": "custom.axisPlacement",
+                                                "value": "right"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-3": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 3,
+                    "title": "Projects Scored (24h)",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(increase(airdrop_projects_scored_total[24h]))"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "stat",
+                        "version": "",
+                        "spec": {
+                            "options": {
+                                "colorMode": "value",
+                                "graphMode": "area"
+                            },
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-4": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 4,
+                    "title": "DB Projects / Raw",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "airdrop_db_projects_total",
+                                                "legendFormat": "scored"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                },
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "airdrop_db_raw_projects_total",
+                                                "legendFormat": "raw"
+                                            }
+                                        },
+                                        "refId": "B",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "stat",
+                        "version": "",
+                        "spec": {
+                            "options": {
+                                "colorMode": "value",
+                                "graphMode": "none"
+                            },
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-5": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 5,
+                    "title": "Collection Items by Source",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(rate(airdrop_collection_items_total[5m])) by (source_id)",
+                                                "legendFormat": "{{source_id}}"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "timeseries",
+                        "version": "",
+                        "spec": {
+                            "options": {},
+                            "fieldConfig": {
+                                "defaults": {
+                                    "unit": "ops"
+                                },
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-6": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 6,
+                    "title": "Opportunity Shadow Assessments",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "sum(airdrop_opportunity_shadow_assessments_total)"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "stat",
+                        "version": "",
+                        "spec": {
+                            "options": {
+                                "colorMode": "value",
+                                "graphMode": "area"
+                            },
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-7": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 7,
+                    "title": "Fetcher Concurrency",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "airdrop_concurrency_fetcher_semaphore_usage",
+                                                "legendFormat": "in-flight requests"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "timeseries",
+                        "version": "",
+                        "spec": {
+                            "options": {},
+                            "fieldConfig": {
+                                "defaults": {
+                                    "unit": "short",
+                                    "min": 0
+                                },
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-8": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 8,
+                    "title": "Circuit Breaker State",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$datasource"
+                                            },
+                                            "spec": {
+                                                "expr": "airdrop_fetcher_circuit_breaker_state",
+                                                "legendFormat": "0=closed 1=half 2=open"
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "stat",
+                        "version": "",
+                        "spec": {
+                            "options": {
+                                "colorMode": "value",
+                                "graphMode": "none"
+                            },
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-9": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 9,
+                    "title": "Recent Logs (Errors)",
+                    "description": "",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$loki"
+                                            },
+                                            "spec": {
+                                                "expr": "{job=\"airdrop-alpha\", service=\"backend\"} |= \"error\""
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "logs",
+                        "version": "",
+                        "spec": {
+                            "options": {
+                                "showTime": true,
+                                "sortOrder": "Descending",
+                                "wrapLogMessage": true
+                            },
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            },
+            "panel-10": {
+                "kind": "Panel",
+                "spec": {
+                    "id": 10,
+                    "title": "Recent Traces (airdrop-alpha)",
+                    "description": "Jaeger trace search — latest pipeline traces",
+                    "links": [],
+                    "data": {
+                        "kind": "QueryGroup",
+                        "spec": {
+                            "queries": [
+                                {
+                                    "kind": "PanelQuery",
+                                    "spec": {
+                                        "query": {
+                                            "kind": "DataQuery",
+                                            "group": "",
+                                            "version": "v0",
+                                            "datasource": {
+                                                "name": "$jaeger"
+                                            },
+                                            "spec": {
+                                                "queryType": "search",
+                                                "service": "airdrop-alpha",
+                                                "operation": "",
+                                                "tags": "",
+                                                "minDuration": "",
+                                                "maxDuration": "",
+                                                "limit": 20
+                                            }
+                                        },
+                                        "refId": "A",
+                                        "hidden": false
+                                    }
+                                }
+                            ],
+                            "transformations": [],
+                            "queryOptions": {}
+                        }
+                    },
+                    "vizConfig": {
+                        "kind": "VizConfig",
+                        "group": "traces",
+                        "version": "",
+                        "spec": {
+                            "options": {},
+                            "fieldConfig": {
+                                "defaults": {},
+                                "overrides": []
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "layout": {
+            "kind": "GridLayout",
+            "spec": {
+                "items": [
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 12,
+                            "y": 0,
+                            "width": 12,
+                            "height": 8,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-1"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 0,
+                            "y": 0,
+                            "width": 12,
+                            "height": 8,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-2"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 0,
+                            "y": 8,
+                            "width": 6,
+                            "height": 4,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-3"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 6,
+                            "y": 8,
+                            "width": 6,
+                            "height": 4,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-4"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 12,
+                            "y": 8,
+                            "width": 12,
+                            "height": 8,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-5"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 0,
+                            "y": 12,
+                            "width": 6,
+                            "height": 4,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-6"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 6,
+                            "y": 12,
+                            "width": 12,
+                            "height": 4,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-7"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 18,
+                            "y": 12,
+                            "width": 6,
+                            "height": 4,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-8"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 0,
+                            "y": 16,
+                            "width": 24,
+                            "height": 8,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-9"
+                            }
+                        }
+                    },
+                    {
+                        "kind": "GridLayoutItem",
+                        "spec": {
+                            "x": 0,
+                            "y": 24,
+                            "width": 24,
+                            "height": 8,
+                            "element": {
+                                "kind": "ElementReference",
+                                "name": "panel-10"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "links": [],
+        "liveNow": false,
+        "preload": false,
+        "tags": [
+            "airdrop",
+            "agent",
+            "system"
+        ],
+        "timeSettings": {
+            "timezone": "browser",
+            "from": "now-6h",
+            "to": "now",
+            "autoRefresh": "30s",
+            "autoRefreshIntervals": [
+                "5s",
+                "10s",
+                "30s",
+                "1m",
+                "5m",
+                "15m",
+                "30m",
+                "1h",
+                "2h",
+                "1d"
+            ],
+            "hideTimepicker": false,
+            "fiscalYearStartMonth": 0
+        },
+        "title": "Web3 Airdrop Alpha - System Overview",
+        "variables": [
+            {
+                "kind": "DatasourceVariable",
+                "spec": {
+                    "name": "datasource",
+                    "pluginId": "prometheus",
+                    "refresh": "never",
+                    "regex": "",
+                    "current": {
+                        "text": "Prometheus",
+                        "value": "Prometheus"
+                    },
+                    "options": [],
+                    "multi": false,
+                    "includeAll": false,
+                    "hide": "dontHide",
+                    "skipUrlSync": false,
+                    "allowCustomValue": true
+                }
+            },
+            {
+                "kind": "DatasourceVariable",
+                "spec": {
+                    "name": "loki",
+                    "pluginId": "loki",
+                    "refresh": "never",
+                    "regex": "",
+                    "current": {
+                        "text": "Loki",
+                        "value": "Loki"
+                    },
+                    "options": [],
+                    "multi": false,
+                    "includeAll": false,
+                    "hide": "dontHide",
+                    "skipUrlSync": false,
+                    "allowCustomValue": true
+                }
+            },
+            {
+                "kind": "DatasourceVariable",
+                "spec": {
+                    "name": "jaeger",
+                    "pluginId": "jaeger",
+                    "refresh": "never",
+                    "regex": "",
+                    "current": {
+                        "text": "Jaeger",
+                        "value": "Jaeger"
+                    },
+                    "options": [],
+                    "multi": false,
+                    "includeAll": false,
+                    "hide": "dontHide",
+                    "skipUrlSync": false,
+                    "allowCustomValue": true
+                }
+            }
+        ]
+    },
+    "status": {
+        "conversion": {
+            "failed": false,
+            "storedVersion": "v0alpha1"
+        }
+    }
+}

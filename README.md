@@ -1,414 +1,493 @@
 # Web3 Airdrop Alpha Agent System
 
-多智能体驱动的 Web3 早期项目识别与空投参与决策系统
+多智能体驱动的 Web3 早期项目识别与空投参与决策系统。
 
-[![Tests](https://img.shields.io/badge/tests-1%2C751%20passed%2C%201%20skipped-brightgreen)](backend/tests/)
-[![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](backend/tests/)
-[![Python](https://img.shields.io/badge/python-3.11%2B%20%7C%20CI%203.13-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-2%2C428%20passed%2C%204%20skipped-brightgreen)](backend/tests/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## ✨ 功能特点
+---
 
-- 🤖 **多 Agent 智能分析** - 4 个专业 Agent 并行评估项目
-- 📊 **三档分类建议** - FARM (高推荐) / WATCH (观察) / IGNORE (忽略)
-- 🚀 **批量评分** - 一次最多评分 100 个项目
-- 💾 **数据持久化** - 默认使用 SQLite，也可通过 `DATABASE_URL` 使用 PostgreSQL
-- 📁 **导入导出** - Excel/CSV 批量导入导出
-- 🌐 **REST API** - 完整的 OpenAPI 文档
-- 🐳 **Docker 部署** - 一键容器化部署
-- 🎨 **Web 界面** - 简洁易用的测试界面
+## 功能概览
 
-## 🚀 快速开始
+### 核心能力
 
-### 方式 1: 一键启动 (Windows 推荐)
+- **6 Agent 并行评分流水线** — Narrative / Team / Risk / Tokenomics / AirdropSignal / Scorer，单项目评分延迟 < 2s
+- **10 个数据源采集器** — DefiLlama / GitHub / CoinGecko / CryptoRank / Etherscan / RootData / Twitter KOL / Twitter Keywords / Galxe / Layer3，统一调度 + 熔断 + 跨源合并
+- **三档分类决策** — FARM (>= 65 分, 高推荐) / WATCH (观察) / IGNORE (不推荐)
+- **Opportunity Shadow 旁路模型** — `opportunity-v2.0` 非权威评估，追加不可变经济快照，不影响主分数
+- **LLM 增强**（可选） — OpenAI 接口增强评分叙述，按发现分数阈值触发，日预算可控
+- **权重自动校准** — 基于反馈数据自动调整八维权重，支持 A/B 对比和灰度发布
+- **Bearer 鉴权 + 匿名 Token** — API Key 保护 + 72h TTL 匿名 token，生产默认强制鉴权
+- **Prometheus 指标 + Grafana Dashboard** — 73 条运行时指标，告警规则覆盖服务可用性和 pipeline 失败率
+- **Docker 一键部署** — SQLite 单容器或 PostgreSQL + Nginx 全栈编排
 
-```batch
-# 双击运行
-Start.bat
+### 评分模型
 
-# 或命令行运行
-.\Start.bat
-```
+主评分模型 `score-v1.4` 八因子加权：
 
-**自动完成**:
-- ✅ 检查 Python 环境
-- ✅ 创建虚拟环境
-- ✅ 安装依赖
-- ✅ 启动后端 API (http://localhost:8002)
-- ✅ 启动前端界面 (http://localhost:3002)
-- ✅ 自动打开浏览器
+| 维度 | 权重 | 说明 |
+|------|------|------|
+| 空投信号 | 20% | 测试网、积分计划、无代币、近期融资 |
+| 叙事时机 | 15% | 赛道热度 + 项目阶段 |
+| 团队信誉 | 15% | VC 背书 + 创始人背景 |
+| 风险评估 | 15% | 代币风险 + 解锁压力 |
+| 代币经济 | 15% | 分配比例 + 解锁周期 |
+| 竞争度 | 10% | 同赛道竞争强度 |
+| 执行力 | 5% | 开发活跃度 |
+| 透明度 | 5% | 文档 + 路线图 |
 
-**停止服务**:
-```batch
-Stop.bat
-```
+**三档分类**：FARM (>= 65) / WATCH (40-64) / IGNORE (< 40)
 
-### 方式 2: 手动启动
+Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curbed-multiwallet-v1`，评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
 
-**启动后端**:
+---
+
+## 快速开始
+
+### 前置要求
+
+- Python 3.10+
+- Node.js 18+（前端）
+- Docker 20+（可选，容器化部署）
+
+### 方式 1: 本地开发
+
 ```bash
+# 1. 克隆仓库
+git clone <repo-url>
+cd Web3-Airdrop-Alpha-Agent-System
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env，至少设置：
+#   APP_ENV=production
+#   API_KEY=<python -c "import secrets; print(secrets.token_urlsafe(32))">
+#   AUTH_TOKEN_SECRET=<python -c "import secrets; print(secrets.token_urlsafe(48))">
+
+# 3. 启动后端
 cd backend
-pip install -e .
-uvicorn app.main:app --reload --port 8002
-```
+pip install -e ".[dev]"
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8002
 
-**启动前端**:
-```bash
+# 4. 启动前端（另开终端）
 cd frontend-next
 npm install
 npm run dev
 ```
 
-生产模式使用同一包提供的脚本：先运行 `npm run build`，再运行 `npm run start`。
+### 方式 2: Docker 部署
 
-**导入种子数据**（可选，首次运行查看示例项目）:
 ```bash
-cd backend
-make seed
+# SQLite 模式（最简）
+docker compose up -d --build
+
+# PostgreSQL 模式（生产推荐）
+docker compose --profile postgres up -d --build
+# 在 .env 中设置 DB_BACKEND=postgres
+
+# 生产全栈（含 Nginx + 监控栈）
+docker compose --profile production up -d --build
 ```
 
-**访问**:
-- 前端界面: http://localhost:3002
-- API 文档: http://localhost:8002/docs
-- API 端点: http://localhost:8002/api/v1
+#### Docker 端口映射
 
-### 方式 3: Docker 部署
+宿主机端口采用 `1` 前缀方案（原端口前加 `1`），避免与其他项目冲突：
 
-```bash
-# 开发环境
-./scripts/deploy.sh dev
+| 服务 | 宿主机 | 容器内 | 说明 |
+|------|--------|--------|------|
+| **Nginx 反向代理** | `18080` | 80 | 前端页面 + API 代理入口 |
+| **前端 (Next.js)** | `13002` | 3002 | 可直连调试 |
+| **Prometheus** | `19090` | 9090 | 指标查询 |
+| **Grafana** | `13000` | 3000 | 监控面板登录 |
+| **Loki** | `13100` | 3100 | 日志查询 API |
 
-# 生产环境（含 Nginx）
-./scripts/deploy.sh prod
+> 后端 API、PostgreSQL 位于 `backend` 内部网络，不暴露到宿主机。
+> 可选服务（OTel Collector `14317`/`14318`/`18889`、Jaeger `11686`）需启用 `observability` profile。
 
-# 查看日志
-docker-compose logs -f backend
+### 方式 3: Windows 一键启动
 
-# 停止服务
-docker-compose down
+```batch
+Start.bat   :: 启动后端 + 前端
+Stop.bat    :: 停止所有服务
 ```
 
-详见 [DEPLOYMENT.md](DEPLOYMENT.md)
+### 访问地址
 
-## 📖 使用示例
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端 | http://localhost:3002 | Next.js 16 + React 19 |
+| API 文档 | http://localhost:8002/docs | Swagger UI |
+| API 参照 | http://localhost:8002/redoc | ReDoc |
+| 健康检查 | http://localhost:8002/health | 健康探针 |
+| 指标 | http://localhost:8002/metrics | Prometheus 格式 |
 
-### Web 界面使用
+---
 
-1. **评分单个项目**
-   - 打开 http://localhost:3002
-   - 填写项目信息（名称、赛道、阶段等）
-   - 勾选空投信号（测试网、积分计划等）
-   - 点击"开始评分"
-   - 查看评分结果和详细分析
+## API 概览
 
-2. **批量导入**
-   - 点击"批量导入"标签
-   - 下载 Excel 模板
-   - 填写项目数据
-   - 上传文件自动评分
+38 个 API 路径，主要端点：
 
-3. **查看列表**
-   - 点击"项目列表"标签
-   - 查看所有已评分项目
-   - 按标签筛选（FARM/WATCH/IGNORE）
+### 核心操作
 
-4. **导出数据**
-   - 点击"导出数据"标签
-   - 选择格式（Excel/CSV）
-   - 选择筛选条件
-   - 下载文件
-
-### API 使用
-
-**评分单个项目**:
 ```bash
+# 触发评分流水线（seed 数据）
 curl -X POST http://localhost:8002/api/v1/run \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "projects": [{
-      "name": "LayerX",
-      "url": "https://layerx.xyz",
-      "sector": "L2",
-      "stage": "testnet",
-      "has_testnet": true,
-      "has_points_program": true,
-      "no_token_yet": true,
-      "recent_funding": true
-    }]
-  }'
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"seed"}'
+
+# 查询项目列表
+curl -H "X-API-Key: $API_KEY" \
+  "http://localhost:8002/api/v1/projects?sort_by=score&order=desc&limit=10"
+
+# 触发采集
+curl -X POST -H "X-API-Key: $API_KEY" \
+  http://localhost:8002/api/v1/collections/defillama/trigger
 ```
 
-**查询项目列表**:
-```bash
-curl http://localhost:8002/api/v1/projects?label=FARM&min_score=80
-```
+### 主要端点分组
 
-**导出 Excel**:
-```bash
-curl -o projects.xlsx \
-  "http://localhost:8002/api/v1/export/projects?format=excel&label=FARM"
-```
+| 分组 | 端点 | 说明 |
+|------|------|------|
+| 评分 | `POST /api/v1/run` | 触发评分流水线 |
+| 项目 | `GET/POST /api/v1/projects` | 项目 CRUD |
+| 采集 | `GET/POST /api/v1/collections/{source}` | 采集源管理 + 手动触发 |
+| Opportunity | `GET /api/v1/projects/{id}/opportunity` | Shadow 旁路评估 |
+| 反馈 | `GET/POST /api/v1/feedback` | 人工反馈 + 权重校准输入 |
+| 鉴权 | `POST /api/v1/auth/anonymous` | 匿名 Token 签发 |
+| 观察列表 | `GET/POST /api/v1/watchlist` | 关注项目标记 |
+| 隔离 | `GET /api/v1/quarantine` | 数据质量隔离管理 |
+| 导入导出 | `GET /api/v1/export/*`, `POST /api/v1/import/*` | Excel/CSV 批量操作 |
+| 校准 | `GET /api/v1/calibration/status` | 权重校准状态 |
+| LLM | `GET /api/v1/llm/status` | LLM 增强状态 |
+| 监控 | `GET /health`, `GET /metrics` | 健康检查 + Prometheus 指标 |
+| Webhook | `POST /api/v1/webhook/alchemy` | Alchemy 事件回调 |
 
-**批量导入**:
-```bash
-curl -X POST http://localhost:8002/api/v1/import/projects \
-  -F "file=@projects.xlsx"
-```
+完整 API 文档见 [docs/API_SPEC.md](docs/API_SPEC.md) 或运行时 `/docs`。
 
-## 🏗️ 系统架构
+---
 
-### 核心组件
+## 数据源
 
-```
-┌─────────────────────────────────────────┐
-│   Next.js 16 / React 19 Web Frontend    │
-│         http://localhost:3002           │
-└──────────────┬──────────────────────────┘
-               │
-               ↓
-┌─────────────────────────────────────────┐
-│         FastAPI Backend                 │
-│      http://localhost:8002/api/v1       │
-├─────────────────────────────────────────┤
-│  ┌─────────────────────────────────┐   │
-│  │   Multi-Agent Pipeline          │   │
-│  │  ┌───┬───┬───┬────┐             │   │
-│  │  │ N │ T │ R │ To │  → Scorer  │   │
-│  │  └───┴───┴───┴────┘             │   │
-│  └─────────────────────────────────┘   │
-│                ↓                        │
-│  ┌─────────────────────────────────┐   │
-│  │   Repository Pattern            │   │
-│  │   (SQLite / PostgreSQL)          │   │
-│  └─────────────────────────────────┘   │
-└─────────────────────────────────────────┘
-```
+10 个采集器，按配置启用：
 
-### Agent 架构
+| 数据源 | 类型 | 默认 | 说明 |
+|--------|------|------|------|
+| DefiLlama | 免费 API | 启用 | TVL + 协议元数据 |
+| GitHub | 免费 API | 启用 | 开发活跃度（建议设 Token 提升 60->5000 req/h） |
+| CoinGecko | 免费 API | 启用 | 币种价格 + 市值 |
+| CryptoRank | API Key | 启用 | 项目库 + 融资数据 |
+| Etherscan | 免费 API | 启用 | 链上交互数据 |
+| RootData | API Key | 禁用 | 项目库 + 融资数据 |
+| Twitter KOL | Bearer Token | 禁用 | KOL/VC 动态 |
+| Twitter Keywords | Bearer Token | 禁用 | 关键词监控 |
+| Galxe | API Key | 禁用 | 活动数据 |
+| Layer3 | API Key | 禁用 | 活动数据 |
+
+采集器具备熔断器（`FETCHER_CIRCUIT_BREAKER`）、速率限制和跨源字段合并。调度器按 `CRON_EXPRESSION` 定时触发（默认每日 08:00 UTC）。
+
+---
+
+## 系统架构
 
 ```
-Collector → [Narrative, Team, Risk, Tokenomics] → Scorer
-                     (并行执行)
-
-- Narrative: 叙事时机分析 (赛道热度 + 项目阶段)
-- Team: 团队信誉分析 (VC 背书 + 创始人)
-- Risk: 风险评估 (代币风险 + 解锁压力)
-- Tokenomics: 代币经济学 (分配比例 + 解锁)
-- Scorer: `score-v1.4` 八维加权评分
+┌──────────────────────────────────────────────────┐
+│         Next.js 16 / React 19 Frontend          │
+│              http://localhost:3002                │
+└──────────────────┬───────────────────────────────┘
+                   │ REST API (X-API-Key)
+                   ▼
+┌──────────────────────────────────────────────────┐
+│              FastAPI Backend                      │
+│           http://localhost:8002                    │
+├──────────────────────────────────────────────────┤
+│                                                   │
+│  ┌─────────────┐   ┌──────────────────────┐      │
+│  │  Collector   │   │  Unified Scheduler   │      │
+│  │  Registry    │   │  (APScheduler)        │      │
+│  │  (10 sources)│   │  cron + misfire      │      │
+│  └──────┬──────┘   └──────────┬───────────┘      │
+│         │                       │                  │
+│         ▼                       ▼                  │
+│  ┌──────────────────────────────────────┐         │
+│  │     Multi-Agent Pipeline              │         │
+│  │  ┌─────────┬─────────┬─────────┐      │         │
+│  │  │Narrative│  Team   │  Risk   │      │         │
+│  │  └─────────┴─────────┴─────────┘      │         │
+│  │  ┌─────────────┬──────────────┐       │         │
+│  │  │ Tokenomics  │AirdropSignal│       │         │
+│  │  └─────────────┴──────────────┘       │         │
+│  │            ▼                          │         │
+│  │       Scorer (score-v1.4)             │         │
+│  │            ▼                          │         │
+│  │  Opportunity Shadow (v2.0)            │         │
+│  └──────────────────────────────────────┘         │
+│                     ▼                              │
+│  ┌──────────────────────────────────────┐         │
+│  │  Repository Pattern                   │         │
+│  │  SQLite (WAL) / PostgreSQL             │         │
+│  │  + Alembic Migrations                 │         │
+│  └──────────────────────────────────────┘         │
+└──────────────────────────────────────────────────┘
 ```
 
-### 评分算法
-
-主评分模型为八因子 `score-v1.4`：空投信号、叙事时机、团队信誉、风险、代币经济、竞争度、执行力和透明度。
-
-**三档分类**:
-- **FARM** (≥65分): 高度推荐参与
-- **WATCH**: 观察等待
-- **IGNORE**: 不推荐
-
-Opportunity 旁路模型使用 `opportunity-v2.0` 和配置档案 `low-cost-curated-multiwallet-v1`。其评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
-
-## 📊 项目统计
+### Agent 流水线
 
 ```
-总代码行数: ~5,000+ 行
-测试基线: 1,751 passed, 1 skipped
-测试覆盖率: 85%
-API 端点: 12 个
-Agent 数量: 6 个
-开发用时: ~32 小时
+Collector → [Narrative, Team, Risk, Tokenomics, AirdropSignal] → Scorer
+                          (并行执行, Semaphore 限流)
+                                   │
+                                   ▼
+                          Opportunity Shadow
+                          (追加评估, 不修改主分)
 ```
 
-### 测试统计
+- **Narrative**: 叙事时机分析（赛道热度 + 项目阶段）
+- **Team**: 团队信誉分析（VC 背书 + 创始人）
+- **Risk**: 风险评估（代币风险 + 解锁压力）
+- **Tokenomics**: 代币经济学（分配比例 + 解锁周期）
+- **AirdropSignal**: 空投信号检测（测试网 + 积分 + 融资）
+- **Scorer**: `score-v1.4` 八维加权评分
+- **Opportunity Shadow**: `opportunity-v2.0` 旁路评估，保存不可变经济快照
 
-已验证基线为 **1,751 passed, 1 skipped**，总体覆盖率为 **85%**（由 85.48% 四舍五入）。
+---
 
-## 🛠️ 技术栈
-
-### 后端
-
-- **框架**: FastAPI 0.115
-- **Python**: 3.11+（CI 验证 3.13）
-- **数据库**: 默认 SQLite 3（WAL 模式）；通过 `DATABASE_URL` 支持 PostgreSQL
-- **日志**: structlog
-- **测试**: pytest + pytest-asyncio
-- **文档**: OpenAPI 3.1.0
-
-### 前端
-
-- **主前端**: `frontend-next/`，Next.js 16 + React 19 + TypeScript，端口 3002
-- **保留原型**: `frontend/` HTML/CSS/JavaScript 界面，不作为主入口
-
-### 部署
-
-- **容器化**: Docker + docker-compose
-- **反向代理**: Nginx (可选)
-- **自动化**: Shell 脚本 + Batch 脚本
-
-## 📁 项目结构
+## 项目结构
 
 ```
 Web3-Airdrop-Alpha-Agent-System/
-├── backend/                 # 后端服务
+├── backend/                    # 后端服务
 │   ├── app/
-│   │   ├── agents/          # Agent 实现
-│   │   ├── routers/         # API 路由
-│   │   ├── config.py        # 配置管理
-│   │   ├── db.py            # 数据库连接
-│   │   ├── repository.py    # 数据访问层
-│   │   ├── export.py        # 导出工具
-│   │   ├── import_utils.py  # 导入工具
-│   │   └── main.py          # 应用入口
-│   ├── tests/               # 后端测试套件
-│   ├── data/                # SQLite 数据库
-│   └── pyproject.toml       # 依赖配置
-├── frontend-next/           # Next.js 16 / React 19 主前端
-├── frontend/                # 保留的 HTML 原型
-│   ├── index.html           # 单页面应用
-│   └── README.md            # 前端文档
-├── scripts/                 # 运维脚本
-│   ├── deploy.sh            # 部署脚本
-│   ├── health-check.sh      # 健康检查
-│   └── backup.sh            # 备份脚本
-├── docs/                    # 完整技术文档
+│   │   ├── agents/             # 6 个 Agent + Orchestrator
+│   │   ├── collectors/         # 10 个采集器 + Registry + Scheduler
+│   │   ├── opportunity/        # Opportunity Shadow 旁路模型
+│   │   │   └── calibration/    # 权重校准
+│   │   ├── routers/v1/         # API 路由 (16 个模块)
+│   │   ├── services/           # 业务服务层
+│   │   ├── repositories/       # V2 数据访问层
+│   │   ├── llm/                # LLM 客户端
+│   │   ├── config.py           # Pydantic Settings
+│   │   ├── db.py               # 数据库抽象层
+│   │   ├── auth.py             # 鉴权中间件
+│   │   ├── metrics.py          # Prometheus 指标
+│   │   └── main.py             # FastAPI 入口
+│   ├── alembic/                # 数据库迁移
+│   ├── tests/                  # 测试套件 (2428 tests)
+│   ├── scripts/                # 运维 + 校准脚本
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend-next/              # Next.js 16 前端
+│   ├── app/                    # App Router 页面
+│   ├── components/             # React 组件
+│   └── lib/                    # API 客户端 + 工具
+├── configs/                    # 配置文件
+│   ├── feature-flags/          # 功能开关
+│   └── observability/          # Prometheus + Grafana + OTel
+├── docker/                     # Docker 辅助配置
+│   ├── loki/                   # 日志收集
+│   └── nginx/                  # 反向代理
+├── docs/                       # 技术文档
+│   ├── adr/                    # 14 份 ADR
 │   ├── ENGINEERING_ROADMAP.md
 │   ├── API_SPEC.md
+│   ├── DEPLOYMENT.md
+│   ├── GO_LIVE_CHECKLIST.md
+│   ├── GO_LIVE_REPORT.md
 │   └── ...
-├── docker-compose.yml       # Docker 编排
-├── Dockerfile               # 镜像定义
-├── nginx.conf               # Nginx 配置
-├── Start.bat                # Windows 一键启动 ⭐
-├── Stop.bat                 # Windows 停止服务
-├── DEPLOYMENT.md            # 部署文档
-└── README.md                # 本文件
+├── scripts/                    # 运维脚本
+│   └── deploy/                 # 部署 + 回滚脚本
+├── docker-compose.yml          # SQLite 模式
+├── docker-compose.postgres.yml # PostgreSQL 模式
+├── docker-compose.prod.yml     # 生产全栈
+├── .env.example                # 环境变量模板
+├── Start.bat / Stop.bat        # Windows 一键启停
+└── README.md                   # 本文件
 ```
 
-## 🔧 配置
+---
 
-### 环境变量
+## 配置
 
-复制 `.env.example` 到 `.env` 并修改:
+### 核心环境变量
 
-```bash
-# 应用配置
-APP_ENV=production
-LOG_LEVEL=info
+复制 `.env.example` 到 `.env` 并配置：
 
-# 数据库
-DB_PATH=/app/data/app.db
+| 变量 | 必填 | 默认 | 说明 |
+|------|------|------|------|
+| `APP_ENV` | 是 | development | `production` 时启用安全校验 |
+| `API_KEY` | 是 | - | API 鉴权密钥, >= 32 字符 |
+| `AUTH_TOKEN_SECRET` | 是 | - | 匿名 Token 签名密钥, >= 32 字符 |
+| `DB_BACKEND` | 否 | sqlite | `sqlite` 或 `postgres` |
+| `DB_PATH` | 否 | data/app.db | SQLite 文件路径 |
+| `POSTGRES_*` | postgres 时 | - | PostgreSQL 连接配置 |
+| `OPENAI_API_KEY` | 否 | - | LLM 增强（不设则走规则引擎） |
+| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限 |
+| `CRON_EXPRESSION` | 否 | 0 8 * * * | 每日分析触发时间 |
+| `MAX_CONCURRENT_PROJECTS` | 否 | 10 | 并行评分上限 |
+| `RATE_LIMIT_ENABLED` | 否 | true | API 限流开关 |
+| `RATE_LIMIT_REQUESTS` | 否 | 100 | 每窗口（60s）最大请求数 |
+| `METRICS_ENABLED` | 否 | true | Prometheus 指标端点 |
+| `OPPORTUNITY_SHADOW_ENABLED` | 否 | true | Opportunity 旁路评估 |
+| `SEED_FALLBACK_ENABLED` | 否 | true | 外部源全挂时降级兜底 |
 
-# LLM (可选，默认使用启发式规则)
-LLM_ENABLED=false
-OPENAI_API_KEY=
+完整变量列表见 `.env.example`。
 
-# 并发控制
-MAX_CONCURRENT_PROJECTS=10
-```
+---
 
-### API 端口
-
-- 默认后端: `8002`
-- 默认前端: `3002`
-
-可在 `docker-compose.yml` 或启动时修改。
-
-## 📚 文档
-
-### 快速入门
-- [README.md](README.md) - 本文件
-- [frontend-next/](frontend-next/) - Next.js 主前端
-- [frontend/README.md](frontend/README.md) - 保留的 HTML 原型说明
-- [DEPLOYMENT.md](DEPLOYMENT.md) - 部署指南
-
-### API 文档
-- [Swagger UI](http://localhost:8002/docs) - 交互式 API 文档
-- [ReDoc](http://localhost:8002/redoc) - API 参考文档
-- [docs/API_SPEC.md](docs/API_SPEC.md) - API 规格说明
-
-### 技术文档
-- [docs/ENGINEERING_ROADMAP.md](docs/ENGINEERING_ROADMAP.md) - 工程路线图
-- [docs/DATA_SCORING_DICT.md](docs/DATA_SCORING_DICT.md) - 评分算法
-- [docs/DATABASE_DDL.md](docs/DATABASE_DDL.md) - 数据库设计
-- [docs/GOLDEN_TEST_CASES.md](docs/GOLDEN_TEST_CASES.md) - 测试用例
-
-## 🧪 测试
+## 测试
 
 ```bash
-# 运行所有测试
 cd backend
+
+# 运行全部测试
 pytest
 
-# 运行特定模块
+# 按模块运行
 pytest tests/agents/          # Agent 测试
-pytest tests/api/             # API 测试
-pytest tests/test_repository.py  # Repository 测试
+pytest tests/api/             # API 端点测试
+pytest tests/collectors/      # 采集器测试
+pytest tests/opportunity/     # Opportunity Shadow 测试
+pytest tests/golden/          # 金标准回归测试
 
 # 生成覆盖率报告
 pytest --cov=app --cov-report=html
-
-# 查看覆盖率
-open htmlcov/index.html
 ```
 
-## 🐛 故障排查
+测试基线：**2428 passed, 4 skipped, 0 failed**
 
-### 后端启动失败
+---
+
+## 监控
+
+### Prometheus 指标
 
 ```bash
-# 检查端口占用
-netstat -ano | findstr :8002
-
-# 重新安装依赖
-cd backend
-pip install -e . --force-reinstall
-
-# 检查 Python 版本
-python --version  # 支持 3.11+，CI 验证 3.13
+curl http://localhost:8002/metrics
 ```
 
-### 前端无法连接后端
+关键指标：
 
-1. 检查后端是否运行: http://localhost:8002/health
-2. 检查浏览器控制台是否有 CORS 错误
-3. 确认 `frontend-next` 的 API rewrite 指向 `http://127.0.0.1:8002`
+- `pipeline_runs_total` — 评分流水线运行次数
+- `pipeline_run_duration_seconds` — 评分延迟
+- `airdrop_fetcher_cache_hits_total` — 采集器缓存命中
+- `airdrop_fetcher_circuit_breaker_state` — 熔断器状态
+- `airdrop_competition_cache_hits_total` — 竞争度缓存命中
 
-### 数据库错误
+### 告警规则
+
+预置 3 条告警（`configs/observability/prometheus/alert_rules.yml`）：
+
+- `APIDown` — 服务不可用 (1m, critical)
+- `HighAPIErrorRate` — 错误率 > 0.1/s (5m, critical)
+- `PipelineConsecutiveFailures` — 15 分钟内 >= 2 次失败 (critical)
+
+### Grafana
+
+导入 `configs/observability/grafana/dashboard-system-overview.json` 查看系统概览面板。
+
+---
+
+## 部署
+
+### 部署检查
+
+上线前请按 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) 逐项检查，或查看 [GO_LIVE_REPORT.md](docs/GO_LIVE_REPORT.md) 获取最新检查结果。
+
+### Docker 命令
 
 ```bash
-# 重新初始化数据库
-rm backend/data/app.db
-# 重启后端会自动创建新数据库
+# 构建镜像
+docker build -t airdrop-alpha:latest -f backend/Dockerfile .
+
+# 启动（SQLite）
+docker compose up -d --build
+
+# 启动（PostgreSQL）
+docker compose --profile postgres up -d --build
+
+# 查看日志
+docker compose logs -f backend
+
+# 健康检查（Docker 部署通过 Nginx）
+curl http://localhost:18080/health
+
+# 停止
+docker compose down
 ```
 
-### 导入失败
+### 数据库迁移
 
-1. 检查文件格式（必须是 .xlsx 或 .csv）
-2. 确保至少包含"项目名称"列
-3. 查看验证错误消息
+```bash
+# 应用迁移
+docker exec airdrop-alpha-backend alembic upgrade head
 
-## 🎯 开发路线图
+# 回滚
+docker exec airdrop-alpha-backend alembic downgrade -1
+```
 
-### ✅ 已完成 (MVP)
+详细部署指南见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
-- [x] W2: Agent 核心实现
-- [x] W3: REST API 层
-- [x] W4: 数据持久化
-- [x] W5: Docker 部署
-- [x] W6: 导入导出功能
-- [x] W7: 简单前端界面
+---
 
-### 🔜 计划中
+## 技术栈
 
-- [x] Next.js 16 / React 19 主前端
-- [ ] 图表可视化
-- [ ] 用户认证
-- [x] 采集与分析定时任务调度
-- [ ] 实时数据源集成
+### 后端
 
-## 🤝 贡献
+- **框架**: FastAPI 0.115 + Pydantic 2.10
+- **Python**: 3.10+
+- **数据库**: SQLite (WAL 模式) / PostgreSQL（通过 `DB_BACKEND` 切换）
+- **迁移**: Alembic
+- **调度**: APScheduler (Unified Scheduler)
+- **日志**: structlog (JSON, 脱敏)
+- **指标**: prometheus-client
+- **鉴权**: Bearer Token + API Key
+- **限流**: 滑动窗口 + IP 限流
 
-欢迎提交 Issue 和 Pull Request！
+### 前端
+
+- **框架**: Next.js 16 + React 19 + TypeScript
+- **样式**: Tailwind CSS
+- **图表**: 自建轻量图表库 (ADR-011)
+- **构建**: 标准-next 构建
+
+### 基础设施
+
+- **容器**: Docker + docker-compose
+- **反向代理**: Nginx (可选)
+- **监控**: Prometheus + Grafana
+- **日志收集**: Loki + Promtail (可选)
+- **CI/CD**: GitHub Actions
+
+---
+
+## 文档
+
+### 开发与部署
+
+- [docs/ENGINEERING_ROADMAP.md](docs/ENGINEERING_ROADMAP.md) — 工程路线图
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — 部署指南
+- [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) — 上线检查清单
+- [docs/GO_LIVE_REPORT.md](docs/GO_LIVE_REPORT.md) — 上线检查报告
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) — 运维手册
+- [docs/SECURITY.md](docs/SECURITY.md) — 安全规范
+
+### API 与数据
+
+- [docs/API_SPEC.md](docs/API_SPEC.md) — API 规格说明
+- [docs/DATA_SCORING_DICT.md](docs/DATA_SCORING_DICT.md) — 评分算法字典
+- [docs/DATABASE_DDL.md](docs/DATABASE_DDL.md) — 数据库 DDL
+- [docs/DATA_SOURCE_STRATEGY.md](docs/DATA_SOURCE_STRATEGY.md) — 数据源策略
+
+### 架构决策
+
+- [docs/adr/](docs/adr/) — 14 份架构决策记录
+- [docs/V2_TASKS.md](docs/V2_TASKS.md) — V2 任务追踪
+
+---
+
+## 贡献
 
 1. Fork 本仓库
 2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
@@ -416,29 +495,10 @@ rm backend/data/app.db
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 开启 Pull Request
 
-## 📄 许可证
+详见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [CONVENTIONS.md](CONVENTIONS.md)。
+
+---
+
+## 许可证
 
 MIT License - 详见 [LICENSE](LICENSE)
-
-## 🙏 致谢
-
-- [FastAPI](https://fastapi.tiangolo.com/) - 现代 Python Web 框架
-- [SQLite](https://www.sqlite.org/) - 轻量级数据库
-- [OpenAI](https://openai.com/) - LLM 支持（可选）
-- [Claude](https://claude.ai/) - AI 开发助手
-
-## 📞 联系方式
-
-- **Issues**: [GitHub Issues](https://github.com/your-org/web3-airdrop-alpha/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/web3-airdrop-alpha/discussions)
-
----
-
-**Made with ❤️ for the Web3 Community**
-
----
-
-## 🔗 相关链接
-
-- [完整技术文档](docs/)
-- [设计原始 README](README_old.md)

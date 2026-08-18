@@ -7,8 +7,9 @@ services:
   nginx:
     image: nginx:alpine
     container_name: airdrop-nginx
+    # 宿主机 18080 → 容器 80（避免与其它项目 80 冲突）
     ports:
-      - "80:80"
+      - "18080:80"
     volumes:
       - ./docker/nginx/nginx-http.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -20,14 +21,14 @@ services:
     networks:
       - frontend
 
-  # Next.js 前端（主前端，直接暴露 3002 端口）
+  # Next.js 前端（主前端，宿主机 13002 → 容器 3002）
   frontend:
     build:
       context: .
       dockerfile: frontend-next/Dockerfile
     container_name: airdrop-frontend
     ports:
-      - "3002:3002"
+      - "13002:3002"
     environment:
       - PORT=3002
       - HOSTNAME=0.0.0.0
@@ -53,11 +54,21 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CRON_HOUR=8
       - CRON_MINUTE=0
+      # 后端日志落盘（相对 /app/backend 工作目录），promtail 采集宿主 ./logs
+      - LOG_FILE=${LOG_FILE:-logs/backend.log}
+      # OpenTelemetry 链路追踪（配合 observability profile 的 otel-collector + jaeger）
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-airdrop-alpha}
+      - OTEL_TRACES_SAMPLER=${OTEL_TRACES_SAMPLER:-traceidratio}
+      - OTEL_TRACES_SAMPLER_ARG=${OTEL_TRACES_SAMPLER_ARG:-0.1}
     env_file:
       - .env
     volumes:
       - ./data:/app/backend/data
       - ./backups:/app/backups
+      # 日志卷：宿主 ./logs 同时被 promtail 以 :ro 挂载采集（/var/log/app/*.log）
+      - ./logs:/app/backend/logs
     depends_on:
       db:
         condition: service_healthy
@@ -92,29 +103,67 @@ services:
     networks:
       - backend
 
-  # 可选：Prometheus 监控
-  # prometheus:
-  #   image: prom/prometheus:latest
-  #   container_name: airdrop-prometheus
-  #   ports:
-  #     - "9090:9090"
-  #   volumes:
-  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #   networks:
-  #     - backend
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: airdrop-prometheus
+    # 宿主机 19090 → 容器 9090
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./configs/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/observability/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - backend
+      - monitoring
 
-  # 可选：Grafana 面板
-  # grafana:
-  #   image: grafana/grafana:latest
-  #   container_name: airdrop-grafana
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
-  #   volumes:
-  #     - grafana-data:/var/lib/grafana
-  #   networks:
-  #     - backend
+  # Alertmanager 告警通知（Telegram）
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: airdrop-alertmanager
+    # 宿主机 19093 → 容器 9093
+    ports:
+      - "19093:9093"
+    volumes:
+      - ./configs/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        cp /etc/alertmanager/alertmanager.yml /tmp/alertmanager.yml
+        sed -i "s/__TELEGRAM_BOT_TOKEN__/${TELEGRAM_BOT_TOKEN:-placeholder}/g" /tmp/alertmanager.yml
+        sed -i "s/__TELEGRAM_CHAT_ID__/${TELEGRAM_CHAT_ID:-1}/g" /tmp/alertmanager.yml
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    networks:
+      - monitoring
+
+  # Grafana 面板
+  grafana:
+    image: grafana/grafana:latest
+    container_name: airdrop-grafana
+    # 宿主机 13000 → 容器 3000
+    ports:
+      - "13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      # Grafana 13 移除了经典面板文件的预置支持（GitHub #123607），
+      # 禁用 v2 dashboard 特性开关以恢复文件预置加载（community workaround）
+      - GF_FEATURE_TOGGLES_kubernetesDashboards=false
+      - GF_FEATURE_TOGGLES_dashboardNewLayouts=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./configs/observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - monitoring
 
   # 可选：Loki 日志集中采集（P2）
   # 使用 profile "observability" 默认不启动；启动命令：
@@ -123,13 +172,14 @@ services:
     image: grafana/loki:2.9.0
     container_name: airdrop-loki
     profiles: ["observability"]
+    # 宿主机 13100 → 容器 3100
     ports:
-      - "3100:3100"
+      - "13100:3100"
     volumes:
       - ./docker/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
-      - loki-data:/tmp/loki
+      - loki-data:/loki
     networks:
-      - backend
+      - monitoring
 
   promtail:
     image: grafana/promtail:2.9.0
@@ -142,7 +192,7 @@ services:
     depends_on:
       - loki
     networks:
-      - backend
+      - monitoring
 
   # 可选：OpenTelemetry Collector（P2）
   otel-collector:
@@ -152,27 +202,31 @@ services:
     command: ["--config=/etc/otel-collector-config.yml"]
     volumes:
       - ./configs/observability/otel/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    # 宿主机 14317/14318/18889 → 容器 4317/4318/8889
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-      - "8889:8889"   # Prometheus exporter
+      - "14317:4317"   # OTLP gRPC
+      - "14318:4318"   # OTLP HTTP
+      - "18889:8889"   # Prometheus exporter
     networks:
-      - backend
+      - backend   # web 通过 backend 网络上报 trace
+      - monitoring  # non-internal 网络：允许宿主端口发布 + Prometheus 抓取
 
   jaeger:
     image: jaegertracing/all-in-one:1.57
     container_name: airdrop-jaeger
     profiles: ["observability"]
+    # 宿主机 11686 → 容器 16686
     ports:
-      - "16686:16686"
+      - "11686:16686"
     networks:
-      - backend
+      - backend   # 接收 otel-collector 的 trace
+      - monitoring  # non-internal 网络：允许宿主访问 Jaeger UI
 
 volumes:
   pgdata:
     driver: local
-  # grafana-data:
-  #   driver: local
+  grafana-data:
+    driver: local
   loki-data:
     driver: local
 
@@ -182,3 +236,5 @@ networks:
   backend:
     driver: bridge
     internal: true  # 后端网络不暴露到外部
+  monitoring:
+    driver: bridge

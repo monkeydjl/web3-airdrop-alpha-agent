@@ -190,31 +190,31 @@ ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;
 ## �️ 实施路线图（v2.0）
 
 ### **Phase 1: 采集基础设施（W-Collect-1）**
-- [ ] 采集表 schema 设计与迁移（`data_sources` / `raw_projects` / `project_signals` / `collection_logs`）
-- [ ] 采集调度器框架（独立于分析调度器）
-- [ ] 速率限制器（`backend/app/utils/rate_limiter.py`，令牌桶）
-- [ ] 采集日志与监控
+- [x] 采集表 schema 设计与迁移（`data_sources` / `raw_projects` / `project_signals` / `collection_logs`）
+- [x] 采集调度器框架（独立于分析调度器）
+- [x] 速率限制器（`backend/app/utils/rate_limiter.py`，令牌桶）
+- [x] 采集日志与监控
 
 ### **Phase 2: 核心数据源接入（W-Collect-2）**
-- [ ] DefiLlama Collector（全量协议扫描，免费）
-- [ ] GitHub Collector（仓库活跃度，免费）
-- [ ] CoinGecko Collector（代币状态验证，免费）
-- [ ] 新项目识别规则（未发币 + 有活跃度）
+- [x] DefiLlama Collector（全量协议扫描，免费）
+- [x] GitHub Collector（仓库活跃度，免费）
+- [x] CoinGecko Collector（代币状态验证，免费）
+- [x] 新项目识别规则（未发币 + 有活跃度）
 
 ### **Phase 3: 实时信号源（W-Collect-3）**
-- [ ] Twitter/X Collector（VC/KOL 监听 + 关键词搜索，付费）
-- [ ] 链上 Collector（新合约部署监控，webhook）
-- [ ] Galxe/Layer3 Collector（任务平台扫描）
+- [x] Twitter/X Collector（VC/KOL 监听 + 关键词搜索，付费）— `TwitterKolCollector` + `TwitterKeywordCollector`
+- [x] 链上 Collector（新合约部署监控，webhook）— `EtherscanCollector`（轮询）+ Alchemy Webhook Handler（推送）
+- [x] Galxe/Layer3 Collector（任务平台扫描）— `GalxeCollector` + `Layer3Collector`
 
 ### **Phase 4: 分析管道增强（W-Analyze）**
-- [ ] 采集 → 分析的自动衔接（新项目入队）
-- [ ] 采集质量过滤（去噪，排除已发币/低活跃度）
-- [ ] 批量分析并发优化（ADR-007 三级并行）
+- [x] 采集 → 分析的自动衔接（新项目入队）— `collection_auto_run_enabled` + `on_collection` 回调 + `collect_from_repository`
+- [x] 采集质量过滤（去噪，排除已发币/低活跃度）— `noise.py` denylist + `is_listed_token_no_airdrop_signals` 质量过滤 + discovery_score 阈值
+- [x] 批量分析并发优化（ADR-007 三级并行）— `asyncio.Semaphore(max_concurrent_projects)` + `asyncio.gather` 实现 Level 1 并发
 
 ### **Phase 5: 展示与反馈（W-Present）**
-- [ ] Dashboard：自动发现项目列表 + 评分
-- [ ] Watchlist（V2，ADR-008）
-- [ ] 反馈闭环（V2，权重校准）
+- [x] Dashboard：自动发现项目列表 + 评分 — `/projects` 支持 `auto_discovered` 筛选 + 返回发现元数据；`/discoveries` LEFT JOIN projects 展示评分
+- [x] Watchlist（V2，ADR-008）— `watchlist` 表 + CRUD 端点（POST/DELETE/GET `/watchlist`）
+- [x] 反馈闭环（V2，权重校准）— `GET /calibration/status` 校准状态 API + `weight_changelog` 建表于 `init_db` + `calibrate_weights.py` 离线校准脚本
 
 ### **保留：手动输入（补充能力）**
 - [x] 手动录入 / CSV 导入 / 单次 API 调用（既有，作为采集盲区的补充）

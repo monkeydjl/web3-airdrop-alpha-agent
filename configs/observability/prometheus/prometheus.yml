@@ -1,5 +1,6 @@
 # Prometheus 配置
 # 配置文件：configs/observability/prometheus/prometheus.yml
+# 引用：docker-compose.prod.yml（Prometheus 服务）
 
 global:
   scrape_interval: 15s
@@ -12,19 +13,20 @@ global:
 rule_files:
   - 'alert_rules.yml'
 
-# 告警管理器配置
+# Alertmanager 配置
 alerting:
   alertmanagers:
     - static_configs:
-        - targets:
-            - 'alertmanager:9093'
+        - targets: ['alertmanager:9093']
+      timeout: 3s
+      api_version: v2
 
 # 抓取配置
 scrape_configs:
-  # Backend API 指标
+  # Backend API 指标（prometheus_client, /metrics）
   - job_name: 'airdrop-backend'
     static_configs:
-      - targets: ['web:8002']
+      - targets: ['airdrop-web:8002']
     metrics_path: '/metrics'
     scrape_interval: 15s
     scrape_timeout: 10s
@@ -33,25 +35,3 @@ scrape_configs:
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-
-  # Node Exporter (系统指标)
-  - job_name: 'node'
-    static_configs:
-      - targets: ['node-exporter:9100']
-
-  # PostgreSQL Exporter (V2)
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['postgres-exporter:9187']
-
-  # Redis Exporter (V2)
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['redis-exporter:9121']
-
-# 服务发现（可选，用于 Kubernetes）
-# kubernetes_sd_configs:
-#   - role: pod
-#     namespaces:
-#       names:
-#         - airdrop-alpha

@@ -4,8 +4,14 @@
 # Web3 Airdrop Alpha - 备份脚本
 # ══════════════════════════════════════════════════════════════
 #
-# 用途: 备份 SQLite 数据库和日志文件
+# 用途: 备份 PostgreSQL（生产）或 SQLite（开发）数据库和日志文件
 # 使用: ./scripts/backup.sh [backup-dir]
+#
+# 说明:
+#   - 生产环境已切换 PostgreSQL（airdrop-db, postgres:15），
+#     使用 pg_dump 逻辑备份（SQL 格式，可精确恢复）
+#   - 旧环境 SQLite 备份逻辑保留兼容
+#   - 容器名: airdrop-web / airdrop-db（docker-compose.prod.yml）
 #
 # ══════════════════════════════════════════════════════════════
 
@@ -15,7 +21,10 @@ set -e
 BACKUP_DIR="${1:-./backups}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="airdrop-alpha-backup-$TIMESTAMP"
-CONTAINER_NAME="airdrop-alpha-backend"
+WEB_CONTAINER="airdrop-web"
+DB_CONTAINER="airdrop-db"
+PG_DB="airdrop"
+PG_USER="airdrop"
 
 echo "🗂️  开始备份..."
 echo "备份目录: $BACKUP_DIR/$BACKUP_NAME"
@@ -24,54 +33,58 @@ echo ""
 # 创建备份目录
 mkdir -p "$BACKUP_DIR/$BACKUP_NAME"
 
-# 检查是否在 Docker 环境
-if docker ps --filter "name=$CONTAINER_NAME" --format "{{.Names}}" 2>/dev/null | grep -q "$CONTAINER_NAME"; then
-    echo "📦 检测到 Docker 容器，从容器备份..."
+echo "1️⃣  备份数据库..."
+BACKUP_TYPE=""
 
-    # 备份数据库
-    echo "1️⃣  备份数据库..."
-    docker exec "$CONTAINER_NAME" sqlite3 /app/data/app.db ".backup /app/data/backup.db"
-    docker cp "$CONTAINER_NAME:/app/data/backup.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
-    docker exec "$CONTAINER_NAME" rm /app/data/backup.db
-    echo "✅ 数据库备份完成"
+# 优先 PG：检测生产 PG 容器
+if docker ps --filter "name=$DB_CONTAINER" --format "{{.Names}}" 2>/dev/null | grep -q "$DB_CONTAINER"; then
+    BACKUP_TYPE="postgres"
+    echo "   (PostgreSQL: $DB_CONTAINER, db=$PG_DB)"
+    docker exec "$DB_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" \
+        --no-owner --no-privileges -F c -f /tmp/airdrop_backup.dump
+    docker cp "$DB_CONTAINER:/tmp/airdrop_backup.dump" "$BACKUP_DIR/$BACKUP_NAME/airdrop_pg.dump"
+    docker exec "$DB_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" \
+        --no-owner --no-privileges -f /tmp/airdrop_backup.sql
+    docker cp "$DB_CONTAINER:/tmp/airdrop_backup.sql" "$BACKUP_DIR/$BACKUP_NAME/airdrop_pg.sql"
+    docker exec "$DB_CONTAINER" rm -f /tmp/airdrop_backup.dump /tmp/airdrop_backup.sql
+    echo "✅ PostgreSQL 数据库备份完成（custom + SQL 双格式）"
 
-    # 备份日志
-    echo ""
-    echo "2️⃣  备份日志..."
-    if docker exec "$CONTAINER_NAME" test -d /app/logs 2>/dev/null; then
-        docker cp "$CONTAINER_NAME:/app/logs" "$BACKUP_DIR/$BACKUP_NAME/"
-        echo "✅ 日志备份完成"
-    else
-        echo "ℹ️  无日志文件需要备份"
-    fi
+# 回退 SQLite：检测旧版后端容器
+elif docker ps --filter "name=$WEB_CONTAINER" --format "{{.Names}}" 2>/dev/null | grep -q "$WEB_CONTAINER"; then
+    BACKUP_TYPE="sqlite"
+    echo "   (SQLite 容器备份)"
+    docker exec "$WEB_CONTAINER" python -c "import sqlite3; c=sqlite3.connect('/app/data/app.db'); c.backup(sqlite3.connect('/tmp/backup.db')); c.close()" 2>/dev/null \
+        || docker exec "$WEB_CONTAINER" sqlite3 /app/data/app.db ".backup /tmp/backup.db"
+    docker cp "$WEB_CONTAINER:/tmp/backup.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
+    docker exec "$WEB_CONTAINER" rm -f /tmp/backup.db
+    echo "✅ SQLite 数据库备份完成"
 
+# 最后回退：本地文件
 else
-    echo "💻 本地环境，从本地文件备份..."
-
-    # 备份数据库
-    echo "1️⃣  备份数据库..."
-    if [ -f "data/app.db" ]; then
-        cp "data/app.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
-        echo "✅ 数据库备份完成"
-    elif [ -f "backend/data/app.db" ]; then
-        cp "backend/data/app.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
-        echo "✅ 数据库备份完成"
+    BACKUP_TYPE="sqlite-local"
+    if [ -f "data/airdrop.db" ]; then
+        cp "data/airdrop.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
+        echo "✅ 本地 SQLite 备份完成 (data/airdrop.db)"
+    elif [ -f "backend/data/airdrop.db" ]; then
+        cp "backend/data/airdrop.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
+        echo "✅ 本地 SQLite 备份完成 (backend/data/airdrop.db)"
     else
-        echo "⚠️  未找到数据库文件"
+        echo "⚠️  未找到数据库文件，跳过数据库备份"
     fi
+fi
 
-    # 备份日志
-    echo ""
-    echo "2️⃣  备份日志..."
-    if [ -d "logs" ]; then
-        cp -r logs "$BACKUP_DIR/$BACKUP_NAME/"
-        echo "✅ 日志备份完成"
-    elif [ -d "backend/logs" ]; then
-        cp -r backend/logs "$BACKUP_DIR/$BACKUP_NAME/"
-        echo "✅ 日志备份完成"
-    else
-        echo "ℹ️  无日志文件需要备份"
-    fi
+# 备份日志（仅容器内存在时）
+echo ""
+echo "2️⃣  备份日志..."
+if docker ps --filter "name=$WEB_CONTAINER" --format "{{.Names}}" 2>/dev/null | grep -q "$WEB_CONTAINER" \
+    && docker exec "$WEB_CONTAINER" test -d /app/backend/logs 2>/dev/null; then
+    docker cp "$WEB_CONTAINER:/app/backend/logs" "$BACKUP_DIR/$BACKUP_NAME/"
+    echo "✅ 日志备份完成"
+elif [ -d "logs" ] && [ -z "$(find logs -maxdepth 1 -type f | head -1)" ]; then
+    cp -r logs "$BACKUP_DIR/$BACKUP_NAME/"
+    echo "✅ 日志备份完成"
+else
+    echo "ℹ️  无日志文件需要备份"
 fi
 
 # 创建备份信息文件
@@ -85,6 +98,7 @@ Date: $(date)
 Timestamp: $TIMESTAMP
 System: $(uname -s)
 Environment: ${APP_ENV:-unknown}
+Database backend: $BACKUP_TYPE
 
 Files:
 $(ls -lh "$BACKUP_DIR/$BACKUP_NAME")
@@ -98,9 +112,8 @@ echo "4️⃣  压缩备份..."
 cd "$BACKUP_DIR"
 tar -czf "$BACKUP_NAME.tar.gz" "$BACKUP_NAME"
 rm -rf "$BACKUP_NAME"
-cd - > /dev/null
-
 BACKUP_SIZE=$(du -h "$BACKUP_DIR/$BACKUP_NAME.tar.gz" | cut -f1)
+cd - > /dev/null
 echo "✅ 备份压缩完成: $BACKUP_SIZE"
 
 # 清理旧备份（保留最近 7 天）

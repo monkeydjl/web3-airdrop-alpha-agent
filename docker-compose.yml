@@ -26,6 +26,16 @@ services:
 
       # 数据库配置
       - DB_PATH=/app/data/app.db
+      # PostgreSQL 切换（A2, ADR-004）：
+      #   DB_BACKEND=postgres → 从 POSTGRES_* 自动组装 DATABASE_URL
+      #   或直接设 DATABASE_URL=postgresql://… 覆盖分项配置
+      - DB_BACKEND=${DB_BACKEND:-sqlite}
+      - DATABASE_URL=${DATABASE_URL:-}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-airdrop}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-airdrop_test}
+      - POSTGRES_DB=${POSTGRES_DB:-airdrop_test}
 
       # LLM 配置（可选）
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -45,11 +55,45 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false  # Compose 2.20+：postgres profile 未启用时跳过依赖
     networks:
       - airdrop-network
     labels:
       - "com.example.service=airdrop-alpha-backend"
       - "com.example.environment=${APP_ENV:-production}"
+
+  # ══════════════════════════════════════════════════════════════
+  # PostgreSQL Service (A2, ADR-004)
+  # 默认不启动；启用方式：
+  #   docker compose --profile postgres up -d
+  # 并设 DB_BACKEND=postgres（或直接设 DATABASE_URL）
+  # ══════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: airdrop-alpha-postgres
+    restart: unless-stopped
+    profiles:
+      - postgres
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airdrop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airdrop_test}
+      POSTGRES_DB: ${POSTGRES_DB:-airdrop_test}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - airdrop_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airdrop} -d ${POSTGRES_DB:-airdrop_test}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - airdrop-network
 
   # ══════════════════════════════════════════════════════════════
   # Nginx Reverse Proxy (可选，用于生产环境)
@@ -79,4 +123,6 @@ volumes:
   data:
     driver: local
   logs:
+    driver: local
+  airdrop_pg_data:
     driver: local
