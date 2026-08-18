@@ -29,6 +29,8 @@ export interface Project {
   funding?: FundingInfo | null;
   signals?: Record<string, unknown> | null;
   funding_note?: string | null;
+  sub_scores?: Record<string, number> | null;
+  weight_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

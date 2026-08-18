@@ -8,14 +8,54 @@ import {
   Info,
   KeyRound,
   Layers,
+  Plus,
   RotateCcw,
   Save,
+  Server,
+  Shuffle,
+  X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { TopBar } from '@/components/TopBar';
 import { Switch, Toast } from '@/components/ui';
+import { apiFetch } from '@/lib/api';
 
 // ── 配置数据（只读展示，对齐设计稿默认值） ──
+
+/** 后端 /llm/status 返回的接口数据 */
+interface LLMProviderStatus {
+  name: string;
+  base_url: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  models: string[];
+  model_count: number;
+}
+
+interface LLMStatus {
+  enabled: boolean;
+  provider_count: number;
+  total_model_count: number;
+  failover_strategy: string;
+  providers: LLMProviderStatus[];
+  temperature: number;
+  max_tokens: number;
+  daily_budget_usd: number;
+  discovery_score_threshold: number;
+}
+
+/** 可编辑的 provider 配置行（前端 mock 状态） */
+interface EditableProvider {
+  id: number;
+  baseurl: string;
+  apikey: string;
+  models: string[];
+}
+
+const DEFAULT_PROVIDERS: EditableProvider[] = [
+  { id: 1, baseurl: 'https://api.openai.com/v1', apikey: '', models: ['gpt-4o-mini', 'gpt-4o'] },
+  { id: 2, baseurl: '', apikey: '', models: [] },
+];
 
 interface WeightRow {
   name: string;
@@ -164,6 +204,71 @@ export default function SettingsPage() {
   const [collectionSchedOn, setCollectionSchedOn] = useState(true);
   const [autoRunOn, setAutoRunOn] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
+  const [providers, setProviders] = useState<EditableProvider[]>(DEFAULT_PROVIDERS);
+  const [llmOn, setLlmOn] = useState(false);
+
+  // 拉取后端 LLM 多接口配置状态
+  const loadLLMStatus = useCallback(async () => {
+    try {
+      const data = await apiFetch<LLMStatus>('/llm/status');
+      setLlmStatus(data);
+      setLlmOn(data.enabled);
+      // 用后端数据回填可编辑列表
+      if (data.providers && data.providers.length > 0) {
+        setProviders(
+          data.providers.map((p, i) => ({
+            id: i + 1,
+            baseurl: p.base_url,
+            apikey: '',
+            models: p.models,
+          })),
+        );
+      }
+    } catch {
+      // API 不可用时保持默认 mock 数据
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLLMStatus();
+  }, [loadLLMStatus]);
+
+  const addProvider = () => {
+    if (providers.length >= 5) return;
+    setProviders([...providers, { id: providers.length + 1, baseurl: '', apikey: '', models: [] }]);
+  };
+
+  const removeProvider = (idx: number) => {
+    if (providers.length <= 1) return;
+    setProviders(providers.filter((_, i) => i !== idx).map((p, i) => ({ ...p, id: i + 1 })));
+  };
+
+  const updateProvider = (idx: number, field: keyof EditableProvider, value: string) => {
+    setProviders(providers.map((p, i) => (i === idx ? { ...p, [field]: value } : p)));
+  };
+
+  const addProviderModel = (idx: number) => {
+    setProviders(providers.map((p, i) => (i === idx ? { ...p, models: [...p.models, ''] } : p)));
+  };
+
+  const updateProviderModel = (pIdx: number, mIdx: number, value: string) => {
+    setProviders(
+      providers.map((p, i) =>
+        i === pIdx
+          ? { ...p, models: p.models.map((m, j) => (j === mIdx ? value : m)) }
+          : p,
+      ),
+    );
+  };
+
+  const removeProviderModel = (pIdx: number, mIdx: number) => {
+    setProviders(
+      providers.map((p, i) =>
+        i === pIdx ? { ...p, models: p.models.filter((_, j) => j !== mIdx) } : p,
+      ),
+    );
+  };
 
   const enabledFlags = flags.filter((f) => f.enabled).length;
   const weightSum = WEIGHTS.reduce((s, w) => s + w.value, 0);
@@ -298,22 +403,160 @@ export default function SettingsPage() {
                   <span className="set-group-name">引擎层</span>
                   <span className="set-group-desc">评分决策引擎——评分权重、LLM 增强与质量阈值共同决定项目打分；默认规则引擎，LLM 为可选增强层。</span>
                 </div>
-                <span className="set-group-badge">当前 · 规则引擎</span>
+                <span className="set-group-badge" data-tone={llmOn ? 'ok' : 'warn'}>
+                  {llmOn ? `LLM · ${llmStatus?.provider_count ?? 0} 接口已启用` : '当前 · 规则引擎'}
+                </span>
               </div>
               <div className="set-group-body">
+                {/* LLM 多接口/多模型故障转移配置 */}
                 <div className="set-subhead">
-                  LLM 增强 <span className="set-subhead-note">填入 API Key 并开启功能开关后自动启用</span>
+                  <span className="flex items-center gap-1.5">
+                    <Shuffle className="h-3.5 w-3.5" strokeWidth={2} />
+                    LLM 多接口故障转移
+                  </span>
+                  <span className="set-subhead-note">
+                    接口1连不上 → 切接口2；模型1失败 → 切模型2
+                  </span>
                 </div>
-                <SettingRow label="OpenAI API Key" env="OPENAI_API_KEY" desc="设置后自动启用 LLM 增强">
-                  <SecretInput placeholder="sk-…（未设置）" />
-                  <button type="button" className="btn-secondary px-2.5 py-1 text-xs">测试连接</button>
-                </SettingRow>
-                <SettingRow label="Base URL" env="OPENAI_BASE_URL" desc="兼容 OpenAI 协议的代理地址">
-                  <input type="text" className="set-input" data-mono="true" defaultValue="https://api.openai.com/v1" />
-                </SettingRow>
-                <SettingRow label="模型" env="LLM_MODEL" desc="评分增强与 AI 简报使用的模型">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="gpt-4o-mini" />
-                </SettingRow>
+
+                {/* LLM 启用开关 */}
+                <div className="set-llm-toggle">
+                  <div className="set-llm-toggle-texts">
+                    <span className="set-llm-toggle-name">LLM 增强总开关</span>
+                    <span className="set-llm-toggle-env">ENABLE_LLM_ENHANCEMENT</span>
+                    <span className="set-llm-toggle-desc">
+                      {llmStatus
+                        ? `${llmStatus.provider_count} 个接口 · ${llmStatus.total_model_count} 个模型 · 故障转移链路已就绪`
+                        : '配置至少一个接口的 API Key 后可启用'}
+                    </span>
+                  </div>
+                  <div className="set-switch-row">
+                    <Switch checked={llmOn} onChange={setLlmOn} label="LLM 增强" />
+                    <span className="set-switch-state">{llmOn ? '已启用' : '已停用'}</span>
+                  </div>
+                </div>
+
+                {/* 接口卡片列表 */}
+                {providers.map((provider, pIdx) => (
+                  <div className="set-llm-provider" key={pIdx}>
+                    <div className="set-llm-provider-head">
+                      <div className="set-llm-provider-titles">
+                        <span className="set-llm-provider-name">
+                          <Server className="h-3.5 w-3.5" strokeWidth={2} />
+                          接口 {pIdx + 1}
+                        </span>
+                        <span className="set-llm-provider-envs">
+                          LLM_BASEURL_{pIdx + 1} · LLM_API_KEY_{pIdx + 1}
+                        </span>
+                      </div>
+                      {providers.length > 1 && (
+                        <button
+                          type="button"
+                          className="set-llm-provider-remove"
+                          onClick={() => removeProvider(pIdx)}
+                          aria-label={`删除接口 ${pIdx + 1}`}
+                        >
+                          <X className="h-3.5 w-3.5" strokeWidth={2} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="set-llm-provider-body">
+                      <div className="set-llm-field">
+                        <label className="set-llm-field-label">
+                          Base URL
+                          <span className="set-llm-field-env">LLM_BASEURL_{pIdx + 1}</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="set-input"
+                          data-mono="true"
+                          placeholder="https://api.openai.com/v1"
+                          value={provider.baseurl}
+                          onChange={(e) => updateProvider(pIdx, 'baseurl', e.target.value)}
+                        />
+                      </div>
+                      <div className="set-llm-field">
+                        <label className="set-llm-field-label">
+                          API Key
+                          <span className="set-llm-field-env">LLM_API_KEY_{pIdx + 1}</span>
+                        </label>
+                        <SecretInput
+                          placeholder={
+                            llmStatus?.providers?.[pIdx]?.api_key_masked
+                              ? `已设置 ${llmStatus.providers[pIdx].api_key_masked}`
+                              : 'sk-…'
+                          }
+                        />
+                      </div>
+                      <div className="set-llm-models">
+                        <div className="set-llm-models-head">
+                          <span className="set-llm-models-title">
+                            模型列表
+                            <span className="set-llm-models-env">
+                              LLM_MODELS_{pIdx + 1}_1, LLM_MODELS_{pIdx + 1}_2, …
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary px-2 py-0.5 text-xs inline-flex items-center gap-1"
+                            onClick={() => addProviderModel(pIdx)}
+                          >
+                            <Plus className="h-3 w-3" strokeWidth={2} />
+                            添加模型
+                          </button>
+                        </div>
+                        <div className="set-llm-model-list">
+                          {provider.models.map((model, mIdx) => (
+                            <div className="set-llm-model-row" key={mIdx}>
+                              <span className="set-llm-model-env">LLM_MODELS_{pIdx + 1}_{mIdx + 1}</span>
+                              <input
+                                type="text"
+                                className="set-input set-llm-model-input"
+                                data-mono="true"
+                                placeholder="model-name"
+                                value={model}
+                                onChange={(e) => updateProviderModel(pIdx, mIdx, e.target.value)}
+                              />
+                              {provider.models.length > 1 && (
+                                <button
+                                  type="button"
+                                  className="set-llm-model-remove"
+                                  onClick={() => removeProviderModel(pIdx, mIdx)}
+                                  aria-label="删除模型"
+                                >
+                                  <X className="h-3 w-3" strokeWidth={2} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {provider.models.length === 0 && (
+                            <div className="set-llm-model-empty">未配置模型</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {/* 故障转移提示 */}
+                    {pIdx === 0 && providers.length > 1 && (
+                      <div className="set-llm-failover-hint">
+                        <Shuffle className="h-3 w-3" strokeWidth={2} />
+                        <span>接口1失败时自动切换到接口2</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* 添加接口按钮 */}
+                {providers.length < 5 && (
+                  <button type="button" className="set-llm-add-provider" onClick={addProvider}>
+                    <Plus className="h-4 w-4" strokeWidth={2} />
+                    <span>添加接口（最多 5 个）</span>
+                  </button>
+                )}
+
+                {/* LLM 通用参数 */}
+                <div className="set-subhead">
+                  通用参数 <span className="set-subhead-note">所有接口共享</span>
+                </div>
                 <SettingRow label="Temperature" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
                   <input type="text" className="set-input" data-size="sm" defaultValue="0.3" />
                 </SettingRow>

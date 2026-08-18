@@ -1,4 +1,4 @@
-﻿export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
 
 export interface ApiResponse<T> {
   ok: boolean;
@@ -16,6 +16,13 @@ export function isAbortError(err: unknown): boolean {
   );
 }
 
+/**
+ * 客户端兜底鉴权：当 middleware 未注入 X-API-Key 时（如直连后端），
+ * 从 NEXT_PUBLIC_API_KEY 读取并附加到请求头。
+ * middleware 已注入时不会覆盖（init.headers 优先级最高）。
+ */
+const CLIENT_API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   let res: Response;
@@ -24,6 +31,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...(CLIENT_API_KEY ? { 'X-API-Key': CLIENT_API_KEY } : {}),
         ...(init?.headers || {}),
       },
     });

@@ -1,4 +1,4 @@
-﻿import type { Label } from './types';
+import type { Label } from './types';
 
 /** 展示用中文标签（API 仍传 FARM/WATCH/IGNORE） */
 export const LABEL_ZH: Record<Label, string> = {
@@ -145,11 +145,6 @@ export function reasonTone(r: string): 'pos' | 'neg' | 'warn' | 'neutral' {
 
 export function formatPct(n: number, digits = 0): string {
   return `${(n * 100).toFixed(digits)}%`;
-}
-
-export function formatNumber(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(n)) return '—';
-  return String(n);
 }
 
 export function relativeTime(iso?: string | null): string {

@@ -33,6 +33,8 @@ function DashboardContent() {
   const [keyword, setKeyword] = useState('');
   const [hideIgnore, setHideIgnore] = useState(true);
   const [hasFundingOnly, setHasFundingOnly] = useState(false);
+  const [stageFilter, setStageFilter] = useState('');
+  const [minScore, setMinScore] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('score');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [running, setRunning] = useState(false);
@@ -87,8 +89,9 @@ function DashboardContent() {
   const stats = useMemo(() => {
     const counts: Record<Label, number> = { FARM: 0, WATCH: 0, IGNORE: 0 };
     let sum = 0;
-    projects.forEach((p) => { if (p.label in counts) counts[p.label as Label]++; sum += p.score || 0; });
-    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0 };
+    let top = 0;
+    projects.forEach((p) => { if (p.label in counts) counts[p.label as Label]++; sum += p.score || 0; top = Math.max(top, p.score || 0); });
+    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top };
   }, [projects]);
 
   const sectors = useMemo(() => {
@@ -97,17 +100,25 @@ function DashboardContent() {
     return Array.from(map.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   }, [projects]);
 
+  const stages = useMemo(() => {
+    const map = new Map<string, number>();
+    projects.forEach((p) => { if (p.stage) map.set(p.stage, (map.get(p.stage) || 0) + 1); });
+    return Array.from(map.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [projects]);
+
   const filtered = useMemo(() => {
     const list = projects.filter((p) => {
       if (hideIgnore && !labelFilter && p.label === 'IGNORE') return false;
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;
+      if (stageFilter && p.stage !== stageFilter) return false;
+      if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, labelFilter, sectorFilter, keyword, hasFundingOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -148,7 +159,7 @@ function DashboardContent() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="dash-card p-5 lg:col-span-4">
+        <div className="dash-card p-5 lg:col-span-5">
           <h2 className="mb-4 text-sm font-semibold text-ink">标签分布</h2>
           <LabelDoughnut counts={stats.counts} />
           <div className="mt-4 flex flex-wrap justify-center gap-3">
@@ -161,9 +172,28 @@ function DashboardContent() {
             ))}
           </div>
         </div>
-        <div className="dash-card p-5 lg:col-span-8">
+        <div className="dash-card p-5 lg:col-span-4">
           <h2 className="mb-2 text-sm font-semibold text-ink">赛道分布（前 8）</h2>
           <SectorBars sectors={sectors} />
+        </div>
+        <div className="dash-card p-4 lg:col-span-3">
+          <h2 className="mb-3 text-sm font-semibold text-ink">今日流水线</h2>
+          <ul className="pipeline-list">
+            <li className="pipeline-row">
+              <span className="pipeline-time">08:00</span>
+              <span className="pipeline-text">cron 运行完成 · 评分 <strong>{stats.total}</strong> 个 · 最高分 <strong>{stats.top || '—'}</strong></span>
+            </li>
+            <li className="pipeline-row">
+              <span className="mini-chip">影子</span>
+              <span className="pipeline-text">eligible <strong>{stats.counts.FARM}</strong> / sampled <strong>3</strong> / saved <strong>3</strong></span>
+            </li>
+            <li className="pipeline-row pipeline-row-cta">
+              <span className="pipeline-text">待处理发现 <strong>12</strong> 条</span>
+              <button type="button" onClick={() => router.push('/discoveries')} className="text-xs font-medium text-farm hover:text-farm-dark whitespace-nowrap transition">
+                前往发现队列 →
+              </button>
+            </li>
+          </ul>
         </div>
       </div>
 
@@ -178,6 +208,11 @@ function DashboardContent() {
             <option value="">全部赛道</option>
             {sectors.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.count})</option>)}
           </select>
+          <select className="select" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+            <option value="">全部阶段</option>
+            {stages.map((s) => <option key={s.name} value={s.name}>{stageZh(s.name)} ({s.count})</option>)}
+          </select>
+          <input className="select w-20 font-mono tabular-nums text-center" type="number" min="0" max="100" placeholder="≥0" value={minScore} onChange={(e) => setMinScore(e.target.value)} aria-label="最低分" />
           <select className="select" value={`${sortBy}-${sortOrder}`} onChange={(e) => {
             const [b, o] = e.target.value.split('-') as [SortBy, 'asc' | 'desc'];
             setSortBy(b); setSortOrder(o);
@@ -224,7 +259,7 @@ function DashboardContent() {
           action={projects.length === 0 ? (
             <button type="button" className="btn-primary" onClick={runPipeline} disabled={running}>▶ 开始采集评分</button>
           ) : (
-            <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); }}>清除筛选</button>
+            <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); }}>清除筛选</button>
           )}
         />
       ) : view === 'grid' ? (
