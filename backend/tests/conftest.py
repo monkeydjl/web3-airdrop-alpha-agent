@@ -16,7 +16,50 @@
 # `Settings(_env_file=None, app_env="production", ...)` 显式构造的用例走的是
 # init kwargs，优先级高于环境变量，仍会正常触发拒绝逻辑。
 import os
+import pathlib
+import uuid
 
 os.environ["APP_ENV"] = "test"
 os.environ["API_KEY"] = ""
 os.environ["HOST"] = "127.0.0.1"
+
+# Override DB_PATH to a workspace-writable location for tests.
+# .env may set DB_PATH=/app/data/app.db (Docker path) which doesn't exist on
+# the host. Tests that don't use tmp_path will fall through to this default.
+os.environ.setdefault("DB_PATH", str(
+    pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"
+))
+
+# ── Override tmp_path to avoid sandbox-locked dirs ──────────────────
+# DSH sandbox locks directories created by pytest's internal TempPathFactory.
+# We override tmp_path and tmp_path_factory to use workspace-writable dirs
+# that we create ourselves (which are NOT locked).
+import pytest
+
+_WORKSPACE_TMP = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "pytest_tmp"
+
+
+@pytest.fixture
+def tmp_path(request):
+    """Override tmp_path to use a workspace-writable directory.
+
+    DSH sandbox may lock pytest's default temp dirs. This fixture creates
+    per-test dirs under data/pytest_tmp/ which are writable.
+    """
+    _WORKSPACE_TMP.mkdir(parents=True, exist_ok=True)
+    # Use test name + uuid for uniqueness
+    test_name = request.node.name.replace("/", "_").replace("::", "_").replace("[", "_").replace("]", "")
+    # Sanitize characters that are illegal in Windows directory names
+    test_name = test_name.replace(":", "_").replace("*", "_").replace("?", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("|", "_")
+    # Truncate to avoid path length issues on Windows
+    test_name = test_name[:80]
+    d = _WORKSPACE_TMP / f"{test_name}_{uuid.uuid4().hex[:8]}"
+    d.mkdir(parents=True, exist_ok=True)
+    yield d
+    # Cleanup (best-effort)
+    import shutil
+
+    try:
+        shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass

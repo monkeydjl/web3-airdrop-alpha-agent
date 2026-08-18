@@ -23,22 +23,59 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import Status, StatusCode
 
 from app.config import settings
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
-# Global tracer for manual spans. Safe to use even when tracing is disabled:
-# without a configured TracerProvider this returns a no-op tracer.
-tracer = trace.get_tracer(__name__)
+# ── OpenTelemetry optional import ──────────────────────────────────
+# OTel is a production-only dependency (observability profile). In local dev
+# and tests it is typically not installed; the module must still import
+# successfully and degrade to a no-op tracer.
+_OTEL_AVAILABLE = False
+try:
+    from opentelemetry import trace as _otel_trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.trace import Status, StatusCode
+
+    _OTEL_AVAILABLE = True
+except ImportError:
+    pass
+
+
+class _NoOpSpan:
+    """Minimal span shim used when OTel is not installed."""
+
+    def set_attribute(self, key: str, value: object) -> None: ...
+    def record_exception(self, exception: Exception) -> None: ...
+    def set_status(self, status: object) -> None: ...
+    def is_recording(self) -> bool:
+        return False
+    def __enter__(self) -> "_NoOpSpan":
+        return self
+    def __exit__(self, *exc: object) -> None: ...
+
+
+class _NoOpTracer:
+    """No-op tracer returned when OTel is unavailable or disabled."""
+
+    def start_as_current_span(self, name: str, **kwargs: Any) -> _NoOpSpan:
+        return _NoOpSpan()
+
+
+# Global tracer for manual spans. When OTel is not installed this is a no-op;
+# when installed but disabled (OTEL_ENABLED=false) the OTel SDK itself returns
+# a no-op tracer via get_tracer without a configured provider.
+if _OTEL_AVAILABLE:
+    tracer: Any = _otel_trace.get_tracer(__name__)
+else:
+    tracer = _NoOpTracer()
 
 # Paths that generate noise rather than signal. Kept in sync with the
 # Prometheus scrape whitelist so /metrics is neither scraped nor traced.
@@ -55,6 +92,10 @@ def setup_tracing() -> bool:
     if not settings.otel_enabled:
         return False
 
+    if not _OTEL_AVAILABLE:
+        logger.warning("tracing.unavailable", reason="opentelemetry not installed")
+        return False
+
     try:
         # Let OTEL_SERVICE_NAME env override code default for deployment flexibility
         service_name = os.environ.get("OTEL_SERVICE_NAME") or settings.otel_service_name
@@ -68,11 +109,11 @@ def setup_tracing() -> bool:
         )
         provider = TracerProvider(resource=resource)
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-        trace.set_tracer_provider(provider)
+        _otel_trace.set_tracer_provider(provider)
 
         # Re-bind global tracer once the provider is installed.
         global tracer
-        tracer = trace.get_tracer(service_name)
+        tracer = _otel_trace.get_tracer(service_name)
 
         _instrument()
         logger.info(
@@ -96,6 +137,8 @@ def instrument_fastapi_app(app) -> None:
     """
     if not settings.otel_enabled:
         return
+    if not _OTEL_AVAILABLE:
+        return
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -114,6 +157,8 @@ def _instrument() -> None:
     httpx / DB instrumentors patch at the module level so the process-wide
     client / connection pool automatically get covered.
     """
+    if not _OTEL_AVAILABLE:
+        return
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
@@ -131,12 +176,17 @@ def _instrument() -> None:
 
 def span_attribute(key: str, value: object) -> None:
     """Attach an attribute to the current span (no-op when not tracing)."""
-    span = trace.get_current_span()
+    if not _OTEL_AVAILABLE:
+        return
+    span = _otel_trace.get_current_span()
     if span.is_recording():
         span.set_attribute(key, value)
 
 
-def end_span_with_error(span: trace.Span, exception: Exception) -> None:
+def end_span_with_error(span: object, exception: Exception) -> None:
     """Mark the span as failed and record the exception."""
-    span.record_exception(exception)
-    span.set_status(Status(StatusCode.ERROR))
+    if not _OTEL_AVAILABLE or isinstance(span, _NoOpSpan):
+        return
+    span_obj: Any = span
+    span_obj.record_exception(exception)
+    span_obj.set_status(Status(StatusCode.ERROR))

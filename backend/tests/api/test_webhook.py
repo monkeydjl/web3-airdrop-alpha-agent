@@ -21,10 +21,12 @@ SIGNING_KEY = "test_signing_key"
 def client(tmp_path):
     """Create a test client with an isolated database."""
     db_path = tmp_path / "test.db"
+    prev_db_path = settings.db_path
     settings.db_path = str(db_path)
     init_db()
     app = create_app(db_override=lambda: None)
-    return TestClient(app)
+    yield TestClient(app)
+    settings.db_path = prev_db_path
 
 
 def _sign(body: bytes, key: str = SIGNING_KEY) -> str:
