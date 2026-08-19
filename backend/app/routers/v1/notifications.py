@@ -32,7 +32,7 @@ router = APIRouter(tags=["notifications"])
 
 def _utc_midnight() -> datetime:
     """今日 UTC 零点，用于「今日」窗口。"""
-    return datetime.combine(date.today(), time.min, tzinfo=UTC)
+    return datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
 
 
 def _now_str() -> str:

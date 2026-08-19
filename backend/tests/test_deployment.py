@@ -221,7 +221,7 @@ class TestEnvironmentConfiguration:
                 "APP_ENV",
                 "APP_VERSION",
                 "LOG_LEVEL",
-                "API_PORT",
+                "PORT",
                 "DB_PATH",
             ]
             for var in required_vars:

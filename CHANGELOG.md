@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Added — Portfolio/Settings 真实化 + middleware 迁移（2026-07-26）
+
+- **Portfolio 页接入真实 API**：去掉全部 mock 数据，改为读取 `GET /interactions/summary` + `GET /interactions`；KPI、校准矩阵、分布、记录表全部真实数据
+- **Settings 页接入真实配置**：新增 `GET /api/v1/settings/config` 只读端点，返回运行时配置快照（密钥只返回布尔值）；前端 Settings 页从硬编码默认值改为回填真实运行时值
+- **Next.js middleware → proxy 迁移**：`middleware.ts` 重命名为 `proxy.ts`（Next.js 16 约定），消除 deprecation warning
+
 ### Added — 通知中心增强：评分变化 + 已读持久化（2026-07-26）
 
 - **评分变化通知**：从 `project_history` 对比同项目最新两条快照，生成 `score` 类型通知（升/降/标签变化）

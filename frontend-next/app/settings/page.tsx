@@ -44,6 +44,43 @@ interface LLMStatus {
   discovery_score_threshold: number;
 }
 
+/** GET /settings/config 返回的运行时配置快照 */
+interface RuntimeConfig {
+  access?: {
+    api_key_set?: boolean;
+    cors_origins?: string;
+    cors_credentials?: boolean;
+    rate_limit_enabled?: boolean;
+    rate_limit_requests?: number;
+    rate_limit_window?: number;
+    app_env?: string;
+  };
+  weights?: Record<string, number>;
+  flags?: Record<string, boolean>;
+  sources?: Record<string, {
+    enabled?: boolean;
+    has_api_key?: boolean;
+    base_url?: string;
+    timeout?: number;
+    cron?: string;
+    keyword_cron?: string;
+    kol_cron?: string;
+  }>;
+  automation?: Record<string, unknown>;
+  platform?: {
+    METRICS_ENABLED?: boolean;
+    METRICS_PATH?: string;
+    LOG_LEVEL?: string;
+    LOG_FORMAT?: string;
+    OTEL_ENABLED?: boolean;
+    OTEL_SERVICE_NAME?: string;
+    DB_BACKEND?: string;
+    APP_ENV?: string;
+  };
+  thresholds?: Record<string, number>;
+  llm?: LLMStatus & { providers?: LLMProviderStatus[] };
+}
+
 /** 可编辑的 provider 配置行（前端 mock 状态） */
 interface EditableProvider {
   id: number;
@@ -198,8 +235,7 @@ function SecretInput({ placeholder, value }: { placeholder?: string; value?: str
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState('set-access');
-  const [flags, setFlags] = useState(FLAGS);
-  const [sources, setSources] = useState(SOURCES);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   const [schedulerOn, setSchedulerOn] = useState(true);
   const [collectionSchedOn, setCollectionSchedOn] = useState(true);
   const [autoRunOn, setAutoRunOn] = useState(false);
@@ -208,31 +244,86 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<EditableProvider[]>(DEFAULT_PROVIDERS);
   const [llmOn, setLlmOn] = useState(false);
 
-  // 拉取后端 LLM 多接口配置状态
-  const loadLLMStatus = useCallback(async () => {
+  // 拉取后端运行时配置 + LLM 状态
+  const loadConfig = useCallback(async () => {
     try {
-      const data = await apiFetch<LLMStatus>('/llm/status');
-      setLlmStatus(data);
-      setLlmOn(data.enabled);
-      // 用后端数据回填可编辑列表
-      if (data.providers && data.providers.length > 0) {
-        setProviders(
-          data.providers.map((p, i) => ({
-            id: i + 1,
-            baseurl: p.base_url,
-            apikey: '',
-            models: p.models,
-          })),
-        );
+      const [cfg, llm] = await Promise.all([
+        apiFetch<RuntimeConfig>('/settings/config'),
+        apiFetch<LLMStatus>('/llm/status').catch(() => null),
+      ]);
+      setRuntimeConfig(cfg ?? null);
+      if (llm) {
+        setLlmStatus(llm);
+        setLlmOn(llm.enabled);
+        if (llm.providers && llm.providers.length > 0) {
+          setProviders(
+            llm.providers.map((p, i) => ({
+              id: i + 1,
+              baseurl: p.base_url,
+              apikey: '',
+              models: p.models,
+            })),
+          );
+        }
       }
     } catch {
-      // API 不可用时保持默认 mock 数据
+      // API 不可用时保持默认值
     }
   }, []);
 
   useEffect(() => {
-    loadLLMStatus();
-  }, [loadLLMStatus]);
+    loadConfig();
+  }, [loadConfig]);
+
+  // runtime config 加载后同步开关初始状态
+  useEffect(() => {
+    if (runtimeConfig?.flags) {
+      setSchedulerOn(runtimeConfig.flags.SCHEDULER_ENABLED ?? true);
+      setCollectionSchedOn(runtimeConfig.flags.COLLECTION_SCHEDULER_ENABLED ?? true);
+      setAutoRunOn(runtimeConfig.flags.COLLECTION_AUTO_RUN_ENABLED ?? false);
+    }
+  }, [runtimeConfig]);
+
+  // 从运行时配置回填 flags / sources
+  const runtimeFlags = runtimeConfig?.flags ?? {};
+  const flags = FLAGS.map((f) => ({
+    ...f,
+    enabled: runtimeFlags[f.env] ?? f.enabled,
+  }));
+  const setFlags = useState(FLAGS)[1]; // keep setter signature for Switch
+
+  const runtimeSources = runtimeConfig?.sources ?? {};
+  const sources = SOURCES.map((s) => {
+    const rt = runtimeSources[s.name.toLowerCase().replace(/[^a-z]/g, '')] || {};
+    return {
+      ...s,
+      enabled: rt.enabled ?? s.enabled,
+      fields: s.fields.map((field) => {
+        if (field.password) {
+          return { ...field, value: '', placeholder: rt.has_api_key ? '已设置（点击修改）' : field.placeholder };
+        }
+        if (field.env.endsWith('BASE_URL') && rt.base_url) {
+          return { ...field, value: rt.base_url };
+        }
+        if (field.env.endsWith('TIMEOUT') && rt.timeout != null) {
+          return { ...field, value: String(rt.timeout) };
+        }
+        return field;
+      }),
+    };
+  });
+  const setSources = useState(SOURCES)[1];
+
+  const schedulerEnabled = runtimeConfig?.flags?.SCHEDULER_ENABLED ?? true;
+  const collectionSchedEnabled = runtimeConfig?.flags?.COLLECTION_SCHEDULER_ENABLED ?? true;
+  const autoRunEnabled = runtimeConfig?.flags?.COLLECTION_AUTO_RUN_ENABLED ?? false;
+
+  // 从运行时配置回填权重
+  const weightValues = runtimeConfig?.weights ?? {};
+  const WEIGHTS_RUNTIME: WeightRow[] = WEIGHTS.map((w) => ({
+    ...w,
+    value: typeof weightValues[w.env] === 'number' ? weightValues[w.env] : w.value,
+  }));
 
   const addProvider = () => {
     if (providers.length >= 5) return;
@@ -271,14 +362,15 @@ export default function SettingsPage() {
   };
 
   const enabledFlags = flags.filter((f) => f.enabled).length;
-  const weightSum = WEIGHTS.reduce((s, w) => s + w.value, 0);
+  const weightSum = WEIGHTS_RUNTIME.reduce((s, w) => s + w.value, 0);
 
   const handleSave = () => {
-    setToast({ message: '配置已保存（演示模式 — 实际写入需后端 settings API）', type: 'info' });
+    setToast({ message: '配置已保存（演示模式 — 实际写入需编辑 .env 并重启服务）', type: 'info' });
   };
 
   const handleReset = () => {
-    setToast({ message: '已还原为默认配置', type: 'success' });
+    setToast({ message: '已重新加载运行时配置', type: 'success' });
+    void loadConfig();
   };
 
   const navItems = [
@@ -332,23 +424,25 @@ export default function SettingsPage() {
                   <span className="set-group-name">接入层</span>
                   <span className="set-group-desc">对外暴露的 API 鉴权 / CORS / 限流，以及外部数据源的接入凭证——系统如何被访问、如何连外界。</span>
                 </div>
-                <span className="set-group-badge" data-tone="warn">鉴权未启用</span>
+                <span className="set-group-badge" data-tone={runtimeConfig?.access?.api_key_set ? 'ok' : 'warn'}>
+                  {runtimeConfig?.access?.api_key_set ? '鉴权已启用' : '鉴权未启用'}
+                </span>
               </div>
               <div className="set-group-body">
                 <div className="set-subhead">服务访问</div>
-                <SettingRow label="API Key" env="API_KEY" desc="空 = 无鉴权（本地默认）；生产环境必须 ≥ 32 字符">
-                  <SecretInput placeholder="未设置（生产环境必须配置）" />
+                <SettingRow label="API Key" env="API_KEY" desc={runtimeConfig?.access?.api_key_set ? "已设置（生产环境已启用鉴权）" : "空 = 无鉴权（本地默认）；生产环境必须 ≥ 32 字符"}>
+                  <SecretInput placeholder={runtimeConfig?.access?.api_key_set ? '已设置（点击修改）' : '未设置（生产环境必须配置）'} />
                   <button type="button" className="btn-secondary px-2.5 py-1 text-xs">测试连接</button>
                 </SettingRow>
                 <SettingRow label="CORS 来源" env="CORS_ORIGINS" desc="逗号分隔；生产环境禁止 * + credentials 组合">
-                  <input type="text" className="set-input" data-mono="true" defaultValue="http://localhost:3002,http://localhost:8002" />
+                  <input type="text" className="set-input" data-mono="true" defaultValue={runtimeConfig?.access?.cors_origins ?? 'http://localhost:3002,http://localhost:8002'} />
                 </SettingRow>
                 <SettingRow label="限流阈值" env="RATE_LIMIT_REQUESTS" desc="每窗口最大请求数">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="100" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.access?.rate_limit_requests ?? 100)} />
                   <span className="set-unit">次</span>
                 </SettingRow>
                 <SettingRow label="限流窗口" env="RATE_LIMIT_WINDOW">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="60" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.access?.rate_limit_window ?? 60)} />
                   <span className="set-unit">秒</span>
                 </SettingRow>
 
@@ -558,24 +652,24 @@ export default function SettingsPage() {
                   通用参数 <span className="set-subhead-note">所有接口共享</span>
                 </div>
                 <SettingRow label="Temperature" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="0.3" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_TEMPERATURE ?? llmStatus?.temperature ?? 0.3)} />
                 </SettingRow>
                 <SettingRow label="Max Tokens" env="LLM_MAX_TOKENS" desc="单次调用上限">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="512" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens ?? 512)} />
                 </SettingRow>
                 <SettingRow label="每日预算" env="LLM_DAILY_BUDGET_USD" desc="超出后自动降级回规则引擎">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="1.0" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_DAILY_BUDGET_USD ?? llmStatus?.daily_budget_usd ?? 1.0)} />
                   <span className="set-unit">USD / 天</span>
                 </SettingRow>
                 <SettingRow label="LLM 启用阈值" env="LLM_DISCOVERY_SCORE_THRESHOLD" desc="仅 discovery_score ≥ 此值的项目走 LLM">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="0.7" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_DISCOVERY_SCORE_THRESHOLD ?? llmStatus?.discovery_score_threshold ?? 0.7)} />
                 </SettingRow>
 
                 <div className="set-subhead">
                   评分权重 <span className="set-subhead-note">Σ = 1.0 启动断言；修改生成新 weight_version</span>
                 </div>
                 <div className="set-weight-grid">
-                  {WEIGHTS.map((w) => (
+                  {WEIGHTS_RUNTIME.map((w) => (
                     <div className="set-weight-row" key={w.env}>
                       <div>
                         <span className="set-weight-name">{w.name}</span>
@@ -595,13 +689,13 @@ export default function SettingsPage() {
 
                 <div className="set-subhead">质量阈值</div>
                 <SettingRow label="分析阈值" env="DISCOVERY_SCORE_ANALYSIS_THRESHOLD" desc="discovery_score ≥ 此值才进入分析管道">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="0.3" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.DISCOVERY_SCORE_ANALYSIS_THRESHOLD ?? 0.3)} />
                 </SettingRow>
                 <SettingRow label="置信度阈值" env="CONFIDENCE_THRESHOLD" desc="低于此值的评分标记为低置信">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="0.5" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.CONFIDENCE_THRESHOLD ?? 0.5)} />
                 </SettingRow>
                 <SettingRow label="缺字段降级阈值" env="MISSING_FIELDS_THRESHOLD" desc="缺失字段数超过此值触发降级">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="3" />
+                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.MISSING_FIELDS_THRESHOLD ?? 3)} />
                   <span className="set-unit">个</span>
                 </SettingRow>
               </div>
@@ -614,7 +708,9 @@ export default function SettingsPage() {
                   <span className="set-group-name">自动化层</span>
                   <span className="set-group-desc">调度器跑什么、什么时候跑，以及数据留多久——无人值守的行为边界。</span>
                 </div>
-                <span className="set-group-badge" data-tone="ok">调度器运行中</span>
+                <span className="set-group-badge" data-tone={schedulerEnabled ? 'ok' : 'warn'}>
+                  {schedulerEnabled ? '调度器运行中' : '调度器已停用'}
+                </span>
               </div>
               <div className="set-group-body">
                 <div className="set-subhead">
@@ -639,7 +735,7 @@ export default function SettingsPage() {
                   </div>
                 </SettingRow>
                 <SettingRow label="分析 cron" env="CRON_EXPRESSION" desc="每日全量分析时间">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="0 8 * * *" />
+                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue={String(runtimeConfig?.automation?.CRON_EXPRESSION ?? '0 8 * * *')} />
                 </SettingRow>
                 <SettingRow label="DefiLlama 采集" env="DEFILLAMA_CRON">
                   <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="0 8 * * *" />
@@ -703,10 +799,10 @@ export default function SettingsPage() {
                   ))}
                 </div>
                 <SettingRow label="指标路径" env="METRICS_PATH" desc="Prometheus metrics 端点">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="/metrics" />
+                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue={runtimeConfig?.platform?.METRICS_PATH ?? '/metrics'} />
                 </SettingRow>
                 <SettingRow label="日志级别" env="LOG_LEVEL" desc="debug / info / warn / error">
-                  <input type="text" className="set-input" data-mono="true" data-size="sm" defaultValue="info" />
+                  <input type="text" className="set-input" data-mono="true" data-size="sm" defaultValue={runtimeConfig?.platform?.LOG_LEVEL ?? 'info'} />
                 </SettingRow>
               </div>
             </section>

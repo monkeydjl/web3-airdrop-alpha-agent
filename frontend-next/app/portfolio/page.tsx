@@ -1,9 +1,12 @@
 'use client';
 
 import { TopBar } from '@/components/TopBar';
-import { LabelBadge } from '@/components/ui';
-import Link from 'next/link';
+import { EmptyState, LabelBadge } from '@/components/ui';
+import { apiFetch } from '@/lib/api';
+import { relativeTime } from '@/lib/format';
 import { Download, Plus } from 'lucide-react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Label = 'FARM' | 'WATCH' | 'IGNORE';
 
@@ -22,87 +25,266 @@ interface MatrixRow {
   color: string;
 }
 
-/** 标签 × 结果校准矩阵（mock） */
-const MATRIX: MatrixRow[] = [
-  {
-    label: 'FARM',
-    total: 23,
-    segments: [
-      { count: 8, pct: 34.8, color: 'var(--state-success)', title: '空投成功 8' },
-      { count: 2, pct: 8.7, color: 'var(--label-ignore)', title: '未空投 2' },
-      { count: 3, pct: 13.0, color: 'var(--state-info)', title: '上涨 3' },
-      { count: 10, pct: 43.5, color: 'var(--alpha-300)', title: '进行中 10' },
-    ],
-    hitRate: 62,
-    color: 'var(--label-farm)',
-  },
-  {
-    label: 'WATCH',
-    total: 18,
-    segments: [
-      { count: 2, pct: 11.1, color: 'var(--state-success)', title: '空投成功 2' },
-      { count: 6, pct: 33.3, color: 'var(--label-ignore)', title: '未空投 6' },
-      { count: 2, pct: 11.1, color: 'var(--state-info)', title: '上涨 2' },
-      { count: 1, pct: 5.6, color: 'var(--state-error)', title: '下跌 1' },
-      { count: 7, pct: 38.9, color: 'var(--alpha-300)', title: '进行中 7' },
-    ],
-    hitRate: 18,
-    color: 'var(--label-watch)',
-  },
-  {
-    label: 'IGNORE',
-    total: 12,
-    segments: [
-      { count: 9, pct: 75.0, color: 'var(--label-ignore)', title: '未空投 9' },
-      { count: 1, pct: 8.3, color: 'var(--state-error)', title: '下跌 1' },
-      { count: 2, pct: 16.7, color: 'var(--alpha-300)', title: '进行中 2' },
-    ],
-    hitRate: 8,
-    color: 'var(--label-ignore)',
-  },
-];
+interface Summary {
+  total?: number;
+  by_status?: Record<string, number>;
+  by_outcome?: Record<string, number>;
+  label_outcome_matrix?: { label_at_start: string; outcome: string; c: number }[];
+  total_cost_usd?: number;
+  total_profit_usd?: number;
+  net_usd?: number;
+  total_hours?: number;
+}
+
+interface InteractionItem {
+  id: number;
+  project_id: string;
+  status?: string;
+  outcome?: string;
+  cost_usd?: number;
+  profit_usd?: number;
+  net_usd?: number;
+  hours_spent?: number;
+  started_at?: string;
+  created_at?: string;
+  label_at_start?: string;
+}
+
+interface InteractionsList {
+  items?: InteractionItem[];
+  total?: number;
+}
 
 /** SVG 命中率环：r=17，周长 = 2π·17 ≈ 106.8 */
 const RING_CIRCUMFERENCE = 2 * Math.PI * 17;
 
-/** 结果分布（by_outcome，mock） */
-const OUTCOMES = [
-  { name: 'airdropped', count: 10, pct: 53, fillClass: 'is-success' },
-  { name: 'not_airdropped', count: 17, pct: 89, fillClass: 'is-ignore' },
-  { name: 'pumped', count: 5, pct: 26, fillClass: 'is-info' },
-  { name: 'dumped', count: 2, pct: 11, fillClass: 'is-error' },
-  { name: '进行中', count: 19, pct: 100, fillClass: 'is-warning' },
-];
+const LABEL_COLOR: Record<string, string> = {
+  FARM: 'var(--label-farm)',
+  WATCH: 'var(--label-watch)',
+  IGNORE: 'var(--label-ignore)',
+};
 
-/** 状态分布（by_status，mock） */
-const STATUSES = [
-  { name: 'planned', count: 6, pct: 29, opacity: 1 },
-  { name: 'active', count: 9, pct: 43, opacity: 0.75 },
-  { name: 'done', count: 21, pct: 100, opacity: 0.55 },
-  { name: 'abandoned', count: 4, pct: 19, opacity: 0.4 },
-];
+const OUTCOME_COLOR: Record<string, string> = {
+  airdropped: 'var(--state-success)',
+  not_airdropped: 'var(--label-ignore)',
+  profit: 'var(--state-info)',
+  loss: 'var(--state-error)',
+  breakeven: 'var(--alpha-300)',
+  pending: 'var(--alpha-300)',
+  unknown: 'var(--alpha-300)',
+};
 
-interface ParticipationRecord {
-  id: number;
-  project: string;
-  label: Label;
-  outcome: string;
-  cost: string;
-  gain: string;
-  hours: string;
-  date: string;
+const OUTCOME_LABEL: Record<string, string> = {
+  airdropped: '空投成功',
+  not_airdropped: '未空投',
+  profit: '上涨',
+  loss: '下跌',
+  breakeven: '持平',
+  pending: '进行中',
+  unknown: '未知',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  planned: 'planned',
+  active: 'active',
+  done: 'done',
+  abandoned: 'abandoned',
+};
+
+/** 命中率：FARM/WATCH 标签下 outcome=airdropped 或 profit 的比例 */
+function computeHitRate(rows: { label_at_start: string; outcome: string; c: number }[], label: string): number {
+  const subset = rows.filter((r) => r.label_at_start === label);
+  const total = subset.reduce((s, r) => s + r.c, 0);
+  if (total === 0) return 0;
+  const hits = subset
+    .filter((r) => r.outcome === 'airdropped' || r.outcome === 'profit')
+    .reduce((s, r) => s + r.c, 0);
+  return Math.round((hits / total) * 100);
 }
 
-/** 最近参与记录（mock） */
-const RECORDS: ParticipationRecord[] = [
-  { id: 1, project: 'Zephyr Protocol', label: 'FARM', outcome: 'airdropped', cost: '$120', gain: '+$890', hours: '6.5h', date: '2025-07-28' },
-  { id: 2, project: 'Nova Protocol', label: 'FARM', outcome: '进行中', cost: '$80', gain: '—', hours: '4.0h', date: '2025-07-25' },
-  { id: 3, project: 'Poly Oracle', label: 'WATCH', outcome: 'pumped', cost: '$50', gain: '+$320', hours: '3.5h', date: '2025-07-20' },
-  { id: 4, project: 'Kite Network', label: 'WATCH', outcome: 'not_airdropped', cost: '$40', gain: '$0', hours: '2.0h', date: '2025-07-15' },
-  { id: 5, project: 'Echo Social', label: 'IGNORE', outcome: 'dumped', cost: '$10', gain: '-$5', hours: '1.0h', date: '2025-07-10' },
-];
+function buildMatrix(
+  matrix: { label_at_start: string; outcome: string; c: number }[],
+): MatrixRow[] {
+  const labels: Label[] = ['FARM', 'WATCH', 'IGNORE'];
+  return labels.map((label) => {
+    const subset = matrix.filter((r) => r.label_at_start === label);
+    const total = subset.reduce((s, r) => s + r.c, 0);
+    const segments: Segment[] = subset.map((r) => {
+      const pct = total > 0 ? Math.round((r.c / total) * 1000) / 10 : 0;
+      return {
+        count: r.c,
+        pct,
+        color: OUTCOME_COLOR[r.outcome] || 'var(--alpha-300)',
+        title: `${OUTCOME_LABEL[r.outcome] || r.outcome} ${r.c}`,
+      };
+    });
+    return {
+      label,
+      total,
+      segments,
+      hitRate: computeHitRate(matrix, label),
+      color: LABEL_COLOR[label] || 'var(--alpha-300)',
+    };
+  });
+}
+
+function fmtMoney(v: number | undefined | null): string {
+  if (v == null) return '—';
+  const sign = v > 0 ? '+' : '';
+  return `${sign}$${Math.round(v).toLocaleString()}`;
+}
+
+function fmtCost(v: number | undefined | null): string {
+  if (v == null) return '—';
+  return `$${Math.round(v).toLocaleString()}`;
+}
+
+function fmtHours(v: number | undefined | null): string {
+  if (v == null) return '—';
+  return `${v}h`;
+}
 
 export default function PortfolioPage() {
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [interactions, setInteractions] = useState<InteractionItem[]>([]);
+  const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [sum, list] = await Promise.all([
+        apiFetch<Summary>('/interactions/summary'),
+        apiFetch<InteractionsList>('/interactions?limit=5'),
+      ]);
+      setSummary(sum ?? null);
+      setInteractions(list?.items ?? []);
+
+      // 批量取项目名
+      const pids = (list?.items ?? [])
+        .map((i) => i.project_id)
+        .filter((pid, idx, arr) => pid && arr.indexOf(pid) === idx);
+      if (pids.length > 0) {
+        const names: Record<string, string> = {};
+        await Promise.all(
+          pids.map(async (pid) => {
+            try {
+              const p = await apiFetch<{ name?: string } | { data?: { name?: string } }>(
+                `/projects?project_id=${encodeURIComponent(pid)}`,
+              );
+              const name = (p as { name?: string }).name || (p as { data?: { name?: string } }).data?.name;
+              if (name) names[pid] = name;
+              else names[pid] = pid.slice(0, 8);
+            } catch {
+              names[pid] = pid.slice(0, 8);
+            }
+          }),
+        );
+        setProjectNames(names);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const matrix = useMemo(
+    () => buildMatrix(summary?.label_outcome_matrix ?? []),
+    [summary],
+  );
+
+  const outcomes = useMemo(() => {
+    const raw = summary?.by_outcome ?? {};
+    return Object.entries(raw).map(([name, count]) => ({
+      name,
+      count,
+      label: OUTCOME_LABEL[name] || name,
+      color: OUTCOME_COLOR[name] || 'var(--alpha-300)',
+    }));
+  }, [summary]);
+
+  const maxOutcome = Math.max(1, ...outcomes.map((o) => o.count));
+
+  const statuses = useMemo(() => {
+    const raw = summary?.by_status ?? {};
+    return Object.entries(raw).map(([name, count]) => ({
+      name: STATUS_LABEL[name] || name,
+      count,
+    }));
+  }, [summary]);
+
+  const maxStatus = Math.max(1, ...statuses.map((s) => s.count));
+
+  const totalInter = summary?.total ?? 0;
+  const byStatus = summary?.by_status ?? {};
+  const totalCost = summary?.total_cost_usd ?? 0;
+  const totalProfit = summary?.total_profit_usd ?? 0;
+  const netUsd = summary?.net_usd ?? totalProfit - totalCost;
+  const totalHours = summary?.total_hours ?? 0;
+  const activeCount = (byStatus.active ?? 0) + (byStatus.planned ?? 0);
+  const doneCount = byStatus.done ?? 0;
+  const abandonedCount = byStatus.abandoned ?? 0;
+  const avgHours = totalInter > 0 ? (totalHours / totalInter).toFixed(1) : '—';
+  const roi = totalCost > 0 ? Math.round((netUsd / totalCost) * 100) : 0;
+
+  if (loading) {
+    return (
+      <>
+        <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
+          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            <span className="hidden sm:inline">新建记录</span>
+          </button>
+        </TopBar>
+        <div className="app-content flex items-center justify-center py-20">
+          <span className="text-sm text-ink-muted">加载中…</span>
+        </div>
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
+          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            <span className="hidden sm:inline">新建记录</span>
+          </button>
+        </TopBar>
+        <div className="app-content py-20">
+          <EmptyState title="加载失败" description={error} />
+        </div>
+      </>
+    );
+  }
+
+  if (totalInter === 0) {
+    return (
+      <>
+        <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
+          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            <span className="hidden sm:inline">新建记录</span>
+          </button>
+        </TopBar>
+        <div className="app-content py-20">
+          <EmptyState
+            title="还没有参与记录"
+            description="在项目详情页点击「我的投入」添加第一条交互记录，这里会自动汇总校准矩阵和收益分析。"
+          />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
@@ -121,23 +303,30 @@ export default function PortfolioPage() {
         <div className="pf-kpi-grid">
           <div className="pf-kpi">
             <span className="pf-kpi-label">总参与</span>
-            <span className="pf-kpi-value">34</span>
-            <span className="pf-kpi-caption">进行中 9 · 已完成 21 · 已放弃 4</span>
+            <span className="pf-kpi-value">{totalInter}</span>
+            <span className="pf-kpi-caption">
+              进行中 {activeCount} · 已完成 {doneCount} · 已放弃 {abandonedCount}
+            </span>
           </div>
           <div className="pf-kpi">
             <span className="pf-kpi-label">净收益</span>
-            <span className="pf-kpi-value is-positive">+$12,480</span>
-            <span className="pf-kpi-caption">收益率 384%</span>
+            <span
+              className="pf-kpi-value"
+              style={{ color: netUsd >= 0 ? 'rgb(var(--farm))' : 'var(--state-error)' }}
+            >
+              {fmtMoney(netUsd)}
+            </span>
+            <span className="pf-kpi-caption">收益率 {roi}%</span>
           </div>
           <div className="pf-kpi">
             <span className="pf-kpi-label">总成本</span>
-            <span className="pf-kpi-value">$3,250</span>
+            <span className="pf-kpi-value">{fmtCost(totalCost)}</span>
             <span className="pf-kpi-caption">硬成本 + Gas</span>
           </div>
           <div className="pf-kpi">
             <span className="pf-kpi-label">总工时</span>
-            <span className="pf-kpi-value">186h</span>
-            <span className="pf-kpi-caption">平均 5.5h / 项目</span>
+            <span className="pf-kpi-value">{fmtHours(totalHours)}</span>
+            <span className="pf-kpi-caption">平均 {avgHours}h / 项目</span>
           </div>
         </div>
 
@@ -171,7 +360,7 @@ export default function PortfolioPage() {
           </div>
           <div className="pf-card-body">
             <div className="pf-mx">
-              {MATRIX.map((row) => {
+              {matrix.map((row) => {
                 const dash = (row.hitRate / 100) * RING_CIRCUMFERENCE;
                 return (
                   <div className="pf-mx-row" key={row.label}>
@@ -180,14 +369,18 @@ export default function PortfolioPage() {
                       <span className="pf-mx-total">{row.total} 项</span>
                     </div>
                     <div className="pf-mx-track" role="img" aria-label={`${row.label} 各结果分布`}>
-                      {row.segments.map((seg) => (
-                        <span
-                          key={seg.title}
-                          className="pf-mx-seg"
-                          style={{ width: `${seg.pct}%`, background: seg.color }}
-                          title={seg.title}
-                        />
-                      ))}
+                      {row.segments.length === 0 ? (
+                        <span className="pf-mx-seg" style={{ width: '100%', background: 'var(--border)' }} title="无数据" />
+                      ) : (
+                        row.segments.map((seg) => (
+                          <span
+                            key={seg.title}
+                            className="pf-mx-seg"
+                            style={{ width: `${seg.pct}%`, background: seg.color }}
+                            title={seg.title}
+                          />
+                        ))
+                      )}
                     </div>
                     <div className="pf-mx-side">
                       <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
@@ -220,7 +413,7 @@ export default function PortfolioPage() {
               })}
             </div>
             <p className="pf-matrix-foot">
-              <strong>FARM 命中率 62%</strong> · WATCH 18% · IGNORE 8% — 标签区分度健康
+              <strong>FARM 命中率 {matrix[0]?.hitRate ?? 0}%</strong> · WATCH {matrix[1]?.hitRate ?? 0}% · IGNORE {matrix[2]?.hitRate ?? 0}% — 标签区分度健康
             </p>
           </div>
         </section>
@@ -231,21 +424,28 @@ export default function PortfolioPage() {
           <section className="pf-card" aria-label="结果分布">
             <div className="pf-card-head">
               <h2 className="pf-card-title">结果分布</h2>
-              <p className="pf-card-caption">by_outcome · 53 条交互记录</p>
+              <p className="pf-card-caption">by_outcome · {totalInter} 条交互记录</p>
             </div>
             <div className="pf-card-body pf-bars">
-              {OUTCOMES.map((o) => (
-                <div className="pf-bar-row" key={o.name}>
-                  <span className={`pf-bar-name ${/^[a-z]/.test(o.name) ? 'is-mono' : ''}`}>
-                    {o.name}
-                  </span>
-                  <span className="pf-bar-count">{o.count}</span>
-                  <span className="pf-bar-track">
-                    <span className={`pf-bar-fill ${o.fillClass}`} style={{ width: `${o.pct}%` }} />
-                  </span>
-                </div>
-              ))}
-              <p className="pf-dist-foot">终态：airdropped / not_airdropped / pumped / dumped · 进行中为可变态</p>
+              {outcomes.length === 0 ? (
+                <p className="text-xs text-ink-muted">暂无数据</p>
+              ) : (
+                outcomes.map((o) => (
+                  <div className="pf-bar-row" key={o.name}>
+                    <span className={`pf-bar-name ${/^[a-z]/.test(o.name) ? 'is-mono' : ''}`}>
+                      {o.label}
+                    </span>
+                    <span className="pf-bar-count">{o.count}</span>
+                    <span className="pf-bar-track">
+                      <span
+                        className="pf-bar-fill is-success"
+                        style={{ width: `${(o.count / maxOutcome) * 100}%`, background: o.color }}
+                      />
+                    </span>
+                  </div>
+                ))
+              )}
+              <p className="pf-dist-foot">终态：airdropped / not_airdropped / profit / loss · pending 为可变态</p>
             </div>
           </section>
 
@@ -253,21 +453,25 @@ export default function PortfolioPage() {
           <section className="pf-card" aria-label="状态分布">
             <div className="pf-card-head">
               <h2 className="pf-card-title">状态分布</h2>
-              <p className="pf-card-caption">by_status · 40 条管线项目</p>
+              <p className="pf-card-caption">by_status · {totalInter} 条交互记录</p>
             </div>
             <div className="pf-card-body pf-bars">
-              {STATUSES.map((s) => (
-                <div className="pf-bar-row" key={s.name}>
-                  <span className="pf-bar-name is-mono">{s.name}</span>
-                  <span className="pf-bar-count">{s.count}</span>
-                  <span className="pf-bar-track">
-                    <span
-                      className="pf-bar-fill"
-                      style={{ width: `${s.pct}%`, opacity: s.opacity }}
-                    />
-                  </span>
-                </div>
-              ))}
+              {statuses.length === 0 ? (
+                <p className="text-xs text-ink-muted">暂无数据</p>
+              ) : (
+                statuses.map((s) => (
+                  <div className="pf-bar-row" key={s.name}>
+                    <span className="pf-bar-name is-mono">{s.name}</span>
+                    <span className="pf-bar-count">{s.count}</span>
+                    <span className="pf-bar-track">
+                      <span
+                        className="pf-bar-fill"
+                        style={{ width: `${(s.count / maxStatus) * 100}%` }}
+                      />
+                    </span>
+                  </div>
+                ))
+              )}
               <p className="pf-dist-foot">状态机：planned → active → done/abandoned，终态不可变</p>
             </div>
           </section>
@@ -277,7 +481,7 @@ export default function PortfolioPage() {
         <section className="pf-card overflow-hidden" aria-label="参与记录">
           <div className="pf-card-head">
             <h2 className="pf-card-title">参与记录</h2>
-            <p className="pf-card-caption">最近 5 条 · 总 34 条</p>
+            <p className="pf-card-caption">最近 {interactions.length} 条 · 总 {totalInter} 条</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
@@ -293,37 +497,48 @@ export default function PortfolioPage() {
                 </tr>
               </thead>
               <tbody>
-                {RECORDS.map((r) => (
-                  <tr key={r.id} className="border-b border-line last:border-b-0 hover:bg-surface-2">
-                    <td className="px-4 py-3 sm:px-5">
-                      <Link
-                        href={`/project/${r.project.toLowerCase().replace(/\s+/g, '-')}`}
-                        className="text-sm font-medium text-ink hover:text-farm"
+                {interactions.map((r) => {
+                  const name = projectNames[r.project_id] || r.project_id.slice(0, 8);
+                  const label = (r.label_at_start || '') as Label;
+                  const profit = r.profit_usd ?? null;
+                  const net = r.net_usd ?? null;
+                  return (
+                    <tr key={r.id} className="border-b border-line last:border-b-0 hover:bg-surface-2">
+                      <td className="px-4 py-3 sm:px-5">
+                        <Link
+                          href={`/project/${r.project_id}`}
+                          className="text-sm font-medium text-ink hover:text-farm"
+                        >
+                          {name}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-3">
+                        {label ? <LabelBadge label={label} /> : <span className="text-xs text-ink-faint">—</span>}
+                      </td>
+                      <td className="px-3 py-3 text-xs text-ink-muted">
+                        {OUTCOME_LABEL[r.outcome || ''] || r.outcome || '—'}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs">{fmtCost(r.cost_usd)}</td>
+                      <td
+                        className="px-3 py-3 font-mono text-xs"
+                        style={{
+                          color:
+                            net != null && net > 0
+                              ? 'rgb(var(--farm))'
+                              : net != null && net < 0
+                                ? 'var(--state-error)'
+                                : undefined,
+                        }}
                       >
-                        {r.project}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-3">
-                      <LabelBadge label={r.label} />
-                    </td>
-                    <td className="px-3 py-3 text-xs text-ink-muted">{r.outcome}</td>
-                    <td className="px-3 py-3 font-mono text-xs">{r.cost}</td>
-                    <td
-                      className="px-3 py-3 font-mono text-xs"
-                      style={{
-                        color: r.gain.startsWith('+')
-                          ? 'rgb(var(--farm))'
-                          : r.gain.startsWith('-')
-                            ? 'var(--state-error)'
-                            : undefined,
-                      }}
-                    >
-                      {r.gain}
-                    </td>
-                    <td className="px-3 py-3 font-mono text-xs text-ink-muted">{r.hours}</td>
-                    <td className="px-4 py-3 sm:px-5 font-mono text-xs text-ink-muted">{r.date}</td>
-                  </tr>
-                ))}
+                        {net != null ? fmtMoney(net) : fmtMoney(profit)}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-ink-muted">{fmtHours(r.hours_spent)}</td>
+                      <td className="px-4 py-3 sm:px-5 font-mono text-xs text-ink-muted">
+                        {r.started_at || (r.created_at ? relativeTime(r.created_at) : '—')}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

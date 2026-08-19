@@ -766,3 +766,331 @@ curl 'http://localhost:8002/api/v1/projects?label=FARM&limit=10'
 # 5) 重算
 curl -X POST http://localhost:8002/api/v1/re-score/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
 ```
+
+---
+
+## 21. interactions（参与记录）
+
+### 21a. POST /api/v1/interactions
+
+创建项目参与记录（用于校准与复盘）。
+
+**请求体**:
+```json
+{
+  "project_id": "uuid-here",
+  "status": "active",
+  "started_at": "2026-07-26",
+  "cost_usd": 120.0,
+  "profit_usd": null,
+  "hours_spent": 6.5,
+  "outcome": "pending",
+  "activities": "Galxe 任务 + 测试网交互",
+  "note": "多钱包参与"
+}
+```
+
+**响应 201**:
+```json
+{
+  "ok": true,
+  "data": { "id": 1, "project_id": "uuid-here", "status": "active", "net_usd": -120.0 }
+}
+```
+
+### 21b. GET /api/v1/interactions
+
+列出参与记录（可按 project_id / status 筛选）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `project_id` | string | — | 按项目筛选 |
+| `status` | string | — | planned/active/done/abandoned |
+| `limit` | int | 50 | 1-200 |
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "items": [...], "total": 34, "count": 5 }
+}
+```
+
+### 21c. GET /api/v1/interactions/summary
+
+聚合统计（校准矩阵 + 收益分析）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "total": 34,
+    "by_status": { "planned": 6, "active": 3, "done": 21, "abandoned": 4 },
+    "by_outcome": { "airdropped": 10, "not_airdropped": 5, "pending": 19 },
+    "label_outcome_matrix": [
+      { "label_at_start": "FARM", "outcome": "airdropped", "c": 8 }
+    ],
+    "total_cost_usd": 3250.0,
+    "total_profit_usd": 15730.0,
+    "net_usd": 12480.0,
+    "total_hours": 186.0
+  }
+}
+```
+
+### 21d. GET /api/v1/projects/{project_id}/interactions
+
+列出指定项目的全部参与记录（等价于 `GET /interactions?project_id=...`）。
+
+### 21e. PATCH /api/v1/interactions/{interaction_id}
+
+更新参与记录（状态流转 / 结果 / 成本收益）。
+
+**请求体**（部分字段）:
+```json
+{
+  "status": "done",
+  "outcome": "airdropped",
+  "profit_usd": 890.0
+}
+```
+
+### 21f. DELETE /api/v1/interactions/{interaction_id}
+
+删除参与记录。返回 `{ "ok": true, "data": { "deleted": true, "id": 1 } }`。
+
+---
+
+## 22. participation-tasks
+
+### 22a. GET /api/v1/participation-tasks
+
+查询项目的参与任务清单（Galxe / Layer3 等平台任务）。
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `project_id` | string | 按项目筛选 |
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "project_id": "uuid", "platform": "galxe", "url": "https://...", "title": "Daily check-in" }
+  ]
+}
+```
+
+---
+
+## 23. quarantine（隔离队列）
+
+### 23a. GET /api/v1/quarantine
+
+列出隔离队列（采集失败 / 数据异常的原始记录）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `status` | string | pending | pending / resolved |
+| `limit` | int | 50 | 1-200 |
+
+### 23b. GET /api/v1/quarantine/{id}
+
+查看隔离记录详情。
+
+### 23c. PATCH /api/v1/quarantine/{id}
+
+更新隔离记录状态（标记为已解决 / 降级）。
+
+**请求体**:
+```json
+{ "status": "resolved", "resolved_at": "2026-07-26T08:00:00Z" }
+```
+
+---
+
+## 24. watchlist（用户关注列表）
+
+### 24a. GET /api/v1/watchlist
+
+列出当前用户的关注项目。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "project_id": "uuid", "note": "高优先级", "created_at": "2026-07-26T08:00:00Z" }
+  ]
+}
+```
+
+### 24b. POST /api/v1/watchlist
+
+添加项目到关注列表。
+
+**请求体**:
+```json
+{ "project_id": "uuid-here", "note": "值得关注" }
+```
+
+### 24c. DELETE /api/v1/watchlist/{project_id}
+
+从关注列表移除项目。
+
+---
+
+## 25. funding（融资信息）
+
+### 25a. GET /api/v1/projects/{project_id}/funding
+
+查询项目融资记录。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "round": "Seed", "amount_usd": 5000000, "date": "2026-06-01", "investors": "a16z" }
+  ]
+}
+```
+
+### 25b. PUT /api/v1/projects/{project_id}/funding
+
+更新项目融资信息（编辑后触发重评）。
+
+**请求体**:
+```json
+{ "funding": "5M Seed (a16z)", "funding_note": "2026-06" }
+```
+
+---
+
+## 26. ai_brief（AI 简报）
+
+### 26a. GET /api/v1/projects/{project_id}/ai-brief
+
+获取项目的 AI 简报（规则生成 / 可选 LLM 增强）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "brief": "Nova Protocol 是一个 L2 扩容方案...",
+    "llm_available": false,
+    "generated_at": "2026-07-26T08:00:00Z"
+  }
+}
+```
+
+### 26b. POST /api/v1/projects/{project_id}/ai-brief/regenerate
+
+重新生成 AI 简报。
+
+---
+
+## 27. llm（LLM 状态）
+
+### 27a. GET /api/v1/llm/status
+
+查询 LLM 多接口故障转移配置状态。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": false,
+    "provider_count": 1,
+    "total_model_count": 2,
+    "failover_strategy": "sequential",
+    "providers": [
+      {
+        "name": "provider-1",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_masked": "sk-***",
+        "has_api_key": true,
+        "models": ["gpt-4o-mini", "gpt-4o"],
+        "model_count": 2
+      }
+    ],
+    "temperature": 0.3,
+    "max_tokens": 512,
+    "daily_budget_usd": 1.0,
+    "discovery_score_threshold": 0.7
+  }
+}
+```
+
+---
+
+## 28. webhook（Alchemy 事件推送）
+
+### 28a. POST /api/v1/webhook/alchemy
+
+Alchemy webhook 回调端点（接收链上事件推送）。
+
+**请求头**: `X-Alchemy-Signature`（HMAC 签名验证）
+
+### 28b. GET /api/v1/webhook/status
+
+查询 webhook 配置状态。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "configured": false, "webhook_url": null }
+}
+```
+
+---
+
+## 29. auth（鉴权）
+
+### 29a. POST /api/v1/auth/anonymous
+
+签发匿名 token（用于受限 API 访问）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "access_token": "eyJ...",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "user_id": "anon-abc123def456"
+  }
+}
+```
+
+---
+
+## 30. settings（运行时配置）
+
+### 30a. GET /api/v1/settings/config
+
+返回当前运行时配置的只读快照（密钥只返回是否已设置，不返回明文）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "access": { "api_key_set": false, "cors_origins": "http://localhost:3002" },
+    "weights": { "WEIGHT_AIRDROP_SIGNAL": 0.18 },
+    "flags": { "ENABLE_LLM_ENHANCEMENT": false },
+    "sources": { "defillama": { "enabled": true, "has_api_key": false } },
+    "automation": { "SCHEDULER_ENABLED": true },
+    "platform": { "METRICS_ENABLED": true, "LOG_LEVEL": "info" },
+    "thresholds": { "CONFIDENCE_THRESHOLD": 0.5 },
+    "llm": { "enabled": false, "providers": [] }
+  }
+}
+```
+
+> 密钥类字段（API_KEY、*_TOKEN 等）只返回布尔值 `has_api_key` / `api_key_set`，不返回明文。

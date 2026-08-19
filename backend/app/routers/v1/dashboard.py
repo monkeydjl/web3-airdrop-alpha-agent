@@ -22,7 +22,7 @@ router = APIRouter(tags=["dashboard"])
 
 def _utc_midnight() -> datetime:
     """今日 UTC 零点，用于「今日」窗口。"""
-    return datetime.combine(date.today(), time.min, tzinfo=timezone.utc)
+    return datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
 
 
 def _row_value(row: Any, key: str, default: Any = None) -> Any:
