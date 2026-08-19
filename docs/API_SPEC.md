@@ -50,6 +50,7 @@
 | POST | `/api/v1/import/projects` | v1 | MVP（已实现?| 批量导入项目并评分（Excel/CSV，最?100 个） |
 | POST | `/api/v1/re-score/{id}` | v1 | MVP | 用最新规?数据对该项目重算评分 |
 | GET | `/api/v1/insights` | v1 | MVP（已实现?| 聚合洞察（label/sector 计数、最热叙事、高风险团队?|
+| GET | `/api/v1/dashboard/overview` | v1 | V2（已实现?| Dashboard 今日概览聚合（采集运行/新增项目/发现队列/影子评估） |
 | GET | `/api/v1/discoveries` | v1 | V2（v2.0，ADR-012?| 查询自动发现的项目列表（支持 source/score 筛选） |
 | GET | `/api/v1/discoveries/{id}` | v1 | V2（v2.0，ADR-012?| 单个发现项目详情（含 raw_projects + signals?|
 | GET | `/api/v1/discoveries/stats` | v1 | V2（v2.0，ADR-012?| 发现统计（按??评分分布聚合?|
@@ -248,6 +249,37 @@ curl -X POST http://localhost:8002/api/v1/run \
 ```
 
 > ?`projects` 表聚合得出；`risk_level` 根据 `team_json.team_score` 推导?0.4 high，≤0.7 medium?0.7 low）。`trend` ?`avg_heat_score` 推导?
+---
+
+## 8a. GET /api/v1/dashboard/overview
+
+聚合「今日流水线」真实数据：采集运行统计、今日新增项目、发现队列待处理数、影子引擎评估数。供 Dashboard「今日流水线」卡片展示。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "today": {
+      "collection_runs": { "total": 5, "success": 4, "failed": 1 },
+      "new_projects": 8,
+      "new_farm_projects": 2
+    },
+    "discovery": {
+      "pending_count": 12,
+      "today_new": 6,
+      "total": 180
+    },
+    "shadow": {
+      "saved_today": 3,
+      "label_counts": { "FARM": 1, "WATCH": 2, "IGNORE": 0 }
+    }
+  }
+}
+```
+
+> `today.collection_runs` 统计今日 `collection_logs`；`discovery` 统计 `raw_projects`（待处理 = `processed=0`）；`shadow` 统计今日 `opportunity_assessments`。「今日」按 UTC 零点窗口计算。
+
 ---
 
 ## 9. POST /api/v1/feedback

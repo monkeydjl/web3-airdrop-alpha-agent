@@ -462,6 +462,7 @@ def create_app(db_override=None) -> FastAPI:
         ai_brief,
         auth,
         collections,
+        dashboard,
         export_import,
         feedback,
         funding,
@@ -493,6 +494,7 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(llm.router, prefix="/api/v1", tags=["v1"])
     app.include_router(webhook.router, prefix="/api/v1", tags=["v1"])
     app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(dashboard.router, prefix="/api/v1", tags=["v1"])
 
     # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
     instrument_fastapi_app(app)

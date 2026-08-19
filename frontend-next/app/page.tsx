@@ -17,6 +17,19 @@ import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/compone
 type SortBy = 'score' | 'name' | 'confidence';
 type ViewMode = 'grid' | 'table';
 
+interface DashboardOverview {
+  ok?: boolean;
+  data?: {
+    today?: {
+      collection_runs?: { total?: number; success?: number; failed?: number };
+      new_projects?: number;
+      new_farm_projects?: number;
+    };
+    discovery?: { pending_count?: number; today_new?: number; total?: number };
+    shadow?: { saved_today?: number; label_counts?: Record<string, number> };
+  };
+}
+
 export default function DashboardPage() {
   return (
     <Suspense>
@@ -64,6 +77,20 @@ function DashboardContent() {
   const { data, error, loading, reload: loadProjects } = useAsyncData(loader, []);
   const projects: Project[] = useMemo(() => data?.projects ?? [], [data]);
   const truncated = data?.truncated ?? false;
+
+  // 「今日流水线」真实聚合数据（发现队列 / 影子引擎 / 采集运行）
+  const [overview, setOverview] = useState<DashboardOverview['data'] | null>(null);
+  useEffect(() => {
+    apiFetch<DashboardOverview>('/dashboard/overview')
+      .then((res) => setOverview(res?.data ?? null))
+      .catch(() => setOverview(null));
+  }, [loading]);
+
+  const overviewRuns = overview?.today?.collection_runs ?? {};
+  const overviewFarm = overview?.shadow?.label_counts?.FARM ?? 0;
+  const overviewSavedToday = overview?.shadow?.saved_today ?? 0;
+  const pendingDiscoveries = overview?.discovery?.pending_count ?? 0;
+  const todayNew = overview?.discovery?.today_new ?? 0;
 
   const runPipeline = async () => {
     setRunning(true);
@@ -180,15 +207,31 @@ function DashboardContent() {
           <h2 className="mb-3 text-sm font-semibold text-ink">今日流水线</h2>
           <ul className="pipeline-list">
             <li className="pipeline-row">
-              <span className="pipeline-time">08:00</span>
-              <span className="pipeline-text">cron 运行完成 · 评分 <strong>{stats.total}</strong> 个 · 最高分 <strong>{stats.top || '—'}</strong></span>
+              <span className="pipeline-time">采集</span>
+              <span className="pipeline-text">
+                运行 <strong>{overviewRuns.total ?? 0}</strong> 次
+                {overviewRuns.success ? ` · 成功 ${overviewRuns.success}` : ''}
+                {overviewRuns.failed ? <span className="text-watch"> · 失败 {overviewRuns.failed}</span> : ''}
+              </span>
+            </li>
+            <li className="pipeline-row">
+              <span className="pipeline-time">新增</span>
+              <span className="pipeline-text">
+                今日新建 <strong>{overview?.today?.new_projects ?? 0}</strong> 个
+                {overview?.today?.new_farm_projects ? ` · FARM ${overview.today.new_farm_projects}` : ''}
+              </span>
             </li>
             <li className="pipeline-row">
               <span className="mini-chip">影子</span>
-              <span className="pipeline-text">eligible <strong>{stats.counts.FARM}</strong> / sampled <strong>3</strong> / saved <strong>3</strong></span>
+              <span className="pipeline-text">
+                今日评估 <strong>{overviewSavedToday}</strong> · FARM <strong>{overviewFarm}</strong>
+              </span>
             </li>
             <li className="pipeline-row pipeline-row-cta">
-              <span className="pipeline-text">待处理发现 <strong>12</strong> 条</span>
+              <span className="pipeline-text">
+                今日发现 <strong>{todayNew}</strong> 条
+                <span className="text-ink-faint"> · 待处理 {pendingDiscoveries}</span>
+              </span>
               <button type="button" onClick={() => router.push('/discoveries')} className="text-xs font-medium text-farm hover:text-farm-dark whitespace-nowrap transition">
                 前往发现队列 →
               </button>

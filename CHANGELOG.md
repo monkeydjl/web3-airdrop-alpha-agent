@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### Added — Dashboard 今日流水线真实化（2026-07-26）
+
+- **新增 `GET /api/v1/dashboard/overview` 聚合端点**：一次返回今日采集运行数、今日新增项目数、发现队列待处理数、影子引擎今日评估数
+- **Dashboard「今日流水线」卡片接入真实数据**：原先写死的 `sampled 3 / saved 3 / 待处理 12` 等假数据，改为读取真实采集运行、发现队列与影子评估计数
+
 ### Added — 上线审核 P1 项（GO_LIVE_AUDIT_REPORT，2026-07-26）
 
 - **所有 API 响应携带 `X-Disclaimer` 响应头**（`Not investment advice...`，SECURITY.md §7.5 合规要求）
