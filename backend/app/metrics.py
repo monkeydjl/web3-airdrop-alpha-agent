@@ -28,7 +28,7 @@ _MISSING = object()
 PIPELINE_RUNS = Counter(
     "airdrop_pipeline_runs_total",
     "Total number of scoring pipeline runs.",
-    ["trigger"],
+    ["trigger", "status"],
 )
 
 PIPELINE_DURATION = Histogram(
@@ -272,6 +272,14 @@ def metric_label_sets(metric) -> frozenset[frozenset[tuple[str, str]]]:
                 continue
             sets.add(frozenset((str(k), str(v)) for k, v in sample.labels.items()))
     return frozenset(sets)
+
+
+# ── HTTP request metrics ─────────────────────────────────────────────
+HTTP_REQUESTS = Counter(
+    "airdrop_http_requests_total",
+    "HTTP requests handled by the API.",
+    ["method", "status_class"],
+)
 
 
 # ── LLM metrics ─────────────────────────────────────────────────────

@@ -278,12 +278,21 @@ def create_app(db_override=None) -> FastAPI:
     # ── 请求日志中间件 ──────────────────────────
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-        """记录请求日志（结构化）。"""
+        """记录请求日志（结构化）并附加免责声明响应头。"""
         import time
+
+        from app.metrics import HTTP_REQUESTS
 
         start = time.time()
         response = await call_next(request)
         duration = (time.time() - start) * 1000
+
+        # SECURITY.md §7.5：所有响应携带免责声明头
+        response.headers["X-Disclaimer"] = "Not investment advice. For informational purposes only."
+
+        # HTTP 请求计数（按状态码分档：2xx/3xx/4xx/5xx）
+        status_class = f"{response.status_code // 100}xx"
+        HTTP_REQUESTS.labels(method=request.method, status_class=status_class).inc()
 
         logger.info(
             "api.request.completed",

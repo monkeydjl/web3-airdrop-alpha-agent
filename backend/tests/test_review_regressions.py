@@ -893,7 +893,8 @@ class TestProductionConfigCannotBeBypassed:
         # §4.2 要求 >= 32 字符；原实现只校验非空，一个字符也能过
         with pytest.raises(ValueError, match="API_KEY"):
             Settings(_env_file=None, app_env="production", api_key="x")
-        Settings(_env_file=None, app_env="production", api_key="a" * 32)
+        # 合法长度通过（需同时配备 AUTH_TOKEN_SECRET，否则会被 P1-3 自检拒绝）
+        Settings(_env_file=None, app_env="production", api_key="a" * 32, auth_token_secret="b" * 48)
 
 
 class TestRateLimiting:

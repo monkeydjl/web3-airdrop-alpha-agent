@@ -195,25 +195,33 @@ async def execute_analysis_pipeline(
     的数据，不共享队列，并发无害。守卫理由见 `app/inflight.py`。
     """
     if projects is not None and len(projects) > 0:
-        return await _run_pipeline(
-            projects=projects,
-            enable_llm=enable_llm,
-            trigger=trigger,
-            limit=limit,
-            save_to_db=save_to_db,
-        )
+        try:
+            return await _run_pipeline(
+                projects=projects,
+                enable_llm=enable_llm,
+                trigger=trigger,
+                limit=limit,
+                save_to_db=save_to_db,
+            )
+        except Exception:
+            PIPELINE_RUNS.labels(trigger=trigger, status="failed").inc()
+            raise
 
     with claim_run(QUEUE_DRAIN_KEY) as acquired:
         if not acquired:
             logger.info("pipeline.queue_drain_rejected", trigger=trigger)
             raise QueueDrainInProgressError("An analysis queue drain is already in progress")
-        return await _run_pipeline(
-            projects=None,
-            enable_llm=enable_llm,
-            trigger=trigger,
-            limit=limit,
-            save_to_db=save_to_db,
-        )
+        try:
+            return await _run_pipeline(
+                projects=None,
+                enable_llm=enable_llm,
+                trigger=trigger,
+                limit=limit,
+                save_to_db=save_to_db,
+            )
+        except Exception:
+            PIPELINE_RUNS.labels(trigger=trigger, status="failed").inc()
+            raise
 
 
 async def _run_pipeline(
@@ -230,7 +238,7 @@ async def _run_pipeline(
         settings.opportunity_shadow_enabled,
         settings.opportunity_shadow_sample_rate,
     )
-    PIPELINE_RUNS.labels(trigger=trigger).inc()
+    PIPELINE_RUNS.labels(trigger=trigger, status="started").inc()
     start_time = time.perf_counter()
 
     raw_projects: list[RawProject]
@@ -356,6 +364,7 @@ async def _run_pipeline(
         summary=result,
         errors=response.errors,
     )
+    PIPELINE_RUNS.labels(trigger=trigger, status="completed").inc()
     return result
 
 

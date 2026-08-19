@@ -5,15 +5,26 @@ groups:
   - name: pipeline_alerts
     interval: 30s
     rules:
+      - alert: PipelineConsecutiveFailures
+        expr: |
+          sum(increase(airdrop_pipeline_runs_total{status="failed"}[15m])) by (trigger) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          component: pipeline
+        annotations:
+          summary: "Pipeline 连续失败（15 分钟内 ≥ 2 次）"
+          description: "Trigger={{ $labels.trigger }} 的评分流水线在 15 分钟窗口内失败 2 次以上，可能存在系统性故障。"
+
       - alert: PipelineFailureRate
-        expr: sum(rate(airdrop_pipeline_runs_total[5m])) by (trigger) > 0
+        expr: sum(rate(airdrop_pipeline_runs_total{status="failed"}[5m])) by (trigger) > 0
         for: 5m
         labels:
           severity: warning
           component: pipeline
         annotations:
-          summary: "Pipeline 触发"
-          description: "Pipeline 在最近 5 分钟内被触发"
+          summary: "Pipeline 失败率告警"
+          description: "Trigger={{ $labels.trigger }} 在 5 分钟内持续出现失败。"
 
       - alert: NoProjectsDiscovered
         expr: increase(airdrop_projects_scored_total[24h]) == 0
@@ -54,6 +65,17 @@ groups:
   - name: system_alerts
     interval: 60s
     rules:
+      - alert: HighAPIErrorRate
+        expr: |
+          sum(rate(airdrop_http_requests_total{status_class="5xx"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API 错误率过高（5xx > 0.1/s）"
+          description: "最近 5 分钟内 5xx 错误率持续超过 0.1 req/s，服务可能存在严重故障。"
+
       - alert: BackendDown
         expr: up{job="airdrop-backend"} == 0
         for: 1m

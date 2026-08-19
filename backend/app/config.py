@@ -467,6 +467,14 @@ class Settings(BaseSettings):
                 )
             if self.host == "0.0.0.0" and not api_key:
                 errors.append("生产环境绑定 0.0.0.0 时必须设置 API_KEY")
+
+            # P1-3：生产环境 AUTH_TOKEN_SECRET 必须设置（匿名 token 才稳定）
+            if not self.auth_token_secret:
+                errors.append(
+                    "生产环境必须设置 AUTH_TOKEN_SECRET（匿名 token 每次重启后失效；"
+                    "建议用 secrets.token_urlsafe(48) 生成固定值）"
+                )
+
             if errors:
                 raise ValueError("不安全的生产配置: " + "; ".join(errors))
 

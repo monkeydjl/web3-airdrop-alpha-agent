@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Added — 上线审核 P1 项（GO_LIVE_AUDIT_REPORT，2026-07-26）
+
+- **所有 API 响应携带 `X-Disclaimer` 响应头**（`Not investment advice...`，SECURITY.md §7.5 合规要求）
+- **新增 HTTP 请求计数指标** `airdrop_http_requests_total`（按方法 + 状态码分档）
+- **告警规则补充**：`HighAPIErrorRate`（5xx > 0.1/s，critical）+ `PipelineConsecutiveFailures`（15 分钟 ≥ 2 次失败，critical）；`airdrop_pipeline_runs_total` 新增 `status` 标签（started/completed/failed）
+- **生产自检新增 AUTH_TOKEN_SECRET 校验**：生产环境该值为空会拒绝启动（否则匿名 token 每次重启后失效）
+
 ### Fixed — 上线审核阻断项修复（GO_LIVE_AUDIT_REPORT，2026-07-26）
 
 - **删除冲突的 `backend/Dockerfile`**：它与正确的 `docker/Dockerfile` 并存且被 `docker-compose.yml` 默认引用，但其 Python 3.14 + 不完整的 COPY 会让 `docker compose up --build` 构建失败；统一引用 `docker/Dockerfile`
