@@ -14,7 +14,7 @@ on:
     branches: [master, main]
 
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.12"
   PYTHON_VERSION_FILE: "backend/requirements.txt"
 
 concurrency:

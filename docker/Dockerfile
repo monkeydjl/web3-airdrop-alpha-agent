@@ -4,7 +4,7 @@
 # ──────────────────────────────────────────────
 
 # ── Stage 1: Builder ────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # ── Stage 2: Production ─────────────────────
-FROM python:3.11-slim AS production
+FROM python:3.12-slim AS production
 
 # 安全 + 运行时依赖
 RUN apt-get update && \

@@ -46,7 +46,7 @@
 
 - [ ] Docker 镜像构建成功
   ```bash
-  docker build -t airdrop-alpha:latest -f backend/Dockerfile .
+  docker build -t airdrop-alpha:latest -f docker/Dockerfile .
   ```
 - [ ] 容器启动无报错
   ```bash

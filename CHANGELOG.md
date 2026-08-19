@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### Fixed — 上线审核阻断项修复（GO_LIVE_AUDIT_REPORT，2026-07-26）
+
+- **删除冲突的 `backend/Dockerfile`**：它与正确的 `docker/Dockerfile` 并存且被 `docker-compose.yml` 默认引用，但其 Python 3.14 + 不完整的 COPY 会让 `docker compose up --build` 构建失败；统一引用 `docker/Dockerfile`
+- **统一 Python 版本到 3.12**：此前 CI 用 3.13、Dockerfile 用 3.11、本地为 3.14，三处不一致可能引入「CI 通过但生产失败」的幽灵问题；现 CI（ci.yml / security.yml）和 docker/Dockerfile 统一为 3.12
+
 ### Fixed — 系统审查（采集链路 / 流水线 / 安全 / 前端，2026-07-26）
 
 详见 `SYSTEM_AUDIT_REPORT.md`。真实库（702 项目 / 1040 原始记录）实测：7 项可验证信号里 6 项命中率为 0%。
