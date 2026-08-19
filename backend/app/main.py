@@ -469,6 +469,7 @@ def create_app(db_override=None) -> FastAPI:
         insights,
         interactions,
         llm,
+        notifications,
         opportunity,
         participation,
         projects,
@@ -495,6 +496,7 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(webhook.router, prefix="/api/v1", tags=["v1"])
     app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
     app.include_router(dashboard.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(notifications.router, prefix="/api/v1", tags=["v1"])
 
     # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
     instrument_fastapi_app(app)
