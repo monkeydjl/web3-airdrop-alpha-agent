@@ -464,6 +464,16 @@ def _sqlite_ddl() -> str:
                 UNIQUE(project_id, user_id)
             );
 
+            -- 通知已读状态（按用户 + 稳定 notification_id）
+            CREATE TABLE IF NOT EXISTS notification_reads (
+                user_id          TEXT NOT NULL,
+                notification_id  TEXT NOT NULL,
+                read_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, notification_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notification_reads_user
+                ON notification_reads(user_id);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -850,6 +860,16 @@ def _postgres_ddl() -> str:
                 created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(project_id, user_id)
             );
+
+            -- 通知已读状态（按用户 + 稳定 notification_id）
+            CREATE TABLE IF NOT EXISTS notification_reads (
+                user_id          TEXT NOT NULL,
+                notification_id  TEXT NOT NULL,
+                read_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, notification_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notification_reads_user
+                ON notification_reads(user_id);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (

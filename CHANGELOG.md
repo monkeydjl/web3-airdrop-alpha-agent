@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Added — 通知中心增强：评分变化 + 已读持久化（2026-07-26）
+
+- **评分变化通知**：从 `project_history` 对比同项目最新两条快照，生成 `score` 类型通知（升/降/标签变化）
+- **已读状态持久化**：新增表 `notification_reads` + `POST /api/v1/notifications/read`（支持 ids / all）；刷新后已读状态保留
+- **前端通知中心**：点击单条 / 「全部已读」会调用后端持久化；并修正 `apiFetch` 解包 `data` 后的字段读取
+
 ### Added — 通知中心真实化（2026-07-26）
 
 - **新增 `GET /api/v1/notifications` 聚合端点**：返回今日新 FARM/WATCH 机会 + 采集器失败告警

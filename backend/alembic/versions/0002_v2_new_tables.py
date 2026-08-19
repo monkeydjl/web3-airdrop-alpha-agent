@@ -163,10 +163,22 @@ CREATE INDEX IF NOT EXISTS idx_prompt_version ON prompt_versions(agent_name, ver
 -- 补全 feedback 表缺失索引
 CREATE INDEX IF NOT EXISTS idx_feedback_signal ON feedback(signal);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+
+-- ============================================
+-- notification_reads 表（通知已读状态，按用户 + notification_id）
+-- ============================================
+CREATE TABLE IF NOT EXISTS notification_reads (
+    user_id          TEXT NOT NULL,
+    notification_id  TEXT NOT NULL,
+    read_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, notification_id)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id);
 """
 
 # downgrade 时按依赖逆序删除
 _DROP_TABLES = [
+    "notification_reads",
     "prompt_versions",
     "dedup_keys",
     "narratives",
@@ -178,6 +190,7 @@ _DROP_TABLES = [
 ]
 
 _DROP_INDEXES = [
+    "idx_notification_reads_user",
     "idx_feedback_created",
     "idx_feedback_signal",
 ]

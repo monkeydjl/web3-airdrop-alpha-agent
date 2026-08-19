@@ -44,6 +44,7 @@ _EXPECTED_TABLES = {
     "narratives",
     "dedup_keys",
     "prompt_versions",
+    "notification_reads",
 }
 
 

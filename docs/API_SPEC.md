@@ -51,7 +51,8 @@
 | POST | `/api/v1/re-score/{id}` | v1 | MVP | 用最新规?数据对该项目重算评分 |
 | GET | `/api/v1/insights` | v1 | MVP（已实现?| 聚合洞察（label/sector 计数、最热叙事、高风险团队?|
 | GET | `/api/v1/dashboard/overview` | v1 | V2（已实现?| Dashboard 今日概览聚合（采集运行/新增项目/发现队列/影子评估） |
-| GET | `/api/v1/notifications` | v1 | V2（已实现） | 通知中心聚合（今日新 FARM/WATCH + 采集器失败告警） |
+| GET | `/api/v1/notifications` | v1 | V2（已实现） | 通知中心聚合（今日新机会 + 评分变化 + 采集器告警） |
+| POST | `/api/v1/notifications/read` | v1 | V2（已实现） | 标记通知已读（ids 或 all=true，按用户持久化） |
 | GET | `/api/v1/discoveries` | v1 | V2（v2.0，ADR-012?| 查询自动发现的项目列表（支持 source/score 筛选） |
 | GET | `/api/v1/discoveries/{id}` | v1 | V2（v2.0，ADR-012?| 单个发现项目详情（含 raw_projects + signals?|
 | GET | `/api/v1/discoveries/stats` | v1 | V2（v2.0，ADR-012?| 发现统计（按??评分分布聚合?|
@@ -285,14 +286,14 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 ## 8b. GET /api/v1/notifications
 
-聚合通知中心真实数据：今日新建的 FARM/WATCH 项目，以及今日采集失败告警。供前端「通知中心」页展示。
+聚合通知中心真实数据：今日新建 FARM/WATCH、评分变化、采集失败告警，并合并当前用户已读状态。
 
 **响应 200**
 ```json
 {
   "ok": true,
   "data": {
-    "unread_count": 2,
+    "unread_count": 3,
     "items": [
       {
         "id": "new-xxxx",
@@ -306,13 +307,24 @@ curl -X POST http://localhost:8002/api/v1/run \
         "link": { "label": "查看项目", "href": "/project/xxxx" }
       },
       {
+        "id": "score-xxxx-12",
+        "type": "score",
+        "title": "Nova Protocol 评分上升 8",
+        "tag": "评分变化",
+        "text": "评分 74 → 82 · 当前标签 FARM",
+        "project_id": "xxxx",
+        "created_at": "2026-07-26 07:45:00",
+        "read": false,
+        "link": { "label": "查看项目", "href": "/project/xxxx" }
+      },
+      {
         "id": "col-defillama-...",
         "type": "collector",
         "title": "defillama 采集器失败",
         "tag": "采集器告警",
         "text": "状态 failed：401 unauthorized",
         "created_at": "2026-07-26 07:30:00",
-        "read": false,
+        "read": true,
         "link": { "label": "运维台", "href": "/ops" }
       }
     ]
@@ -320,7 +332,35 @@ curl -X POST http://localhost:8002/api/v1/run \
 }
 ```
 
-> `new_project` 来自今日 `projects`（label ∈ FARM/WATCH）；`collector` 来自今日 `collection_logs` 中 status 为 failed/error 的记录。「今日」按 UTC 零点窗口计算。当前不持久化已读状态（前端本地标记）。
+> - `new_project`：今日 `projects`（label ∈ FARM/WATCH）
+> - `score`：`project_history` 同项目最新两条 score/label 有差异，且最新条在今日窗口
+> - `collector`：今日 `collection_logs` 中 status ∈ failed/error
+> - `read`：来自 `notification_reads`（按当前鉴权 user_id）
+
+---
+
+## 8c. POST /api/v1/notifications/read
+
+标记通知已读并持久化。
+
+**请求**
+```json
+{ "ids": ["new-xxxx", "score-yyyy-12"] }
+```
+或
+```json
+{ "all": true }
+```
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": { "marked": 2, "ids": ["new-xxxx", "score-yyyy-12"] }
+}
+```
+
+> `all=true` 时会对当前可聚合出的全部通知 id 写入已读；与 `ids` 可同时使用（并集）。按 `user_id` 隔离。
 
 ---
 

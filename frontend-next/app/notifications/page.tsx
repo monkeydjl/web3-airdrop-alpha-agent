@@ -46,12 +46,15 @@ interface ApiNotification {
   link?: { label: string; href: string };
 }
 
-interface NotificationsResponse {
-  ok?: boolean;
-  data?: {
-    unread_count?: number;
-    items?: ApiNotification[];
-  };
+/** apiFetch 已解包后端 data 字段 */
+interface NotificationsData {
+  unread_count?: number;
+  items?: ApiNotification[];
+}
+
+interface MarkReadData {
+  marked?: number;
+  ids?: string[];
 }
 
 const TYPE_DOT: Record<string, DotTone> = {
@@ -117,8 +120,8 @@ export default function NotificationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch<NotificationsResponse>('/notifications');
-      const raw = res?.data?.items ?? [];
+      const res = await apiFetch<NotificationsData>('/notifications');
+      const raw = res?.items ?? [];
       setItems(raw.map(mapApiItem));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载通知失败');
@@ -147,24 +150,48 @@ export default function NotificationsPage() {
   const deadlineCount = items.filter((n) => n.type === 'deadline').length;
   const collectorAlertCount = items.filter((n) => n.type === 'collector' && !n.read).length;
 
-  const handleMarkAllRead = () => {
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    setToast({ message: '已全部标记为已读（本地）', type: 'success' });
+  const handleMarkAllRead = async () => {
+    const prev = items;
+    setItems((cur) => cur.map((n) => ({ ...n, read: true })));
+    try {
+      await apiFetch<MarkReadData>('/notifications/read', {
+        method: 'POST',
+        body: JSON.stringify({ all: true }),
+      });
+      setToast({ message: '已全部标记为已读', type: 'success' });
+    } catch (err) {
+      setItems(prev);
+      setToast({
+        message: err instanceof Error ? err.message : '标记已读失败',
+        type: 'error',
+      });
+    }
   };
 
-  const handleClickItem = (id: string) => {
-    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  const handleClickItem = async (id: string) => {
+    const target = items.find((n) => n.id === id);
+    if (!target || target.read) return;
+    const prev = items;
+    setItems((cur) => cur.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    try {
+      await apiFetch<MarkReadData>('/notifications/read', {
+        method: 'POST',
+        body: JSON.stringify({ ids: [id] }),
+      });
+    } catch {
+      setItems(prev);
+    }
   };
 
   return (
     <>
       {toast && <Toast message={toast.message} type={toast.type} />}
-      <TopBar title="通知中心" subtitle="真实数据 · 新机会 · 采集器告警">
+      <TopBar title="通知中心" subtitle="真实数据 · 新机会 · 评分变化 · 采集告警">
         <button
           type="button"
           className="btn-secondary inline-flex items-center gap-1.5"
-          onClick={handleMarkAllRead}
-          disabled={items.length === 0}
+          onClick={() => void handleMarkAllRead()}
+          disabled={items.length === 0 || unreadCount === 0}
         >
           <CheckCheck className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">全部已读</span>
@@ -238,8 +265,8 @@ export default function NotificationsPage() {
                 <button
                   type="button"
                   className="btn-secondary px-2.5 py-1 text-xs"
-                  onClick={handleMarkAllRead}
-                  disabled={items.length === 0}
+                  onClick={() => void handleMarkAllRead()}
+                  disabled={items.length === 0 || unreadCount === 0}
                 >
                   <CheckCheck className="h-3.5 w-3.5" strokeWidth={2} />
                   <span>全部已读</span>
@@ -274,7 +301,7 @@ export default function NotificationsPage() {
                   key={item.id}
                   className="ntf-item"
                   data-read={item.read}
-                  onClick={() => handleClickItem(item.id)}
+                  onClick={() => void handleClickItem(item.id)}
                 >
                   <span className={`ntf-dot ntf-dot-${item.dotTone}`} />
                   <div className="ntf-body">

@@ -17,17 +17,15 @@ import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/compone
 type SortBy = 'score' | 'name' | 'confidence';
 type ViewMode = 'grid' | 'table';
 
+/** apiFetch 已解包后端 data 字段 */
 interface DashboardOverview {
-  ok?: boolean;
-  data?: {
-    today?: {
-      collection_runs?: { total?: number; success?: number; failed?: number };
-      new_projects?: number;
-      new_farm_projects?: number;
-    };
-    discovery?: { pending_count?: number; today_new?: number; total?: number };
-    shadow?: { saved_today?: number; label_counts?: Record<string, number> };
+  today?: {
+    collection_runs?: { total?: number; success?: number; failed?: number };
+    new_projects?: number;
+    new_farm_projects?: number;
   };
+  discovery?: { pending_count?: number; today_new?: number; total?: number };
+  shadow?: { saved_today?: number; label_counts?: Record<string, number> };
 }
 
 export default function DashboardPage() {
@@ -79,10 +77,10 @@ function DashboardContent() {
   const truncated = data?.truncated ?? false;
 
   // 「今日流水线」真实聚合数据（发现队列 / 影子引擎 / 采集运行）
-  const [overview, setOverview] = useState<DashboardOverview['data'] | null>(null);
+  const [overview, setOverview] = useState<DashboardOverview | null>(null);
   useEffect(() => {
     apiFetch<DashboardOverview>('/dashboard/overview')
-      .then((res) => setOverview(res?.data ?? null))
+      .then((res) => setOverview(res ?? null))
       .catch(() => setOverview(null));
   }, [loading]);
 
