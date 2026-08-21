@@ -1,8 +1,16 @@
 # 上线部署检查报告
 
+> ⚠️ **本报告已过期（2026-08-15），结论不再有效。**
+> 2026-08-20 独立复核发现 4 个 P0 阻断项（详见
+> [`../CODE_REVIEW_REPORT.md`](../CODE_REVIEW_REPORT.md)），本文件「检查方式：
+> 逐项实际执行验证」与实际不符。请以
+> [`../GO_LIVE_AUDIT_REPORT.md`](../GO_LIVE_AUDIT_REPORT.md) 为准。
+> 当前实测基线：**2452 passed, 4 skipped, 0 failed**，覆盖率 87.66%。
+> 保留本文件仅作历史归档。
+
 > 检查日期：2026-08-15
 > 适用版本：v0.1.0（V2 全部 14 项任务完成）
-> 测试基线：2428 passed, 4 skipped, 0 failed
+> 测试基线：~~2428 passed, 4 skipped, 0 failed~~（未经验证，见上）
 > 检查方式：逐项实际执行验证
 
 ---

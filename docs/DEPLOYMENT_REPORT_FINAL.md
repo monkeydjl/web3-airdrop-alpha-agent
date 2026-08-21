@@ -1,8 +1,18 @@
 # 最终上线部署报告
 
+> ⚠️ **本报告已过期（2026-08-17），结论不再有效。**
+> 2026-08-20 独立复核发现 4 个 P0 阻断项：`/settings/config` 明文泄露 LLM API Key
+> （零凭证可窃取）、按文档启动容器必然 CrashLoop、两个整页虚构数据、测试实为
+> 1 failed 且 CI 三门全红（ruff 99 errors / format 31 文件 / mypy 7 errors）。
+> 本文件中「全绿 / 0 失败 / 可签收」等表述均**未经真实验证**。
+> 请以 [`../GO_LIVE_AUDIT_REPORT.md`](../GO_LIVE_AUDIT_REPORT.md) 与
+> [`../CODE_REVIEW_REPORT.md`](../CODE_REVIEW_REPORT.md) 为准（含实跑证据）。
+> 当前实测基线：**2452 passed, 4 skipped, 0 failed**，覆盖率 87.66%。
+> 保留本文件仅作历史归档。
+
 > 生成日期：2026-08-17
 > 系统版本：v0.1.0（V2 全部 14 项任务完成）
-> 测试基线：2428 passed, 4 skipped, 0 failed
+> 测试基线：~~2428 passed, 4 skipped, 0 failed~~（未经验证，见上）
 > 报告类型：最终签收报告（Final Go-Live Sign-off）
 
 ---

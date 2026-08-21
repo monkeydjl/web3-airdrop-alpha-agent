@@ -8,6 +8,32 @@
 
 ## [Unreleased]
 
+### Security — 上线复核 P0 修复（2026-08-20）
+
+- **修复 `/api/v1/settings/config` 明文泄露 LLM API Key**（严重）：该端点直接返回 `settings.llm_providers`，其中含 `api_key` 原文。配合公开的 `POST /api/v1/auth/anonymous`（任何人可领匿名 token），构成**零凭证窃取 OpenAI/DeepSeek 密钥**的完整链路（已实测复现）。现改为只返回 `has_api_key` 布尔值，与 `/llm/status` 的脱敏口径一致
+- **`/api/v1/settings` 收入管理员权限**（`ADMIN_ONLY_PREFIXES`）：运行时配置快照含 CORS 白名单、DB 后端、全部阈值与 cron，属运维信息，不应对匿名角色开放。修复后匿名 token 访问返回 403，管理员 200
+- **移除 `NEXT_PUBLIC_API_KEY` 客户端兜底**（`frontend-next/lib/api.ts`）：`NEXT_PUBLIC_*` 会被内联进浏览器 bundle，任何访客都能在 DevTools 读到管理员密钥。鉴权统一由服务端 `proxy.ts` 注入，密钥不出服务端
+- **生产环境 CORS 增加 localhost 校验**：`CORS_ORIGINS` 含 `localhost`/`127.0.0.1` 时拒绝启动，避免生产忘配导致真实前端域名被全部挡掉（表现为"上线后所有接口跨域失败"）
+
+### Fixed — 上线复核 P0/P1 修复（2026-08-20）
+
+- **修复容器按官方文档启动必然 CrashLoop**（阻断）：`docker-compose.yml` 的 `environment:` 白名单未透传 `AUTH_TOKEN_SECRET`，而镜像内无 `.env`（被 `.dockerignore` 排除）、也没有 `env_file:`；`APP_ENV` 默认为 `production` 时生产自检强制要求该值 → `docker compose up -d --build` 100% 起不来。现补 `env_file: [.env]`，与 `docker-compose.prod.yml` 对齐。已用真实容器验证：修复前拒绝启动，修复后 `Up (healthy)` 且 `/health` 返回 healthy
+- **修复两层缓存 TTL 边界判定**（`app/utils/fetcher.py`）：内存与磁盘层都用 `time.time() - ts > ttl`，`ttl=0`（语义为"不缓存"）时因 `0 > 0` 为 False 而返回本该过期的数据。Windows 时钟分辨率约 15.6ms，实测 20 次里 14 次命中脏数据。改为 `>=`
+- **移除 `/collections` 整页虚构数据**：原页面零 API 调用，展示 9 个不存在的项目（Nova Protocol / Poly Oracle 等）配虚构评分与「官方确认 Q3 空投」类假情报，对空投决策系统属误导性金融信息。现接入既有但从未被前端使用的 `GET/DELETE /api/v1/watchlist`，取消收藏为真实写入
+- **移除 `/archive` 整页虚构数据**：原页面展示虚构归档记录、「命中率 99.2%」、「已归档 38.6 GB」，且所有开关为 `onChange={() => {}}`。现只展示 `/settings/config` 里真实的保留期配置，并明确标注「暂无运行历史接口」
+- **移除 `/settings` 假保存按钮**：`handleSave` 只弹「配置已保存」toast 而不写任何东西，旁边却写着「修改将在保存后写入 .env 并热加载」，自相矛盾。整页改为明确的只读快照（标题标注「只读」，输入框改文本展示，开关 `disabled`），删除保存按钮
+- **移除 `/ops` 假调度块与假配额**：`SCHEDULER_JOBS` 写死 4 个后端根本不存在的 job 及其「成功 · 182 条」等执行结果，开关空操作、「立即执行」无 onClick；`SOURCE_QUOTAS` 写死各源配额用量。现改为展示 `/settings/config` 的真实调度配置，配额改用后端真实的 `api_calls_today`
+- **移除项目详情页恒为「排名第 1」**：`const rank = 1` 写死，任何项目都显示第 1 名
+- **采集源缺凭证时启动告警**：`GITHUB_ENABLED=true` 但 `GITHUB_TOKEN` 为空时，GitHub 源静默不跑（`is_enabled()` 返回 False），而 execution 维度占 13% 权重会永久缺失。现在启动日志显式 warning
+- **`dashboard.py` 影子块异常不再静默 `pass`**：改记 debug 日志，避免真实 SQL/schema 故障被吞掉、面板恒显 0 而无从排查
+
+### Changed — 工程门禁与配置一致性（2026-08-20）
+
+- **CI 三道门修复至全绿**：`ruff check` 由 99 errors → 0（62 项自动修复，其余逐条判断）；`ruff format` 由 31 文件待重排 → 全部合规；`mypy app` 由 7 errors → 0
+- **`sqlite3.Row` 的 SIM118 加豁免**：`"col" in row.keys()` 是列存在性检查的唯一正确写法（`in row` 检查的是**值**），照 ruff 建议改会让所有可选列静默变 None——已在 `pyproject.toml` 注明原因
+- **统一两份 `pyproject.toml` 的口径**：`backend/pyproject.toml` 的 version 1.0.0→0.1.0、requires-python >=3.10→>=3.11、mypy python_version 3.13→3.12（对齐 CI 与 Dockerfile 的 3.12），并补上此前缺失的 `--cov-fail-under=80`（pytest 从 `backend/` 运行时用的正是这份配置，等于本地跑测试完全不校验覆盖率）
+- **`.env.example` 补关键提示**：`AUTH_TOKEN_SECRET` 标注生产必填（为空则容器 CrashLoop）+ 生成命令；`CORS_ORIGINS` 标注生产必须改真实域名
+
 ### Added — Portfolio/Settings 真实化 + middleware 迁移（2026-07-26）
 
 - **Portfolio 页接入真实 API**：去掉全部 mock 数据，改为读取 `GET /interactions/summary` + `GET /interactions`；KPI、校准矩阵、分布、记录表全部真实数据

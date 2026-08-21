@@ -1,8 +1,15 @@
 # 上线部署检查清单
 
-> 生成日期：2026-08-15
+> 生成日期：2026-08-15（测试基线与上线前置项于 2026-08-20 复核更新）
 > 适用版本：v0.1.0（V2 全部 14 项任务完成）
-> 测试基线：2428 passed, 4 skipped, 0 failed
+> 测试基线：2452 passed, 4 skipped, 0 failed，覆盖率 87.66%（2026-08-20 实测）
+>
+> ⚠️ **上线前必读**：2026-08-20 复核发现并修复了 4 个 P0 阻断项（含一条零凭证
+> 窃取 LLM API Key 的链路、容器按本文档命令启动必然 CrashLoop）。详见
+> [`CODE_REVIEW_REPORT.md`](../CODE_REVIEW_REPORT.md) 与
+> [`GO_LIVE_AUDIT_REPORT.md`](../GO_LIVE_AUDIT_REPORT.md)。
+> 本文档 §1 的环境变量清单已补充两项**生产强制**要求：
+> `AUTH_TOKEN_SECRET` 必须透传进容器；`CORS_ORIGINS` 不得含 localhost。
 
 ---
 
@@ -25,13 +32,19 @@
   # 生成方法
   python -c "import secrets; print(secrets.token_urlsafe(32))"
   ```
-- [ ] `AUTH_TOKEN_SECRET` 已设置固定值（不设则匿名 token 每次重启失效）
+- [ ] `AUTH_TOKEN_SECRET` 已设置固定值 —— **生产为空会直接拒绝启动**
   ```bash
   python -c "import secrets; print(secrets.token_urlsafe(48))"
   ```
+- [ ] **确认该值能传进容器**：`docker-compose.yml` 已通过 `env_file: [.env]` 读取。
+      若改用自定义 compose，务必确认 `AUTH_TOKEN_SECRET` 在容器内可见——
+      镜像不含 `.env`（被 `.dockerignore` 排除），漏传会 CrashLoop 且无限重启
 - [ ] `DEBUG=false`
-- [ ] `CORS_ORIGINS` 已设置为实际前端域名（非 `*`）
+- [ ] `CORS_ORIGINS` 已设置为实际前端域名 —— **含 `localhost` / `127.0.0.1` 会拒绝启动**
+      （默认值就是 localhost，忘改会让真实前端全部跨域失败）
 - [ ] `CORS_CREDENTIALS=true` 时 `CORS_ORIGINS` 不含 `*`
+- [ ] 建议 `SEED_FALLBACK_ENABLED=false`：否则采集全挂时会用 8 个内置种子项目
+      填充评分结果（标记为 `source='seed'`，但会计入 Dashboard 汇总）
 
 ### 2. 数据库
 
