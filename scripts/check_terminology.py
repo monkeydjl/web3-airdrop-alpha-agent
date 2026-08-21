@@ -13,9 +13,20 @@ docs/GLOSSARY.md §2）：
 注意：「评分决策引擎」不含子串「评分引擎」，故朴素匹配不会误伤正确写法。
 「规则引擎」是合法术语（ADR-001 定义的默认打分路径），不在禁用列表。
 
+## 行级豁免
+
+有些行**必须**写出禁用术语才能表达意思，主要两类：
+
+1. **定义规则本身的文档**（CLAUDE.md 里"拦截「评分引擎 / 评分大脑」"那句）
+2. **引用历史记录**（会话记忆里引用的旧 git commit message，改了就是篡改记录）
+
+这类行在行尾加 `terminology-ok` 标记即可豁免（Markdown 里用 HTML 注释、
+代码里用普通注释）。**标记是逐行的、显式的、可 grep 审计的** ——
+不做整文件豁免，否则真正的术语回退会藏在被豁免的文件里。
+
 用法：
   python scripts/check_terminology.py [file ...]   # pre-commit 传入暂存文件
-  python scripts/check_terminology.py --all        # 全仓扫描（CI 可用）
+  python scripts/check_terminology.py --all        # 全仓扫描（CI 用）
 
 退出码：0 = 通过；1 = 发现禁用术语。
 """
@@ -24,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -34,6 +46,9 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"scoring engine", re.IGNORECASE), "Scoring Decision Engine"),
 ]
 
+# 行级豁免标记（见模块文档字符串）
+ALLOW_MARK = "terminology-ok"
+
 # 只检查这些扩展名的文本文件
 SCAN_EXTS = {".md", ".py", ".html", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".txt"}
 
@@ -42,9 +57,21 @@ EXEMPT_BASENAMES = {"check_terminology.py"}
 
 
 def iter_tracked_files() -> list[str]:
-    """--all 模式：列出 git 跟踪的待检文件。"""
+    """--all 模式：列出 git 跟踪的待检文件。
+
+    用 shutil.which 解析 git 全路径，避免依赖 PATH 查找顺序（ruff S607）。
+    """
+    git = shutil.which("git")
+    if git is None:
+        print("[check_terminology] 找不到 git，退回空列表", file=sys.stderr)
+        return []
     out = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+        [git, "ls-files"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         print("[check_terminology] git ls-files 失败，退回空列表", file=sys.stderr)
@@ -68,6 +95,8 @@ def check_file(path: str) -> list[str]:
 
     violations: list[str] = []
     for lineno, line in enumerate(lines, start=1):
+        if ALLOW_MARK in line:
+            continue  # 行级显式豁免（见模块文档字符串）
         for pattern, suggestion in FORBIDDEN:
             if pattern.search(line):
                 violations.append(
@@ -95,6 +124,7 @@ def main(argv: list[str]) -> int:
             "\n约定：指代整个评分子系统用「评分决策引擎 / Scoring Decision Engine」；"
             "「规则引擎」仅指 LLM 关闭时的默认打分路径（CLAUDE.md §1 / CONVENTIONS.md §3.5）。"
         )
+        print(f"若该行确实必须写出禁用术语（定义规则本身、引用历史记录），在行尾加 {ALLOW_MARK} 标记。")
         return 1
     return 0
 

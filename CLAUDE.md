@@ -17,7 +17,9 @@
 
 术语首次出现于新文档时，锚点链接到 `[GLOSSARY §2](docs/GLOSSARY.md)`。
 
-**强制检查**：pre-commit 钩子 `check-terminology`（`scripts/check_terminology.py`）会在提交时拦截「评分引擎 / 评分大脑 / scoring engine」等回退写法；全仓自检可手动跑 `python scripts/check_terminology.py --all`。
+**强制检查**：pre-commit 钩子 `check-terminology`（`scripts/check_terminology.py`）会在提交时拦截「评分引擎 / 评分大脑 / scoring engine」等回退写法；全仓自检可手动跑 `python scripts/check_terminology.py --all`。<!-- terminology-ok: 本行在定义禁用词清单本身 -->
+
+**行级豁免**：若某行确实必须写出禁用术语（定义规则本身、或引用不该篡改的历史 commit message），在行尾加 `terminology-ok` 标记。豁免是**逐行显式**的，可用 `grep -rn terminology-ok` 审计 —— 不做整文件豁免，否则真正的术语回退会藏在被豁免的文件里。
 
 ## 2. 文档与代码同步
 

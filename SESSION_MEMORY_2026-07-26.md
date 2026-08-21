@@ -5,7 +5,7 @@
 1. **通读整个项目** — 从 README、AGENTS.md、CONVENTIONS.md、CLAUDE.md 到全部后端源码（agents / collectors / opportunity / routers / services / db / pipeline_run / config / auth / scheduler / repository）、前端 12 个页面 + 组件库、文档目录 38 份文件、测试套件、Docker 配置、可观测性配置。
 2. **分批提交 224 个工作区变更** — 按 7 个逻辑单元拆分提交，工作区清零：
    - `0966179` chore: 删除旧 HTML 原型 airdrop-alpha-console/ + 旧顶层 tests/ + 15 份过期文档（123 文件，-66k 行）
-   - `3c97272` fix(backend): 系统审查修复 — 流水线持久化 / 采集链路 6 项信号 0% 命中 / 安全加固（500 不回显异常、structlog 脱敏、APP_ENV 归一化、API_KEY≥32、限流接入）/ 评分引擎回归 ADR-014（33 文件）
+   - `3c97272` fix(backend): 系统审查修复 — 流水线持久化 / 采集链路 6 项信号 0% 命中 / 安全加固（500 不回显异常、structlog 脱敏、APP_ENV 归一化、API_KEY≥32、限流接入）/ 评分引擎回归 ADR-014（33 文件）<!-- terminology-ok: 原样引用历史 commit message，不得篡改 -->
    - `56990ed` feat(backend): V2 新模块 — UnifiedScheduler / HeatSignalProvider / cache / calibration / LLM 多接口故障转移 / OTel tracing / V2 Repository / seed 兜底 / 4 个新路由 / Alembic V2 迁移（15 文件，+3364 行）
    - `25644c2` test(backend): V2 测试套件 — 15 个新测试文件覆盖全部新模块（+4747 行）
    - `901a36f` fix(frontend): 前端审查修复 — 采集按钮读嵌套字段 / Insights 热度 NaN / Nav 三态探针 / 详情页代次守卫 / BOM 修复（12 文件）
