@@ -9,6 +9,7 @@ import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSourceApi, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
+import { ActionQueue } from '@/components/ActionQueue';
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { ProjectCard } from '@/components/ProjectCard';
 import { TopBar } from '@/components/TopBar';
@@ -237,6 +238,9 @@ function DashboardContent() {
           </ul>
         </div>
       </div>
+
+      {/* 今日行动：把 FARM/WATCH 的参与清单跨项目聚合成「今天做这几件事」 */}
+      <ActionQueue limit={5} onDone={showToast} />
 
       {/* Toolbar */}
       <div className="dash-card p-3">

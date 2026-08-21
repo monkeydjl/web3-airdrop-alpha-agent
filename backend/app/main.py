@@ -471,6 +471,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 注册路由 ────────────────────────────────
     from app.routers.v1 import (
+        action_queue,
         ai_brief,
         auth,
         collections,
@@ -505,6 +506,7 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(auth.router, prefix="/api/v1", tags=["v1"])
     app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(action_queue.router, prefix="/api/v1", tags=["v1"])
     app.include_router(funding.router, prefix="/api/v1", tags=["v1"])
     app.include_router(opportunity.router, prefix="/api/v1", tags=["v1"])
     app.include_router(llm.router, prefix="/api/v1", tags=["v1"])
