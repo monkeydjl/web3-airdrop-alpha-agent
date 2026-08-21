@@ -17,6 +17,13 @@ services:
       - ./data:/app/data
       # 持久化日志
       - ./logs:/app/logs
+    # 镜像里没有 .env（.dockerignore 排除），所以必须由 compose 把它读进来。
+    # 只靠下面的 environment: 白名单是不够的——漏一个生产必需项（历史上先漏
+    # API_KEY、后漏 AUTH_TOKEN_SECRET）容器就直接 CrashLoop。env_file 兜住全部
+    # 配置，environment: 里的显式项仍然优先级更高（用于设默认值/改名）。
+    # 与 docker-compose.prod.yml 保持一致。
+    env_file:
+      - .env
     environment:
       # 应用配置
       - APP_ENV=${APP_ENV:-production}

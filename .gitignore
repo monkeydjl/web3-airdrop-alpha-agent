@@ -101,6 +101,11 @@ log/
 data/cache/
 data/tmp/
 data/processed/
+# pytest 临时工作目录（测试 fixture 生成，偶发文件锁会干扰 git/rg 扫描）
+data/tmp2/
+data/pytest_tmp/
+.pytest_workdir/
+backend/.pytest_tmp/
 # fetcher 磁盘缓存（§10.1）
 backend/cache/
 backups/
