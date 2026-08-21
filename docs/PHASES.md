@@ -112,8 +112,10 @@ mypy app                      → no issues in 114 source files
 
 ## 未决事项（跨阶段）
 
-- **13 个本地 commit 未推远程**
-- `SEED_FALLBACK_ENABLED` 生产建议设 `false`（默认 `true`）
+- **30 个本地 commit 未推远程**（实测 `git rev-list --count origin/master..HEAD`）
+- **文档编码损坏 634 处待人工判定**（合计 1116 处，已修复 482 处）。
+  详见 `docs/ENCODING_REPAIR.md`。`DATA_SOURCE_STRATEGY.md` 无干净历史底本，
+  其 458 处只能靠受约束选择题逐个定。已挂 pre-commit 钩子防复发- `SEED_FALLBACK_ENABLED` 生产建议设 `false`（默认 `true`）
 - ~~Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）~~ →
   **已锁定**（2026-08-21）：拆成三个文件，运行时 13 个 + 开发 7 个全部精确 `==`，
   逐包与本地跑通 2500 测试的环境核对一致，并在干净 venv 里实测装完能启动。

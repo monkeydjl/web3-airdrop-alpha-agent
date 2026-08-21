@@ -62,3 +62,14 @@ repos:
         types: [file]
         files: \.(md|py|html|js|ts|tsx|json|yaml|yml|txt)$
         pass_filenames: true
+
+      # 拦截编码损坏：仓库里已有 3 个文档因非 UTF-8 写回而丢字（合计 1116 处，
+      # 其中一个文件所有历史版本都已损坏、无法恢复）。这类损坏是静默的 ——
+      # 文件照样能提交，只是中文字符变成 '?'。这道检查不让它再发生一次。
+      - id: check-encoding
+        name: UTF-8 编码检查（防止中文丢字）
+        entry: python scripts/check_encoding.py
+        language: system
+        types: [file]
+        files: \.(md|py|ts|tsx|js|jsx|json|yml|yaml|txt|ps1|bat|css|sql|toml|cfg|ini)$
+        pass_filenames: true
