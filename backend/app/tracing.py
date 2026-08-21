@@ -150,7 +150,7 @@ def instrument_fastapi_app(app) -> None:
             excluded_urls=",".join(_EXCLUDED_PATHS),
         )
         logger.info("tracing.fastapi_instrumented")
-    except ImportError as exc:  # pragma: no cover - deps always installed
+    except ImportError as exc:  # pragma: no cover - OTel deps are optional, see requirements-otel.txt
         logger.warning("tracing.fastapi_instrumentation_unavailable", missing=str(exc))
 
 
@@ -173,7 +173,7 @@ def _instrument() -> None:
         # SQLite (dev) and PostgreSQL (prod) query spans.
         SQLite3Instrumentor().instrument()
         PsycopgInstrumentor().instrument()
-    except ImportError as exc:  # pragma: no cover - deps always installed
+    except ImportError as exc:  # pragma: no cover - OTel deps are optional, see requirements-otel.txt
         logger.warning("tracing.instrumentation_partial", missing=str(exc))
 
 
