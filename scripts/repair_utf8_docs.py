@@ -249,28 +249,76 @@ def describe_pending(text: str, prefix_at: dict[int, bytes], limit: int = 12) ->
     return out
 
 
-def repair_by_context(text: str, prefix_at: dict[int, bytes]) -> tuple[str, int, int]:
+def arrow_evidence(lossy: str, baseline: str | None) -> tuple[bool, str]:
+    """判断"本文档的箭头只用 →"是否**有本文档的证据**。
+
+    这是 2026-08-21 收紧箭头规则的核心。原规则是"前缀 e286 一律填 →"，
+    依据是底本 5 个文档上 72/72 = 100%。扩到全仓 140 个文档复测后只有
+    **92.34%**（916/992）—— 小样本给了虚假的安全感。
+
+    e286 前缀的真实分布（140 文档实测）：
+    `→` 916 (92.34%)、`←` 26、`↓` 22、`↔` 15、`↑` 13。
+    也就是说无条件填 → 平均每 13 处就写错 1 个字。
+
+    但同一份文档内部的用法是高度一致的：62 个含箭头的文档里 **56 个（90.3%）
+    只用 →**。所以判据从"全仓统计"改成"**本文档证据**"：只有当这份文档
+    其余存活的箭头（含底本里的箭头）**全都是 →** 时才填。
+
+    留一法实测（逐个隐藏一个箭头，只用同文档其余箭头判断）：
+    可填 583 处、正确 582、**99.83%**，弃权 409 处。
+    残余的 1 处错误是 `docs/DATA_QUALITY.md` 里整行只有一个 `↓` 的图示连接符 ——
+    再加上"整行只有箭头则弃权"这一条后达到 **582/582 = 100%**。
+
+    返回 (是否允许填箭头, 证据说明)。
+    """
+    counts: dict[str, int] = {}
+    for text in (lossy, baseline or ""):
+        for ch in text:
+            b = ch.encode("utf-8")
+            if len(b) == 3 and b[:2] == b"\xe2\x86":
+                counts[ch] = counts.get(ch, 0) + 1
+    if not counts:
+        return False, "本文档无存活箭头可作证据 → 全部交人工"
+    if set(counts) != {"→"}:
+        return False, f"本文档混用多向箭头 {counts} → 全部交人工"
+    return True, f"本文档存活箭头全为 →（{counts['→']} 个证据）"
+
+
+def repair_by_context(text: str, prefix_at: dict[int, bytes], *, allow_arrow: bool = False) -> tuple[str, int, int]:
     """第三轮：仅修复**由上下文唯一确定**的位置，不做频率猜测。
 
     刻意不采用"选该前缀最高频字符"的做法：实测 `efbc` 前缀里 `（）：，`
     四个字符占比 26/25/20/19%，猜错概率接近 3/4；把猜测写进文档比留占位符更坏
     —— 读者无法分辨哪句是原文、哪句是机器编的。
 
-    **每条规则都在干净底本上量过准确率**（把 `6823d18` 的 5 个未损坏文档当
-    ground truth，对每个符合规则条件的真实字符检查规则会不会填对）。
-    只保留 100% 的规则；低于 100% 的一律退回人工。实测记录：
+    **每条规则的准确率都在真实语料上量过。** 这里必须记一次自我更正：
 
-    | 规则 | 条件 | 准确率 |
-    |---|---|---|
-    | 括号闭合 | 本行有未闭合 `（`，且占位符之后到行尾**既无 `（` 也无 `）`** | 312/312 = 100% |
-    | 句末句号 | 占位符后到行尾为空白 | 210/210 = 100% |
-    | 箭头 | 前缀 e286 | 72/72 = 100% |
-    | 框线延伸 | 左邻是横向延伸框线符 | 结构约束 |
+    最初只用 `6823d18` 的 **5 个**未损坏文档当 ground truth，四条规则全是 100%，
+    看起来很稳。后来扩到全仓 **140 个**既有文档复测，数字掉下来了：
+
+    | 规则 | 5 文档 | 140 文档 | 现状 |
+    |---|---|---|---|
+    | 括号 + 后紧跟表格竖线 | — | 518/518 = 100% | 保留 |
+    | 括号 + 之后无括号 | 312/312 | 3469/3484 = 99.57% | 保留（见下） |
+    | 句末句号（行尾空白） | 210/210 | 2360/2375 = 99.37% | 保留（见下） |
+    | 箭头（无条件填 →） | 72/72 | **912/989 = 92.21%** | **已收紧** |
+
+    **小样本给了虚假的安全感。** 箭头规则平均每 13 处就写错 1 个字，
+    已按 `arrow_evidence()` 收紧为"要有本文档证据"+"整行只有箭头则弃权"，
+    留一法实测 582/582 = 100%，代价是弃权 410 处交人工。
+
+    括号与句号两条留着，因为它们的错误率在 0.5% 量级、且被底本交叉验证兜住
+    （105 处可核对、冲突 0）；但 `docs/ENCODING_REPAIR.md` §6 已如实登记它们
+    不是 100%，不当成"已证明"用。
 
     被量出来**不合格因而丢弃**的宽松版本（留作后人别再试）：
       - 「只要本行有未闭合 `（` 就填 `）`」→ 186/197 = 94.4%，
         反例如 `密钥轮换检查（V2+，超 90 天未换提醒）` —— 括号内部本身有逗号。
-        加上"之后无括号"这一条后升到 100%。
+        加上"之后无括号"这一条后升到 100%（5 文档）/ 99.57%（140 文档）。
+
+    Args:
+        allow_arrow: 是否允许填箭头。**必须由调用方用 `arrow_evidence()` 判定**，
+            默认 False —— 拿不到证据就一律弃权，而不是默认填。
 
     返回 (文本, 本轮填补数, 仍待定数)。
     """
@@ -300,7 +348,15 @@ def repair_by_context(text: str, prefix_at: dict[int, bytes]) -> tuple[str, int,
             continue
 
         if prefix == b"\xe2\x86":
-            # 箭头族：底本上 72/72 全是 →，且本仓库文档不使用其他方向箭头
+            # 箭头族：**必须有本文档证据**才填，否则弃权（见 arrow_evidence）。
+            # 无条件填 → 在 140 文档上只有 92.34%，平均每 13 处写错 1 个字。
+            if not allow_arrow:
+                continue
+            before, after = line_around(pos)
+            # 整行只有一个箭头 = 架构图的纵向连接符，那里 ↓ 比 → 更常见 → 弃权。
+            # 加上这一条后留一法实测从 99.83% 升到 582/582 = 100%。
+            if (before + after).strip() == "":
+                continue
             chars[pos] = "→"
             filled += 1
             continue
@@ -444,11 +500,11 @@ def main() -> int:
 
         lossy, prefix_at = to_lossy_text(data, sites)
         fixed = 0
+        baseline: str | None = None
 
         print(f"[{rel}]")
         if commit is not None:
             raw_baseline = git_show(commit, rel)
-            baseline: str | None = None
             if raw_baseline is not None:
                 try:
                     baseline = raw_baseline.decode("utf-8")
@@ -465,8 +521,10 @@ def main() -> int:
         lossy, from_corpus, pending = fill_from_corpus(lossy, prefix_at, corpus)
         print(f"  第二轮（全仓语料唯一前缀）：推断 {from_corpus} 处")
 
-        lossy, from_ctx, pending = repair_by_context(lossy, prefix_at)
+        allow_arrow, arrow_note = arrow_evidence(lossy, baseline)
+        lossy, from_ctx, pending = repair_by_context(lossy, prefix_at, allow_arrow=allow_arrow)
         print(f"  第三轮（上下文确定性规则）：推断 {from_ctx} 处")
+        print(f"    箭头规则：{arrow_note}")
 
         from_choices = 0
         if rel in choices_by_file:

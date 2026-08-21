@@ -274,6 +274,75 @@ def test_context_rule_skips_mid_sentence_enumeration(repair):
     assert pending == 1
 
 
+# ── 箭头规则的收紧（2026-08-21 自我更正）─────────────────────
+#
+# 原规则"前缀 e286 一律填 →"在 5 个文档上是 72/72 = 100%，扩到全仓 140 个
+# 文档后只有 92.34%（916/992）—— 平均每 13 处写错 1 个字。
+# 收紧后要求"本文档存活箭头全为 →"且"整行不只有箭头"，留一法实测 582/582。
+
+
+def test_arrow_needs_evidence_and_defaults_to_abstain(repair):
+    """没有 allow_arrow 就绝不填箭头 —— 默认弃权，不是默认填。"""
+    text = f"采集{repair.PLACEHOLDER}入库\n"
+    prefix_at = {text.index(repair.PLACEHOLDER): b"\xe2\x86"}
+    _out, filled, pending = repair.repair_by_context(text, prefix_at)
+    assert (filled, pending) == (0, 1)
+
+
+def test_arrow_filled_when_evidence_allows(repair):
+    text = f"采集{repair.PLACEHOLDER}入库\n"
+    prefix_at = {text.index(repair.PLACEHOLDER): b"\xe2\x86"}
+    out, filled, _ = repair.repair_by_context(text, prefix_at, allow_arrow=True)
+    assert filled == 1
+    assert out.startswith("采集→入库")
+
+
+def test_arrow_abstains_on_diagram_connector_line(repair):
+    """整行只有一个箭头 = 架构图纵向连接符，那里 ↓ 比 → 常见 → 弃权。
+
+    这一条是留一法里唯一的残余错误逼出来的（docs/DATA_QUALITY.md 的独行 ↓），
+    加上后从 99.83% 升到 100%。
+    """
+    text = f"上游\n{repair.PLACEHOLDER}\n下游\n"
+    prefix_at = {text.index(repair.PLACEHOLDER): b"\xe2\x86"}
+    _out, filled, pending = repair.repair_by_context(text, prefix_at, allow_arrow=True)
+    assert (filled, pending) == (0, 1), "独行箭头即便 allow_arrow 也必须弃权"
+
+
+def test_arrow_evidence_requires_some_surviving_arrow(repair):
+    allowed, note = repair.arrow_evidence("完全没有箭头的正文\n", None)
+    assert allowed is False
+    assert "无存活箭头" in note
+
+
+def test_arrow_evidence_rejects_mixed_direction_document(repair):
+    """文档自己混用多向箭头时不得填 —— 这正是 92% 那批错误的来源。"""
+    allowed, note = repair.arrow_evidence("A→B 然后 C←D\n", None)
+    assert allowed is False
+    assert "混用" in note
+
+
+def test_arrow_evidence_accepts_pure_rightward_document(repair):
+    allowed, note = repair.arrow_evidence("A→B\nC→D\n", None)
+    assert allowed is True
+    assert "2 个证据" in note
+
+
+def test_arrow_evidence_counts_baseline_as_evidence(repair):
+    """底本里的箭头同样算证据 —— 损坏文档自己可能一个都没剩。
+
+    实测三个损坏文档的存活箭头都是 0 个，证据全部来自底本；
+    无底本的 DATA_SOURCE_STRATEGY.md 因此 17 处箭头全部弃权。
+    """
+    allowed, _ = repair.arrow_evidence("正文无箭头\n", "底本里 A→B、C→D\n")
+    assert allowed is True
+
+
+def test_arrow_evidence_baseline_mix_also_blocks(repair):
+    allowed, _ = repair.arrow_evidence("正文无箭头\n", "底本 A→B 但也有 C↓D\n")
+    assert allowed is False
+
+
 # ── 答案合并的越界拒绝 ─────────────────────────────────────
 
 
