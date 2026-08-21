@@ -10,7 +10,6 @@ import {
   Layers,
   Plus,
   RotateCcw,
-  Save,
   Server,
   Shuffle,
   X,
@@ -236,9 +235,6 @@ function SecretInput({ placeholder, value }: { placeholder?: string; value?: str
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState('set-access');
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
-  const [schedulerOn, setSchedulerOn] = useState(true);
-  const [collectionSchedOn, setCollectionSchedOn] = useState(true);
-  const [autoRunOn, setAutoRunOn] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
   const [providers, setProviders] = useState<EditableProvider[]>(DEFAULT_PROVIDERS);
@@ -275,22 +271,12 @@ export default function SettingsPage() {
     loadConfig();
   }, [loadConfig]);
 
-  // runtime config 加载后同步开关初始状态
-  useEffect(() => {
-    if (runtimeConfig?.flags) {
-      setSchedulerOn(runtimeConfig.flags.SCHEDULER_ENABLED ?? true);
-      setCollectionSchedOn(runtimeConfig.flags.COLLECTION_SCHEDULER_ENABLED ?? true);
-      setAutoRunOn(runtimeConfig.flags.COLLECTION_AUTO_RUN_ENABLED ?? false);
-    }
-  }, [runtimeConfig]);
-
   // 从运行时配置回填 flags / sources
   const runtimeFlags = runtimeConfig?.flags ?? {};
   const flags = FLAGS.map((f) => ({
     ...f,
     enabled: runtimeFlags[f.env] ?? f.enabled,
   }));
-  const setFlags = useState(FLAGS)[1]; // keep setter signature for Switch
 
   const runtimeSources = runtimeConfig?.sources ?? {};
   const sources = SOURCES.map((s) => {
@@ -312,11 +298,12 @@ export default function SettingsPage() {
       }),
     };
   });
-  const setSources = useState(SOURCES)[1];
 
-  const schedulerEnabled = runtimeConfig?.flags?.SCHEDULER_ENABLED ?? true;
-  const collectionSchedEnabled = runtimeConfig?.flags?.COLLECTION_SCHEDULER_ENABLED ?? true;
-  const autoRunEnabled = runtimeConfig?.flags?.COLLECTION_AUTO_RUN_ENABLED ?? false;
+  // 直接派生自后端运行时配置：本页只读，不再维护会与后端不一致的本地副本
+  const schedulerOn = runtimeConfig?.flags?.SCHEDULER_ENABLED ?? true;
+  const collectionSchedOn = runtimeConfig?.flags?.COLLECTION_SCHEDULER_ENABLED ?? true;
+  const autoRunOn = runtimeConfig?.flags?.COLLECTION_AUTO_RUN_ENABLED ?? false;
+  const schedulerEnabled = schedulerOn;
 
   // 从运行时配置回填权重
   const weightValues = runtimeConfig?.weights ?? {};
@@ -364,10 +351,6 @@ export default function SettingsPage() {
   const enabledFlags = flags.filter((f) => f.enabled).length;
   const weightSum = WEIGHTS_RUNTIME.reduce((s, w) => s + w.value, 0);
 
-  const handleSave = () => {
-    setToast({ message: '配置已保存（演示模式 — 实际写入需编辑 .env 并重启服务）', type: 'info' });
-  };
-
   const handleReset = () => {
     setToast({ message: '已重新加载运行时配置', type: 'success' });
     void loadConfig();
@@ -383,14 +366,10 @@ export default function SettingsPage() {
   return (
     <>
       {toast && <Toast message={toast.message} type={toast.type} />}
-      <TopBar title="系统设置" subtitle="环境变量 · 数据源凭证 · LLM · 权重 · 调度 · 保留 · 功能开关">
+      <TopBar title="系统设置（只读）" subtitle="运行时配置快照 · 修改需编辑 .env 并重启">
         <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={handleReset}>
           <RotateCcw className="h-4 w-4" strokeWidth={2} />
-          <span className="hidden sm:inline">还原默认</span>
-        </button>
-        <button type="button" className="btn-primary inline-flex items-center gap-1.5" onClick={handleSave}>
-          <Save className="h-4 w-4" strokeWidth={2} />
-          <span>保存更改</span>
+          <span className="hidden sm:inline">重新加载</span>
         </button>
       </TopBar>
 
@@ -431,36 +410,48 @@ export default function SettingsPage() {
               <div className="set-group-body">
                 <div className="set-subhead">服务访问</div>
                 <SettingRow label="API Key" env="API_KEY" desc={runtimeConfig?.access?.api_key_set ? "已设置（生产环境已启用鉴权）" : "空 = 无鉴权（本地默认）；生产环境必须 ≥ 32 字符"}>
-                  <SecretInput placeholder={runtimeConfig?.access?.api_key_set ? '已设置（点击修改）' : '未设置（生产环境必须配置）'} />
-                  <button type="button" className="btn-secondary px-2.5 py-1 text-xs">测试连接</button>
+                  <span className="set-readonly-value">
+                    {runtimeConfig?.access?.api_key_set ? '已设置' : '未设置'}
+                  </span>
                 </SettingRow>
                 <SettingRow label="CORS 来源" env="CORS_ORIGINS" desc="逗号分隔；生产环境禁止 * + credentials 组合">
-                  <input type="text" className="set-input" data-mono="true" defaultValue={runtimeConfig?.access?.cors_origins ?? 'http://localhost:3002,http://localhost:8002'} />
+                  {/* 不再回退到 localhost 默认值：后端没给值就显示"未配置"，
+                      否则生产环境 CORS 缺配会被这个假默认值掩盖 */}
+                  <span className="set-readonly-value" data-mono="true">
+                    {runtimeConfig?.access?.cors_origins || '未配置'}
+                  </span>
                 </SettingRow>
                 <SettingRow label="限流阈值" env="RATE_LIMIT_REQUESTS" desc="每窗口最大请求数">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.access?.rate_limit_requests ?? 100)} />
+                  <span className="set-readonly-value">
+                    {runtimeConfig?.access?.rate_limit_requests ?? '—'}
+                  </span>
                   <span className="set-unit">次</span>
                 </SettingRow>
                 <SettingRow label="限流窗口" env="RATE_LIMIT_WINDOW">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.access?.rate_limit_window ?? 60)} />
+                  <span className="set-readonly-value">
+                    {runtimeConfig?.access?.rate_limit_window ?? '—'}
+                  </span>
                   <span className="set-unit">秒</span>
                 </SettingRow>
 
                 <div className="set-subhead">
                   数据源凭证 <span className="set-subhead-note">留空 API Key = 匿名配额，速率受限</span>
                 </div>
-                {sources.map((src, idx) => (
+                {sources.map((src) => (
                   <div className="set-source" key={src.env}>
                     <div className="set-source-head">
                       <div className="set-source-titles">
                         <span className="set-source-name">{src.name}</span>
                         <span className="set-source-tier">{src.tier}</span>
                       </div>
+                      {/* 只读：本页无写入接口。采集源的真正启停在「运维台」，
+                          那里接的是 PATCH /collections/{source_id}（真实生效） */}
                       <div className="set-switch-row">
                         <Switch
                           checked={src.enabled}
-                          onChange={(v) => setSources((prev) => prev.map((s, i) => i === idx ? { ...s, enabled: v } : s))}
-                          label={`启用 ${src.name}`}
+                          onChange={() => {}}
+                          disabled
+                          label={`${src.name} 状态（只读）`}
                         />
                         <span className="set-switch-state">{src.enabled ? '已启用' : '已停用'}</span>
                       </div>
@@ -716,21 +707,22 @@ export default function SettingsPage() {
                 <div className="set-subhead">
                   调度任务 <span className="set-subhead-note">ADR-012 双调度模型</span>
                 </div>
+                {/* 三个调度开关只读：改动需编辑 .env 后重启（后端无写入接口） */}
                 <SettingRow label="分析调度器" env="SCHEDULER_ENABLED" desc="空队列自动触发 /run">
                   <div className="set-switch-row">
-                    <Switch checked={schedulerOn} onChange={setSchedulerOn} label="分析调度器" />
+                    <Switch checked={schedulerOn} onChange={() => {}} disabled label="分析调度器状态（只读）" />
                     <span className="set-switch-state">{schedulerOn ? '已启用' : '已停用'}</span>
                   </div>
                 </SettingRow>
                 <SettingRow label="采集调度器" env="COLLECTION_SCHEDULER_ENABLED" desc="v2.0 各源独立调度">
                   <div className="set-switch-row">
-                    <Switch checked={collectionSchedOn} onChange={setCollectionSchedOn} label="采集调度器" />
+                    <Switch checked={collectionSchedOn} onChange={() => {}} disabled label="采集调度器状态（只读）" />
                     <span className="set-switch-state">{collectionSchedOn ? '已启用' : '已停用'}</span>
                   </div>
                 </SettingRow>
                 <SettingRow label="采集后自动分析" env="COLLECTION_AUTO_RUN_ENABLED" desc="采集成功后立即触发分析队列">
                   <div className="set-switch-row">
-                    <Switch checked={autoRunOn} onChange={setAutoRunOn} label="采集后自动分析" />
+                    <Switch checked={autoRunOn} onChange={() => {}} disabled label="采集后自动分析状态（只读）" />
                     <span className="set-switch-state">{autoRunOn ? '已启用' : '已停用'}</span>
                   </div>
                 </SettingRow>
@@ -783,17 +775,19 @@ export default function SettingsPage() {
               </div>
               <div className="set-group-body">
                 <div className="set-flag-grid">
-                  {flags.map((flag, idx) => (
+                  {flags.map((flag) => (
                     <div className="set-flag" key={flag.env}>
                       <div className="set-flag-texts">
                         <span className="set-flag-name">{flag.name}</span>
                         <span className="set-flag-env">{flag.env}</span>
                         <span className="set-flag-desc">{flag.desc}</span>
                       </div>
+                      {/* 只读：功能开关由环境变量决定，重启才生效 */}
                       <Switch
                         checked={flag.enabled}
-                        onChange={(v) => setFlags((prev) => prev.map((f, i) => i === idx ? { ...f, enabled: v } : f))}
-                        label={flag.name}
+                        onChange={() => {}}
+                        disabled
+                        label={`${flag.name} 状态（只读）`}
                       />
                     </div>
                   ))}
@@ -807,20 +801,16 @@ export default function SettingsPage() {
               </div>
             </section>
 
-            {/* 保存栏 */}
+            {/* 说明栏：本页只读，没有写入接口，所以不放"保存"按钮 */}
             <div className="set-savebar">
               <span className="set-savebar-hint">
                 <Info className="h-3.5 w-3.5" strokeWidth={2} />
-                修改将在保存后写入 .env 并热加载；评分权重变更会生成新版本号。
+                本页为运行时配置的**只读**快照。修改请编辑 .env 后重启服务；后端暂无配置写入接口。
               </span>
               <div className="set-savebar-actions">
                 <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={handleReset}>
                   <RotateCcw className="h-4 w-4" strokeWidth={2} />
-                  <span>还原默认</span>
-                </button>
-                <button type="button" className="btn-primary inline-flex items-center gap-1.5" onClick={handleSave}>
-                  <Save className="h-4 w-4" strokeWidth={2} />
-                  <span>保存更改</span>
+                  <span>重新加载</span>
                 </button>
               </div>
             </div>

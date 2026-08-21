@@ -2144,6 +2144,11 @@
 
 .set-unit { font-size: 12px; color: rgb(var(--ink-muted)); white-space: nowrap; }
 
+/* 只读配置值：设置页没有写入接口，用文本展示代替可编辑输入框，
+   避免让用户以为改了就能生效 */
+.set-readonly-value { font-size: 13px; color: rgb(var(--ink)); word-break: break-all; }
+.set-readonly-value[data-mono='true'] { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+
 .set-switch-row { display: flex; align-items: center; gap: 8px; }
 .set-switch-state { font-size: 12px; color: rgb(var(--ink-muted)); }
 

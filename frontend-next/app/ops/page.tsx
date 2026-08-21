@@ -7,7 +7,7 @@ import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, HealthData } from '@/lib/types';
 import { useCallback, useEffect, useState } from 'react';
-import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, History, Plus, UploadCloud } from 'lucide-react';
+import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, UploadCloud } from 'lucide-react';
 
 interface QuarantineItem {
   raw_id: string;
@@ -15,6 +15,29 @@ interface QuarantineItem {
   discovery_score?: number;
   quarantine_reason?: string;
   raw_data?: { name?: string; sector?: string };
+}
+
+/** /settings/config 的 automation 块（真实调度配置） */
+interface AutomationConfig {
+  SCHEDULER_ENABLED?: boolean;
+  COLLECTION_SCHEDULER_ENABLED?: boolean;
+  COLLECTION_AUTO_RUN_ENABLED?: boolean;
+  CRON_EXPRESSION?: string;
+  ANALYSIS_RUN_LIMIT?: number;
+  SCHEDULER_MISFIRE_GRACE_SECONDS?: number;
+}
+
+interface SettingsConfig {
+  automation?: AutomationConfig;
+}
+
+function boolZh(v?: boolean): string {
+  if (v === undefined) return '—';
+  return v ? '已启用' : '已停用';
+}
+
+function numOr(v?: number, suffix = ''): string {
+  return v == null ? '—' : `${v}${suffix}`;
 }
 
 const SOURCE_CRONS: Record<string, string> = {
@@ -31,26 +54,6 @@ const SOURCE_CRONS: Record<string, string> = {
   layer3: '0 11 * * *',
 };
 
-const SOURCE_QUOTAS: Record<string, { used: number; limit: number }> = {
-  defillama: { used: 142, limit: 500 },
-  github: { used: 318, limit: 1000 },
-  coingecko: { used: 96, limit: 400 },
-  cryptorank: { used: 72, limit: 300 },
-  rootdata: { used: 0, limit: 200 },
-  twitter: { used: 284, limit: 500 },
-  twitter_kol: { used: 128, limit: 200 },
-  twitter_keyword: { used: 156, limit: 500 },
-  etherscan: { used: 48, limit: 100 },
-  galxe: { used: 92, limit: 400 },
-  layer3: { used: 34, limit: 200 },
-};
-
-const SCHEDULER_JOBS = [
-  { key: 'job_daily_opportunity', name: '每日机会评分', cron: '0 8 * * *', nextRun: '今天 08:00', lastResult: '成功 · 182 条', enabled: true },
-  { key: 'job_discovery_sweep', name: '发现队列巡检', cron: '*/30 * * * *', nextRun: '12 分钟后', lastResult: '成功 · 24 条', enabled: true },
-  { key: 'job_ai_brief_daily', name: 'AI 简报生成', cron: '30 7 * * *', nextRun: '明天 07:30', lastResult: '超时 · 已重试', enabled: true },
-  { key: 'job_chain_archive', name: '链上快照归档', cron: '0 3 * * 0', nextRun: '周日 03:00', lastResult: '从未运行', enabled: false },
-];
 
 function formatUsd(n?: number | null) {
   if (n == null || Number.isNaN(Number(n))) return '—';
@@ -123,6 +126,7 @@ export default function OpsPage() {
     total_hours?: number;
   } | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [automation, setAutomation] = useState<AutomationConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [partialError, setPartialError] = useState<string[]>([]);
@@ -141,7 +145,7 @@ export default function OpsPage() {
     setError('');
     setPartialError([]);
     try {
-      const [src, q, ix, h] = await Promise.all([
+      const [src, q, ix, h, cfg] = await Promise.all([
         apiFetch<{ sources: CollectionSourceApi[] }>('/collections/sources'),
         apiFetch<{ count: number; items: QuarantineItem[] }>('/quarantine?limit=50').catch(
           (err: unknown) => {
@@ -162,12 +166,18 @@ export default function OpsPage() {
           return null;
         }),
         fetchHealth().catch(() => null),
+        apiFetch<SettingsConfig>('/settings/config').catch((err: unknown) => {
+          setPartialError((prev) => [...prev, '调度配置加载失败']);
+          void err;
+          return null;
+        }),
       ]);
       setSources((src.sources || []).map(normalizeCollectionSource));
       setQuarantine(q.items || []);
       setQCount(typeof q.count === 'number' ? q.count : 0);
       setIxSummary(ix);
       if (h) setHealth(h as HealthData);
+      setAutomation(cfg?.automation ?? null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -377,9 +387,6 @@ export default function OpsPage() {
                 const name = s.source_name || sourceZh(s.source_id);
                 const toggling = busy === `toggle-${s.source_id}`;
                 const cronExpr = SOURCE_CRONS[s.source_id] || '0 8 * * *';
-                const quotaUsed = SOURCE_QUOTAS[s.source_id]?.used ?? 0;
-                const quotaLimit = SOURCE_QUOTAS[s.source_id]?.limit ?? 500;
-                const quotaPct = quotaLimit > 0 ? Math.round((quotaUsed / quotaLimit) * 100) : 0;
                 return (
                   <article
                     key={s.source_id}
@@ -410,12 +417,10 @@ export default function OpsPage() {
                       </span>
                     </div>
                     <div className="ops-source-foot">
-                      <div className="ops-quota">
-                        <span className="font-mono">{quotaUsed} / {quotaLimit}</span>
-                        <span className="ops-quota-bar">
-                          <span className="ops-quota-fill" style={{ width: `${quotaPct}%` }} />
-                        </span>
-                      </div>
+                      {/* 用后端真实的 api_calls_today，不再画写死的配额进度条 */}
+                      <span className="text-[11px] text-ink-faint">
+                        {s.apiCallsToday != null ? `今日调用 ${s.apiCallsToday} 次` : '今日调用 —'}
+                      </span>
                       <button
                         type="button"
                         className="btn-secondary !min-h-8 !px-3 !text-xs"
@@ -596,70 +601,43 @@ export default function OpsPage() {
         </div>
       </section>
 
-      {/* Scheduler */}
+      {/* 调度配置（真实值来自 /settings/config 的 automation 块）。
+          后端没有「调度任务运行历史 / 手动触发单个 job」的接口，所以这里只展示
+          配置事实，不再编造 nextRun / lastResult，也不放点了没反应的开关和按钮。 */}
       <section className="mt-4 ops-card">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-          <h2 className="text-sm font-semibold text-ink">定时跑批</h2>
-          <div className="flex items-center gap-2">
-            <button type="button" className="btn-ghost !min-h-7 !px-2 !text-xs">
-              <History className="h-3.5 w-3.5" strokeWidth={2} />
-              <span>运行历史</span>
-            </button>
-            <button type="button" className="btn-secondary !min-h-7 !px-2.5 !text-xs">
-              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-              <span>新建任务</span>
-            </button>
-          </div>
+          <h2 className="text-sm font-semibold text-ink">调度配置</h2>
+          <span className="text-xs text-ink-muted">只读 · 改动需编辑 .env 并重启</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[520px] text-left text-sm">
             <thead className="border-b border-line bg-surface-2/80">
               <tr className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-muted">
-                <th className="px-4 py-2.5 font-semibold sm:px-5">任务</th>
-                <th className="px-3 py-2.5 font-semibold">cron</th>
-                <th className="px-3 py-2.5 font-semibold">下次执行</th>
-                <th className="px-3 py-2.5 font-semibold">上次结果</th>
-                <th className="px-3 py-2.5 font-semibold">状态</th>
-                <th className="px-4 py-2.5 font-semibold sm:px-5">操作</th>
+                <th className="px-4 py-2.5 font-semibold sm:px-5">配置项</th>
+                <th className="px-3 py-2.5 font-semibold">环境变量</th>
+                <th className="px-4 py-2.5 font-semibold sm:px-5">当前值</th>
               </tr>
             </thead>
             <tbody>
-              {SCHEDULER_JOBS.map((job) => (
-                <tr key={job.key} className="border-b border-line last:border-b-0">
-                  <td className="px-4 py-3 sm:px-5">
-                    <div className="font-medium text-ink">{job.name}</div>
-                    <div className="font-mono text-[11px] text-ink-faint">{job.key}</div>
-                  </td>
-                  <td className="px-3 py-3 font-mono text-xs text-ink-muted">{job.cron}</td>
-                  <td className="px-3 py-3 text-xs text-ink-muted">{job.nextRun}</td>
-                  <td className="px-3 py-3 text-xs">
-                    {job.lastResult.includes('成功') ? (
-                      <span className="ops-state-ok">{job.lastResult}</span>
-                    ) : job.lastResult.includes('超时') || job.lastResult.includes('重试') ? (
-                      <span className="ops-state-warn">{job.lastResult}</span>
-                    ) : (
-                      <span className="ops-state-muted">{job.lastResult}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-3">
-                    <Switch
-                      checked={job.enabled}
-                      onChange={() => {}}
-                      label={`启用${job.name}`}
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-right sm:px-5">
-                    <button type="button" className="btn-ghost !min-h-7 !px-2 !text-xs">
-                      立即执行
-                    </button>
-                  </td>
+              {[
+                { name: '分析调度器', env: 'SCHEDULER_ENABLED', value: boolZh(automation?.SCHEDULER_ENABLED) },
+                { name: '采集调度器', env: 'COLLECTION_SCHEDULER_ENABLED', value: boolZh(automation?.COLLECTION_SCHEDULER_ENABLED) },
+                { name: '采集后自动分析', env: 'COLLECTION_AUTO_RUN_ENABLED', value: boolZh(automation?.COLLECTION_AUTO_RUN_ENABLED) },
+                { name: '分析 cron', env: 'CRON_EXPRESSION', value: automation?.CRON_EXPRESSION ?? '—' },
+                { name: '单次分析上限', env: 'ANALYSIS_RUN_LIMIT', value: numOr(automation?.ANALYSIS_RUN_LIMIT) },
+                { name: 'misfire 补跑窗口', env: 'SCHEDULER_MISFIRE_GRACE_SECONDS', value: numOr(automation?.SCHEDULER_MISFIRE_GRACE_SECONDS, ' 秒') },
+              ].map((row) => (
+                <tr key={row.env} className="border-b border-line last:border-b-0">
+                  <td className="px-4 py-3 font-medium text-ink sm:px-5">{row.name}</td>
+                  <td className="px-3 py-3 font-mono text-[11px] text-ink-faint">{row.env}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-ink-muted sm:px-5">{row.value}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <p className="ops-section-foot">
-          由 analysis_scheduler 驱动 · 错过触发自动补跑 · 时区 Asia/Shanghai
+          由 analysis_scheduler + 采集调度器驱动 · 错过触发自动补跑 · 重入返回 409
         </p>
       </section>
     </div>

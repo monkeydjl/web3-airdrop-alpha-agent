@@ -318,7 +318,6 @@ export default function ProjectPage() {
   const reasons = Array.isArray(project.reason) ? project.reason : [];
   const site = safeExternalUrl(project.url);
   const score = project.score ?? 0;
-  const rank = 1; // TODO: 后端暂无排名接口，前端默认第 1
   const evalTime = project.updated_at
     ? new Date(project.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     : '—';
@@ -403,10 +402,8 @@ export default function ProjectPage() {
 
         <div className="flex flex-wrap items-end gap-x-7 gap-y-4 lg:flex-col lg:items-end lg:text-right">
           <div className="flex gap-7 lg:flex-col lg:gap-3.5">
-            <div className="pd-mini-stat">
-              <span className="pd-mini-value">排名第 {String(rank).padStart(1, '0')}</span>
-              <span className="pd-mini-label">本周高分</span>
-            </div>
+            {/* 「排名」原先写死为 1（后端无排名接口），任何项目都显示"排名第 1"，
+                属于误导信息 —— 直接不展示，改为展示真实的置信度 */}
             <div className="pd-mini-stat">
               <span className="pd-mini-value">评于 {evalTime}</span>
               <span className="pd-mini-label">权威引擎 score-v1.4</span>
