@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
 from app.db import get_connection, insert_returning_id
+from app.services.user_scope import DEFAULT_USER, owned_project_ids, owned_project_ids_where
 
 logger = structlog.get_logger(__name__)
 
@@ -274,16 +275,18 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
 )
 def get_pending_review(
     limit: int = Query(20, ge=1, le=100, description="返回条数"),
+    user_id: str | None = Query(None, max_length=64, description="用户标识（缺省 default）"),
 ) -> FeedbackResponse:
     """返回待标记结果的项目列表。"""
+    uid = user_id or DEFAULT_USER
     try:
         with get_connection() as conn:
-            # 已有 outcome 的项目不再需要标记
-            done_rows = conn.execute("SELECT DISTINCT project_id FROM feedback WHERE outcome IS NOT NULL").fetchall()
-            done = {str(r[0]) for r in done_rows if r and r[0]}
-
-            engaged_rows = conn.execute("SELECT DISTINCT project_id FROM interactions").fetchall()
-            engaged = {str(r[0]) for r in engaged_rows if r and r[0]}
+            # 已有 outcome 的项目不再需要标记。
+            # 走统一的归属过滤（user_scope）：此前这里完全没有用户过滤，
+            # 与 /action-queue 的口径不一致 —— 多用户启用后会把别人标过的项目
+            # 从你的待标清单里剔掉，也会把别人的交互记录当成你的。
+            done = owned_project_ids_where(conn, "feedback", uid, "outcome IS NOT NULL")
+            engaged = owned_project_ids(conn, "interactions", uid)
 
             rows = conn.execute(
                 """
