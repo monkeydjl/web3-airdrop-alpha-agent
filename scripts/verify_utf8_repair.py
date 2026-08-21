@@ -20,6 +20,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# 待定占位符 U+FFFD 的 UTF-8 编码。repair_utf8_docs.py 用它标记"还没判定出
+# 原字是什么"的位置；在半成品 .partial 里它是合法状态，不是错误的修复。
+PENDING_MARK = "\ufffd".encode()
+
 
 def corruption_sites(data: bytes) -> list[tuple[int, bytes]]:
     """返回 [(offset, 完好的前2字节), ...]。"""
@@ -67,11 +71,12 @@ def verify(broken_path: Path, fixed_path: Path) -> int:
     # 逐段对齐，把段之间的字节取出来当作"被修复的字符"。
     pos = 0
     problems: list[str] = []
+    repaired = pending = 0
     for idx, seg in enumerate(segs):
         # 段内容必须逐字节一致（修复不得改动未损坏的正文）
         if fixed_bytes[pos : pos + len(seg)] != seg:
             problems.append(f"  第 {idx} 段正文被改动（offset≈{pos}）：修复只允许补齐损坏字符，不得重写正文")
-            return _report(problems)
+            return _report(problems, path=fixed_path)
         pos += len(seg)
         if idx == len(segs) - 1:
             break
@@ -81,26 +86,39 @@ def verify(broken_path: Path, fixed_path: Path) -> int:
         got = fixed_bytes[pos : pos + 3]
         if len(got) < 3:
             problems.append(f"  损坏点 #{idx} 位置修复后内容不足 3 字节")
+        elif got == PENDING_MARK:
+            # U+FFFD = 尚未判定的占位符。半成品（.partial）里合法存在：
+            # 它显式表示"这里还不知道原字是什么"，不是错误的修复。
+            pending += 1
         elif got[:2] != prefix:
             problems.append(
                 f"  损坏点 #{idx}（原 offset {sites[idx][0]}）前缀不符："
                 f"应为 {prefix!r}，实为 {got[:2]!r} —— 换了个不相关的字，超出候选集"
             )
+        else:
+            repaired += 1
         pos += 3
 
     if pos != len(fixed_bytes):
         problems.append(f"  尾部长度不符：对齐消耗 {pos} 字节，文件共 {len(fixed_bytes)} 字节")
 
-    return _report(problems, total=len(sites), path=fixed_path)
+    return _report(problems, total=len(sites), path=fixed_path, repaired=repaired, pending=pending)
 
 
-def _report(problems: list[str], total: int = 0, path: Path | None = None) -> int:
+def _report(
+    problems: list[str],
+    total: int = 0,
+    path: Path | None = None,
+    repaired: int = 0,
+    pending: int = 0,
+) -> int:
     if problems:
         print(f"[FAIL] {path}：{len(problems)} 处不合法")
         for p in problems[:20]:
             print(p)
         return 1
-    print(f"[OK] {path}：{total} 处损坏全部在合法候选集内修复，未损坏正文逐字节一致")
+    tail = f"，另有 {pending} 处仍为待定占位符（半成品）" if pending else ""
+    print(f"[OK] {path}：{total} 处损坏中已修复 {repaired} 处且全部落在合法候选集内{tail}；未损坏正文逐字节一致")
     return 0
 
 

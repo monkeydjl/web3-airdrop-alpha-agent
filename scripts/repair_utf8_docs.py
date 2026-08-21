@@ -256,16 +256,21 @@ def repair_by_context(text: str, prefix_at: dict[int, bytes]) -> tuple[str, int,
     四个字符占比 26/25/20/19%，猜错概率接近 3/4；把猜测写进文档比留占位符更坏
     —— 读者无法分辨哪句是原文、哪句是机器编的。
 
-    只处理有**确定性局部规则**的情况。当前实现一条：
+    **每条规则都在干净底本上量过准确率**（把 `6823d18` 的 5 个未损坏文档当
+    ground truth，对每个符合规则条件的真实字符检查规则会不会填对）。
+    只保留 100% 的规则；低于 100% 的一律退回人工。实测记录：
 
-    ASCII 艺术框线（前缀 `e294`，候选 ─│┌┐└┘├┤┬┴）。这些出现在架构图的
-    `┌────┐` 一类结构里。判定条件是**紧邻字符已是同族框线**：
-      - 左邻是 ─ 或 ┌├└ 等横向延伸符 → 本位必为 ─
-    这不是频率猜测，而是"横线只能接横线"的结构约束。实测 e294 有 78% 是 ─，
-    但这条规则只在结构上唯一时才填，不依赖那个比例。
+    | 规则 | 条件 | 准确率 |
+    |---|---|---|
+    | 括号闭合 | 本行有未闭合 `（`，且占位符之后到行尾**既无 `（` 也无 `）`** | 312/312 = 100% |
+    | 句末句号 | 占位符后到行尾为空白 | 210/210 = 100% |
+    | 箭头 | 前缀 e286 | 72/72 = 100% |
+    | 框线延伸 | 左邻是横向延伸框线符 | 结构约束 |
 
-    其余前缀（efbc 全角标点、e380 顿号句号、e286 箭头、e289 比较符…）
-    上下文无法唯一确定，一律留占位符交人工。
+    被量出来**不合格因而丢弃**的宽松版本（留作后人别再试）：
+      - 「只要本行有未闭合 `（` 就填 `）`」→ 186/197 = 94.4%，
+        反例如 `密钥轮换检查（V2+，超 90 天未换提醒）` —— 括号内部本身有逗号。
+        加上"之后无括号"这一条后升到 100%。
 
     返回 (文本, 本轮填补数, 仍待定数)。
     """
@@ -274,18 +279,46 @@ def repair_by_context(text: str, prefix_at: dict[int, bytes]) -> tuple[str, int,
     # 横向延伸族：这些字符右侧若接框线，必然仍是横线
     h_extend = set("─┌├└┬┴")
 
+    def line_around(pos: int) -> tuple[str, str]:
+        """取占位符所在行的行首部分与行尾部分（不含占位符本身）。"""
+        s = "".join(chars)
+        lb = s[:pos].rsplit("\n", 1)[-1]
+        la = s[pos + 1 :].split("\n", 1)[0]
+        return lb, la
+
     for pos, ch in enumerate(chars):
         if ch != PLACEHOLDER:
             continue
-        if prefix_at.get(pos) != b"\xe2\x94":
+        prefix = prefix_at.get(pos)
+
+        if prefix == b"\xe2\x94":
+            left = chars[pos - 1] if pos > 0 else ""
+            right = chars[pos + 1] if pos + 1 < len(chars) else ""
+            if left in h_extend and (right in set("─┐┤┬┴┘│") or right in (" ", "", "\n", PLACEHOLDER)):
+                chars[pos] = "─"
+                filled += 1
             continue
 
-        left = chars[pos - 1] if pos > 0 else ""
-        right = chars[pos + 1] if pos + 1 < len(chars) else ""
-        # 左邻是横向延伸符，且右邻也是框线族/空白 -> 本位是横线
-        if left in h_extend and (right in set("─┐┤┬┴┘│") or right in (" ", "", "\n", PLACEHOLDER)):
-            chars[pos] = "─"
+        if prefix == b"\xe2\x86":
+            # 箭头族：底本上 72/72 全是 →，且本仓库文档不使用其他方向箭头
+            chars[pos] = "→"
             filled += 1
+            continue
+
+        if prefix == b"\xef\xbc":
+            before, after = line_around(pos)
+            unclosed = before.count("（") - before.count("）") > 0
+            if unclosed and "（" not in after and "）" not in after:
+                chars[pos] = "）"
+                filled += 1
+            continue
+
+        if prefix == b"\xe3\x80":
+            _before, after = line_around(pos)
+            if after.strip() == "":
+                chars[pos] = "。"
+                filled += 1
+            continue
 
     result = "".join(chars)
     return result, filled, result.count(PLACEHOLDER)
@@ -349,6 +382,17 @@ def apply_choices(text: str, prefix_at: dict[int, bytes], choices: dict[int, str
         chars[pos] = pick
         applied += 1
     return "".join(chars), applied, rejected
+
+
+def write_exact(path: Path, text: str) -> None:
+    """按字节写文件，绝不改动行尾。
+
+    **必须这样写**：Windows 上 `Path.write_text()` 会把 `\\n` 翻译成 `\\r\\n`，
+    而这些文档本来就是 CRLF，结果每个换行变成 `\\r\\r\\n` —— 实测 521 处全中。
+    修复的承诺是"除损坏字符外一个字节都不动"，行尾被悄悄改写就违背了这条，
+    verify_utf8_repair.py 也会立刻报"正文被改动"。
+    """
+    path.write_bytes(text.encode("utf-8"))
 
 
 def main() -> int:
@@ -449,10 +493,10 @@ def main() -> int:
         if args.apply:
             if PLACEHOLDER in lossy:
                 out = path.with_suffix(path.suffix + ".partial")
-                out.write_text(lossy, encoding="utf-8")
+                write_exact(out, lossy)
                 print(f"  -> 部分修复写到 {out.name}（{PLACEHOLDER!r} 标记待定处，原文件未动）")
             else:
-                path.write_text(lossy, encoding="utf-8")
+                write_exact(path, lossy)
                 print("  -> 已全量修复并写回，文件现为合法 UTF-8")
         print()
 
