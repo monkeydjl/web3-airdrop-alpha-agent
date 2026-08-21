@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Path
 
 from app.repository import ProjectRepository
 from app.services.participation_tasks import generate_participation_tasks
+from app.services.project_signals import signals_view
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["participation"])
@@ -25,7 +26,9 @@ def get_participation_tasks(
             detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"},
         )
 
-    data = generate_participation_tasks(dict(project))
+    # 必须走 signals_view：扩展信号存在 meta.signals 里，projects 表没有对应列，
+    # 直接传 dict(project) 会让全部信号判断恒为 False（任务清单退化为通用套话）。
+    data = generate_participation_tasks(signals_view(project))
     logger.info(
         "participation.tasks_generated",
         project_id=project_id,
