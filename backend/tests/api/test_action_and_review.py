@@ -119,6 +119,43 @@ class TestActionQueue:
         assert client.get("/api/v1/action-queue?limit=0").status_code == 422
         assert client.get("/api/v1/action-queue?limit=999").status_code == 422
 
+    def test_candidate_pool_is_capped_regardless_of_db_size(self, client):
+        """代价只与候选池上限相关，与库里项目总数无关。
+
+        这是本端点不加缓存的依据：库涨到上万也只解析固定条数。
+        插 120 个项目（> 候选池 60），考察的项目数必须停在 60。
+        """
+        from app.routers.v1.action_queue import _CANDIDATE_POOL
+
+        for i in range(120):
+            _insert_project(f"big{i:03d}", name=f"Big{i}", score=90 - (i % 40), label="FARM")
+
+        data = client.get("/api/v1/action-queue?limit=5").json()["data"]
+        assert data["summary"]["projects_considered"] <= _CANDIDATE_POOL
+        assert data["summary"]["returned"] == 5
+
+    def test_marked_project_is_excluded_on_next_request(self, client):
+        """标记「已做」后该项目立刻从清单消失 —— 不加缓存才有这个即时性。
+
+        注意 POST /interactions 不传 user_id 时落 NULL，而清单按默认用户查询，
+        必须能读到 NULL 那批（见 tests/test_user_scope.py）。
+        """
+        _insert_project("p-mark", name="MarkMe", score=88, label="FARM")
+        _insert_project("p-other", name="Other", score=70, label="FARM")
+
+        first = client.get("/api/v1/action-queue?limit=10").json()["data"]
+        assert "p-mark" in {i["project_id"] for i in first["items"]}
+
+        res = client.post(
+            "/api/v1/interactions",
+            json={"project_id": "p-mark", "status": "active", "activities": "t", "outcome": "pending"},
+        )
+        assert res.status_code == 200
+
+        after = client.get("/api/v1/action-queue?limit=10").json()["data"]
+        assert "p-mark" not in {i["project_id"] for i in after["items"]}
+        assert after["summary"]["projects_skipped_engaged"] == 1
+
 
 class TestPendingReview:
     def test_lists_farm_and_watch_only(self, client):

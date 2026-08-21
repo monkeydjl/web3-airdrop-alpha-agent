@@ -115,9 +115,16 @@ mypy app                      → no issues in 114 source files
 - **13 个本地 commit 未推远程**
 - `SEED_FALLBACK_ENABLED` 生产建议设 `false`（默认 `true`）
 - Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）
-- `action-queue` 无缓存，每请求解析 60 个项目 meta；项目数上万时需优化
-- `user_id` 过滤两处不一致（`action-queue` 用 `= ? OR IS NULL`，
-  `pending-review` 无过滤）—— 单用户 MVP 无影响，启用 `ENABLE_USER_SYSTEM` 前必须统一
+- ~~`action-queue` 无缓存，项目数上万时需优化~~ →
+  **已核实无需优化**（2026-08-21）：候选池固定 60，耗时与库内项目总数**无关**。
+  实测端到端中位数 26ms（比 `/dashboard/overview` 的 46ms 更快），纯聚合
+  约 0.04ms/项目。刻意不加缓存 —— 缓存会引入失效时机问题（标记「已做」需立即
+  反映），收益只有几毫秒。已加测试锁死「考察项目数 ≤ 候选池上限」
+- ~~`user_id` 过滤两处不一致~~ → **已统一**（2026-08-21）：抽出
+  `app/services/user_scope.py`。根因是两张表写入约定不同（实测：
+  `POST /interactions` 不传 user_id 落 **NULL**，`POST /watchlist/{id}` 落
+  **'default'**）。现在默认用户会同时认 NULL 与 default，具名用户严格匹配、
+  不读 NULL —— 多用户启用后不会跨用户串数据。`pending-review` 也补上了用户过滤
 - `/archive` 与 `/ops` 部分区块仍无后端接口（当前为诚实占位，非假数据）
 
 ---
