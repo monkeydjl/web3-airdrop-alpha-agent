@@ -18,6 +18,11 @@
   --accent: 16 185 129;
   --accent-hover: 5 150 105;
   --accent-soft: 209 250 229;
+  /* --brand 是 --accent 的别名：原生 CSS 块里已有 10 处 rgb(var(--brand))，
+     但该变量此前从未定义 —— 解析为 rgb(undefined) 后颜色静默丢失（选中态、
+     进度条填充、hover 边框全部失效）。Tailwind 的 brand token 只作用于
+     工具类（bg-brand），不产生 CSS 自定义属性，故必须在此显式定义。 */
+  --brand: 16 185 129;
   --farm: 16 185 129;
   --farm-soft: 209 250 229;
   --farm-dark: 6 95 70;
@@ -66,6 +71,7 @@
   --accent: 52 211 153;
   --accent-hover: 16 185 129;
   --accent-soft: 6 78 59;
+  --brand: 52 211 153; /* 暗色下的 --accent 同值，见亮色主题注释 */
   --farm: 52 211 153;
   --farm-soft: 6 78 59;
   --farm-dark: 167 243 208;
@@ -2151,6 +2157,50 @@
 
 .set-switch-row { display: flex; align-items: center; gap: 8px; }
 .set-switch-state { font-size: 12px; color: rgb(var(--ink-muted)); }
+
+/* ── 今日行动队列（工作台卡片 / 快速标记页）────────────────── */
+.aq-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  border: 1px solid rgb(var(--line)); border-radius: 10px;
+  padding: 10px 12px; background: rgb(var(--surface));
+  transition: border-color .15s ease, background .15s ease;
+}
+.aq-row:hover { border-color: rgb(var(--brand) / .4); }
+.aq-project {
+  font-size: 12px; font-weight: 600; color: rgb(var(--brand));
+  text-decoration: none; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.aq-project:hover { text-decoration: underline; }
+.aq-chip {
+  font-size: 11px; line-height: 1.5; padding: 1px 6px; border-radius: 999px;
+  background: rgb(var(--ink) / .06); color: rgb(var(--ink-muted)); white-space: nowrap;
+}
+.aq-chip-req { background: rgb(var(--farm) / .14); color: rgb(var(--farm)); font-weight: 600; }
+
+/* 快速标记页：三选一结果按钮 */
+.rv-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid rgb(var(--line)); border-radius: 10px;
+  padding: 10px 12px; background: rgb(var(--surface));
+}
+.rv-row[data-marked='true'] { opacity: .55; }
+.rv-btns { display: flex; gap: 6px; margin-left: auto; }
+.rv-btn {
+  font-size: 12px; padding: 4px 10px; border-radius: 8px;
+  border: 1px solid rgb(var(--line)); background: rgb(var(--surface));
+  color: rgb(var(--ink)); cursor: pointer; white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.rv-btn:hover:not(:disabled) { border-color: rgb(var(--brand) / .5); }
+.rv-btn[data-active='true'] {
+  background: rgb(var(--brand)); border-color: rgb(var(--brand)); color: #fff; font-weight: 600;
+}
+.rv-btn:disabled { cursor: not-allowed; opacity: .6; }
+
+/* 校准进度条 */
+.cal-bar { height: 8px; border-radius: 999px; background: rgb(var(--ink) / .08); overflow: hidden; }
+.cal-bar-fill { height: 100%; border-radius: 999px; background: rgb(var(--brand)); transition: width .3s ease; }
 
 /* 评分权重条 */
 .set-weight-grid { display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
