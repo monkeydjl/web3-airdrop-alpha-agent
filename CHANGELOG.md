@@ -47,6 +47,37 @@
   50 个。前端改为自动分批发送，用户勾再多也不会吃 422
 - 补回归测试：伪造 ID 被拒、混合批次整体回滚、404 不被兜底 `except` 改写成 500
 
+### Security — 锁定依赖版本，构建可复现（2026-08-21）
+
+- **`backend/requirements.txt` 全部改为精确 `==`**（此前 25 行全是浮动 `>=`）。
+  浮动约束意味着每次 `docker build` 拉到的可能是不同版本，本地测过的组合与线上
+  跑的不是一回事，出问题无法复现。锁定值逐包与**本地跑通 2500 个测试的环境**
+  核对一致（Python 3.11.9）
+- **拆出 `requirements-dev.txt`**：pytest / pytest-asyncio / pytest-cov / respx /
+  Faker / ruff / mypy 各锁精确版本，且**不进生产镜像**
+- **CI 三处散装安装改为装锁定文件**：`pip install ruff`、`pip install pytest
+  pytest-cov`、`pip install mypy` 全部替换。散装等于不锁版本 —— ruff/mypy 小版本
+  间检查结果会变，这正是"本地绿 CI 红"的常见来源
+- **`pip-audit` 现在能给出确定结论**：审计对象从浮动约束变为精确版本，
+  同时覆盖 dev 依赖
+- Dockerfile 的 `COPY backend/requirements*.txt` 收窄为只复制运行时依赖，
+  并注明启用链路追踪时需要额外装什么
+
+**发现的既有问题（顺带查清）**：那 7 个 `opentelemetry-*` 包被声明为必需依赖，
+但**本地从未安装**，也**没有任何测试覆盖**（`pytest -k "otel or tracing"` →
+2504 deselected，0 个用例）。实测 `OTEL_ENABLED=true` 且缺包时应用正常启动、
+`/health` 200，仅打一条 `tracing.unavailable` 警告——说明它们对主流程并非必需。
+已移入可选的 `requirements-otel.txt`。
+
+**刻意未锁的一项**：`requirements-otel.txt` 保留 `>=` 区间。本次作业时本机
+**无法访问 PyPI**（实测连接被关闭），无法确认这些包的可用版本；凭记忆写死一个
+版本号会让人以为"已锁定已验证"，实际是未经证实的猜测，比不锁更危险。首次真正
+启用追踪时应实测通过后回填。
+
+**验证方式**：新建干净 venv → 仅装 `requirements.txt` → 实测 41 个包安装成功、
+应用启动、`/health` 200、`/metrics` 200；追加 `requirements-dev.txt` 后跑
+22 个测试通过；临时环境已清理，本机 venv 未受污染。
+
 ### Changed — 统一用户归属过滤口径（2026-08-21）
 
 - **新增 `app/services/user_scope.py`，收敛「查某用户的记录」这一判断**。

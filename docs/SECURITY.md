@@ -100,9 +100,25 @@
 ## 6. 依赖安全
 
 ### 6.1 依赖锁定
-- `requirements.txt` 锁主版本+补丁号（`fastapi==0.110.0`）。
-- `requirements.lock.txt`（pip-compile 生成）锁全部传递依赖，保证可复现。
+
+**现状（2026-08-21 实测）**：
+
+| 文件 | 内容 | 锁定状态 |
+|---|---|---|
+| `backend/requirements.txt` | 运行时依赖（13 个） | ✅ 精确 `==`，与本地跑通 2500 测试的环境逐包核对一致 |
+| `backend/requirements-dev.txt` | 测试/静态检查（7 个） | ✅ 精确 `==`（含 ruff / mypy，避免 CI 结果不可复现） |
+| `backend/requirements-otel.txt` | 链路追踪，**可选** | ⚠ 仍为 `>=` 区间 —— 见下方说明 |
+| `requirements.lock.txt`（pip-compile 全量传递依赖） | 未生成 | ❌ 尚未采用 |
+
+**OTel 为何未锁**：锁定作业时本机无法访问 PyPI，无法验证具体版本可装可跑；
+该路径也**没有任何测试覆盖**（`pytest -k "otel or tracing"` → 0 个用例）。
+凭记忆写死版本号会让人误以为"已锁定已验证"，比不锁更危险。首次真正启用追踪时
+应实测通过后回填 `==`。缺包不影响主流程：`app/tracing.py` 降级为 no-op tracer
+（实测 `OTEL_ENABLED=true` 且缺包时应用正常启动、`/health` 200）。
+
 - 每月跑 `pip-audit` 扫描 CVE，高危 24h 内修，中危 7 天内修。
+  CI 已对 `requirements.txt` 与 `requirements-dev.txt` 做 `--strict` 审计；
+  OTel 可选依赖单独审计但不阻断构建。
 
 ### 6.2 CI 集成
 ```yaml

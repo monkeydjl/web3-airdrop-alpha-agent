@@ -39,12 +39,20 @@ jobs:
 
       - name: Audit dependencies
         run: |
+          # requirements.txt 现已是精确锁定（==），pip-audit 能给出确定结论；
+          # 此前全是浮动 >=，审计的是"某个可能版本"，结果不可复现。
+          # requirements.lock.txt 分支保留：若将来改用 pip-compile 产出全量
+          # 锁文件（含间接依赖），优先审计它。
           if [ -f backend/requirements.lock.txt ]; then
             pip-audit -r backend/requirements.lock.txt --strict
-          elif [ -f backend/requirements.txt ]; then
-            pip-audit -r backend/requirements.txt --strict
           else
-            echo "⚠️ No requirements file found, skipping audit"
+            pip-audit -r backend/requirements.txt --strict
+            pip-audit -r backend/requirements-dev.txt --strict
+            # OTel 为可选依赖且未锁版本（见文件内说明），单独审计但不阻断
+            if [ -f backend/requirements-otel.txt ]; then
+              pip-audit -r backend/requirements-otel.txt || \
+                echo "::warning::OTel 可选依赖审计未通过（未锁版本，不阻断构建）"
+            fi
           fi
         continue-on-error: false
 

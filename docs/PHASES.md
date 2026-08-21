@@ -114,7 +114,12 @@ mypy app                      → no issues in 114 source files
 
 - **13 个本地 commit 未推远程**
 - `SEED_FALLBACK_ENABLED` 生产建议设 `false`（默认 `true`）
-- Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）
+- ~~Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）~~ →
+  **已锁定**（2026-08-21）：拆成三个文件，运行时 13 个 + 开发 7 个全部精确 `==`，
+  逐包与本地跑通 2500 测试的环境核对一致，并在干净 venv 里实测装完能启动。
+  CI 三处散装安装（`pip install ruff` / `pytest` / `mypy`）也改为装锁定文件。
+  唯一例外是可选的 `requirements-otel.txt` 仍为区间 —— 本机无法访问 PyPI 无从
+  验证，且该路径零测试覆盖，故不凭记忆写死版本（详见 docs/SECURITY.md §6.1）
 - ~~`action-queue` 无缓存，项目数上万时需优化~~ →
   **已核实无需优化**（2026-08-21）：候选池固定 60，耗时与库内项目总数**无关**。
   实测端到端中位数 26ms（比 `/dashboard/overview` 的 46ms 更快），纯聚合

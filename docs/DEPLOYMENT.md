@@ -11,10 +11,15 @@
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt                     # 运行时依赖（版本已锁定）
+pip install -r requirements-dev.txt                 # 要跑测试才需要
 python run.py
 # 本地开发默认 http://localhost:8002（见 IMPLEMENTATION_STATUS）；下列 8000 多指 Docker 映射
 ```
+
+> 依赖分三个文件：`requirements.txt`（运行时，进镜像）、
+> `requirements-dev.txt`（pytest/ruff/mypy，**不进镜像**）、
+> `requirements-otel.txt`（链路追踪，可选，缺了应用照常启动只是追踪不生效）。
 
 首次启动会自动建库（`backend/data/airdrop.db`）。导入演示数据并跑分析：
 
