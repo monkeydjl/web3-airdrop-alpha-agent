@@ -6,6 +6,9 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import create_app
 
+# 一个显眼的假 key，用来在整份响应体里搜它有没有原样漏出去
+LEAK_CANARY = "sk-CANARY-must-never-appear-in-any-response"
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -67,3 +70,80 @@ class TestSettingsConfig:
 
         total = sum(weights[k] for k in weight_keys)
         assert abs(total - 1.0) < 0.01, f"weights sum = {total}, expected ~1.0"
+
+
+class TestSettingsConfigLlmKeyRedaction:
+    """回归：`/settings/config` 曾直接回显 settings.llm_providers 里的明文 api_key。
+
+    配合公开的 /auth/anonymous（任何人可领匿名 token），构成零凭证窃取
+    OPENAI_API_KEY 的完整链路。这组测试锁死"密钥永不出现在响应体里"。
+    """
+
+    def test_llm_providers_never_expose_raw_api_key(self, client, monkeypatch) -> None:
+        """配置了 LLM key 时，响应体全文都不得出现该 key。"""
+        monkeypatch.setattr(settings, "openai_api_key", LEAK_CANARY)
+
+        response = client.get("/api/v1/settings/config")
+        assert response.status_code == 200
+
+        # 关键断言：整份响应体（含嵌套结构）搜不到明文
+        assert LEAK_CANARY not in response.text
+
+        providers = response.json()["data"]["llm"]["providers"]
+        assert providers, "provider list should not be empty when a key is configured"
+        for p in providers:
+            assert "api_key" not in p, "provider must not carry a raw api_key field"
+            assert p["has_api_key"] is True
+            # 只暴露非敏感元信息
+            assert set(p) <= {"name", "base_url", "has_api_key", "models"}
+
+    def test_llm_providers_report_missing_key(self, client, monkeypatch) -> None:
+        """未配置 key 时不应伪造 has_api_key=True。"""
+        monkeypatch.setattr(settings, "openai_api_key", "")
+
+        response = client.get("/api/v1/settings/config")
+        for p in response.json()["data"]["llm"]["providers"]:
+            assert p["has_api_key"] is False
+
+
+class TestSettingsRequiresAdmin:
+    """回归：/api/v1/settings 必须是管理员专属（匿名 token 不可读）。
+
+    运行时配置快照含 CORS 白名单、DB 后端、全部阈值与 cron —— 对匿名开放
+    等于免费给攻击者做侦察。
+    """
+
+    ADMIN_KEY = "admin-key-for-settings-tests-0123456789"
+
+    @pytest.fixture
+    def auth_client(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "db_path", str(tmp_path / "settings_auth.db"))
+        monkeypatch.setattr(settings, "api_key", self.ADMIN_KEY)
+        monkeypatch.setattr(settings, "auth_token_secret", "secret-for-settings-admin-tests")
+        monkeypatch.setattr(settings, "rate_limit_enabled", False)
+        return TestClient(create_app())
+
+    def test_settings_in_admin_only_prefixes(self) -> None:
+        from app.auth import ADMIN_ONLY_PREFIXES
+
+        assert "/api/v1/settings" in ADMIN_ONLY_PREFIXES
+
+    def test_no_credentials_rejected(self, auth_client) -> None:
+        assert auth_client.get("/api/v1/settings/config").status_code == 401
+
+    def test_anonymous_token_forbidden(self, auth_client) -> None:
+        """匿名 token 能领到，但读不了 settings。"""
+        token = auth_client.post("/api/v1/auth/anonymous").json()["access_token"]
+
+        response = auth_client.get(
+            "/api/v1/settings/config",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 403
+
+    def test_admin_key_allowed(self, auth_client) -> None:
+        response = auth_client.get(
+            "/api/v1/settings/config",
+            headers={"X-API-Key": self.ADMIN_KEY},
+        )
+        assert response.status_code == 200

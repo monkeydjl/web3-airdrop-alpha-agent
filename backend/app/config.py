@@ -65,7 +65,9 @@ class Settings(BaseSettings):
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5433
     postgres_user: str = "airdrop"
-    postgres_password: str = "airdrop_test"
+    # 本地开发默认值，生产必须由 POSTGRES_PASSWORD 覆盖（GO_LIVE_CHECKLIST P0-2.2）。
+    # 非硬编码凭据：真实密码只经环境变量注入，从不入库/入镜像。
+    postgres_password: str = "airdrop_test"  # noqa: S105
     postgres_db: str = "airdrop_test"
     # 同步路由在线程池并发执行，SQLite 写锁需要等待窗口而非立即报错
     sqlite_busy_timeout_seconds: float = 10.0
@@ -293,6 +295,7 @@ class Settings(BaseSettings):
         if not has_key:
             # 检查编号接口是否有 API key
             import os
+
             for i in range(1, 6):
                 if os.environ.get(f"LLM_API_KEY_{i}", "").strip():
                     has_key = True
@@ -329,24 +332,28 @@ class Settings(BaseSettings):
                 if model:
                     models.append(model)
 
-            providers.append({
-                "base_url": base_url,
-                "api_key": api_key,
-                "name": f"provider-{i}",
-                "models": models,
-            })
+            providers.append(
+                {
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "name": f"provider-{i}",
+                    "models": models,
+                }
+            )
 
         if providers:
             return providers
 
         # 回退到单接口模式
         if self.openai_api_key:
-            return [{
-                "base_url": self.openai_base_url,
-                "api_key": self.openai_api_key,
-                "name": "openai",
-                "models": [self.llm_model] if self.llm_model else [],
-            }]
+            return [
+                {
+                    "base_url": self.openai_base_url,
+                    "api_key": self.openai_api_key,
+                    "name": "openai",
+                    "models": [self.llm_model] if self.llm_model else [],
+                }
+            ]
 
         return []
 
@@ -473,6 +480,16 @@ class Settings(BaseSettings):
                 errors.append(
                     "生产环境必须设置 AUTH_TOKEN_SECRET（匿名 token 每次重启后失效；"
                     "建议用 secrets.token_urlsafe(48) 生成固定值）"
+                )
+
+            # cors_origins 的默认值是 localhost（见字段定义）。生产忘配就会把真实
+            # 前端域名全部挡在门外——表现为"上线后所有接口跨域失败"，而这种故障
+            # 除了浏览器控制台几乎无迹可寻。宁可拒绝启动，也不要静默错配。
+            localhost_origins = [o for o in self.cors_origins_list if "localhost" in o or "127.0.0.1" in o]
+            if localhost_origins:
+                errors.append(
+                    "生产环境 CORS_ORIGINS 不能包含 localhost/127.0.0.1"
+                    f"（当前 {', '.join(localhost_origins)}）——请设为实际前端域名"
                 )
 
             if errors:

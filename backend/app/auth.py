@@ -58,6 +58,10 @@ ADMIN_ONLY_PREFIXES = (
     "/api/v1/quarantine",
     "/api/v1/export",
     "/api/v1/import",
+    # 运行时配置快照属于运维信息：CORS 白名单、DB 后端、全部阈值与 cron、
+    # LLM provider 清单。对匿名角色开放等于免费给攻击者做侦察，且历史上
+    # 该端点曾直接回显明文 LLM api_key。纵深防御：即使响应已脱敏，也只给管理员。
+    "/api/v1/settings",
 )
 
 
@@ -66,15 +70,25 @@ ADMIN_ONLY_PREFIXES = (
 # ═══════════════════════════════════════════════════════════════
 
 
+_EPHEMERAL_SECRET: bytes | None = None
+
+
 def _get_secret() -> bytes:
-    """获取签名密钥，空时随机生成（仅 MVP 单进程）。"""
+    """获取签名密钥，空时随机生成（仅 MVP 单进程）。
+
+    用模块级全局缓存而非函数属性：后者 mypy 无法表达（Callable 没有自定义属性），
+    此前靠 `# type: ignore` 掩着。生产环境 AUTH_TOKEN_SECRET 为必填（见 config
+    的 _validate_production），所以这条随机分支只在本地/测试生效。
+    """
     secret = settings.auth_token_secret
-    if not secret:
-        # 随机生成（进程级缓存，重启后旧 token 失效）
-        if not hasattr(_get_secret, "_cached"):
-            _get_secret._cached = os.urandom(32)
-        return _get_secret._cached  # type: ignore[attr-defined]
-    return secret.encode("utf-8")
+    if secret:
+        return secret.encode("utf-8")
+
+    # 随机生成（进程级缓存，重启后旧 token 失效）
+    global _EPHEMERAL_SECRET
+    if _EPHEMERAL_SECRET is None:
+        _EPHEMERAL_SECRET = os.urandom(32)
+    return _EPHEMERAL_SECRET
 
 
 def _b64url_encode(data: bytes) -> str:

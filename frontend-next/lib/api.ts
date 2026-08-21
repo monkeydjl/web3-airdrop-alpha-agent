@@ -17,12 +17,14 @@ export function isAbortError(err: unknown): boolean {
 }
 
 /**
- * 客户端兜底鉴权：当 middleware 未注入 X-API-Key 时（如直连后端），
- * 从 NEXT_PUBLIC_API_KEY 读取并附加到请求头。
- * middleware 已注入时不会覆盖（init.headers 优先级最高）。
+ * 鉴权由服务端的 `proxy.ts` 注入 X-API-Key（读服务端环境变量 BACKEND_API_KEY /
+ * API_KEY），密钥不出服务端。
+ *
+ * **刻意不再支持 NEXT_PUBLIC_API_KEY 客户端兜底**：Next.js 会把所有
+ * `NEXT_PUBLIC_*` 变量内联进浏览器 bundle，任何访客都能在 DevTools 里读到管理员
+ * 密钥——那等于把鉴权直接送人。需要本地直连后端调试时，请让后端 API_KEY 留空
+ * （MVP 无鉴权模式），而不是把密钥暴露给浏览器。
  */
-const CLIENT_API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
-
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   let res: Response;
@@ -31,7 +33,6 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        ...(CLIENT_API_KEY ? { 'X-API-Key': CLIENT_API_KEY } : {}),
         ...(init?.headers || {}),
       },
     });

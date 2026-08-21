@@ -50,6 +50,25 @@ def _mask_key(val: str | None) -> bool:
     return bool(val and val.strip())
 
 
+def _safe_providers() -> list[dict[str, Any]]:
+    """LLM provider 列表，**永不含明文 api_key**。
+
+    `settings.llm_providers` 每个条目都带 `api_key` 原文；此前本端点直接把它塞进
+    响应，配合 `/api/v1/auth/anonymous` 公开签发匿名 token，等于任何人零凭证就能
+    取走 OPENAI_API_KEY。这里只保留运维需要的非敏感字段，并与
+    `routers/v1/llm.py` 的脱敏口径保持一致（只暴露"是否已设置"）。
+    """
+    return [
+        {
+            "name": p.get("name", ""),
+            "base_url": p.get("base_url", ""),
+            "has_api_key": bool(p.get("api_key")),
+            "models": p.get("models", []),
+        }
+        for p in settings.llm_providers
+    ]
+
+
 @router.get(
     "/settings/config",
     response_model=SettingsConfigResponse,
@@ -68,7 +87,8 @@ def get_settings_config() -> SettingsConfigResponse:
         "app_env": settings.app_env,
     }
 
-    weights: dict[str, float] = {
+    # weight_version 是字符串（"v1.2"），与 8 个 float 权重同处一个字典，故用 Any
+    weights: dict[str, Any] = {
         "WEIGHT_AIRDROP_SIGNAL": settings.weight_airdrop_signal,
         "WEIGHT_NARRATIVE_TIMING": settings.weight_narrative_timing,
         "WEIGHT_EXECUTION": settings.weight_execution,
@@ -208,7 +228,7 @@ def get_settings_config() -> SettingsConfigResponse:
                 "max_tokens": settings.llm_max_tokens,
                 "daily_budget_usd": settings.llm_daily_budget_usd,
                 "discovery_score_threshold": settings.llm_discovery_score_threshold,
-                "providers": settings.llm_providers,
+                "providers": _safe_providers(),
             },
         },
     )
