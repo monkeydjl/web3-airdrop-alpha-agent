@@ -269,11 +269,8 @@ async def llm_chat(
 
             # 连接错误：跳过当前 provider 剩余模型，直接切到下一个 provider
             if is_conn:
-                remaining = [
-                    c for c in combinations[len(attempts):]
-                    if c[0] != provider
-                ]
-                combinations = combinations[:len(attempts)] + remaining
+                remaining = [c for c in combinations[len(attempts) :] if c[0] != provider]
+                combinations = combinations[: len(attempts)] + remaining
                 continue
 
             # 模型错误或其他错误：继续尝试下一个组合

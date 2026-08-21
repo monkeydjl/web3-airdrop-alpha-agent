@@ -145,10 +145,7 @@ class TestSectorCountCache:
                 cache.put(sector, count)
                 cache.get(sector)
 
-        threads = [
-            threading.Thread(target=writer, args=(f"S{i}", i))
-            for i in range(10)
-        ]
+        threads = [threading.Thread(target=writer, args=(f"S{i}", i)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:

@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from unittest.mock import patch
 
 import pytest
 
+import app.calibration as cal_module
 from app.calibration import (
     WEIGHT_KEYS,
     CalibrationSample,
@@ -31,14 +31,12 @@ from app.calibration import (
     extract_samples,
     format_report,
     grid_search,
-    record_candidate,
-    run_calibration,
     recompute_label,
     recompute_score,
+    record_candidate,
+    run_calibration,
 )
 from app.db import init_db
-import app.calibration as cal_module
-
 
 # ── Fixtures ────────────────────────────────────
 

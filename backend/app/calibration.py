@@ -17,9 +17,7 @@ Reference:
 from __future__ import annotations
 
 import json
-import math
 import random
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -38,9 +36,12 @@ MIN_FARM_SAMPLES = 30  # §3.3 其中 FARM 相关
 MAX_DIM_CHANGE = 0.10  # §4.2 单维最大变化
 SEARCH_STEP = 0.05  # §4.2 步长
 DIRICHLET_SAMPLES = 2000  # 随机搜索采样数
-LABEL_FARM = "FARM"
-LABEL_WATCH = "WATCH"
-LABEL_IGNORE = "IGNORE"
+# 标注成 Literal 而非裸 str：这三个常量会流入 `-> Literal[...] | None` 的返回值，
+# 推断成 str 会让 mypy 在 _outcome_to_label 处报 return-value。
+ScoreLabel = Literal["FARM", "WATCH", "IGNORE"]
+LABEL_FARM: ScoreLabel = "FARM"
+LABEL_WATCH: ScoreLabel = "WATCH"
+LABEL_IGNORE: ScoreLabel = "IGNORE"
 
 # 八个权重维度
 WEIGHT_KEYS: list[str] = [
@@ -99,7 +100,7 @@ class CalibrationReport:
 # ── 样本提取 ────────────────────────────────────
 
 
-def _outcome_to_label(outcome: str) -> Literal["FARM", "WATCH", "IGNORE"] | None:
+def _outcome_to_label(outcome: str) -> ScoreLabel | None:
     """将 feedback.outcome 映射为真实标签（§3.1）。
 
     outcome=airdropped/pumped → FARM（空投或拉升 = 值得参与）
@@ -249,9 +250,7 @@ def recompute_label(subscores: dict[str, float], weights: dict[str, float]) -> s
     return LABEL_IGNORE
 
 
-def compute_j(
-    samples: list[CalibrationSample], weights: dict[str, float]
-) -> dict[str, float]:
+def compute_j(samples: list[CalibrationSample], weights: dict[str, float]) -> dict[str, float]:
     """计算目标函数 J = recall(FARM) − 2 × false_positive_rate(FARM)。
 
     返回包含 J、recall、fpr 及混淆矩阵的字典。
@@ -303,14 +302,9 @@ def _normalize_weights(raw: dict[str, float]) -> dict[str, float]:
     return {k: raw[k] / total for k in WEIGHT_KEYS}
 
 
-def _within_constraint(
-    candidate: dict[str, float], baseline: dict[str, float]
-) -> bool:
+def _within_constraint(candidate: dict[str, float], baseline: dict[str, float]) -> bool:
     """检查候选权重是否满足单维变化 ≤ 0.10 约束（§4.2）。"""
-    for k in WEIGHT_KEYS:
-        if abs(candidate[k] - baseline[k]) > MAX_DIM_CHANGE + 1e-9:
-            return False
-    return True
+    return all(abs(candidate[k] - baseline[k]) <= MAX_DIM_CHANGE + 1e-9 for k in WEIGHT_KEYS)
 
 
 def _dirichlet_sample(alpha: float = 2.0) -> dict[str, float]:
@@ -321,9 +315,7 @@ def _dirichlet_sample(alpha: float = 2.0) -> dict[str, float]:
 
 def _snap_to_grid(weights: dict[str, float]) -> dict[str, float]:
     """将权重对齐到 0.05 步长，然后重新归一化。"""
-    snapped = {
-        k: round(weights[k] / SEARCH_STEP) * SEARCH_STEP for k in WEIGHT_KEYS
-    }
+    snapped = {k: round(weights[k] / SEARCH_STEP) * SEARCH_STEP for k in WEIGHT_KEYS}
     return _normalize_weights(snapped)
 
 
@@ -364,7 +356,7 @@ def grid_search(
     while improved and iterations < max_iterations:
         improved = False
         iterations += 1
-        for i, key in enumerate(WEIGHT_KEYS):
+        for key in WEIGHT_KEYS:
             for delta in (SEARCH_STEP, -SEARCH_STEP):
                 candidate = best_weights.copy()
                 candidate[key] += delta
@@ -540,11 +532,13 @@ def format_report(report: CalibrationReport) -> str:
     ]
 
     if report.best_weights is not None:
-        lines.extend([
-            "",
-            "候选权重（Candidate Weights）:",
-            "-" * 40,
-        ])
+        lines.extend(
+            [
+                "",
+                "候选权重（Candidate Weights）:",
+                "-" * 40,
+            ]
+        )
         for k in WEIGHT_KEYS:
             old = report.current_weights[k]
             new = report.best_weights[k]
@@ -552,30 +546,36 @@ def format_report(report: CalibrationReport) -> str:
             arrow = "↑" if delta > 0 else ("↓" if delta < 0 else "=")
             lines.append(f"  {k:25s} {old:.2f} → {new:.2f}  ({arrow} {abs(delta):.2f})")
 
-        lines.extend([
-            "",
-            f"Best J:     {report.best_j:.4f}",
-            f"Improvement: {report.improvement:.4f}",
-            "",
-            "混淆矩阵（Confusion Matrix）:",
-            f"  TP={report.metrics.get('tp', 0)}  FP={report.metrics.get('fp', 0)}",
-            f"  FN={report.metrics.get('fn', 0)}  TN={report.metrics.get('tn', 0)}",
-            f"  Recall(FARM)={report.metrics.get('recall_farm', 0):.4f}",
-            f"  FPR(FARM)={report.metrics.get('fpr_farm', 0):.4f}",
-            f"  Precision(FARM)={report.metrics.get('precision_farm', 0):.4f}",
-            "",
-            f"Changelog ID: {report.changelog_id}",
-            f"Status: candidate（需灰度双跑 ≥ 7 天后 PR 切换）",
-        ])
+        lines.extend(
+            [
+                "",
+                f"Best J:     {report.best_j:.4f}",
+                f"Improvement: {report.improvement:.4f}",
+                "",
+                "混淆矩阵（Confusion Matrix）:",
+                f"  TP={report.metrics.get('tp', 0)}  FP={report.metrics.get('fp', 0)}",
+                f"  FN={report.metrics.get('fn', 0)}  TN={report.metrics.get('tn', 0)}",
+                f"  Recall(FARM)={report.metrics.get('recall_farm', 0):.4f}",
+                f"  FPR(FARM)={report.metrics.get('fpr_farm', 0):.4f}",
+                f"  Precision(FARM)={report.metrics.get('precision_farm', 0):.4f}",
+                "",
+                f"Changelog ID: {report.changelog_id}",
+                "Status: candidate（需灰度双跑 ≥ 7 天后 PR 切换）",
+            ]
+        )
     else:
-        lines.extend([
-            "",
-            "未执行搜索（未传 --search 或门禁未通过）",
-        ])
+        lines.extend(
+            [
+                "",
+                "未执行搜索（未传 --search 或门禁未通过）",
+            ]
+        )
 
-    lines.extend([
-        "",
-        "=" * 60,
-    ])
+    lines.extend(
+        [
+            "",
+            "=" * 60,
+        ]
+    )
 
     return "\n".join(lines)

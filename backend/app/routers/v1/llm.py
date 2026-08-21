@@ -39,14 +39,16 @@ def llm_status():
 
     provider_list = []
     for p in providers:
-        provider_list.append({
-            "name": p["name"],
-            "base_url": p["base_url"],
-            "api_key_masked": _mask_key(p.get("api_key", "")),
-            "has_api_key": bool(p.get("api_key")),
-            "models": p.get("models", []),
-            "model_count": len(p.get("models", [])),
-        })
+        provider_list.append(
+            {
+                "name": p["name"],
+                "base_url": p["base_url"],
+                "api_key_masked": _mask_key(p.get("api_key", "")),
+                "has_api_key": bool(p.get("api_key")),
+                "models": p.get("models", []),
+                "model_count": len(p.get("models", [])),
+            }
+        )
 
     total_models = sum(p["model_count"] for p in provider_list)
 

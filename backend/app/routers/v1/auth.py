@@ -83,7 +83,7 @@ def issue_anonymous(
 
     return AnonymousTokenResponse(
         access_token=token,
-        token_type="Bearer",
+        token_type="Bearer",  # noqa: S106 — OAuth2 方案名，不是密码
         expires_in=expires_in,
         user_id=actual_user_id,
     )

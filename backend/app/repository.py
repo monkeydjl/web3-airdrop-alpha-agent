@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
 import structlog
@@ -437,9 +438,11 @@ class ProjectRepository:
 
         result: dict[str, int] = {}
         for sector in sectors:
+            # functools.partial 而非带默认值的 lambda：后者 mypy 无法推断
+            # （Cannot infer type of lambda），同时保留"绑定当前 sector"的语义。
             result[sector] = cache.get_or_compute(
                 sector,
-                lambda s=sector: self.count_by_sector(s),
+                partial(self.count_by_sector, sector),
             )
         return result
 

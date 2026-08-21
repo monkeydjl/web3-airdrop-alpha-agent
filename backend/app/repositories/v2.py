@@ -77,11 +77,13 @@ class AuditLogRepository:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)
 
+        # where 只由上面固定的字面量片段拼接（"action = ?" 等），所有取值一律走
+        # 绑定参数 params；无用户输入进入 SQL 文本。
         rows = self.conn.execute(
             f"""
             SELECT * FROM audit_logs {where}
             ORDER BY created_at DESC LIMIT ?
-            """,
+            """,  # noqa: S608
             params,
         ).fetchall()
 
@@ -122,9 +124,7 @@ class MetricsRepository:
         ).fetchall()
         return [dict_from_row(r) for r in rows]
 
-    def query_by_name(
-        self, metric_name: str, *, limit: int = 50
-    ) -> list[dict[str, Any]]:
+    def query_by_name(self, metric_name: str, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM metrics WHERE metric_name = ? ORDER BY timestamp DESC LIMIT ?",
             (metric_name, limit),
@@ -159,16 +159,13 @@ class LLMEvalRepository:
                  llm_cost_usd, decision, detail)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (eval_date, sample_count, rule_accuracy, llm_accuracy,
-             llm_cost_usd, decision, detail),
+            (eval_date, sample_count, rule_accuracy, llm_accuracy, llm_cost_usd, decision, detail),
         )
         self.conn.commit()
         return cursor.lastrowid or 0
 
     def get_latest(self) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            "SELECT * FROM llm_eval_changelog ORDER BY eval_date DESC LIMIT 1"
-        ).fetchone()
+        row = self.conn.execute("SELECT * FROM llm_eval_changelog ORDER BY eval_date DESC LIMIT 1").fetchone()
         return dict_from_row(row) if row else None
 
     def list_all(self, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -226,9 +223,7 @@ class QuarantineRepository:
         ).fetchall()
         return [dict_from_row(r) for r in rows]
 
-    def query_by_reason(
-        self, reason: str, *, limit: int = 50
-    ) -> list[dict[str, Any]]:
+    def query_by_reason(self, reason: str, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM quarantine WHERE failure_reason = ? ORDER BY created_at DESC LIMIT ?",
             (reason, limit),
@@ -267,9 +262,7 @@ class ProjectHistoryRepository:
         self.conn.commit()
         return cursor.lastrowid or 0
 
-    def query_by_project(
-        self, project_id: str, *, limit: int = 50
-    ) -> list[dict[str, Any]]:
+    def query_by_project(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM project_history WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
             (project_id, limit),
@@ -314,8 +307,7 @@ class NarrativesRepository:
                 momentum = COALESCE(excluded.momentum, narratives.momentum),
                 updated_at = excluded.updated_at
             """,
-            (sector, aliases_json, base_heat, stage, momentum,
-             datetime.now(UTC).isoformat()),
+            (sector, aliases_json, base_heat, stage, momentum, datetime.now(UTC).isoformat()),
         )
         self.conn.commit()
 
@@ -327,9 +319,7 @@ class NarrativesRepository:
         return dict_from_row(row) if row else None
 
     def list_all(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT * FROM narratives ORDER BY sector"
-        ).fetchall()
+        rows = self.conn.execute("SELECT * FROM narratives ORDER BY sector").fetchall()
         return [dict_from_row(r) for r in rows]
 
     def delete(self, sector: str) -> bool:
@@ -440,9 +430,7 @@ class PromptVersionsRepository:
         ).fetchone()
         return dict_from_row(row) if row else None
 
-    def get_version(
-        self, agent_name: str, version: str
-    ) -> dict[str, Any] | None:
+    def get_version(self, agent_name: str, version: str) -> dict[str, Any] | None:
         row = self.conn.execute(
             "SELECT * FROM prompt_versions WHERE agent_name = ? AND version = ?",
             (agent_name, version),

@@ -54,14 +54,28 @@ def test_total_from_subscores_v1_weights():
 
 
 def test_metric_j_perfect_farm():
-    farm_subs = {k: 100.0 for k in (
-        "airdrop_signal", "narrative_timing", "team_reputation",
-        "risk", "tokenomics", "competition",
-    )}
-    ignore_subs = {k: 0.0 for k in (
-        "airdrop_signal", "narrative_timing", "team_reputation",
-        "risk", "tokenomics", "competition",
-    )}
+    farm_subs = {
+        k: 100.0
+        for k in (
+            "airdrop_signal",
+            "narrative_timing",
+            "team_reputation",
+            "risk",
+            "tokenomics",
+            "competition",
+        )
+    }
+    ignore_subs = {
+        k: 0.0
+        for k in (
+            "airdrop_signal",
+            "narrative_timing",
+            "team_reputation",
+            "risk",
+            "tokenomics",
+            "competition",
+        )
+    }
     weights = {
         "airdrop_signal": 0.2,
         "narrative_timing": 0.2,

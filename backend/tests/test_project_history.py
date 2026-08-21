@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from copy import deepcopy
 
 import pytest
 
@@ -152,9 +151,7 @@ class TestProjectHistoryWrite:
 
         # Neither projects nor project_history should have the row
         # (project_history table doesn't exist, but projects should be rolled back)
-        proj = db_conn.execute(
-            "SELECT * FROM projects WHERE id = ?", (sample_state.project.id,)
-        ).fetchone()
+        proj = db_conn.execute("SELECT * FROM projects WHERE id = ?", (sample_state.project.id,)).fetchone()
         assert proj is None, "projects row should not exist after rollback"
 
         # Recreate the table for other tests that might share the fixture

@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app import tracing as _tracing
 from app.agents.base import (
     AgentContext,
     AgentError,
@@ -31,7 +32,6 @@ from app.agents.tokenomics import TokenomicsAgent
 from app.config import settings
 from app.models import RunResponse
 from app.repository import ProjectRepository
-from app import tracing as _tracing
 from app.tracing import end_span_with_error
 
 logger = structlog.get_logger(__name__)
@@ -99,9 +99,7 @@ class SimpleOrchestrator:
         if save_to_db:
             try:
                 repo = ProjectRepository()
-                global_counts = repo.global_sector_counts(
-                    sectors={s for s in sector_counts if s}
-                )
+                global_counts = repo.global_sector_counts(sectors={s for s in sector_counts if s})
                 # 合并：DB 全库计数 + 当前批次 = 竞争度基准
                 for sector, db_count in global_counts.items():
                     sector_counts[sector] = sector_counts.get(sector, 0) + db_count
@@ -115,9 +113,7 @@ class SimpleOrchestrator:
 
         # Process projects with bounded concurrency (ADR-007 Level 1)
         # Each project's exceptions are isolated — one failure never blocks others.
-        async def _process_with_semaphore(
-            project: RawProject, idx: int
-        ) -> PipelineState:
+        async def _process_with_semaphore(project: RawProject, idx: int) -> PipelineState:
             async with self._semaphore:
                 logger.info(
                     "orchestrator.project_start",
@@ -127,9 +123,7 @@ class SimpleOrchestrator:
                     progress=f"{idx + 1}/{len(projects)}",
                 )
                 try:
-                    return await self._run_single_project(
-                        project, context, sector_counts
-                    )
+                    return await self._run_single_project(project, context, sector_counts)
                 except Exception as e:
                     # Safety net: _run_single_project already catches, but if
                     # something escapes, don't let it kill the batch.
@@ -225,9 +219,7 @@ class SimpleOrchestrator:
             persisted_project_rows=persisted_project_rows,
         )
 
-    async def _run_agent_span(
-        self, agent_name: str, project_id: str, coro
-    ) -> Any:
+    async def _run_agent_span(self, agent_name: str, project_id: str, coro) -> Any:
         """Wrap an agent coroutine with a named span."""
         with _tracing.tracer.start_as_current_span(f"airdrop.agent.{agent_name}") as span:
             span.set_attribute("project_id", project_id)

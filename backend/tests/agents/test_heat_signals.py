@@ -17,7 +17,6 @@ import pytest
 
 from app.agents.heat_signals import (
     HeatSignalProvider,
-    get_heat_signal_provider,
     reset_heat_signal_provider,
 )
 from app.agents.narrative import SECTOR_PROFILE, NarrativeAgent
@@ -75,6 +74,7 @@ class TestHeatSignalProvider:
         provider = HeatSignalProvider(ttl=0.05, lookback_hours=1)
         m1 = provider.get_multiplier("DeFi")
         import time
+
         time.sleep(0.06)
         m2 = provider.get_multiplier("DeFi")
         # 两次结果应相同（无信号时都是 1.0）
@@ -92,8 +92,10 @@ class TestHeatSignalProvider:
     def test_multiplier_clamped_to_range(self):
         """乘子被钳制到 [min, max] 范围。"""
         provider = HeatSignalProvider(
-            ttl=300, lookback_hours=1,
-            max_multiplier=1.3, min_multiplier=0.7,
+            ttl=300,
+            lookback_hours=1,
+            max_multiplier=1.3,
+            min_multiplier=0.7,
         )
         # 无信号时 1.0 在范围内
         m = provider.get_multiplier("NonExistentSector")
@@ -118,8 +120,10 @@ class TestHeatSignalProvider:
     def test_with_signals_increases_multiplier(self, clean_signals):
         """有信号时乘子 > 1.0。"""
         provider = HeatSignalProvider(
-            ttl=300, lookback_hours=72,
-            max_multiplier=1.3, min_multiplier=0.7,
+            ttl=300,
+            lookback_hours=72,
+            max_multiplier=1.3,
+            min_multiplier=0.7,
         )
 
         # 插入测试信号数据
@@ -187,7 +191,9 @@ class TestHeatSignalProvider:
 
         # 清理测试数据
         with get_connection() as conn:
-            conn.execute("DELETE FROM project_signals WHERE signal_source IN ('twitter', 'rootdata') AND dedup_key LIKE 'heat-sector-%'")
+            conn.execute(
+                "DELETE FROM project_signals WHERE signal_source IN ('twitter', 'rootdata') AND dedup_key LIKE 'heat-sector-%'"
+            )
             conn.execute("DELETE FROM raw_projects WHERE dedup_key LIKE 'heat-sector-%'")
             conn.commit()
 
@@ -198,6 +204,7 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_agent_with_disabled_signals(self):
         """heat_signal_enabled=False 时使用静态 heat_score。"""
+
         # 使用 mock provider 返回固定值
         class MockProvider:
             def get_multiplier(self, sector: str) -> float:
@@ -220,6 +227,7 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_agent_with_elevated_signals(self):
         """有热度信号时 heat_score 高于静态值。"""
+
         class MockProvider:
             def get_multiplier(self, sector: str) -> float:
                 return 1.3  # 高热度
@@ -243,6 +251,7 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_agent_with_cold_signals(self):
         """低热度信号时 heat_score 低于静态值。"""
+
         class MockProvider:
             def get_multiplier(self, sector: str) -> float:
                 return 0.7  # 低热度
@@ -264,6 +273,7 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_agent_provider_failure_falls_back(self):
         """Provider 异常时降级到静态 heat_score。"""
+
         class FailingProvider:
             def get_multiplier(self, sector: str) -> float:
                 raise RuntimeError("signal source down")
@@ -285,6 +295,7 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_agent_unknown_sector(self):
         """未知 sector 使用 DEFAULT_PROFILE。"""
+
         class MockProvider:
             def get_multiplier(self, sector: str) -> float:
                 return 1.0
@@ -293,7 +304,9 @@ class TestNarrativeAgentIntegration:
 
         from app.agents.base import AgentContext, PipelineState, RawProject
 
-        project = RawProject(id="test-narr-005", name="UnknownProj", sector="QuantumDAO", stage="testnet", source="seed")
+        project = RawProject(
+            id="test-narr-005", name="UnknownProj", sector="QuantumDAO", stage="testnet", source="seed"
+        )
         state = PipelineState(project=project, context=AgentContext(run_id="test"))
 
         result_state = await agent.run(state)
@@ -305,16 +318,17 @@ class TestNarrativeAgentIntegration:
     @pytest.mark.asyncio
     async def test_heat_does_not_block_analyze(self):
         """热度信号失败不阻塞 analyze 并行。"""
+
         class SlowFailingProvider:
             def get_multiplier(self, sector: str) -> float:
                 raise TimeoutError("signal timeout")
 
         agent = NarrativeAgent(heat_provider=SlowFailingProvider())
 
-        from app.agents.base import AgentContext, PipelineState, RawProject
-
         # 同时跑多个项目的 narrative agent
         import asyncio
+
+        from app.agents.base import AgentContext, PipelineState, RawProject
 
         async def run_one(pid: str, sector: str):
             project = RawProject(id=pid, name=f"Proj{pid}", sector=sector, stage="testnet", source="seed")

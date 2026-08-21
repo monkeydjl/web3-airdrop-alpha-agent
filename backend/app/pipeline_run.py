@@ -15,12 +15,12 @@ from typing import Any
 
 import structlog
 
+from app import tracing as _tracing
 from app.agents.base import RawProject
 from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import run_orchestrator
 from app.collectors.persistence import CollectionRepository
 from app.config import settings
-from app.seed import get_seed_raw_projects
 from app.inflight import QUEUE_DRAIN_KEY, QueueDrainInProgressError, claim_run
 from app.metrics import (
     PIPELINE_DURATION,
@@ -34,7 +34,7 @@ from app.metrics import (
     update_db_gauges,
 )
 from app.opportunity.service import OpportunityService
-from app import tracing as _tracing
+from app.seed import get_seed_raw_projects
 from app.utils.normalize import create_dedup_key
 
 logger = structlog.get_logger(__name__)
@@ -254,13 +254,12 @@ async def _run_pipeline(
             limit=limit if limit is not None else settings.analysis_run_limit,
         )
 
-    if not raw_projects:
-        # §10.2 降级兜底：外部采集源全挂时回退到内置 seed 数据
-        if from_repository and settings.seed_fallback_enabled:
-            logger.warning("pipeline.seed_fallback_activated", trigger=trigger)
-            raw_projects = get_seed_raw_projects()
-            # seed 数据无 raw_ids，不走 mark_processed 出队路径
-            from_repository = False
+    # §10.2 降级兜底：外部采集源全挂时回退到内置 seed 数据
+    if not raw_projects and from_repository and settings.seed_fallback_enabled:
+        logger.warning("pipeline.seed_fallback_activated", trigger=trigger)
+        raw_projects = get_seed_raw_projects()
+        # seed 数据无 raw_ids，不走 mark_processed 出队路径
+        from_repository = False
 
     if not raw_projects:
         run_id = f"api-run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"

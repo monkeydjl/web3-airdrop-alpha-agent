@@ -201,6 +201,7 @@ class TestBaseAgentLLMEnhancePromptVersion:
 
 def _make_test_agent() -> BaseAgent:
     """Create a minimal BaseAgent subclass for testing."""
+
     class TestAgent(BaseAgent):
         def __init__(self):
             super().__init__("TestAgent")

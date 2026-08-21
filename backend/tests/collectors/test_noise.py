@@ -39,66 +39,87 @@ def test_protocol_and_raw_helpers():
 class TestListedTokenNoAirdropSignals:
     def test_listed_token_with_no_signals(self):
         """Project with listed token and zero airdrop signals should be filtered."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=False,
-            has_testnet=False,
-            has_points_program=False,
-            has_task_portal=False,
-            explicit_airdrop_mention=False,
-            source_id="defillama",
-        ) is True
-
-    def test_unlisted_token_kept(self):
-        """Project without a token yet should NOT be filtered."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=True,
-            has_testnet=False,
-            has_points_program=False,
-            has_task_portal=False,
-            explicit_airdrop_mention=False,
-            source_id="defillama",
-        ) is False
-
-    def test_listed_token_with_testnet_kept(self):
-        """Listed token but has testnet = potential airdrop, keep it."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=False,
-            has_testnet=True,
-            source_id="defillama",
-        ) is False
-
-    def test_listed_token_with_points_kept(self):
-        """Listed token but has points program = potential airdrop, keep it."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=False,
-            has_points_program=True,
-            source_id="defillama",
-        ) is False
-
-    def test_listed_token_with_quest_kept(self):
-        """Listed token but has quest portal = potential airdrop, keep it."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=False,
-            has_task_portal=True,
-            source_id="defillama",
-        ) is False
-
-    def test_signal_supplement_sources_exempt(self):
-        """Signal supplement sources should never be filtered."""
-        for source_id in ("coingecko", "cryptorank", "etherscan", "alchemy_webhook"):
-            assert is_listed_token_no_airdrop_signals(
+        assert (
+            is_listed_token_no_airdrop_signals(
                 no_token_yet=False,
                 has_testnet=False,
                 has_points_program=False,
                 has_task_portal=False,
                 explicit_airdrop_mention=False,
-                source_id=source_id,
-            ) is False
+                source_id="defillama",
+            )
+            is True
+        )
+
+    def test_unlisted_token_kept(self):
+        """Project without a token yet should NOT be filtered."""
+        assert (
+            is_listed_token_no_airdrop_signals(
+                no_token_yet=True,
+                has_testnet=False,
+                has_points_program=False,
+                has_task_portal=False,
+                explicit_airdrop_mention=False,
+                source_id="defillama",
+            )
+            is False
+        )
+
+    def test_listed_token_with_testnet_kept(self):
+        """Listed token but has testnet = potential airdrop, keep it."""
+        assert (
+            is_listed_token_no_airdrop_signals(
+                no_token_yet=False,
+                has_testnet=True,
+                source_id="defillama",
+            )
+            is False
+        )
+
+    def test_listed_token_with_points_kept(self):
+        """Listed token but has points program = potential airdrop, keep it."""
+        assert (
+            is_listed_token_no_airdrop_signals(
+                no_token_yet=False,
+                has_points_program=True,
+                source_id="defillama",
+            )
+            is False
+        )
+
+    def test_listed_token_with_quest_kept(self):
+        """Listed token but has quest portal = potential airdrop, keep it."""
+        assert (
+            is_listed_token_no_airdrop_signals(
+                no_token_yet=False,
+                has_task_portal=True,
+                source_id="defillama",
+            )
+            is False
+        )
+
+    def test_signal_supplement_sources_exempt(self):
+        """Signal supplement sources should never be filtered."""
+        for source_id in ("coingecko", "cryptorank", "etherscan", "alchemy_webhook"):
+            assert (
+                is_listed_token_no_airdrop_signals(
+                    no_token_yet=False,
+                    has_testnet=False,
+                    has_points_program=False,
+                    has_task_portal=False,
+                    explicit_airdrop_mention=False,
+                    source_id=source_id,
+                )
+                is False
+            )
 
     def test_listed_token_with_airdrop_mention_kept(self):
         """Listed token but has explicit airdrop mention = keep it."""
-        assert is_listed_token_no_airdrop_signals(
-            no_token_yet=False,
-            explicit_airdrop_mention=True,
-            source_id="twitter_kol",
-        ) is False
+        assert (
+            is_listed_token_no_airdrop_signals(
+                no_token_yet=False,
+                explicit_airdrop_mention=True,
+                source_id="twitter_kol",
+            )
+            is False
+        )

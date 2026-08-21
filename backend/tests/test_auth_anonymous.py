@@ -23,7 +23,6 @@ from app.config import settings
 from app.db import init_db
 from app.main import create_app
 
-
 # ═══════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════

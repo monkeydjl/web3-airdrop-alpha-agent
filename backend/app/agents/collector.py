@@ -778,7 +778,9 @@ class CollectorAgent(BaseAgent):
                     "funding_quality": flags.get("funding_quality") or 0,
                     "discovery_score": row["discovery_score"],
                     "auto_discovered": True,
-                    "discovered_at": datetime.fromisoformat(row["discovered_at"]) if isinstance(row["discovered_at"], str) else row["discovered_at"],
+                    "discovered_at": datetime.fromisoformat(row["discovered_at"])
+                    if isinstance(row["discovered_at"], str)
+                    else row["discovered_at"],
                     "_dedup_key": dedup,
                 }
             )

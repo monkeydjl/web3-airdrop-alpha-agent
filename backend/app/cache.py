@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from typing import Callable
+from collections.abc import Callable
 
 import structlog
 
@@ -141,11 +141,7 @@ class SectorCountCache:
         """返回当前缓存内容的快照（用于一致性比对）。"""
         with self._lock:
             now = time.monotonic()
-            return {
-                sector: count
-                for sector, (count, expires_at) in self._store.items()
-                if now < expires_at
-            }
+            return {sector: count for sector, (count, expires_at) in self._store.items() if now < expires_at}
 
 
 # ── 模块级单例 ──────────────────────────────────────────────────

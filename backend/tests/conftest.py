@@ -26,9 +26,7 @@ os.environ["HOST"] = "127.0.0.1"
 # Override DB_PATH to a workspace-writable location for tests.
 # .env may set DB_PATH=/app/data/app.db (Docker path) which doesn't exist on
 # the host. Tests that don't use tmp_path will fall through to this default.
-os.environ.setdefault("DB_PATH", str(
-    pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"
-))
+os.environ.setdefault("DB_PATH", str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"))
 
 # ── Override tmp_path to avoid sandbox-locked dirs ──────────────────
 # DSH sandbox locks directories created by pytest's internal TempPathFactory.
@@ -50,16 +48,23 @@ def tmp_path(request):
     # Use test name + uuid for uniqueness
     test_name = request.node.name.replace("/", "_").replace("::", "_").replace("[", "_").replace("]", "")
     # Sanitize characters that are illegal in Windows directory names
-    test_name = test_name.replace(":", "_").replace("*", "_").replace("?", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("|", "_")
+    test_name = (
+        test_name.replace(":", "_")
+        .replace("*", "_")
+        .replace("?", "_")
+        .replace('"', "_")
+        .replace("<", "_")
+        .replace(">", "_")
+        .replace("|", "_")
+    )
     # Truncate to avoid path length issues on Windows
     test_name = test_name[:80]
     d = _WORKSPACE_TMP / f"{test_name}_{uuid.uuid4().hex[:8]}"
     d.mkdir(parents=True, exist_ok=True)
     yield d
     # Cleanup (best-effort)
+    import contextlib
     import shutil
 
-    try:
+    with contextlib.suppress(Exception):
         shutil.rmtree(d, ignore_errors=True)
-    except Exception:
-        pass

@@ -8,8 +8,9 @@ Reference:
 - docs/DATA_QUALITY.md
 """
 
+import contextlib
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -279,9 +280,7 @@ def get_calibration_status() -> FeedbackResponse:
             strong_samples = int(strong_row[0]) if strong_row else 0
 
             # 信号分布
-            signal_rows = conn.execute(
-                "SELECT signal, COUNT(*) as cnt FROM feedback GROUP BY signal"
-            ).fetchall()
+            signal_rows = conn.execute("SELECT signal, COUNT(*) as cnt FROM feedback GROUP BY signal").fetchall()
             signal_counts = {row["signal"]: row["cnt"] for row in signal_rows}
 
             # outcome 分布
@@ -305,11 +304,10 @@ def get_calibration_status() -> FeedbackResponse:
 
             changelog = []
             for row in changelog_rows:
-                metrics = {}
-                try:
+                metrics: dict[str, Any] = {}
+                # 单条 metrics_json 损坏不该让整个 changelog 接口失败
+                with contextlib.suppress(ValueError, TypeError):
                     metrics = _json.loads(row["metrics_json"]) if row["metrics_json"] else {}
-                except (ValueError, TypeError):
-                    pass
                 changelog.append(
                     {
                         "from_version": row["from_version"],

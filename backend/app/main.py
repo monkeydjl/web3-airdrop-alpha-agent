@@ -64,6 +64,18 @@ def create_app(db_override=None) -> FastAPI:
             llm_enabled=settings.is_llm_enabled,
             collection_scheduler_enabled=settings.collection_scheduler_enabled,
         )
+
+        # 采集源"开了但缺 key"必须显式告警：这类源的 is_enabled() 返回 False，
+        # 于是整源静默不跑。GitHub 尤其致命——execution 维度占 13% 权重，缺了
+        # 会让所有项目的开发活跃度恒为空，而运维看不到任何异常。
+        if settings.github_enabled and not settings.github_token:
+            logger.warning(
+                "app.collector_disabled_missing_credential",
+                source="github",
+                reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索需要 token，本源不会运行",
+                impact="execution 维度（权重 0.13）的 GitHub 活跃度信号将始终缺失",
+            )
+
         if db_override is None:
             init_db()
 
@@ -475,9 +487,11 @@ def create_app(db_override=None) -> FastAPI:
         projects,
         quarantine,
         run,
-        settings as settings_router,
         watchlist,
         webhook,
+    )
+    from app.routers.v1 import (
+        settings as settings_router,
     )
 
     app.include_router(run.router, prefix="/api/v1", tags=["v1"])

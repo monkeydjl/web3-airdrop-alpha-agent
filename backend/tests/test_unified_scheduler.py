@@ -16,17 +16,13 @@ Reference:
 from __future__ import annotations
 
 import asyncio
-import time
-from datetime import UTC, datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.config import settings
 from app.inflight import QUEUE_DRAIN_KEY, active_runs, claim_run, reset_active_runs
 from app.scheduler import UnifiedScheduler
-
 
 # ── Fixtures ──────────────────────────────────
 
@@ -127,8 +123,9 @@ async def test_no_overlap_concurrent_triggers(monkeypatch):
             "persisted_count": 0,
         }
 
+    # 只需替换 pipeline：指标 gauge 由 pipeline_run 内部更新，scheduler 自己
+    # 并不引用 update_db_gauges（此前这里 patch 的是一个已失效的残留符号）。
     monkeypatch.setattr("app.scheduler.execute_analysis_pipeline", fake_pipeline)
-    monkeypatch.setattr("app.scheduler.update_db_gauges", lambda conn: None)
 
     # Start first analysis (will block on release_drain)
     task1 = asyncio.create_task(sched._run_analysis())
@@ -225,8 +222,8 @@ async def test_analysis_runs_when_not_in_progress(monkeypatch):
             "persisted_count": 3,
         }
 
+    # 同上：gauge 更新在 pipeline_run 内，scheduler 不引用该符号
     monkeypatch.setattr("app.scheduler.execute_analysis_pipeline", fake_pipeline)
-    monkeypatch.setattr("app.scheduler.update_db_gauges", lambda conn: None)
 
     await sched._run_analysis()
 
@@ -247,12 +244,14 @@ async def test_analysis_failure_records_pipeline_run(monkeypatch):
     recorded: list[dict] = []
 
     def fake_record(*, run_id, trigger, duration_ms, summary, error=None, **kw):
-        recorded.append({
-            "run_id": run_id,
-            "trigger": trigger,
-            "error": error,
-            "summary": summary,
-        })
+        recorded.append(
+            {
+                "run_id": run_id,
+                "trigger": trigger,
+                "error": error,
+                "summary": summary,
+            }
+        )
 
     monkeypatch.setattr("app.scheduler.record_pipeline_run", fake_record)
 

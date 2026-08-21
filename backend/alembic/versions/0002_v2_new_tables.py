@@ -208,7 +208,7 @@ def upgrade() -> None:
         # 跳过空语句和纯注释行
         if stmt and not stmt.startswith("--"):
             # 去掉前导注释行
-            lines = [l for l in stmt.split("\n") if not l.strip().startswith("--")]
+            lines = [line for line in stmt.split("\n") if not line.strip().startswith("--")]
             clean = "\n".join(lines).strip()
             if clean:
                 bind.execute(text(clean))

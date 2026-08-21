@@ -115,7 +115,14 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S110", "ARG001", "ARG002"]  # Allow assert in tests and unused pytest fixtures
-"backend/tests/**/*.py" = ["ARG001", "ARG002", "ARG005"]  # Allow unused pytest fixture arguments
+# 测试里的 "密钥" 全是本地假值（test-hmac-secret-… / "Bearer" 方案名），
+# S105/S106 在此无意义；S110 允许清理阶段静默失败。
+"backend/tests/**/*.py" = ["ARG001", "ARG002", "ARG005", "S105", "S106", "S110"]
+# sqlite3.Row 的 `in` 检查的是**值**而不是键（'name' in row 为 False，'alpha' in row 为 True），
+# 所以 `"col" in row.keys()` 是列存在性检查的唯一正确写法。照 SIM118 改成 `"col" in row`
+# 会让所有可选列静默变成 None —— 这是行为破坏，不是风格问题。
+"backend/app/routers/v1/collections.py" = ["SIM118"]
+"backend/app/routers/v1/watchlist.py" = ["SIM118"]
 "backend/scripts/*.py" = ["E402"]  # Scripts update sys.path before importing the local app package
 "backend/app/config.py" = ["S104"]  # Containerized API defaults to listening on all interfaces
 "backend/app/repository.py" = ["S608"]  # Dynamic SQL fragments use fixed columns and bound values

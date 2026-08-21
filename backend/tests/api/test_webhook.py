@@ -193,9 +193,7 @@ class TestAlchemyWebhook:
         def failing_persist(self, *args, **kwargs):
             raise RuntimeError("DB connection failed")
 
-        monkeypatch.setattr(
-            CollectionRepository, "persist_collection_result", failing_persist
-        )
+        monkeypatch.setattr(CollectionRepository, "persist_collection_result", failing_persist)
 
         body = json.dumps(_address_activity_payload()).encode()
         response = client.post(

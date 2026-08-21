@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from app.collectors.base import CollectorResult, RawDiscovery, RawSignal
@@ -75,12 +75,7 @@ def _build_discovery(payload: dict[str, Any]) -> RawDiscovery | None:
     event = payload.get("event", {})
     data = event.get("data", {})
 
-    address = (
-        data.get("address")
-        or data.get("to")
-        or data.get("from")
-        or ""
-    ).lower()
+    address = (data.get("address") or data.get("to") or data.get("from") or "").lower()
     if not address:
         return None
 
@@ -129,9 +124,7 @@ def _build_discovery(payload: dict[str, Any]) -> RawDiscovery | None:
     ]
 
     # Discovery score: modest, capped below analysis threshold (signal-only)
-    discovery_score = round(
-        min(MAX_DISCOVERY_SCORE, 0.08 + value_strength * 0.2), 3
-    )
+    discovery_score = round(min(MAX_DISCOVERY_SCORE, 0.08 + value_strength * 0.2), 3)
 
     return RawDiscovery(
         source_id="alchemy_webhook",

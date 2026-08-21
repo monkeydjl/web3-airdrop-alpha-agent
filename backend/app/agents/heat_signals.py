@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
 
 import structlog
 
@@ -112,11 +111,13 @@ class HeatSignalProvider:
                   AND rp.raw_data LIKE ?
                   AND ps.captured_at >= datetime('now', ?)
                 """,
-                (f'%"{sector}"%', f'-{lookback} hours'),
+                (f'%"{sector}"%', f"-{lookback} hours"),
             ).fetchone()
 
             twitter_count = int(twitter_row["cnt"]) if twitter_row and twitter_row["cnt"] else 0
-            twitter_strength = float(twitter_row["avg_strength"]) if twitter_row and twitter_row["avg_strength"] else 0.0
+            twitter_strength = (
+                float(twitter_row["avg_strength"]) if twitter_row and twitter_row["avg_strength"] else 0.0
+            )
 
             # 2. VC 融资信号：signal_type='funding'
             funding_row = conn.execute(
@@ -129,11 +130,13 @@ class HeatSignalProvider:
                   AND rp.raw_data LIKE ?
                   AND ps.captured_at >= datetime('now', ?)
                 """,
-                (f'%"{sector}"%', f'-{lookback} hours'),
+                (f'%"{sector}"%', f"-{lookback} hours"),
             ).fetchone()
 
             funding_count = int(funding_row["cnt"]) if funding_row and funding_row["cnt"] else 0
-            funding_strength = float(funding_row["avg_strength"]) if funding_row and funding_row["avg_strength"] else 0.0
+            funding_strength = (
+                float(funding_row["avg_strength"]) if funding_row and funding_row["avg_strength"] else 0.0
+            )
 
             # 3. KOL 热度信号：signal_type IN ('airdrop','tge')
             kol_row = conn.execute(
@@ -147,7 +150,7 @@ class HeatSignalProvider:
                   AND rp.raw_data LIKE ?
                   AND ps.captured_at >= datetime('now', ?)
                 """,
-                (f'%"{sector}"%', f'-{lookback} hours'),
+                (f'%"{sector}"%', f"-{lookback} hours"),
             ).fetchone()
 
             kol_count = int(kol_row["cnt"]) if kol_row and kol_row["cnt"] else 0
@@ -164,11 +167,7 @@ class HeatSignalProvider:
         funding_component = min(1.0, funding_count / 5.0) * funding_strength  # 5 条融资 = 满分
         kol_component = min(1.0, kol_count / 10.0)  # 10 条 KOL 信号 = 满分
 
-        signal_score = (
-            twitter_component * 0.4
-            + funding_component * 0.4
-            + kol_component * 0.2
-        )
+        signal_score = twitter_component * 0.4 + funding_component * 0.4 + kol_component * 0.2
 
         # 映射到乘子：signal_score=0 → 1.0（中性），signal_score=1.0 → max_multiplier
         # 信号极度稀少时乘子降低（低于 0.1 阈值）

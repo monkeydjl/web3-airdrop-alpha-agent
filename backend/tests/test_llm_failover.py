@@ -11,24 +11,21 @@
     LLM_MODELS_2_1=deepseek-chat
 """
 
-import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from app.llm.client import (
     LLMProvider,
-    LLMResult,
     _build_combinations,
     _is_connection_error,
     _is_model_error,
     llm_chat,
 )
 
-
 # ── 辅助函数 ──────────────────────────────────
+
 
 def _clear_llm_env(monkeypatch):
     """清除所有 LLM 相关环境变量。"""
@@ -62,6 +59,7 @@ def _setup_provider_2(monkeypatch, models=None):
 
 # ── 配置解析测试 ──────────────────────────────
 
+
 class TestConfigParsing:
     """编号制配置解析测试。"""
 
@@ -73,6 +71,7 @@ class TestConfigParsing:
         monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
 
         from app.config import Settings
+
         s = Settings()
         providers = s.llm_providers
         assert len(providers) == 1
@@ -88,6 +87,7 @@ class TestConfigParsing:
         _setup_provider_2(monkeypatch, models=["deepseek-chat", "deepseek-reasoner"])
 
         from app.config import Settings
+
         s = Settings()
         providers = s.llm_providers
 
@@ -109,6 +109,7 @@ class TestConfigParsing:
         _setup_provider_1(monkeypatch, models=["gpt-4o-mini"])
 
         from app.config import Settings
+
         s = Settings()
         providers = s.llm_providers
         assert len(providers) == 1
@@ -119,6 +120,7 @@ class TestConfigParsing:
         _clear_llm_env(monkeypatch)
 
         from app.config import Settings
+
         s = Settings()
         providers = s.llm_providers
         assert providers == []
@@ -130,14 +132,15 @@ class TestConfigParsing:
         monkeypatch.setenv("ENABLE_LLM_ENHANCEMENT", "true")
 
         from app.config import Settings
+
         s = Settings()
         assert s.is_llm_enabled is True
 
 
 # ── 错误分类测试 ──────────────────────────────
 
-class TestErrorClassification:
 
+class TestErrorClassification:
     def test_connection_error_is_connection(self):
         err = httpx.ConnectError("Connection refused")
         assert _is_connection_error(err) is True
@@ -185,8 +188,8 @@ class TestErrorClassification:
 
 # ── 组合列表构建测试 ──────────────────────────
 
-class TestCombinations:
 
+class TestCombinations:
     def test_2x2_combinations(self):
         providers = [
             LLMProvider(base_url="url1", api_key="key1", name="p1", models=["model-a", "model-b"]),
@@ -221,15 +224,25 @@ class TestCombinations:
 
 # ── 故障转移集成测试 ──────────────────────────
 
-class TestFailover:
 
+class TestFailover:
     @pytest.mark.asyncio
     async def test_first_provider_success(self, monkeypatch):
         """第一个接口成功，不尝试第二个。"""
         mock_settings = MagicMock()
         mock_settings.llm_providers = [
-            {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a", "model-b"]},
-            {"base_url": "https://api2.com/v1", "api_key": "key2", "name": "provider-2", "models": ["model-a", "model-b"]},
+            {
+                "base_url": "https://api1.com/v1",
+                "api_key": "key1",
+                "name": "provider-1",
+                "models": ["model-a", "model-b"],
+            },
+            {
+                "base_url": "https://api2.com/v1",
+                "api_key": "key2",
+                "name": "provider-2",
+                "models": ["model-a", "model-b"],
+            },
         ]
         mock_settings.llm_temperature = 0.3
         mock_settings.llm_max_tokens = 512
@@ -280,7 +293,12 @@ class TestFailover:
         """模型1调用失败 → 自动切换到模型2。"""
         mock_settings = MagicMock()
         mock_settings.llm_providers = [
-            {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a", "model-b"]},
+            {
+                "base_url": "https://api1.com/v1",
+                "api_key": "key1",
+                "name": "provider-1",
+                "models": ["model-a", "model-b"],
+            },
         ]
         mock_settings.llm_temperature = 0.3
         mock_settings.llm_max_tokens = 512
@@ -308,8 +326,18 @@ class TestFailover:
         """所有接口和模型都失败 → 返回 None。"""
         mock_settings = MagicMock()
         mock_settings.llm_providers = [
-            {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a", "model-b"]},
-            {"base_url": "https://api2.com/v1", "api_key": "key2", "name": "provider-2", "models": ["model-a", "model-b"]},
+            {
+                "base_url": "https://api1.com/v1",
+                "api_key": "key1",
+                "name": "provider-1",
+                "models": ["model-a", "model-b"],
+            },
+            {
+                "base_url": "https://api2.com/v1",
+                "api_key": "key2",
+                "name": "provider-2",
+                "models": ["model-a", "model-b"],
+            },
         ]
         mock_settings.llm_temperature = 0.3
         mock_settings.llm_max_tokens = 512
@@ -346,8 +374,18 @@ class TestFailover:
         """完整故障转移链：接口1连接失败 → 接口2模型1失败 → 接口2模型2成功。"""
         mock_settings = MagicMock()
         mock_settings.llm_providers = [
-            {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a", "model-b"]},
-            {"base_url": "https://api2.com/v1", "api_key": "key2", "name": "provider-2", "models": ["model-a", "model-b"]},
+            {
+                "base_url": "https://api1.com/v1",
+                "api_key": "key1",
+                "name": "provider-1",
+                "models": ["model-a", "model-b"],
+            },
+            {
+                "base_url": "https://api2.com/v1",
+                "api_key": "key2",
+                "name": "provider-2",
+                "models": ["model-a", "model-b"],
+            },
         ]
         mock_settings.llm_temperature = 0.3
         mock_settings.llm_max_tokens = 512

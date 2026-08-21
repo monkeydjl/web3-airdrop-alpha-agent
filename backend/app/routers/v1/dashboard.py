@@ -9,20 +9,22 @@ Reference:
 - docs/OBSERVABILITY.md
 """
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, datetime, time
 from typing import Any
 
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db import get_connection
 
+logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["dashboard"])
 
 
 def _utc_midnight() -> datetime:
     """今日 UTC 零点，用于「今日」窗口。"""
-    return datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+    return datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
 
 
 def _row_value(row: Any, key: str, default: Any = None) -> Any:
@@ -72,10 +74,7 @@ class DashboardOverviewResponse(BaseModel):
     "/dashboard/overview",
     response_model=DashboardOverviewResponse,
     summary="Dashboard 今日概览聚合",
-    description=(
-        "聚合今日采集运行、发现队列与影子引擎评估的真实数据，"
-        "供 Dashboard「今日流水线」卡片展示。"
-    ),
+    description=("聚合今日采集运行、发现队列与影子引擎评估的真实数据，供 Dashboard「今日流水线」卡片展示。"),
 )
 def get_dashboard_overview() -> DashboardOverviewResponse:
     """返回今日概览聚合数据。
@@ -84,7 +83,6 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
         DashboardOverviewResponse 包含 today/discovery/shadow 三个聚合块
     """
     midnight = _utc_midnight()
-    now = datetime.now(timezone.utc)
 
     data: dict[str, Any] = {
         "today": {"collection_runs": {"total": 0, "success": 0, "failed": 0}},
@@ -97,8 +95,7 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
         # ── 今日采集运行（collection_logs）──────────────────────────
         # 注意 started_at 存储格式可能是 ISO 字符串或 TIMESTAMP，统一用字符串前缀比较。
         cursor = conn.execute(
-            "SELECT status, COUNT(*) AS n FROM collection_logs "
-            "WHERE started_at >= ? GROUP BY status",
+            "SELECT status, COUNT(*) AS n FROM collection_logs WHERE started_at >= ? GROUP BY status",
             (midnight.isoformat(sep=" "),),
         )
         runs_total = 0
@@ -173,9 +170,11 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
                     label_counts[label] = n
             data["shadow"]["saved_today"] = saved_today
             data["shadow"]["label_counts"] = label_counts
-        except Exception:
-            # opportunity_assessments 表可能尚未建（影子引擎未运行过）
-            pass
+        except Exception as exc:
+            # opportunity_assessments 表可能尚未建（影子引擎未运行过）。
+            # 记 debug 而不是静默 pass：否则真正的 SQL/schema 故障也会被吞掉，
+            # 表现为面板恒显 0 而无从排查。
+            logger.debug("dashboard.shadow_block_unavailable", error=str(exc))
     finally:
         conn.close()
 

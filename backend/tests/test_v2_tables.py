@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
 
 import pytest
 
@@ -31,7 +30,6 @@ from app.repositories.v2 import (
     PromptVersionsRepository,
     QuarantineRepository,
 )
-
 
 # ── Fixtures ────────────────────────────────────
 
@@ -55,16 +53,19 @@ def conn():
 # ── Table existence tests ──────────────────────
 
 
-@pytest.mark.parametrize("table_name", [
-    "quarantine",
-    "project_history",
-    "audit_logs",
-    "llm_eval_changelog",
-    "metrics",
-    "narratives",
-    "dedup_keys",
-    "prompt_versions",
-])
+@pytest.mark.parametrize(
+    "table_name",
+    [
+        "quarantine",
+        "project_history",
+        "audit_logs",
+        "llm_eval_changelog",
+        "metrics",
+        "narratives",
+        "dedup_keys",
+        "prompt_versions",
+    ],
+)
 def test_table_exists_after_init_db(conn, table_name):
     """All V2 tables are created by init_db()."""
     row = conn.execute(
@@ -74,28 +75,31 @@ def test_table_exists_after_init_db(conn, table_name):
     assert row is not None, f"Table '{table_name}' not found after init_db()"
 
 
-@pytest.mark.parametrize("index_name", [
-    "idx_quarantine_status",
-    "idx_quarantine_reason",
-    "idx_quarantine_created",
-    "idx_project_history_project",
-    "idx_project_history_run",
-    "idx_project_history_created",
-    "idx_audit_action",
-    "idx_audit_user",
-    "idx_audit_created",
-    "idx_llm_eval_date",
-    "idx_metrics_run_id",
-    "idx_metrics_name",
-    "idx_metrics_timestamp",
-    "idx_narratives_stage",
-    "idx_dedup_key",
-    "idx_dedup_project",
-    "idx_prompt_agent",
-    "idx_prompt_version",
-    "idx_feedback_signal",
-    "idx_feedback_created",
-])
+@pytest.mark.parametrize(
+    "index_name",
+    [
+        "idx_quarantine_status",
+        "idx_quarantine_reason",
+        "idx_quarantine_created",
+        "idx_project_history_project",
+        "idx_project_history_run",
+        "idx_project_history_created",
+        "idx_audit_action",
+        "idx_audit_user",
+        "idx_audit_created",
+        "idx_llm_eval_date",
+        "idx_metrics_run_id",
+        "idx_metrics_name",
+        "idx_metrics_timestamp",
+        "idx_narratives_stage",
+        "idx_dedup_key",
+        "idx_dedup_project",
+        "idx_prompt_agent",
+        "idx_prompt_version",
+        "idx_feedback_signal",
+        "idx_feedback_created",
+    ],
+)
 def test_index_exists_after_init_db(conn, index_name):
     """All V2 indexes are created by init_db()."""
     row = conn.execute(
@@ -110,15 +114,13 @@ def test_index_exists_after_init_db(conn, index_name):
 
 def test_quarantine_columns(conn):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(quarantine)")}
-    expected = {"id", "project_id", "raw_data", "failure_reason",
-                "severity", "status", "resolved_at", "created_at"}
+    expected = {"id", "project_id", "raw_data", "failure_reason", "severity", "status", "resolved_at", "created_at"}
     assert expected.issubset(cols), f"Missing columns: {expected - cols}"
 
 
 def test_project_history_columns(conn):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(project_history)")}
-    expected = {"id", "project_id", "run_id", "score", "label",
-                "stage", "weight_version", "snapshot", "created_at"}
+    expected = {"id", "project_id", "run_id", "score", "label", "stage", "weight_version", "snapshot", "created_at"}
     assert expected.issubset(cols)
 
 
@@ -136,8 +138,7 @@ def test_narratives_columns(conn):
 
 def test_prompt_versions_columns(conn):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(prompt_versions)")}
-    expected = {"id", "agent_name", "prompt_key", "version",
-                "content", "is_default", "created_by", "created_at"}
+    expected = {"id", "agent_name", "prompt_key", "version", "content", "is_default", "created_by", "created_at"}
     assert expected.issubset(cols)
 
 
@@ -165,7 +166,7 @@ class TestAuditLogRepository:
 
         logs = repo.query(user="analyst")
         assert len(logs) == 2
-        assert all(l["user"] == "analyst" for l in logs)
+        assert all(log["user"] == "analyst" for log in logs)
 
     def test_query_all(self, conn):
         repo = AuditLogRepository(conn)
@@ -239,9 +240,12 @@ class TestLLMEvalRepository:
     def test_list_all(self, conn):
         repo = LLMEvalRepository(conn)
         repo.insert(
-            eval_date="2026-01-01", sample_count=100,
-            rule_accuracy=0.75, llm_accuracy=0.82,
-            llm_cost_usd=12.50, decision="keep_llm",
+            eval_date="2026-01-01",
+            sample_count=100,
+            rule_accuracy=0.75,
+            llm_accuracy=0.82,
+            llm_cost_usd=12.50,
+            decision="keep_llm",
         )
 
         all_evals = repo.list_all()
@@ -325,11 +329,13 @@ class TestProjectHistoryRepository:
     def test_query_by_run(self, conn):
         repo = ProjectHistoryRepository(conn)
         repo.insert(
-            project_id="proj-1", run_id="run-1",
+            project_id="proj-1",
+            run_id="run-1",
             snapshot=json.dumps({}),
         )
         repo.insert(
-            project_id="proj-2", run_id="run-1",
+            project_id="proj-2",
+            run_id="run-1",
             snapshot=json.dumps({}),
         )
 
@@ -467,13 +473,20 @@ class TestPromptVersionsRepository:
 
     def test_set_default_clears_others(self, conn):
         repo = PromptVersionsRepository(conn)
-        id1 = repo.insert(
-            agent_name="scorer", prompt_key="prompt",
-            version="v1", content="c1", created_by="admin", is_default=True,
+        repo.insert(
+            agent_name="scorer",
+            prompt_key="prompt",
+            version="v1",
+            content="c1",
+            created_by="admin",
+            is_default=True,
         )
         id2 = repo.insert(
-            agent_name="scorer", prompt_key="prompt",
-            version="v2", content="c2", created_by="admin",
+            agent_name="scorer",
+            prompt_key="prompt",
+            version="v2",
+            content="c2",
+            created_by="admin",
         )
 
         # Before: v1 is default
@@ -490,16 +503,25 @@ class TestPromptVersionsRepository:
     def test_list_by_agent(self, conn):
         repo = PromptVersionsRepository(conn)
         repo.insert(
-            agent_name="narrative", prompt_key="p1",
-            version="v1", content="c1", created_by="admin",
+            agent_name="narrative",
+            prompt_key="p1",
+            version="v1",
+            content="c1",
+            created_by="admin",
         )
         repo.insert(
-            agent_name="narrative", prompt_key="p2",
-            version="v2", content="c2", created_by="admin",
+            agent_name="narrative",
+            prompt_key="p2",
+            version="v2",
+            content="c2",
+            created_by="admin",
         )
         repo.insert(
-            agent_name="scorer", prompt_key="p1",
-            version="v1", content="c3", created_by="admin",
+            agent_name="scorer",
+            prompt_key="p1",
+            version="v1",
+            content="c3",
+            created_by="admin",
         )
 
         narrative_prompts = repo.list_by_agent("narrative")

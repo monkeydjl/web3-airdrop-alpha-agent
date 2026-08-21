@@ -164,11 +164,6 @@ def is_listed_token_no_airdrop_signals(
         return False
 
     # Token is listed. Check for any airdrop-related signals
-    has_any_airdrop_signal = (
-        has_testnet
-        or has_points_program
-        or has_task_portal
-        or explicit_airdrop_mention
-    )
+    has_any_airdrop_signal = has_testnet or has_points_program or has_task_portal or explicit_airdrop_mention
 
     return not has_any_airdrop_signal

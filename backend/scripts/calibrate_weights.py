@@ -31,9 +31,7 @@ from app.db import get_connection
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="权重校准脚本：门禁检查 + 可选搜索"
-    )
+    parser = argparse.ArgumentParser(description="权重校准脚本：门禁检查 + 可选搜索")
     parser.add_argument(
         "--search",
         action="store_true",

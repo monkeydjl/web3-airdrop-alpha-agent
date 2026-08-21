@@ -21,9 +21,8 @@ any deployment (compose / k8s) without extra code:
 
 from __future__ import annotations
 
-import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -57,15 +56,19 @@ class _NoOpSpan:
     def set_status(self, status: object) -> None: ...
     def is_recording(self) -> bool:
         return False
-    def __enter__(self) -> "_NoOpSpan":
+
+    def __enter__(self) -> _NoOpSpan:
         return self
+
     def __exit__(self, *exc: object) -> None: ...
 
 
 class _NoOpTracer:
     """No-op tracer returned when OTel is unavailable or disabled."""
 
-    def start_as_current_span(self, name: str, **kwargs: Any) -> _NoOpSpan:
+    def start_as_current_span(self, name: str, **kwargs: Any) -> _NoOpSpan:  # noqa: ARG002
+        # 参数必须保留以匹配 OTel Tracer 协议签名（调用方按位置/关键字传 name 与
+        # span 属性）；no-op 实现刻意忽略它们。
         return _NoOpSpan()
 
 

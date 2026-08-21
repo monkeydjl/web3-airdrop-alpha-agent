@@ -157,6 +157,10 @@ def configure_logging() -> None:
             redact_processor,
             renderer,
         ],
-        logger_factory=structlog.WriteLoggerFactory(file=_TeeWriter(*streams)),
+        # WriteLoggerFactory 的类型标注要求完整 TextIO，但运行时只用 write()/flush()
+        # （见 _TeeWriter docstring）。这里是结构化鸭子类型与标注的落差，非真实缺陷。
+        logger_factory=structlog.WriteLoggerFactory(
+            file=_TeeWriter(*streams),  # type: ignore[arg-type]
+        ),
         cache_logger_on_first_use=True,
     )

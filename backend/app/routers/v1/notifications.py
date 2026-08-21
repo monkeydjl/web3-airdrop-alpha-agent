@@ -17,7 +17,7 @@ Reference:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime, time
 from itertools import groupby
 from typing import Any
 
@@ -89,9 +89,7 @@ def _collect_items(conn: Any, window_start: str) -> list[dict[str, Any]]:
                 "title": f"今日新进 {label}：{name}",
                 "tag": label,
                 "text": (
-                    f"主评分 {score}"
-                    f"{' · ' + sector if sector else ''}"
-                    f" · 建议{'参与' if label == 'FARM' else '观察'}"
+                    f"主评分 {score}{' · ' + sector if sector else ''} · 建议{'参与' if label == 'FARM' else '观察'}"
                 ),
                 "project_id": pid,
                 "created_at": str(created),
@@ -195,9 +193,7 @@ def _collect_items(conn: Any, window_start: str) -> list[dict[str, Any]]:
         (window_start,),
     )
     failed = [
-        r
-        for r in cursor.fetchall()
-        if str(_row_value(r, "status") or "").lower() in ("failed", "error", "fault")
+        r for r in cursor.fetchall() if str(_row_value(r, "status") or "").lower() in ("failed", "error", "fault")
     ]
     for row in failed[:5]:
         source = _row_value(row, "source_id") or "unknown"
@@ -274,10 +270,7 @@ class MarkReadResponse(BaseModel):
     "/notifications",
     response_model=NotificationsResponse,
     summary="通知中心聚合",
-    description=(
-        "聚合今日新 FARM/WATCH 机会、评分变化与采集器告警的真实通知，"
-        "并合并当前用户的已读状态。"
-    ),
+    description=("聚合今日新 FARM/WATCH 机会、评分变化与采集器告警的真实通知，并合并当前用户的已读状态。"),
 )
 def get_notifications(request: Request) -> NotificationsResponse:
     """返回真实通知列表。"""

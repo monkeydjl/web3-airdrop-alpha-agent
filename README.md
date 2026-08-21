@@ -2,8 +2,8 @@
 
 多智能体驱动的 Web3 早期项目识别与空投参与决策系统。
 
-[![Tests](https://img.shields.io/badge/tests-2%2C428%20passed%2C%204%20skipped-brightgreen)](backend/tests/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-2%2C452%20passed%2C%204%20skipped-brightgreen)](backend/tests/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -274,7 +274,7 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── metrics.py          # Prometheus 指标
 │   │   └── main.py             # FastAPI 入口
 │   ├── alembic/                # 数据库迁移
-│   ├── tests/                  # 测试套件 (2428 tests)
+│   ├── tests/                  # 测试套件 (2456 tests)
 │   ├── scripts/                # 运维 + 校准脚本
 │   ├── Dockerfile
 │   └── pyproject.toml
@@ -355,7 +355,7 @@ pytest tests/golden/          # 金标准回归测试
 pytest --cov=app --cov-report=html
 ```
 
-测试基线：**2428 passed, 4 skipped, 0 failed**
+测试基线：**2452 passed, 4 skipped, 0 failed**，覆盖率 87.66%（2026-08-20 实测，`cd backend && pytest -q`，耗时 32 分 40 秒）
 
 ---
 

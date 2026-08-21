@@ -36,16 +36,10 @@ from app.metrics import (
     COLLECTION_DURATION,
     COLLECTION_ITEMS,
     COLLECTION_RUNS,
-    PIPELINE_DURATION,
-    PIPELINE_RUNS,
-    PROJECTS_BY_LABEL,
-    PROJECTS_SCORED,
-    update_db_gauges,
 )
 from app.pipeline_run import execute_analysis_pipeline, record_pipeline_run
 
 if TYPE_CHECKING:
-    from app.collectors.base import CollectorResult as CR
     from app.collectors.registry import CollectorRegistry
 
 logger = structlog.get_logger(__name__)
@@ -64,7 +58,7 @@ class UnifiedScheduler:
 
     def __init__(
         self,
-        registry: "CollectorRegistry",
+        registry: CollectorRegistry,
         on_collection: CollectionCallback | None = None,
     ) -> None:
         self.registry = registry

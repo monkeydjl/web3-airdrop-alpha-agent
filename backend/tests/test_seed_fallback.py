@@ -16,9 +16,7 @@ Reference:
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -28,7 +26,6 @@ from app.inflight import reset_active_runs
 from app.pipeline_run import execute_analysis_pipeline
 from app.repository import ProjectRepository
 from app.seed import SEED_PROJECTS, get_seed_raw_projects
-
 
 # ── Unit tests: get_seed_raw_projects ──────────
 
@@ -167,8 +164,6 @@ async def test_pipeline_fallback_log_emitted(monkeypatch):
 
     events: list[str] = []
 
-    original_warning = __import__("app.pipeline_run", fromlist=["logger"]).logger.warning
-
     def capture_warning(event, **kwargs):
         events.append(event)
 
@@ -296,7 +291,6 @@ async def test_explicit_projects_skip_fallback(monkeypatch):
     explicit = RawProject(id="explicit-1", name="Explicit Project", source="manual")
 
     fallback_called = False
-    original_get_seed = __import__("app.pipeline_run", fromlist=["get_seed_raw_projects"]).get_seed_raw_projects
 
     def spy_get_seed():
         nonlocal fallback_called

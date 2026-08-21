@@ -24,7 +24,6 @@ from app.config import Settings
 from app.db import get_connection, init_db, is_postgres
 from app.repository import ProjectRepository
 
-
 # ── PG availability check (runtime, not collection-time) ───
 
 
@@ -34,11 +33,12 @@ def _pg_reachable() -> bool:
     # by another test module before DB_BACKEND was set
     db_backend = os.environ.get("DB_BACKEND", "").strip().lower()
     database_url = os.environ.get("DATABASE_URL", "").strip()
-    is_pg = db_backend == "postgres" or database_url.startswith("postgresql://") or database_url.startswith("postgres://")
-    if not is_pg:
-        # Also check the settings singleton
-        if not is_postgres():
-            return False
+    is_pg = (
+        db_backend == "postgres" or database_url.startswith("postgresql://") or database_url.startswith("postgres://")
+    )
+    # Also check the settings singleton
+    if not is_pg and not is_postgres():
+        return False
     try:
         conn = get_connection()
         conn.execute("SELECT 1")
