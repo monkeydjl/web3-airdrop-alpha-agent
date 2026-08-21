@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Radar, SatelliteDish, LineChart, ClipboardCheck, ServerCog,
-  Bell, Archive, Bookmark, Settings, Sun, Moon,
+  Bell, Archive, Bookmark, Settings, Sun, Moon, CheckCheck,
 } from 'lucide-react';
 import { fetchHealth } from '@/lib/api';
 import type { HealthData } from '@/lib/types';
@@ -17,6 +17,7 @@ const navItems = [
   { href: '/discoveries', label: '发现队列', icon: SatelliteDish },
   { href: '/insights', label: '洞察', icon: LineChart },
   { href: '/portfolio', label: '参与复盘', icon: ClipboardCheck },
+  { href: '/review', label: '结果复盘', icon: CheckCheck },
   { href: '/ops', label: '运维台', icon: ServerCog },
   { href: '/notifications', label: '通知中心', icon: Bell },
   { href: '/archive', label: '归档历史', icon: Archive },
