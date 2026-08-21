@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -29,7 +28,6 @@ from app.utils.fetcher import (
     HTTPCache,
     clear_cache,
     fetch,
-    get_circuit_breaker_state,
     reset_circuit_breaker,
 )
 
@@ -53,9 +51,7 @@ def _mock_response(status=200, json_data=None):
     resp.json.return_value = json_data or {"ok": True}
     resp.raise_for_status = MagicMock()
     if status >= 400:
-        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            f"{status} Error", request=MagicMock(), response=resp
-        )
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(f"{status} Error", request=MagicMock(), response=resp)
     return resp
 
 
@@ -96,6 +92,26 @@ class TestTwoTierCache:
         # Get with TTL=0 should expire
         result = cache.get("expire_key", ttl=0)
         assert result is None
+
+    def test_ttl_zero_never_serves_cache(self, tmp_path):
+        """ttl=0 语义是"不缓存"，必须每次都 miss。
+
+        回归：原实现用 `time.time() - ts > ttl`，在 Windows（时钟分辨率约 15.6ms）
+        上同一时刻 set 后立即 get(ttl=0) 得到 `0 > 0 == False`，于是返回本该过期
+        的数据——实测 20 次里 14 次命中脏数据。边界必须是 >=。
+        重复多轮，确保不是碰巧躲过时钟跳变。
+        """
+        for i in range(25):
+            cache = HTTPCache(max_size=10, cache_dir=str(tmp_path / f"round{i}"))
+            cache.set("k", {"v": i})
+            assert cache.get("k", ttl=0) is None, f"ttl=0 served stale cache on round {i}"
+
+    def test_ttl_zero_memory_tier_only(self):
+        """内存层单独也必须遵守 ttl=0（磁盘层关闭时不能漏判）。"""
+        for i in range(25):
+            cache = HTTPCache(max_size=10, cache_dir=None)
+            cache.set("k", {"v": i})
+            assert cache.get("k", ttl=0) is None, f"memory tier served stale cache on round {i}"
 
     def test_disk_cache_clear_removes_files(self, tmp_path):
         """clear() removes disk cache files."""
@@ -180,9 +196,7 @@ class TestSemaphoreControl:
             return _mock_response(json_data={"ok": True})
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(
-                side_effect=mock_request
-            )
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=mock_request)
             # Launch 5 concurrent requests with semaphore=2
             await asyncio.gather(*[fetch(f"https://example.com/{i}") for i in range(5)])
 
@@ -205,9 +219,7 @@ class TestSemaphoreControl:
             return _mock_response(json_data={"from_network": True})
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(
-                side_effect=mock_request
-            )
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=mock_request)
             # Cache hit — should not call network at all
             result = await fetch("https://example.com/api", cache_key="cached_url", cache_ttl=60)
 
@@ -231,9 +243,7 @@ class TestSemaphoreControl:
             return _mock_response()
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(
-                side_effect=mock_request
-            )
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=mock_request)
             with pytest.raises(RuntimeError, match="Circuit breaker OPEN"):
                 await fetch("https://example.com/api")
 
@@ -347,9 +357,7 @@ class TestFetcherMetrics:
             return _mock_response(json_data={"slow": True})
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(
-                side_effect=slow_request
-            )
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=slow_request)
             task = asyncio.create_task(fetch("https://example.com/slow"))
 
             await started.wait()
@@ -432,9 +440,7 @@ class TestFetchDiskCacheIntegration:
             return _mock_response(json_data={"from_network": True})
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(
-                side_effect=mock_request
-            )
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=mock_request)
             # First fetch — network call
             r1 = await fetch("https://example.com/c1", cache_key="c1", cache_ttl=3600)
             assert r1 == {"from_network": True}

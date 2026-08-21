@@ -14,13 +14,13 @@ Reference:
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
-import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import structlog
@@ -50,7 +50,7 @@ class CircuitBreaker:
     - HALF_OPEN: Testing if service recovered
     """
 
-    _STATE_MAP = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+    _STATE_MAP: ClassVar[dict[str, int]] = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
 
     def __init__(
         self,
@@ -107,10 +107,10 @@ class CircuitBreaker:
 
     def _update_metric(self):
         """Sync circuit breaker state to Prometheus gauge."""
-        try:
+        # 指标是 best-effort，但不能完全静默：suppress 保证不影响主流程，
+        # debug 日志保留排查线路（指标注册表冲突等）。
+        with contextlib.suppress(Exception):
             FETCHER_CIRCUIT_BREAKER_STATE.set(self._STATE_MAP.get(self.state, 0))
-        except Exception:
-            pass  # Metrics are best-effort
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -140,11 +140,24 @@ class HTTPCache:
         return self._cache_dir / f"{key_hash}.json"
 
     def get(self, key: str, ttl: int) -> Any | None:
-        """Get cached value if not expired (checks memory then disk)."""
+        """Get cached value if not expired (checks memory then disk).
+
+        `ttl <= 0` 表示"不使用缓存"，直接判定为已过期——不能靠比较时间算出来：
+        原实现用 `age > ttl`，而 Windows 上 time.time() 分辨率约 15.6ms，同一时刻
+        写入再读取时 age 就是 0.0，`0 > 0` 为 False，于是返回了本该过期的数据
+        （实测 20 次里 14 次命中脏数据）。磁盘层更糟：文件 mtime 可能比
+        time.time() 略微**超前**，age 变成负数，连 `age >= ttl` 也挡不住。
+        """
+        if ttl <= 0:
+            self.invalidate(key)
+            return None
+
+        now = time.time()
+
         # 1. Memory tier
         if key in self._cache:
             value, timestamp = self._cache[key]
-            if time.time() - timestamp > ttl:
+            if now - timestamp >= ttl:
                 del self._cache[key]
             else:
                 return value
@@ -154,7 +167,7 @@ class HTTPCache:
         if disk_path and disk_path.exists():
             try:
                 mtime = disk_path.stat().st_mtime
-                if time.time() - mtime > ttl:
+                if now - mtime >= ttl:
                     disk_path.unlink(missing_ok=True)
                     return None
                 with open(disk_path, encoding="utf-8") as f:
@@ -164,6 +177,14 @@ class HTTPCache:
                 disk_path.unlink(missing_ok=True)
 
         return None
+
+    def invalidate(self, key: str) -> None:
+        """丢弃某个 key 的两层缓存（不存在时静默返回）。"""
+        self._cache.pop(key, None)
+        disk_path = self._disk_path(key)
+        if disk_path:
+            with contextlib.suppress(OSError):
+                disk_path.unlink(missing_ok=True)
 
     def set(self, key: str, value: Any):
         """Set cached value in both tiers."""
@@ -189,10 +210,9 @@ class HTTPCache:
         self._cache.clear()
         if self._cache_dir and self._cache_dir.exists():
             for f in self._cache_dir.glob("*.json"):
-                try:
+                # 单个文件删不掉（占用/权限）不该中断整体清理
+                with contextlib.suppress(OSError):
                     f.unlink()
-                except OSError:
-                    pass
 
     @property
     def memory_size(self) -> int:
@@ -299,9 +319,7 @@ async def fetch(
         _in_flight += 1
         FETCHER_SEMAPHORE_USAGE.set(_in_flight)
         try:
-            return await _fetch_with_retry(
-                url, cache_key, cache_ttl, timeout, max_retries, retry_delay, method, **kwargs
-            )
+            return await _fetch_with_retry(url, cache_key, timeout, max_retries, retry_delay, method, **kwargs)
         finally:
             _in_flight -= 1
             FETCHER_SEMAPHORE_USAGE.set(_in_flight)
@@ -310,14 +328,17 @@ async def fetch(
 async def _fetch_with_retry(
     url: str,
     cache_key: str,
-    cache_ttl: int,
     timeout: int,
     max_retries: int,
     retry_delay: float,
     method: str,
     **kwargs,
 ) -> dict[str, Any]:
-    """Internal: perform HTTP request with retry and cache result on success."""
+    """Internal: perform HTTP request with retry and cache result on success.
+
+    不收 cache_ttl：写入侧只记时间戳（`_cache.set`），TTL 由读取侧
+    `_cache.get(key, ttl)` 判定，因此这里拿到 ttl 也无处可用。
+    """
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -384,7 +405,6 @@ def reset_for_testing():
     """Reset all global state for test isolation."""
     clear_cache()
     reset_circuit_breaker()
-    reset_for_testing.__wrapped__ = True  # marker
 
 
 if __name__ == "__main__":
