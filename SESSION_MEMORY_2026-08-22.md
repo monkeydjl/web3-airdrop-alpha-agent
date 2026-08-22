@@ -182,10 +182,9 @@ next build               → 编译成功（4.8s），收尾 spawn EPERM = 沙�
 
 ## 遗留问题 / 下一步
 
-1. **合并 PR #4**（`mergeStateStatus = CLEAN`，12 项检查全绿），
-   合完**关掉 dependabot PR #3** —— 它的 nanoid 修复已 cherry-pick 进 #4。
-   ⚠ PR #3 自己仍是 `BLOCKED`，但原因已不同：它的 `Docker Image Trivy Scan`
-   还是 5 天前那次 36 HIGH 的旧结果（它的分支上没有 Trivy 修复），不必去修它
+1. **合并 PR #5**（`security.yml` 的 `security-events: write` 权限 + 触发器修复）。
+   合并后**去看 master 上那次 push 运行**：`Upload Trivy results` 是否终于成功、
+   `code-scanning/alerts` 是否不再是空的。**这是唯一的验证方式，我没有提前声称成功**
 2. **编码损坏**：一型 487 处待人工判定（`DATA_SOURCE_STRATEGY.md` 占 367 处且
    无干净底本）、二型 `API_SPEC.md` 70 处只检测不修复、三型 2 处只登记
 3. **Python 版本口径不一致**：镜像/CI/mypy 用 3.12，本地 venv 3.11.9。
@@ -262,7 +261,57 @@ numpy 里唯一的 `from setuptools import ...` 在 `numpy/distutils`（构建�
 
 **12 项检查全部 pass**（含 `Full Backend Test Suite` 7m42s、`Coverage Gate` 88.21%、
 `Docker Build Check` 含 `/health` 冒烟、`Docker Image Trivy Scan`）。
-`mergeStateStatus` 从 `BLOCKED` 变为 **`CLEAN`**，可以合并。
+`mergeStateStatus` 从 `BLOCKED` 变为 `CLEAN`，**已合并**，
+合并 commit `d1b710b`（merge commit 方式，保留全部 46 个 commit 的历史）。
+dependabot PR #3 已关闭并说明真实原因。
+
+### 五、合并之后才露出来的第二个故障（并更正我自己的说法）
+
+合并触发 push 事件，`Docker Image Trivy Scan` 在 master 上**仍然红着** ——
+但原因完全不同：
+
+```
+Run Trivy scan          success   ← Trivy 本身 0 漏洞，白天那些修复是有效的
+Upload Trivy results    failure   ← Resource not accessible by integration
+```
+
+实测原因：仓库默认 workflow 令牌权限是 `read`，而 `upload-sarif` 需要
+`security-events: write`。`pull_request` 事件下这一步能成功
+（PR #4 的记录确实在 `code-scanning/analyses` 里，`ref` 为 `refs/pull/4/merge`），
+`push` 事件下被拒。修法：只在 `container-scan` 这一个 job 上声明所需权限，
+**不动仓库默认值** —— 默认 `read` 是对的。
+
+**这更正了我白天的说法。** 我说过「这个 job 红 13 天是因为 36 个高危」
+「SARIF 上传成功但 code scanning 告警数为 0」，两句都只对一半：
+**一个 job 里叠了两个独立故障**，漏洞那个把权限那个挡住了 ——
+Trivy 先 exit 1，上传成不成功轮不到显现。逐步骤走完 08-09 以来每一次 master 运行：
+
+| 日期 | commit | 事件 | Run Trivy scan | Upload |
+|---|---|---|---|---|
+| 08-22 | d1b710b | push | **success** | failure |
+| 08-17 | 3d6d7ef | schedule | failure | failure |
+| 08-13 | d77d827 | push | failure | failure |
+| 08-13 | 237b23c | push | failure | failure |
+| 08-10 | fd0cb60 | schedule | failure | failure |
+| 08-09 | fd0cb60 | push | failure | failure |
+
+**上传从第一天起就在所有非 PR 运行里失败。** 我白天观察到的「告警数为 0」
+正是这件事的可见症状 —— 我当时把它当成 SARIF 机制的怪癖，
+其实它就是权限不足的直接后果。
+
+**教训：一个 job 的红灯不等于一个故障。** 修好前面那个，后面那个才会露出来。
+所以「修好了」这个判断必须在**修完之后再看一次实际结果**，
+而不是在推之前根据推理下结论。
+
+顺带修两个让上一个修复无法验证的问题：
+
+- push 路径过滤不含 `security.yml` 自己 → 改这个 workflow 不会触发它
+  （权限修复本来验证不了，只能等周一定时任务）
+- 加 `workflow_dispatch` 手动触发 —— 这个 job 之所以 13 天没人诊断，
+  部分原因就是复现一次运行得先凑出符合路径过滤的提交
+
+这两个 commit **走了 PR #5**，没有直推 master —— 分支保护刚修成真的，
+不该由我第一个绕过去。已把它们从本地 master 撤下、确认与远程逐字一致后再开分支。
 
 ### 四、分支保护的检查名错配（所有者选了「改保护规则名」后修）
 
