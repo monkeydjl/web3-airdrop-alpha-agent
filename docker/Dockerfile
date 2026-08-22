@@ -37,12 +37,32 @@ RUN python -m venv /venv && \
 FROM python:3.12-slim AS production
 
 # 安全 + 运行时依赖
+#
+# ⚠ 为什么这里要 apt-get upgrade：
+#   Trivy 在 2026-08-22 报出 36 个 HIGH，其中 34 个来自基础镜像自带的
+#   util-linux 2.41-5 家族（bsdutils / libblkid1 / liblastlog2-2 / libmount1 /
+#   libsmartcols1 / libuuid1 / login / mount / util-linux），4 个 CVE 各命中
+#   9 个包：CVE-2026-53612/53613/53614（mount 的 TOCTOU 与 nosuid 绕过）、
+#   CVE-2026-53615（libblkid 整数溢出）。Debian 已发布 2.41.5-0+deb13u1。
+#   这些包不是我们声明的依赖，requirements.txt 里没有它们 ——
+#   `python:3.12-slim` 的 tag 不会随安全更新重新指向新镜像层，所以必须在构建
+#   时显式升级，否则每次构建都继承同一批已知漏洞。
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends \
         curl \
         libpq5 \
     && rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --shell /bin/bash --uid 1000 appuser
+
+# 基础镜像自带的 Python 打包工具链也有 HIGH（剩下 2 个）：
+#   setuptools 70.3.0 → CVE-2025-47273（PackageIndex 路径穿越，修复版 78.1.1）
+#   msgpack 1.1.2     → GHSA-6v7p-g79w-8964（pip 内嵌的 CacheControl 依赖，
+#                       Unpacker 复用后越界读，修复版 1.2.1）
+# 同样不是我们的依赖：本地 venv 里已是 setuptools 83.0.0 / msgpack 1.2.1。
+# 运行时并不需要 setuptools 或 pip（应用跑的是 /venv 里的 uvicorn），但直接
+# 删掉会让镜像难以排障，因此选择升级而非移除。
+RUN pip install --no-cache-dir --upgrade pip setuptools
 
 WORKDIR /app
 
