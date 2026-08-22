@@ -16,10 +16,18 @@ on:
       - "docker/Dockerfile"
       - "frontend-next/package.json"
       - "frontend-next/package-lock.json"
+      # 改这个 workflow 自己也要能触发它 —— 否则修完扫描逻辑或权限
+      # 都没法在 push 事件下验证，只能等每周一的定时任务。
+      # 实测踩过：`security-events: write` 那次修完，因为路径过滤不含
+      # 本文件，合并后压根没跑起来。
+      - ".github/workflows/security.yml"
   pull_request:
     branches: [master, main]
   schedule:
     - cron: "0 6 * * 1" # 每周一 06:00 UTC
+  # 手动触发。这个 job 红了 13 天却无人能复现，部分原因就是只能等
+  # push/定时 —— 想验证一次修复得先凑出一个符合路径过滤的提交。
+  workflow_dispatch:
 
 jobs:
   # ── Dependency Audit ──────────────────────
