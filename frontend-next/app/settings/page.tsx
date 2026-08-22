@@ -88,18 +88,26 @@ interface ProviderView {
 interface WeightRow {
   name: string;
   env: string;
-  value: number;
+  /** 真值只在后端（WEIGHT_* 环境变量，启动断言 Σ=1.0）；后端没给就是 undefined */
+  value?: number;
 }
 
+/**
+ * 8 个权重维度的**顺序与中文名**，不含数值。
+ *
+ * 此前每行都带 `value: 0.18` 这样的字面量做兜底。实测当前 8 项与后端恰好一致，
+ * 所以看不出问题 —— 但那正是这种写法的危险处：`.env` 一改，页面会继续
+ * 自信地显示旧权重，而且合计仍然显示「1.00 ✓」。
+ */
 const WEIGHTS: WeightRow[] = [
-  { name: '空投信号', env: 'WEIGHT_AIRDROP_SIGNAL', value: 0.18 },
-  { name: '叙事时机', env: 'WEIGHT_NARRATIVE_TIMING', value: 0.15 },
-  { name: '执行力', env: 'WEIGHT_EXECUTION', value: 0.13 },
-  { name: '团队声誉', env: 'WEIGHT_TEAM_REPUTATION', value: 0.12 },
-  { name: '风险', env: 'WEIGHT_RISK', value: 0.12 },
-  { name: '代币经济学', env: 'WEIGHT_TOKENOMICS', value: 0.10 },
-  { name: '竞争格局', env: 'WEIGHT_COMPETITION', value: 0.10 },
-  { name: '透明度', env: 'WEIGHT_TRANSPARENCY', value: 0.10 },
+  { name: '空投信号', env: 'WEIGHT_AIRDROP_SIGNAL' },
+  { name: '叙事时机', env: 'WEIGHT_NARRATIVE_TIMING' },
+  { name: '执行力', env: 'WEIGHT_EXECUTION' },
+  { name: '团队声誉', env: 'WEIGHT_TEAM_REPUTATION' },
+  { name: '风险', env: 'WEIGHT_RISK' },
+  { name: '代币经济学', env: 'WEIGHT_TOKENOMICS' },
+  { name: '竞争格局', env: 'WEIGHT_COMPETITION' },
+  { name: '透明度', env: 'WEIGHT_TRANSPARENCY' },
 ];
 
 interface SourceConfig {
@@ -313,11 +321,11 @@ export default function SettingsPage() {
   const autoRunOn = runtimeConfig?.flags?.COLLECTION_AUTO_RUN_ENABLED ?? false;
   const schedulerEnabled = schedulerOn;
 
-  // 从运行时配置回填权重
+  // 权重只认后端值；后端没给就是 undefined（渲染成「—」，不猜）
   const weightValues = runtimeConfig?.weights ?? {};
   const WEIGHTS_RUNTIME: WeightRow[] = WEIGHTS.map((w) => ({
     ...w,
-    value: typeof weightValues[w.env] === 'number' ? weightValues[w.env] : w.value,
+    value: typeof weightValues[w.env] === 'number' ? weightValues[w.env] : undefined,
   }));
 
   /** automation 块的窄化视图，省掉每处都写 `runtimeConfig?.automation?.X` */
@@ -329,7 +337,8 @@ export default function SettingsPage() {
   // 改完刷新页面就没了。留着等于给一个不存在的功能配齐了按钮。
 
   const enabledFlags = flags.filter((f) => f.enabled).length;
-  const weightSum = WEIGHTS_RUNTIME.reduce((s, w) => s + w.value, 0);
+  const weightsComplete = WEIGHTS_RUNTIME.every((w) => typeof w.value === 'number');
+  const weightSum = WEIGHTS_RUNTIME.reduce((s, w) => s + (w.value ?? 0), 0);
 
   const handleReset = () => {
     setToast({ message: '已重新加载运行时配置', type: 'success' });
@@ -610,15 +619,28 @@ export default function SettingsPage() {
                         <span className="set-weight-env">{w.env}</span>
                       </div>
                       <div className="set-weight-track">
-                        <div className="set-weight-fill" style={{ width: `${Math.round(w.value * 400)}%` }} />
+                        <div
+                          className="set-weight-fill"
+                          style={{ width: `${Math.round((w.value ?? 0) * 400)}%` }}
+                        />
                       </div>
-                      <span className="set-weight-val">{w.value.toFixed(2)}</span>
+                      <span className="set-weight-val">
+                        {w.value != null ? w.value.toFixed(2) : '—'}
+                      </span>
                     </div>
                   ))}
                 </div>
                 <div className="set-weight-sum">
                   <span>权重合计（启动断言 Σ = 1.0）</span>
-                  <b>{weightSum.toFixed(2)} ✓</b>
+                  {/* 只有 8 项都拿到后端值时才显示合计与 ✓。
+                      缺一项就显示「—」——此前缺值会回落到写死的权重，
+                      于是无论后端是什么，这里都稳定显示「1.00 ✓」，
+                      一个永远为真的校验等于没有校验。 */}
+                  <b>
+                    {weightsComplete
+                      ? `${weightSum.toFixed(2)} ${Math.abs(weightSum - 1) < 0.005 ? '✓' : '✗'}`
+                      : '—'}
+                  </b>
                 </div>
 
                 <div className="set-subhead">质量阈值</div>

@@ -71,6 +71,31 @@ class TestSettingsConfig:
         total = sum(weights[k] for k in weight_keys)
         assert abs(total - 1.0) < 0.01, f"weights sum = {total}, expected ~1.0"
 
+    def test_label_thresholds_match_scorer(self, client) -> None:
+        """标签阈值必须等于 scorer 的真值，不能是抄来的第二份常量。
+
+        前端项目详情页曾把「FARM≥65 / WATCH≥50」写死在文案里，而这两个数
+        已经改过一次（v1.1：FARM 70 → 65）。这个测试的作用是：以后有人再调
+        `LABEL_THRESHOLDS`，如果本端点没跟着变，这里就红——避免又出现一份
+        静默说谎的副本。
+        """
+        from app.agents.scorer import LABEL_THRESHOLDS
+
+        thresholds = client.get("/api/v1/settings/config").json()["data"]["thresholds"]
+        expected = {name: value for value, name in LABEL_THRESHOLDS}
+
+        assert thresholds["LABEL_FARM_THRESHOLD"] == expected["FARM"]
+        assert thresholds["LABEL_WATCH_THRESHOLD"] == expected["WATCH"]
+        # 顺序也必须成立：FARM 门槛严于 WATCH
+        assert thresholds["LABEL_FARM_THRESHOLD"] > thresholds["LABEL_WATCH_THRESHOLD"]
+
+    def test_label_threshold_helper_rejects_unknown_label(self) -> None:
+        """拼错标签名时返回 0，而不是某个看起来像真值的数字。"""
+        from app.routers.v1.settings import _label_threshold
+
+        assert _label_threshold("FARM") > 0
+        assert _label_threshold("NOT_A_LABEL") == 0
+
 
 class TestSettingsConfigLlmKeyRedaction:
     """回归：`/settings/config` 曾直接回显 settings.llm_providers 里的明文 api_key。

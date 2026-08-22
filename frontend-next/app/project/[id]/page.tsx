@@ -48,16 +48,30 @@ const SIGNAL_CHECKS: { key: string; label: string }[] = [
   { key: 'has_twitter', label: '社媒' },
 ];
 
+/**
+ * 8 个评分维度。
+ *
+ * 这里只保留维度顺序和中文口径，**权重不再写死** —— 原先每一项都带
+ * `weight: '0.18'` 这样的字面量，而权重的真值在后端（`WEIGHT_*` 环境变量，
+ * 启动时断言 Σ=1.0）。写死的那份不会跟着 .env 变，只会静默变成错的。
+ * 现在权重从 `GET /settings/config` 的 `weights` 块按 `envKey` 取。
+ */
 const DIMENSIONS = [
-  { id: 'airdrop_signal', weight: '0.18' },
-  { id: 'narrative_timing', weight: '0.15' },
-  { id: 'execution', weight: '0.13' },
-  { id: 'team_reputation', weight: '0.12' },
-  { id: 'risk', weight: '0.12' },
-  { id: 'competition', weight: '0.10' },
-  { id: 'tokenomics', weight: '0.10' },
-  { id: 'transparency', weight: '0.10' },
+  { id: 'airdrop_signal', envKey: 'WEIGHT_AIRDROP_SIGNAL' },
+  { id: 'narrative_timing', envKey: 'WEIGHT_NARRATIVE_TIMING' },
+  { id: 'execution', envKey: 'WEIGHT_EXECUTION' },
+  { id: 'team_reputation', envKey: 'WEIGHT_TEAM_REPUTATION' },
+  { id: 'risk', envKey: 'WEIGHT_RISK' },
+  { id: 'competition', envKey: 'WEIGHT_COMPETITION' },
+  { id: 'tokenomics', envKey: 'WEIGHT_TOKENOMICS' },
+  { id: 'transparency', envKey: 'WEIGHT_TRANSPARENCY' },
 ] as const;
+
+/** GET /settings/config 里本页真正用到的两块 */
+interface RuntimeThresholds {
+  weights?: Record<string, number | string>;
+  thresholds?: Record<string, number>;
+}
 
 function num(v: unknown, fallback = 0): number {
   const n = typeof v === 'number' ? v : Number(v);
@@ -110,6 +124,7 @@ export default function ProjectPage() {
   const params = useParams<{ id: string }>();
   const projectId = params?.id ?? '';
   const [project, setProject] = useState<Project | null>(null);
+  const [runtimeCfg, setRuntimeCfg] = useState<RuntimeThresholds | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rescoring, setRescoring] = useState(false);
@@ -155,6 +170,16 @@ export default function ProjectPage() {
 
     setLoading(true);
     setError('');
+    // 顺带拉一次运行时配置：8 维权重和 FARM/WATCH 阈值以前是写死在本文件里的
+    // （见 DIMENSIONS 注释）。这一路失败不影响项目详情本身，所以单独 catch。
+    apiFetch<RuntimeThresholds>('/settings/config', { signal: ac.signal })
+      .then((cfg) => {
+        if (!mounted.current || myGeneration !== generation.current) return;
+        setRuntimeCfg(cfg ?? null);
+      })
+      .catch(() => {
+        /* 配置拉不到就退回显示「—」，不编造数字 */
+      });
     apiFetch<{ project: Project }>(`/projects/${projectId}`, { signal: ac.signal })
       .then((data) => {
         if (!mounted.current || myGeneration !== generation.current) return;
@@ -321,6 +346,18 @@ export default function ProjectPage() {
   const evalTime = project.updated_at
     ? new Date(project.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     : '—';
+
+  // 权重 / 标签阈值 / 权重版本一律来自后端，不再在本文件写死副本。
+  // weight_version 优先取这条项目记录自己的值（它记录的是"当初用哪版权重打的分"），
+  // 项目上没有时退到后端当前生效的版本，两者都没有才显示「—」。
+  const runtimeWeights = (runtimeCfg?.weights ?? {}) as Record<string, number | string>;
+  const cfgWeightVersion = runtimeWeights.weight_version;
+  const weightVersion =
+    project.weight_version ||
+    (typeof cfgWeightVersion === 'string' ? cfgWeightVersion : '') ||
+    '—';
+  const farmThreshold = runtimeCfg?.thresholds?.LABEL_FARM_THRESHOLD;
+  const watchThreshold = runtimeCfg?.thresholds?.LABEL_WATCH_THRESHOLD;
 
   return (
     <>
@@ -546,16 +583,20 @@ export default function ProjectPage() {
 
           {/* 8 dim scores */}
           <section className="border-t border-line py-5">
-            <SecHead title="8 维子分" meta={project.weight_version || 'v1.2'} />
+            <SecHead title="8 维子分" meta={weightVersion} />
             <div className="pd-dims">
               {DIMENSIONS.map((dim) => {
                 const val = subScores[dim.id] ?? 0;
                 const pct = Math.round(val);
                 const fillClass = val >= 80 ? '' : val >= 65 ? 'pd-fill-70' : 'pd-fill-45';
+                const w = runtimeWeights[dim.envKey];
                 return (
                   <div className="pd-dim" key={dim.id}>
                     <span className="pd-dim-name">{dim.id}</span>
-                    <span className="pd-dim-weight">×{dim.weight}</span>
+                    {/* 权重来自后端；拿不到就显示「×—」，不回落到写死的旧值 */}
+                    <span className="pd-dim-weight">
+                      ×{typeof w === 'number' ? w.toFixed(2) : '—'}
+                    </span>
                     <div className="pd-dim-bar">
                       <div className={`pd-dim-bar-fill ${fillClass}`} style={{ width: `${pct}%` }} />
                     </div>
@@ -565,7 +606,11 @@ export default function ProjectPage() {
               })}
             </div>
             <p className="mt-3 text-xs text-ink-faint">
-              <span className="font-mono">{project.weight_version || 'v1.2'}</span> · 阈值 FARM≥65 / WATCH≥50
+              {/* FARM/WATCH 分档以前写死成「FARM≥65 / WATCH≥50」。这两个数已经调过
+                  一次（v1.1 把 FARM 从 70 降到 65），写死就意味着下次再调时这行会
+                  静默变成错的。现在读后端 thresholds 块的真值。 */}
+              <span className="font-mono">{weightVersion}</span> · 阈值 FARM≥
+              {farmThreshold ?? '—'} / WATCH≥{watchThreshold ?? '—'}
             </p>
           </section>
 
