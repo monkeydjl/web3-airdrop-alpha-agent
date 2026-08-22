@@ -12,10 +12,18 @@ import type { DiscoveryItem, DiscoveriesResponse } from '@/lib/types';
 type StatusFilter = 'pending' | 'processed' | 'all';
 type SortBy = 'score' | 'time' | 'name';
 
-const SOURCE_OPTIONS = [
-  'defillama', 'github', 'coingecko', 'cryptorank', 'rootdata',
-  'twitter_kol', 'twitter_keyword', 'etherscan', 'galxe', 'layer3',
-];
+// 来源下拉不再写死清单：真值是后端注册的采集器（`GET /collections/sources`）。
+// 此前这里硬编码了 10 个 source_id —— 实测当时确实与后端一致，但这属于
+// 「碰巧对上」：后端加一个采集器，这个下拉就会漏掉它，而漏掉的表现是
+// 「筛选不到」，不是报错，几乎不可能被发现。
+interface CollectionSource {
+  source_id: string;
+  source_name?: string | null;
+}
+
+interface CollectionSourcesData {
+  sources: CollectionSource[];
+}
 
 export default function DiscoveriesPage() {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
@@ -38,6 +46,24 @@ export default function DiscoveriesPage() {
 
   // 隔离操作
   const [quarantining, setQuarantining] = useState<string | null>(null);
+
+  // 来源下拉的选项来自后端注册的采集器；取不到就只留「全部来源」，
+  // 不退回一份可能过时的硬编码副本。
+  const [sourceOptions, setSourceOptions] = useState<CollectionSource[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<CollectionSourcesData>('/collections/sources')
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.sources)) setSourceOptions(data.sources);
+      })
+      .catch(() => {
+        // 下拉取不到不阻塞主表；此时只显示「全部来源」
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadStats = useCallback(async () => {
     try {
@@ -157,7 +183,11 @@ export default function DiscoveriesPage() {
               <span className="disc-stat-label">今日新增</span>
             </div>
             <div className="disc-stat-value">{todayNew}</div>
-            <div className="disc-stat-caption">{SOURCE_OPTIONS.length} 个采集源</div>
+            <div className="disc-stat-caption">
+              {/* 采集源数量来自后端注册表。取不到时显示「—」而不是「0 个」——
+                  「0 个采集源」是个具体的错误断言，「—」才是「还不知道」。 */}
+              {sourceOptions.length ? `${sourceOptions.length} 个采集源` : '采集源 —'}
+            </div>
           </div>
           <div className="disc-stat-card">
             <div className="disc-stat-head">
@@ -200,8 +230,10 @@ export default function DiscoveriesPage() {
                 onChange={(e) => setSourceFilter(e.target.value)}
               >
                 <option value="">全部来源</option>
-                {SOURCE_OPTIONS.map((s) => (
-                  <option key={s} value={s}>{sourceZh(s)}</option>
+                {sourceOptions.map((s) => (
+                  <option key={s.source_id} value={s.source_id}>
+                    {s.source_name || sourceZh(s.source_id)}
+                  </option>
                 ))}
               </select>
             </label>

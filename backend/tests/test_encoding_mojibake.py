@@ -125,6 +125,10 @@ def test_known_mojibake_list_matches_reality(checker):
     """已登记的二型损坏文件必须确实还损坏着。
 
     修好后请从 KNOWN_BROKEN_MOJIBAKE 删除 —— 这个断言会提醒你。
+
+    2026-08-22 起该清单为**空集**（API_SPEC.md 的 70 处已全部修完），
+    所以这个循环当前不执行任何断言。空循环的测试等于没有测试，因此
+    另有 `test_mojibake_registry_is_empty` 正面钉住「清单必须保持为空」。
     """
     for rel in checker.KNOWN_BROKEN_MOJIBAKE:
         path = REPO_ROOT / rel
@@ -133,6 +137,22 @@ def test_known_mojibake_list_matches_reality(checker):
         text = path.read_text(encoding="utf-8")
         n = checker.count_mojibake(text)
         assert n > 0, f"{rel} 已无二型损坏，请从 KNOWN_BROKEN_MOJIBAKE 清单中删除"
+
+
+def test_mojibake_registry_is_empty(checker):
+    """二型损坏已清零，豁免清单必须保持为空。
+
+    为什么要正面钉住「空」：**登记豁免会掩盖内容问题**。只要文件挂在豁免
+    清单上，就没人会去逐行读它，于是错的内容跟错的字节一起躺着 ——
+    API_SPEC.md 就是活例子：修那 70 处编码损坏的过程中，顺带查出 13 条
+    根本不存在的端点、若干虚构的 query 参数和字段名。那些谎言比乱码更贵，
+    却因为「反正这文件已登记待修」而没人碰。
+
+    往这个清单里加文件是**倒退**，必须在这里显式讨论，而不是悄悄加一行。
+    """
+    assert not checker.KNOWN_BROKEN_MOJIBAKE, (
+        f"二型豁免清单应为空，却有 {sorted(checker.KNOWN_BROKEN_MOJIBAKE)}；新增豁免等于让这些文件的内容错误一起免检。"
+    )
 
 
 def test_no_unregistered_mojibake_in_repo(checker):
