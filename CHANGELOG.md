@@ -8,6 +8,88 @@
 
 ## [Unreleased]
 
+### Fixed — CI 三处长期红灯（2026-08-22）
+
+推送 37 个积压 commit 时开了 PR #4，借 CI 把三项长期失败的检查查清并修掉。
+它们**都先于本次改动存在**，只是此前没人看得出失败原因。
+
+- **Docker 镜像扫描：36 个高危 → 0**（`Docker Image Trivy Scan` 自 08-09 起每次都红）
+
+  这个 job 从未给出可读的失败原因：workflow 只让 Trivy 输出 SARIF 到文件，
+  失败时日志里只剩一句 `exit code 1`；SARIF 上传成功但 code scanning 告警数为 0，
+  run 里也没有可下载的构件 —— 从任何角度都看不到漏洞明细。先加了一步 table 格式
+  输出（`exit-code: 0`，只负责让人看见，判定仍归 SARIF 那步），漏洞才第一次露面：
+
+  - **34 个来自基础镜像的 util-linux 家族**：9 个包 × 4 个 CVE
+    （`bsdutils` / `libblkid1` / `liblastlog2-2` / `libmount1` / `libsmartcols1` /
+    `libuuid1` / `login` / `mount` / `util-linux`），
+    CVE-2026-53612/53613/53614（mount 的 TOCTOU 与 nosuid/noexec 绕过）、
+    CVE-2026-53615（libblkid 整数溢出）。Debian 已发布修复 `2.41.5-0+deb13u1`，
+    但 `python:3.12-slim` 这个 tag 不会随安全更新重新指向新层，所以构建时
+    必须显式 `apt-get upgrade`。加上之后 36 → 2。
+
+  - **剩下 2 个的真正来源是 pip 的内嵌依赖清单，升级 pip 修不掉**。
+    `setuptools 70.3.0`（CVE-2025-47273）与 `msgpack 1.1.2`
+    （GHSA-6v7p-g79w-8964）这两个版本号，与 pip 自带的
+    `pip/_vendor/vendor.txt` 里钉着的版本**逐字一致**。pip 把依赖以源码形式
+    内嵌在 `pip/_vendor/` 下、不产生 dist-info，Trivy 把 vendor.txt 当成包清单来读 ——
+    这也解释了它每次扫描都警告两遍
+    「Third-party SBOM may lead to inaccurate vulnerability detection」，
+    以及诊断输出里 `PkgPath = None`、target 名叫 `Python` 而非文件路径。
+    本机 pip 已是最新的 26.2.1，vendor.txt 里**依然**钉着这两个旧版，
+    所以任何 pip 升级都不可能清掉它们。
+    改为**从镜像里删除 pip 与 setuptools**，builder 与 production 两个阶段都删 ——
+    只删一处没用，因为 production 会 `COPY --from=builder /venv /venv`
+    把同一份 pip 搬过去（Trivy 报告里确实列着
+    `venv/lib/python3.12/site-packages/pip-26.2.1.dist-info/METADATA`）。
+    删除安全性已实测：用 `sys.meta_path` 拦截器让 pip / setuptools /
+    pkg_resources / `_distutils_hack` 全部无法导入，应用仍完整启动（28 条路由）、
+    `/health` 返回 200 healthy，pandas / numpy / psycopg / alembic / apscheduler
+    均正常；numpy 里唯一的 `from setuptools import ...` 位于 `numpy/distutils`
+    （构建期代码），应用完整导入后它从未被加载。
+    **代价**：镜像内不能再 `pip install` 排障，已在 Dockerfile 注明；
+    可选的 OTel 依赖若要装，必须加在删除步骤之前。
+
+- **前端依赖 9 个高危 → 0**（`npm audit` 自 08-13 起让 `Frontend Lint & Build` 红着）
+
+  9 个全部源自 `nanoid < 3.3.18`（GHSA-2v37-7h3g-55p8，CWE-835 无限循环），
+  经 `postcss` 传染到 `next` / `tailwindcss` 与各 postcss 插件。
+  修法是 **cherry-pick dependabot PR #3 的原始 commit**（`16e4763`），
+  而不是自己写版本号 —— 本机 npm registry 不可达（`EPERM`），
+  编不出可信的 `integrity` 哈希，只能用它从 registry 取到的那份。
+  只改 `frontend-next/package-lock.json` 3 行。实测 `npm audit --audit-level=high`
+  从 9 high / exit 1 变为 **found 0 vulnerabilities / exit 0**，
+  `tsc --noEmit` 与 `eslint` 仍 exit 0。同时解掉了 dependabot PR #3 卡了 5 天的问题。
+
+- **文档死链 6 条 → 0**（`Docs Link Check`）
+
+  `docs/00_index.md` 与 `ENGINEERING_ROADMAP.md` 仍链向 `0966179`
+  （移除遗留 HTML 原型）里删掉的 6 个文件，而索引表还给每一个都标着 ✅：
+  `PROJECT_BOOTSTRAP_OVERVIEW.md`、`IMPLEMENTATION_STATUS.md`、
+  `PROJECT_BOOTSTRAP_CHECKLIST_V2.md`、`PROJECT_BOOTSTRAP_AUDIT_REPORT_V2.md`、
+  `COLLECTION_ANALYSIS_HANDOFF.md`、`DESIGN_REVIEW_CHANGELOG.md`。
+  实现状态改指向 `docs/PHASES.md`，并在索引里留了一条说明记录删了什么、为什么，
+  而不是悄悄改表。本地复现 CI 判据（仅相对链接、folder-path 与 workflow 一致）
+  扫 117 个 md 确认清零。ADR / superpowers 计划 / DELIVERY_CHECKLIST 里的**散文提及**
+  保持原样 —— 那是历史记录而非导航，CI 也不检查它们。
+
+### Changed — Trivy 失败时先打印明细（2026-08-22）
+
+`security.yml` 的 `container-scan` 增加一步 table 格式扫描（非阻断），
+排在原 SARIF 步骤之前。判定逻辑完全没变，SARIF 那步仍以 HIGH/CRITICAL 阻断。
+动机是这个 job 红了 13 天却无人能说出原因 —— 一个只报「失败」不报「为什么」的
+门禁，实际效果等于没有门禁。
+
+### 未解决 — master 分支保护有 3 个检查名对不上（2026-08-22）
+
+`master` 的 `required_status_checks` 要求 5 项，其中 **3 项在仓库里没有任何 job 会产出**：
+要求 `Lint (ruff)` 而实际 job 名为 `Lint & Format Check`；要求 `Test (pytest)`
+而实际为 `Full Backend Test Suite`；要求 `Coverage Gate` 而覆盖率门禁在 pytest
+步骤内部、不是独立 job。这 3 项会永远 pending，因此任何 PR 的 `mergeStateStatus`
+恒为 `BLOCKED`（dependabot PR #3 卡 5 天正是此因）。
+门禁看着有 5 道、实际只有 2 道生效。修法二选一：改保护规则的名字对齐实际 job 名，
+或改 job 名对齐保护规则。**未擅自改动** —— 修改分支保护属于放宽门禁，需所有者决定。
+
 ### Fixed — 归档从未真正运行过（2026-08-22）
 
 从「归档页上那句『暂无运行历史接口』」查起，结果发现它掩盖的不是缺个接口，

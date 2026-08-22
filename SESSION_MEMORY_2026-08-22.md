@@ -182,19 +182,88 @@ next build               → 编译成功（4.8s），收尾 spawn EPERM = 沙�
 
 ## 遗留问题 / 下一步
 
-1. **推送方式仍未确认** —— 本地 commit 未推远程（远程 `master`）。
-   直推 master 还是开分支走 PR？**下个会话先问这个**
+1. **master 分支保护有 3 个必过检查名对不上，任何 PR 恒为 BLOCKED**
+   —— 要求 `Lint (ruff)` / `Test (pytest)` / `Coverage Gate`，
+   而仓库里实际 job 名是 `Lint & Format Check` / `Full Backend Test Suite`，
+   覆盖率门禁在 pytest 步骤内部、不是独立 job。这 3 项永远 pending。
+   **下个会话先请所有者定夺**：改保护规则名 vs 改 job 名。未擅自改动，
+   因为改分支保护属于放宽门禁
 2. **编码损坏**：一型 487 处待人工判定（`DATA_SOURCE_STRATEGY.md` 占 367 处且
    无干净底本）、二型 `API_SPEC.md` 70 处只检测不修复、三型 2 处只登记
 3. **Python 版本口径不一致**：镜像/CI/mypy 用 3.12，本地 venv 3.11.9。
    待所有者决定
-4. **Docker 未验证**：本环境 docker daemon 权限被拒
-   （`permission denied ... npipe`），无法重跑构建
+4. ~~**Docker 未验证**~~ → **本轮已由 CI 验证**：`Docker Build Check` pass
+   （含 `/health` 冒烟）、`Docker Image Trivy Scan` pass。本地仍无法构建
+   （docker daemon `npipe` 权限被拒），但 CI 覆盖了这一层
 5. `SEED_FALLBACK_ENABLED` 生产建议设 `false`
 6. `/ops` 仍有无后端接口的区块（诚实占位，非假数据）
 7. **归档的真实运行尚未观察到** —— 库里数据只到 08-15，当前没有任何行到期，
    所以定时归档跑起来也是 0 行。要等数据自然过期，或所有者同意临时调小保留期
    做一次实跑
+8. **镜像内不再有 pip** —— 为清掉 Trivy 的 2 个高危而删除（详见下文）。
+   后果：不能在容器里 `pip install` 排障。要临时装包就进 builder 阶段，
+   或另起一个 `python:3.12-slim` 容器
+
+---
+
+## 三、推送与 CI：三处长期红灯查清并修掉
+
+所有者的指示是「没问题就推 master，影响大就开 PR」，判断权交给我。
+
+### 为什么选了开 PR
+
+dry-run 通过（fast-forward、非强推、密钥扫描干净），但查分支保护时发现
+`master` 要求的 5 个必过检查里**有 3 个在仓库里没有任何 job 会产出**。
+所有者是 owner 且 `enforce_admins: false`，技术上推得进去 —— 但那等于绕过
+一道「看着有 5 道、实际只有 2 道生效」的门禁。283 个文件、6.8 万行删除的
+改动不该这样落地，且这个配置错误本身需要修。
+→ PR #4：`release/v2-consolidation`，master 未动。
+
+### CI 查出并修掉的三项（都先于本次改动存在）
+
+| 检查 | 修前 | 修后 |
+|---|---|---|
+| `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
+| `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
+| `Docs Link Check` | 6 条死链 | **0** |
+
+**Trivy 那项的关键教训：一个只报「失败」不报「为什么」的门禁，等于没有门禁。**
+它红了 13 天，因为 workflow 只让 Trivy 输出 SARIF 到文件 —— 失败时日志只剩
+`exit code 1`，SARIF 上传成功却 code scanning 告警数为 0，run 里也没有构件。
+先加一步 table 格式输出（非阻断，判定仍归 SARIF），漏洞才第一次露面。
+
+- 34 个来自基础镜像 util-linux 家族（9 包 × 4 CVE），
+  `python:3.12-slim` 的 tag 不随安全更新重新指向新层 → 构建时 `apt-get upgrade`，
+  36 → 2
+- **剩下 2 个差点被我修错**：`setuptools 70.3.0` / `msgpack 1.1.2`。
+  第一反应是「升级 setuptools」，但那是错的 —— 镜像里 setuptools 已经是
+  84.0.0（Trivy 自己列出 `setuptools-84.0.0.dist-info` 且 0 漏洞），
+  它报的 70.3.0 另有来源。加 JSON 诊断步骤打出 `PkgPath = None`、
+  target 名叫 `Python` 而非文件路径，才定位到**真正来源是
+  `pip/_vendor/vendor.txt`** —— 与它钉的版本逐字一致。pip 把依赖以源码内嵌、
+  不产生 dist-info，Trivy 把这份清单当包列表读（它每次扫描都警告两遍
+  「Third-party SBOM may lead to inaccurate vulnerability detection」）。
+  本机 pip 已是最新 26.2.1，vendor.txt 仍钉旧版 → **任何 pip 升级都不可能修掉**。
+  改为删除 pip/setuptools，且 **builder 与 production 两阶段都要删** ——
+  只删一处没用，production 会 `COPY --from=builder /venv /venv` 把同一份 pip 搬过去。
+
+删除前先证明运行时不需要它们：用 `sys.meta_path` 拦截器让
+pip / setuptools / pkg_resources / `_distutils_hack` 全部无法导入，
+应用仍完整启动（28 条路由）、`/health` 200 healthy，
+pandas / numpy / psycopg / alembic / apscheduler 均正常。
+numpy 里唯一的 `from setuptools import ...` 在 `numpy/distutils`（构建期代码），
+应用完整导入后它从未被加载。
+
+**npm audit 那项**：9 个高危全源自 `nanoid < 3.3.18`，经 postcss 传染。
+修法是 cherry-pick dependabot PR #3 的原始 commit（`16e4763`），
+**不是自己写版本号** —— 本机 npm registry 不可达（`EPERM`），
+编不出可信的 `integrity` 哈希。顺带解掉了 PR #3 卡 5 天的问题。
+
+### PR #4 最终状态
+
+11 项检查**全部 pass**（含 `Full Backend Test Suite` 7m34s、
+`Docker Build Check` 含 `/health` 冒烟、`Docker Image Trivy Scan`）。
+`mergeStateStatus` 仍是 `BLOCKED`，唯一原因就是上面那 3 个不存在的检查名。
 
 ## 这轮踩过的坑（给下一个会话）
 
@@ -207,3 +276,25 @@ next build               → 编译成功（4.8s），收尾 spawn EPERM = 沙�
 - `npx next build` 收尾 `spawn EPERM`（沙箱不能开管道）→ 用
   `node ./node_modules/typescript/bin/tsc --noEmit` 单独验类型
 - `git diff --stat` 的 `LF will be replaced by CRLF` 警告无害
+- **`git push` 在本环境的正确姿势**（踩了好几轮）：
+  默认 schannel 报 `SEC_E_NO_CREDENTIALS`；换 `-c http.sslBackend=openssl` 后
+  凭据助手是 shell 脚本包装（`!'...gh.exe' auth git-credential`），
+  沙箱不能开命名管道 → `sh.exe: couldn't create signal pipe, Win32 error 5`。
+  可行解：**Basic 认证头**（Bearer 不行，GitHub 的 git-http 认 Basic）
+  ```
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:" + (gh auth token)))
+  git -c http.sslBackend=openssl -c credential.helper= -c "http.extraHeader=Authorization: Basic $b64" push origin <branch>
+  ```
+- **`gh run view --log-failed` 会失败**（`Access is denied`，缓存目录在
+  `%LOCALAPPDATA%` 沙箱外）→ 改用
+  `gh api repos/<o>/<r>/actions/jobs/<id>/logs > 工作区内文件`
+- **GitHub Actions 日志是 UTF-16LE 带 BOM**，不是 UTF-8。
+  用 UTF-8 解码会得到空字符串，让人误以为日志里没有内容 ——
+  我因此一度以为 Trivy 没输出表格。按前两字节嗅探：
+  `raw[:2] in (b'\xff\xfe', b'\xfe\xff')` → `utf-16`
+- **别急着「修」一个自相矛盾的报告**：Trivy 报 setuptools 70.3.0，
+  而镜像里明明是 84.0.0。第一反应「再升一次 setuptools」是个看起来合理、
+  但**不可能生效**的修法。先加诊断把 `PkgPath` / `PURL` 打出来，
+  才找到真来源 `pip/_vendor/vendor.txt`。
+  **报告自相矛盾时，先怀疑取数口径，别急着改代码。**
+

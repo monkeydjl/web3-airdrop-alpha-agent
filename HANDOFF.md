@@ -5,22 +5,37 @@
 多智能体 Web3 空投评分系统（后端 FastAPI + 前端 Next.js 16）。
 **08-20 修完上线阻断项；08-21 打通「行动 → 复盘 → 校准」闭环、锁定依赖版本、
 发现并部分修复文档编码损坏；08-22 收紧编码修复的箭头规则、落地归档子系统
-（并查出归档从未真正运行过）。**
+（并查出归档从未真正运行过）、把 41 个积压 commit 推上远程分支并开 PR #4，
+顺带查清并修掉三处长期红着的 CI 检查。**
 
 ```
-pytest -q（全量）        → 2601 passed, 4 skipped, 87.94% cov, 35m3s, exit 0（08-21 末轮）
-                           08-22 归档相关定向 69 passed；全量在跑
+pytest -q（全量，本地）   → 2648 passed, 4 skipped, 88.15% cov, 36m31s, exit 0
 ruff check               → All checks passed!
-ruff format --check      → 231 files already formatted
+ruff format --check      → 251 files already formatted
 mypy app                 → no issues found in 117 source files
 前端 tsc / eslint         → 全通过（tsc exit 0、eslint exit 0）
-next build               → 编译成功，收尾阶段 spawn EPERM（沙箱限制，非代码问题）
+check_encoding.py        → exit 0（489 文件，5 个已登记损坏）
+check_terminology.py --all → exit 0
 ```
 
-**本地 commit 未推远程**（08-21 实测 35 个，本轮又增）。
-远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`，分支 `master`。
-**推送方式仍未获所有者确认**（直推 master vs 开分支走 PR），因此一直没推 —— 这是
-下一个会话最该先问清楚的一件事。
+**代码已推远程分支 `release/v2-consolidation`，PR #4 已开，master 未动。**
+远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`。
+PR #4 的 **11 项 CI 检查全部 pass**（含 `Full Backend Test Suite` 7m34s、
+`Docker Build Check` 含 `/health` 冒烟、`Docker Image Trivy Scan`）。
+
+⚠ **但 PR 仍无法合并**，`mergeStateStatus = BLOCKED`。原因不在代码：
+`master` 分支保护要求 5 个必过检查，其中 **3 个在仓库里没有任何 job 会产出** ——
+要求 `Lint (ruff)` 而实际 job 名为 `Lint & Format Check`；要求 `Test (pytest)`
+而实际为 `Full Backend Test Suite`；要求 `Coverage Gate` 而覆盖率门禁在 pytest
+步骤内部、不是独立 job。这 3 项永远 pending（dependabot PR #3 卡 5 天同因）。
+门禁看着有 5 道、实际只有 2 道生效。
+**下一个会话最该先问所有者的一件事**：改保护规则名对齐实际 job 名，
+还是改 job 名对齐保护规则？未擅自改动 —— 改分支保护属于放宽门禁。
+
+> 为什么选 PR 而非直推：dry-run 通过（fast-forward、非强推、密钥扫描干净），
+> 所有者是 owner 且 `enforce_admins: false`，技术上推得进去。但那等于绕过一道
+> 形式存在、实际不生效的门禁，而 283 个文件、6.8 万行删除（其中 6.6 万来自单个
+> 遗留原型清理 commit `0966179`）的改动不该这样落地。
 
 ## 08-22 做了什么
 
@@ -210,21 +225,58 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 
 ## 下一步（按优先级）
 
-- [ ] **问所有者：怎么推这 30 个 commit**（直推 master 还是开分支走 PR）
+- [ ] **问所有者：master 分支保护那 3 个对不上的检查名怎么修**（改规则名 vs 改 job 名）。
+      **这是目前唯一挡着 PR #4 合并的东西**，代码侧 11 项检查已全绿
 - [ ] **决定 Python 版本口径**：`docker/Dockerfile` 与 CI 用 **3.12**、mypy 配置
       也写 3.12，但本地 venv 是 **3.11.9**，`pyproject.toml` 只声明 `>=3.11`。
       **本地测过的解释器和镜像里跑的不是同一个。** 统一到 3.12 需要重建本地
-      venv 并重跑全套（约 35 分钟），或把镜像降到 3.11。我没擅自改。
+      venv 并重跑全套（约 36 分钟），或把镜像降到 3.11。我没擅自改。
+      注：CI 的 `Full Backend Test Suite` 是在 3.12 上跑绿的，所以两边都能过测试
 - [ ] **继续编码修复**（见上）：一型 487 处 + 二型 70 处 + 三型 2 处
 - [ ] **上线前人工设定**：`.env` 里 `APP_ENV=production`、`API_KEY`（≥32）、
       `AUTH_TOKEN_SECRET`（≥48）、`CORS_ORIGINS`（**真实域名，含 localhost 会
       拒绝启动**）、`SEED_FALLBACK_ENABLED=false`
 - [ ] **确认调度器怎么跑**：数据已过期（最新 `updated_at` 08-18，最后采集 08-15），
       因为 APScheduler 只在服务常驻时才跑。上线要么保证长驻，要么加外部定时
-- [ ] **重跑一次 docker 构建**：上一轮（08-20）验证过容器 `Up (healthy)`，
-      但之后改了 `Dockerfile` 的 COPY 行与 requirements 拆分，**新镜像未实测**
-- [ ] **可选补后端接口**：归档运行历史（`app/archive.py` 有逻辑无路由）、
-      调度任务手动触发、项目排名。补上后 `/archive`、`/ops` 可从"诚实占位"升级
+- [x] ~~**重跑一次 docker 构建**~~ → **08-22 已由 CI 验证**：
+      `Docker Build Check` pass（含起容器 + `/health` 冒烟）、
+      `Docker Image Trivy Scan` pass（0 HIGH）。本地仍无法构建（daemon `npipe`
+      权限被拒），但 CI 覆盖了这一层。⚠ 注意本轮**从镜像里删除了 pip/setuptools**
+      （原因见下文 CI 段），所以容器内不能再 `pip install` 排障
+- [ ] **可选补后端接口**：调度任务手动触发、项目排名。
+      归档运行历史已于 08-22 补齐（`GET /api/v1/archive/runs`），`/archive` 页已实装；
+      `/ops` 仍有"诚实占位"区块
+
+## 08-22 后半段：推送与三处 CI 长期红灯
+
+所有者指示「没问题就推 master，影响大就开 PR」，判断权交给我 → 选了开 PR（理由见开头）。
+借 CI 把三项长期失败的检查查清并修掉，**它们都先于本次改动存在**：
+
+| 检查 | 修前 | 修后 |
+|---|---|---|
+| `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
+| `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
+| `Docs Link Check` | 6 条死链 | **0** |
+
+**Trivy 那项的教训：一个只报「失败」不报「为什么」的门禁，等于没有门禁。**
+它红了 13 天，因为 workflow 只让 Trivy 输出 SARIF 到文件 —— 失败时日志只剩
+`exit code 1`，SARIF 上传成功却 code scanning 告警数为 0，run 里也没有构件。
+先加一步 table 格式输出（非阻断，判定仍归 SARIF），漏洞才第一次露面。
+
+- 34 个来自基础镜像 util-linux 家族（9 包 × 4 CVE：CVE-2026-53612/53613/53614/53615）。
+  `python:3.12-slim` 的 tag 不随 Debian 安全更新重新指向新层 → 构建时
+  `apt-get upgrade`，36 → 2
+- **剩下 2 个差点被我修错**（详见「我更正过自己」一节新增的第 8 条）：
+  真来源是 `pip/_vendor/vendor.txt`，不是任何已安装的包。
+  改为删除 pip/setuptools，**builder 与 production 两阶段都要删** ——
+  只删一处没用，production 会 `COPY --from=builder /venv /venv` 把同一份 pip 搬过去。
+  删除前已实测：用 `sys.meta_path` 拦截器让 pip/setuptools/pkg_resources/
+  `_distutils_hack` 全部无法导入，应用仍完整启动（28 条路由）、`/health` 200 healthy
+
+**npm audit 那项**：9 个高危全源自 `nanoid < 3.3.18` 经 postcss 传染。
+修法是 **cherry-pick dependabot PR #3 的原始 commit**（`16e4763`），
+不是自己写版本号 —— 本机 npm registry 不可达（`EPERM`），编不出可信的
+`integrity` 哈希。顺带解掉了 PR #3 卡 5 天的问题。
 
 ## 如何运行与验证
 
@@ -329,7 +381,7 @@ npm run typecheck && npm run lint && npm run build
 - **归档历史端点严格只读**：查看历史不触发清理（有测试锁住）。
   手动触发只保留脚本入口，避免"点一下就删数据"的按钮
 
-## 我在这几轮里更正过自己七次
+## 我在这几轮里更正过自己九次
 
 留档是为了让接手的人知道哪些结论是被推翻过的、不要照着旧结论走：
 
@@ -348,6 +400,19 @@ npm run typecheck && npm run lint && npm run build
    真实原因是构造函数的 `days or default` 把我传的 `0` 吃掉了 —— 那个"反例
    跑不出来"的结论本身是错的。修掉 `or` 之后 bug 立刻复现。
    *教训：验证失败时，先怀疑验证装置*
+8. Trivy 剩下 2 个高危，我的第一反应是「升级 setuptools」，
+   **那是个看起来合理但不可能生效的修法**：镜像里 setuptools 已经是 84.0.0
+   （Trivy 自己列出 `setuptools-84.0.0.dist-info` 且 0 漏洞），它报的 70.3.0
+   另有来源。我先按这个错判提交了一版 `pip install --upgrade setuptools`，
+   结果 36 → 2 之后**一个也没少**。加 JSON 诊断打出 `PkgPath = None`、
+   target 名叫 `Python` 而非文件路径，才定位到真来源是 `pip/_vendor/vendor.txt`
+   （pip 把依赖以源码内嵌、不产生 dist-info，Trivy 把这份清单当包列表读）。
+   本机 pip 已是最新 26.2.1，vendor.txt 仍钉着这两个旧版 —— 任何 pip 升级都
+   不可能修掉。*教训：报告自相矛盾时，先怀疑取数口径，别急着改代码*
+9. 我一度以为 Trivy 的 table 输出没能打出表格（日志里搜不到），
+   实际是 **GitHub Actions 的 job 日志是 UTF-16LE 带 BOM**，用 UTF-8 解码得到
+   空字符串。按前两字节嗅探 `raw[:2] in (b'\xff\xfe', b'\xfe\xff')` 才读得到。
+   *教训：读不到内容时，先确认编码，再断言"没有内容"*
 
 CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
 "原判断 + 更正"两条，没有抹掉痕迹。
@@ -369,7 +434,29 @@ CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
 本轮有三条测试就是干这个的：检查脚本必须过自己的检查、
 测试文件必须过闸门、全仓不得有未登记损坏。
 
+**08-22 又加一例**：`Docker Image Trivy Scan` 红了 13 天，但它只报「失败」不报
+「为什么」—— SARIF 写进文件，日志只剩 `exit code 1`。同一个模式：
+闸门存在、但它的输出无法被人读取，于是等于不存在。修法是让它先打印再判定。
+
+## 本环境的操作陷阱（省下重新踩的时间）
+
+- **`git push` 的可行姿势**：默认 schannel 报 `SEC_E_NO_CREDENTIALS`；
+  换 `-c http.sslBackend=openssl` 后凭据助手是 shell 脚本包装
+  （`!'...gh.exe' auth git-credential`），沙箱不能开命名管道 →
+  `sh.exe: couldn't create signal pipe, Win32 error 5`。
+  可行解是 **Basic 认证头**（Bearer 不行，GitHub 的 git-http 认 Basic）：
+  ```powershell
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:" + (gh auth token)))
+  git -c http.sslBackend=openssl -c credential.helper= -c "http.extraHeader=Authorization: Basic $b64" push origin <branch>
+  ```
+- **`gh run view --log-failed` 会失败**（`Access is denied`，缓存目录在
+  `%LOCALAPPDATA%` 沙箱外）→ 改用
+  `gh api repos/<owner>/<repo>/actions/jobs/<id>/logs > 工作区内文件`
+- **GitHub Actions 日志与 `npm audit --json` 都是 UTF-16LE 带 BOM**，
+  用 UTF-8 解码会得到空串。按前两字节嗅探再解码
+- **subagent 委派在本工作区不可靠**（试过七次全部异常退出、无结果）→ 前台跑脚本
+
 ---
 
-_交接日期：2026-08-21 · 会话记忆见 `SESSION_MEMORY_2026-08-21.md` ·
+_交接日期：2026-08-22 · 会话记忆见 `SESSION_MEMORY_2026-08-22.md` ·
 编码专题见 `docs/ENCODING_REPAIR.md` · 阶段进度见 `docs/PHASES.md`_

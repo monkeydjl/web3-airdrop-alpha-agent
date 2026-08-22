@@ -77,6 +77,32 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 
 ## 历史阶段
 
+### 运维 — 推送上线与 CI 长期红灯清理（2026-08-22 完成）
+
+**结论：完成。** 41 个积压 commit 推上远程分支并开 PR #4，
+借 CI 查清并修掉三项**先于本次改动就红着**的检查。
+
+| 检查 | 修前 | 修后 |
+|---|---|---|
+| `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
+| `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
+| `Docs Link Check` | 6 条死链 | **0** |
+
+- Trivy：34 个来自基础镜像 util-linux 家族（`apt-get upgrade` 解决）；
+  剩下 2 个的真来源是 `pip/_vendor/vendor.txt`（pip 内嵌依赖清单，
+  不产生 dist-info），**升级 pip 不可能修掉** → 从 builder 与 production
+  两个阶段都删除 pip/setuptools。删除前实测应用在这些包全不可导入时仍正常启动
+- npm audit：9 个高危全源自 `nanoid < 3.3.18`，
+  cherry-pick dependabot PR #3 的原始 commit（保证 `integrity` 哈希来自 registry
+  而非自己编造），顺带解掉 PR #3 卡 5 天的问题
+- 死链：`00_index.md` 索引着 6 个已在 `0966179` 删除的文件，却全标着 ✅
+- **教训一：一个只报「失败」不报「为什么」的门禁，等于没有门禁。**
+  Trivy 红了 13 天，因为 workflow 只写 SARIF 到文件，失败时日志只剩 `exit code 1`。
+  先加 table 输出（非阻断）再判定，漏洞才第一次露面
+- **教训二：报告自相矛盾时，先怀疑取数口径。** Trivy 报 setuptools 70.3.0
+  而镜像里已是 84.0.0 —— 按「再升一次」提交的那版一个漏洞也没少；
+  加诊断打出 `PkgPath = None` 才找到真来源
+
 ### 运维 — 归档子系统落地（2026-08-22 完成）
 
 **结论：完成。** 从前端一句诚实占位查起，发现归档功能从未被调度过，并连带查出
@@ -118,18 +144,41 @@ SQLite/PostgreSQL 双后端 + Alembic；Prometheus + Grafana + Loki + OTel。
 ```
 pytest -q                     → 2648 passed, 4 skipped, 0 failed（36分31秒，exit 0）
 覆盖率                         → 88.15%（门槛 80%）
-ruff check / format           → All checks passed / 231 files already formatted
+ruff check / format           → All checks passed / 251 files already formatted
 mypy app                      → no issues in 117 source files
 前端 tsc / eslint              → 全绿（均 exit 0）
 next build                    → 编译成功，收尾 spawn EPERM（沙箱限制，非代码问题）
 ```
 
+**远程 CI 基线（PR #4，08-22 实测 11 项全 pass）**：
+
+```
+Lint & Format Check       pass   29s
+Type Check (mypy)         pass   36s
+Full Backend Test Suite   pass   7m34s   ← Python 3.12 上跑绿
+Frontend Lint & Build     pass   30s     ← 含 npm audit（此前 9 high）
+Docker Build Check        pass   24s     ← 含起容器 + /health 冒烟
+Docker Image Trivy Scan   pass   1m28s   ← 此前 36 HIGH
+Check Markdown Links      pass   42s     ← 此前 6 条死链
+pip-audit (CVE Scan)      pass   39s
+Detect Secrets            pass   17s
+Dependency Review         pass    9s
+Trivy                     pass    3s
+```
+
 > ⚠️ 两个环境陷阱：`ruff format --check .`（全仓带点）在 ruff 0.16.1 会 panic，
-> 必须按子目录跑；全量 pytest 约 33 分钟，不要误判卡死。
+> 必须按子目录跑；全量 pytest 约 36 分钟，不要误判卡死。
 
 ## 未决事项（跨阶段）
 
-- **30 个本地 commit 未推远程**（实测 `git rev-list --count origin/master..HEAD`）
+- **代码已推远程分支 `release/v2-consolidation`，PR #4 已开，master 未动**。
+  ⚠ **PR 无法合并，但不是代码问题**：`master` 分支保护要求 5 个必过检查，
+  其中 **3 个在仓库里没有任何 job 会产出** —— 要求 `Lint (ruff)` 而实际 job 名为
+  `Lint & Format Check`；要求 `Test (pytest)` 而实际为 `Full Backend Test Suite`；
+  要求 `Coverage Gate` 而覆盖率门禁在 pytest 步骤内部、不是独立 job。
+  这 3 项永远 pending，因此 `mergeStateStatus` 恒为 `BLOCKED`
+  （dependabot PR #3 卡 5 天同因）。门禁看着有 5 道、实际只有 2 道生效。
+  **需所有者定夺**：改保护规则名 vs 改 job 名。未擅自改动 —— 改分支保护属于放宽门禁
 - **文档编码损坏三型，共 559 处待处理**：
   - 一型（非法 UTF-8）1116 处 → 已定 629 处（56.4%），**487 处**待人工判定。
     `DATA_SOURCE_STRATEGY.md` 占 367 处且无干净历史底本。
