@@ -75,6 +75,23 @@ jobs:
   container-scan:
     name: Docker Image Trivy Scan
     runs-on: ubuntu-latest
+    # 上传 SARIF 到 code scanning 需要 `security-events: write`。
+    #
+    # 仓库的默认 workflow 令牌权限是 `read`（实测
+    # `actions/permissions/workflow` → `default_workflow_permissions: read`），
+    # 这是安全的默认值，不该为了这一个步骤把整仓改成 write。
+    # 所以在这个 job 上按最小必要显式声明。
+    #
+    # 为什么之前没暴露：`pull_request` 事件下 upload-sarif 能成功上传
+    # （PR #4 上的同一个 job 全绿，analyses 里确实有 refs/pull/4/merge 的记录），
+    # 但 `push` 事件下同一步骤报
+    # `Resource not accessible by integration`。合并 PR #4 触发 push 之后，
+    # Trivy 扫描本身已经 0 漏洞通过，job 却因为上传失败仍判 failure ——
+    # 也就是说这道闸门此前 13 天的红灯里，混着两个独立故障：
+    # 真实漏洞（已修）与权限不足（此处修）。前者掩盖了后者。
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
