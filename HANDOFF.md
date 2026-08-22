@@ -1,24 +1,70 @@
-# HANDOFF — 2026-08-21
+# HANDOFF — 2026-08-22
 
 ## 项目当前状态
 
 多智能体 Web3 空投评分系统（后端 FastAPI + 前端 Next.js 16）。
 **08-20 修完上线阻断项；08-21 打通「行动 → 复盘 → 校准」闭环、锁定依赖版本、
-发现并部分修复文档编码损坏。**
+发现并部分修复文档编码损坏；08-22 收紧编码修复的箭头规则、落地归档子系统
+（并查出归档从未真正运行过）。**
 
 ```
-pytest -q（全量）        → 2524 passed, 4 skipped, 87.86% cov, 35m10s, exit 0
+pytest -q（全量）        → 2601 passed, 4 skipped, 87.94% cov, 35m3s, exit 0（08-21 末轮）
+                           08-22 归档相关定向 69 passed；全量在跑
 ruff check               → All checks passed!
-ruff format --check      → 245 files already formatted
-mypy app                 → no issues found in 115 source files
-前端 tsc / eslint / build → 全通过
-干净 venv 装依赖          → 41 包装成，/health 200，/metrics 200
+ruff format --check      → 231 files already formatted
+mypy app                 → no issues found in 117 source files
+前端 tsc / eslint         → 全通过（tsc exit 0、eslint exit 0）
+next build               → 编译成功，收尾阶段 spawn EPERM（沙箱限制，非代码问题）
 ```
 
-**30 个本地 commit 未推远程**（`git rev-list --count origin/master..HEAD` 实测）。
+**本地 commit 未推远程**（08-21 实测 35 个，本轮又增）。
 远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`，分支 `master`。
-**推送方式未获所有者确认**（直推 master vs 开分支走 PR），因此一直没推 —— 这是
+**推送方式仍未获所有者确认**（直推 master vs 开分支走 PR），因此一直没推 —— 这是
 下一个会话最该先问清楚的一件事。
+
+## 08-22 做了什么
+
+### 1. 归档子系统落地 —— 起因是一句"诚实占位"
+
+`/archive` 页此前写着「暂无运行历史接口」。去查"为什么没接口"，结果发现
+**归档功能从来没有生效过**，以及两个会让数据无限增长、一个会提前删数据的缺陷：
+
+- **零调度**：`RawDataArchiver` 逻辑是真的，但全仓只有手动脚本会调它 ——
+  `scheduler.py` / CI / compose / Dockerfile 里对 `archive` 零引用，
+  而 `DATABASE_DDL.md` §6.1 却写着「每日 cron 执行」。
+  现在接入 `UnifiedScheduler`，`ARCHIVE_CRON` 默认 `0 3 * * *`
+  （采集 job 在 08:00–10:30，03:00 不争锁）
+- **73% 的行永远不会被归档**：`processed` 只在采集记录被提升为正式项目时置 1，
+  而提升要求 `discovery_score >= 0.3`。低分记录永远不会被提升 → 永远不满足
+  `processed = 1 AND 超期`。实测 693 行里 509 行（73%）是 `processed = 0` 且
+  分数全部 < 0.3；184 行 `processed = 1` 全部 ≥ 0.3。这 509 行也没有同
+  `dedup_key` 的高分兄弟，佐证逻辑救不回来。估算 1 年约 16.8 万行 / 76 MB。
+  新增 `UNPROCESSED_RAW_RETENTION_DAYS`（90 天）单独一档，**归档而非删除**
+  —— 它们是复盘"当时为什么没立项"和调阈值做回溯的唯一依据（所有者选的）
+- **归档表保留期零实现**：文档写了 180/365 天，代码里搜不到任何按 `archived_at`
+  删除的语句 —— 归档表只进不出，等于把无界增长搬了个地方
+- **时间戳格式不一致会提前一天删数据**：`archived_at` 走 SQLite
+  `DEFAULT CURRENT_TIMESTAMP`（`'2026-08-22 02:08:51'`，空格分隔），其它时间列
+  走应用层 `isoformat()`（`'...T02:08:51.9+00:00'`，T 分隔）。SQLite 的
+  TIMESTAMP 是 TEXT，`<` 是字符串比较，空格 0x20 < `T` 0x54 → 当天写入的行被判成
+  "早于今天零点"。实测保留期设 0 天时刚归档的行**当场被删**。现在两种 cutoff
+  分开（`_cutoff` / `_cutoff_db_default`）
+- **`days or default` 把显式的 0 吃掉了**：构造函数原写 `raw_retention_days or
+  settings.xxx`，于是显式传入的 `0`（合法，意为立刻清理）被换成默认值。
+  这一度让上面那条时间戳测试**假通过** —— 改成 `is None` 才复现出真缺陷。
+  *这是本轮第二次"测试通过≠功能正确"*
+
+新增：`archive_runs` 表（每次运行一行，含失败）+ `GET /api/v1/archive/runs`
+（管理员专属、只读）+ Alembic 迁移 `0003`（可单独回滚到 `0002`）+ `/archive` 页
+真实数据（六档策略行数与待清理预估、调度状态、最近 20 次运行）。
+
+### 2. 顺带修正的文档不实之处
+
+`DATABASE_DDL.md` §6.1 的示意 SQL 是
+`WHERE discovered_at < datetime('now','-30 days')`，**没有 `processed` 条件**，
+看起来"什么都归档"，而实现一直带 `processed = 1`。已改为与实现一致，
+并补 §6.2（为什么未处理记录要单独一档，含实测数与增长估算）、
+§6.3（时间戳格式陷阱）。
 
 ## 08-21 做了什么
 
@@ -246,7 +292,9 @@ npm run typecheck && npm run lint && npm run build
 7. **`SEED_FALLBACK_ENABLED` 默认 true** —— 生产建议关掉。开着时采集全挂会用
    8 个内置种子项目填充（标记 `source='seed'`、前端显示「种子数据」，用户可
    分辨，但会计入 Dashboard 汇总）
-8. **`/archive` 与 `/ops` 部分区块无后端接口** —— 诚实占位，非假数据，但不完整
+8. ~~**`/archive` 与 `/ops` 部分区块无后端接口**~~ → `/archive` **已接真实数据**
+   （08-22）。查这句占位时发现它掩盖的是三个真缺陷（归档零调度、73% 低分记录
+   无界增长、归档表保留期零实现），详见「08-22 做了什么」。`/ops` 仍有占位区块
 9. **跨批次非原子**：`/review` 勾选 > 50 条时分多批，批次内原子、跨批次不保证。
    界面已如实说明
 10. **信号覆盖严重不均**：`token_listed` 268 个项目有、`tvl` 165、
@@ -271,8 +319,17 @@ npm run typecheck && npm run lint && npm run build
 - **二型损坏只检测不修复**：它连"1 字符换 1 字符"都不成立，自动修复无法被
   逐字节校验证伪 —— 与其做个证明不了对错的修复，不如先把它标出来
 - **不凭记忆锁 OTel 版本**：PyPI 不可达 → 无从验证 → 写死会伪装成"已验证"
+- **低分采集记录归档而不是删除**（所有者选择）：它们是复盘"当时为什么没立项"、
+  以及日后调 `discovery_score` 阈值做回溯验证的唯一依据，删了拿不回来
+- **归档 cron 定在 03:00**（所有者选择）：采集 job 集中在 08:00–10:30，
+  03:00 跑完不与写入争锁
+- **`/api/v1/archive` 收进管理员专属**：响应含各表真实行数与保留期/cron 配置，
+  属运维信息，与 `/settings` 同一口径。前端 `/archive` 走服务端注入密钥的代理，
+  不影响页面可用性
+- **归档历史端点严格只读**：查看历史不触发清理（有测试锁住）。
+  手动触发只保留脚本入口，避免"点一下就删数据"的按钮
 
-## 我在这几轮里更正过自己五次
+## 我在这几轮里更正过自己七次
 
 留档是为了让接手的人知道哪些结论是被推翻过的、不要照着旧结论走：
 
@@ -285,6 +342,12 @@ npm run typecheck && npm run lint && npm run build
    扩到 140 个文档后箭头规则只有 92.2%。**小样本给了虚假的安全感**
 5. 说 `app/tracing.py`「零测试覆盖」→ 实测靠其它测试导入 `app.main` 已有
    **44%** 间接覆盖。准确说法是"没有针对性测试、关键契约从未被断言"
+6. 说箭头规则"已量化但待收紧" → 本轮**已收紧**（换判据到留一法 100%），
+   并如实披露待定数从 470 涨到 487 这个**进度回退**
+7. 归档的时间戳格式 bug **第一次验证时没能复现**，我差点据此认为它不存在。
+   真实原因是构造函数的 `days or default` 把我传的 `0` 吃掉了 —— 那个"反例
+   跑不出来"的结论本身是错的。修掉 `or` 之后 bug 立刻复现。
+   *教训：验证失败时，先怀疑验证装置*
 
 CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
 "原判断 + 更正"两条，没有抹掉痕迹。

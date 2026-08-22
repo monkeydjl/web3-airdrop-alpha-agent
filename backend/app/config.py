@@ -114,6 +114,21 @@ class Settings(BaseSettings):
     project_signals_retention_days: int = 90
     collection_logs_retention_days: int = 90
 
+    # ── 归档保留期与调度 ─────────────────────────
+    # 未过分析阈值的采集记录（processed=0）的保留期。
+    # 实测这类记录占 raw_projects 的 73%（509/693），且**永远不会**被标记
+    # processed=1（低于 discovery_score_analysis_threshold 就不立项），
+    # 因此原来"只归档 processed=1"的条件让它们无限累积。
+    # 单独给一个更长的保留期：它们仍是复盘"当时为什么没立项"的依据。
+    unprocessed_raw_retention_days: int = 90
+    # 归档表自身的保留期（此前 DATABASE_DDL.md 写了 180/365 天但零实现，
+    # 归档表只进不出）。
+    raw_archive_retention_days: int = 180
+    signals_archive_retention_days: int = 365
+    # 归档任务调度：默认每天 03:00，在所有采集 job（08:00-10:30）之前跑完
+    archive_scheduler_enabled: bool = True
+    archive_cron: str = "0 3 * * *"
+
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
     weight_narrative_timing: float = 0.15

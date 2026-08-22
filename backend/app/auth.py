@@ -62,6 +62,10 @@ ADMIN_ONLY_PREFIXES = (
     # LLM provider 清单。对匿名角色开放等于免费给攻击者做侦察，且历史上
     # 该端点曾直接回显明文 LLM api_key。纵深防御：即使响应已脱敏，也只给管理员。
     "/api/v1/settings",
+    # 归档运行历史同样是运维信息：各表真实行数、保留期配置、调度 cron。
+    # 与 /settings 一个口径 —— 前端 /archive 页本来就已经在调用 /settings/config，
+    # 走的是同一条服务端注入密钥的代理路径，不影响页面可用性。
+    "/api/v1/archive",
 )
 
 

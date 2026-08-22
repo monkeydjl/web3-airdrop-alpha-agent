@@ -1094,3 +1094,71 @@ Alchemy webhook 回调端点（接收链上事件推送）。
 ```
 
 > 密钥类字段（API_KEY、*_TOKEN 等）只返回布尔值 `has_api_key` / `api_key_set`，不返回明文。
+
+---
+
+## 31. archive（归档运行历史）
+
+**管理员专属**（`/api/v1/archive` 在 `ADMIN_ONLY_PREFIXES` 内）：响应含各表真实
+行数、保留期配置与调度 cron，属运维信息，与 `/settings` 同一口径。
+
+### 31a. GET /api/v1/archive/runs
+
+只读。返回最近若干次归档运行、六档保留策略的当前待清理规模、以及归档调度配置。
+**不会触发归档** —— 手动触发用 `python scripts/archive_raw_data.py`。
+
+**查询参数**：`limit`（默认 20，范围 1–200）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "runs": [
+      {
+        "id": 12,
+        "started_at": "2026-08-22T03:00:00+00:00",
+        "finished_at": "2026-08-22T03:00:04+00:00",
+        "duration_ms": 4120,
+        "trigger": "scheduler",
+        "dry_run": 0,
+        "status": "success",
+        "raw_archived": 18,
+        "unprocessed_archived": 460,
+        "signals_archived": 0,
+        "logs_deleted": 3,
+        "raw_archive_pruned": 0,
+        "signals_archive_pruned": 0,
+        "error_message": null
+      }
+    ],
+    "summary": {
+      "total_runs": 12,
+      "failed_runs": 0,
+      "last_run_at": "2026-08-22T03:00:00+00:00",
+      "pending_total": 0
+    },
+    "policies": [
+      {
+        "key": "raw_unprocessed",
+        "table": "raw_projects",
+        "label": "未过分析阈值的采集记录",
+        "retention_days": 90,
+        "action": "archive",
+        "total": 509,
+        "pending": 0
+      }
+    ],
+    "schedule": { "enabled": true, "cron": "0 3 * * *", "timezone": "UTC" }
+  }
+}
+```
+
+`trigger` 取值 `scheduler` / `manual` / `api`；`status` 取值 `success` / `failed`。
+失败的运行同样会出现在 `runs` 里并带 `error_message` —— 只显示成功会让"归档
+连续几天没跑成"看不出来。
+
+`policies` 固定六档：`raw_processed`、`raw_unprocessed`、`signals`、`logs`、
+`raw_archive`、`signals_archive`；`action` 为 `archive`（搬入归档表）或
+`delete`（直接删除）。`pending` 是"下一次运行会动多少行"的实时预估，与归档器
+使用同一组条件。详见 [DATABASE_DDL.md §6](DATABASE_DDL.md)。

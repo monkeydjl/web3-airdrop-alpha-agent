@@ -45,6 +45,8 @@ _EXPECTED_TABLES = {
     "dedup_keys",
     "prompt_versions",
     "notification_reads",
+    # 归档运行历史（迁移 0003）
+    "archive_runs",
 }
 
 
@@ -100,7 +102,7 @@ def _dump_schema(db_path: Path) -> tuple[dict, dict]:
 
 
 def test_alembic_upgrade_creates_all_tables(tmp_path: Path) -> None:
-    """upgrade head 在空库建出全部 24 张表（16 baseline + 8 V2 新表）。"""
+    """upgrade head 在空库建出全部表（16 baseline + 8 V2 新表 + archive_runs）。"""
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     tables = _get_user_tables(db_path)
@@ -145,10 +147,35 @@ def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:
 
 
 def test_alembic_version_recorded(tmp_path: Path) -> None:
-    """upgrade head 后 alembic_version 表记录最新版本 0002。"""
+    """upgrade head 后 alembic_version 表记录最新版本 0003。"""
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     conn = sqlite3.connect(str(db_path))
     ver = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     conn.close()
-    assert ver is not None and ver[0] == "0002"
+    assert ver is not None and ver[0] == "0003"
+
+
+def test_alembic_0003_is_reversible(tmp_path: Path) -> None:
+    """0003 可以单独回滚到 0002（归档表与索引一起消失，其余表不动）。
+
+    归档是 2026-08-22 新加的一档，必须能在不动前两版 schema 的前提下回退 ——
+    否则一旦归档出问题，运维只能整库回滚。
+    """
+    db_path = tmp_path / "migrate.db"
+    _run_alembic("upgrade", "head", db_path=db_path)
+    assert "archive_runs" in _get_user_tables(db_path)
+
+    _run_alembic("downgrade", "0002", db_path=db_path)
+    tables = _get_user_tables(db_path)
+    assert "archive_runs" not in tables
+    assert tables == _EXPECTED_TABLES - {"archive_runs"}, "回滚 0003 不应影响其它表"
+
+    _, indexes = _dump_schema(db_path)
+    assert "idx_archive_runs_started" not in indexes
+    assert "idx_archive_archived_at" not in indexes
+    assert "idx_signals_archive_archived_at" not in indexes
+
+    # 再升回来必须成功（回滚不是单程票）
+    _run_alembic("upgrade", "head", db_path=db_path)
+    assert _get_user_tables(db_path) == _EXPECTED_TABLES

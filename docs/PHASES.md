@@ -77,6 +77,22 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 
 ## 历史阶段
 
+### 运维 — 归档子系统落地（2026-08-22 完成）
+
+**结论：完成。** 从前端一句诚实占位查起，发现归档功能从未被调度过，并连带查出
+两处会导致数据无限增长、一处会提前删数据的缺陷。详见「未决事项」中的条目与
+`CHANGELOG.md`。
+
+- 归档接入 `UnifiedScheduler`（`ARCHIVE_CRON`，默认 `0 3 * * *`）
+- 新增未处理记录单独一档保留期（`UNPROCESSED_RAW_RETENTION_DAYS`，默认 90 天，
+  归档而非删除）
+- 实现归档表自身的保留期清理（180 / 365 天）
+- 新增 `archive_runs` 表 + `GET /api/v1/archive/runs`（管理员专属，只读）+
+  Alembic 迁移 `0003`（可单独回滚）
+- `/archive` 页从占位改为真实数据
+- 教训：**一句"暂无接口"的诚实占位，可能是在替一个真缺陷挡枪** —— 去查它为什么
+  没接口，而不是只补接口
+
 ### W12-补 — 上线阻断项修复（2026-08-20 完成）
 
 **结论：完成。** 独立复核推翻了既有「✅ 可上线」结论，发现并修复 4 个 P0 + 8 个 P1。
@@ -97,14 +113,15 @@ SQLite/PostgreSQL 双后端 + Alembic；Prometheus + Grafana + Loki + OTel。
 
 ---
 
-## 当前基线（2026-08-21 实测）
+## 当前基线（2026-08-22 实测）
 
 ```
-pytest -q                     → 2490 passed, 4 skipped, 0 failed（32分55秒，exit 0）
-覆盖率                         → 87.85%（门槛 80%）
-ruff check / format           → All checks passed / 241 files already formatted
-mypy app                      → no issues in 114 source files
-前端 tsc / eslint / next build → 全绿（eslint 0 problems）
+pytest -q                     → 2648 passed, 4 skipped, 0 failed（36分31秒，exit 0）
+覆盖率                         → 88.15%（门槛 80%）
+ruff check / format           → All checks passed / 231 files already formatted
+mypy app                      → no issues in 117 source files
+前端 tsc / eslint              → 全绿（均 exit 0）
+next build                    → 编译成功，收尾 spawn EPERM（沙箱限制，非代码问题）
 ```
 
 > ⚠️ 两个环境陷阱：`ruff format --check .`（全仓带点）在 ruff 0.16.1 会 panic，
@@ -159,8 +176,23 @@ mypy app                      → no issues in 114 source files
   `POST /interactions` 不传 user_id 落 **NULL**，`POST /watchlist/{id}` 落
   **'default'**）。现在默认用户会同时认 NULL 与 default，具名用户严格匹配、
   不读 NULL —— 多用户启用后不会跨用户串数据。`pending-review` 也补上了用户过滤
-- `/archive` 与 `/ops` 部分区块仍无后端接口（当前为诚实占位，非假数据）
+- ~~`/archive` 与 `/ops` 部分区块仍无后端接口~~ → `/archive` **已接真实数据**
+  （2026-08-22）：新增 `GET /api/v1/archive/runs` + `archive_runs` 表，页面展示
+  六档保留策略的真实行数与待清理预估、调度状态、最近 20 次运行明细。
+  `/ops` 仍有区块是诚实占位（非假数据）
+- **归档功能此前从未真正运行过**（2026-08-22 修复）：那句「暂无运行历史接口」的
+  占位掩盖的不是缺接口，而是三个真缺陷 ——
+  ① `RawDataArchiver` 逻辑真实但**零调度**（只有手动脚本会调它，而
+  `DATABASE_DDL.md` 写着「每日 cron 执行」）；
+  ② 低分采集记录（实测 509/693 = **73%**，分数全部 < 0.3）永远不会被标记
+  `processed = 1`，因此永远不满足归档条件 → 1 年约 16.8 万行 / 76 MB 无界增长；
+  ③ 归档表自身的 180/365 天保留期**零实现**，归档表只进不出。
+  另修掉两个会静默出错的实现细节：`archived_at`（DB 默认值，空格分隔）与其它
+  时间列（应用层 isoformat，T 分隔）格式不同，用同一个 cutoff 比较会**提前一天
+  删数据**（实测保留期设 0 天时刚归档的行当场被删）；以及构造函数的
+  `days or default` 把显式传入的 `0` 静默换成默认值 —— 后者一度让前者的测试
+  **假通过**，改成 `is None` 才复现出真缺陷
 
 ---
 
-_更新日期：2026-08-21 · 里程碑定义见 ENGINEERING_ROADMAP §12/§13 · 术语以 docs/GLOSSARY.md 为准_
+_更新日期：2026-08-22 · 里程碑定义见 ENGINEERING_ROADMAP §12/§13 · 术语以 docs/GLOSSARY.md 为准_

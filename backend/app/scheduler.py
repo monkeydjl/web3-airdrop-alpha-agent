@@ -10,10 +10,14 @@ ADR-005 双调度模型的归并实现。此前 `CollectionScheduler` 和 `Analy
 本模块用单个 `AsyncIOScheduler` 注册全部 job，并在分析触发前**显式检查**
 `active_runs()` 实现跳过——§11「前一次未完成则跳过」语义。
 
+2026-08-22 补入归档 job：`app/archive.py` 的归档逻辑此前只有手动脚本调用，
+没有任何调度，等于保留期配置从未生效过。
+
 Reference:
 - ENGINEERING_ROADMAP.md §11 调度
 - ADR-005 APScheduler 内嵌调度
 - V2_TASKS.md B3
+- DATABASE_DDL.md §6 数据保留策略
 """
 
 from __future__ import annotations
@@ -70,13 +74,18 @@ class UnifiedScheduler:
     # ── 生命周期 ──────────────────────────────────
 
     def start(self) -> None:
-        """启动统一调度器：注册全部采集 job + 分析 job，然后启动。"""
-        if not settings.scheduler_enabled and not settings.collection_scheduler_enabled:
+        """启动统一调度器：注册全部采集 job + 分析 job + 归档 job，然后启动。"""
+        if (
+            not settings.scheduler_enabled
+            and not settings.collection_scheduler_enabled
+            and not settings.archive_scheduler_enabled
+        ):
             self._logger.info("unified_scheduler.disabled")
             return
 
         self._register_collection_jobs()
         self._register_analysis_job()
+        self._register_archive_job()
         self.scheduler.start()
         self._logger.info("unified_scheduler.started")
 
@@ -301,6 +310,58 @@ class UnifiedScheduler:
     async def trigger_analysis_now(self) -> dict[str, Any]:
         """手动立即触发一次分析。"""
         return await execute_analysis_pipeline(trigger="manual")
+
+    # ── 归档 job 注册 ──────────────────────────────
+
+    def _register_archive_job(self) -> None:
+        """注册归档清理 job。
+
+        归档逻辑（`app/archive.py`）此前只有手动脚本会调用，**没有任何调度**，
+        所以保留期配置实际上从未生效过。默认 03:00 跑，在所有采集 job
+        （08:00–10:30）之前完成，避免和写入争锁。
+        """
+        if not settings.archive_scheduler_enabled:
+            self._logger.info("unified_scheduler.archive_disabled")
+            return
+
+        self.scheduler.add_job(
+            self._run_archive,
+            trigger=CronTrigger.from_crontab(settings.archive_cron, timezone=settings.timezone),
+            id="archive_cleanup",
+            name="Archive expired raw collection data",
+            replace_existing=True,
+            misfire_grace_time=settings.scheduler_misfire_grace_seconds,
+            coalesce=True,
+            max_instances=1,
+        )
+        self._logger.info(
+            "unified_scheduler.archive_job_added",
+            cron=settings.archive_cron,
+            timezone=settings.timezone,
+        )
+
+    def _run_archive(self) -> None:
+        """执行一次归档清理并记入 `archive_runs`。
+
+        同步函数：归档全是 SQL，没有 await 点；APScheduler 会把它丢到线程池里，
+        因此不会阻塞事件循环。异常不外抛 —— 归档失败不该让调度器停掉，
+        失败已经作为一行 `status=failed` 记进历史了。
+        """
+        from app.archive import RawDataArchiver
+        from app.db import get_connection
+        from app.repositories.archive_runs import TRIGGER_SCHEDULER
+
+        conn = get_connection()
+        try:
+            result = RawDataArchiver().run_and_record(conn, trigger=TRIGGER_SCHEDULER)
+            self._logger.info(
+                "unified_scheduler.archive_completed",
+                **result.to_dict(),
+            )
+        except Exception as e:
+            self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
+        finally:
+            conn.close()
 
     # ── 诊断 ──────────────────────────────────────
 

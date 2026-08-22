@@ -180,11 +180,16 @@ async def test_start_registers_both_collection_and_analysis_jobs(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_disabled_when_both_flags_off(monkeypatch):
-    """When both scheduler_enabled and collection_scheduler_enabled are False, no jobs registered."""
+async def test_start_disabled_when_all_flags_off(monkeypatch):
+    """三个开关（采集 / 分析 / 归档）全关时才不启动调度器。
+
+    归档是 2026-08-22 加入的第三个独立开关，所以这里从"两个"变成"三个" ——
+    少关一个就会启动，这正是 test_archive_alone_still_starts_scheduler 要的行为。
+    """
     registry = _make_fake_registry()
     monkeypatch.setattr(settings, "scheduler_enabled", False)
     monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
 
     sched = UnifiedScheduler(registry)
     sched.start()
@@ -344,3 +349,122 @@ async def test_get_jobs_returns_unified_list(monkeypatch):
         assert "analysis_run_queue" in job_ids
     finally:
         sched.shutdown(wait=False)
+
+
+# ── 归档 job ────────────────────────────────────
+#
+# 归档逻辑（app/archive.py）此前**没有任何调度会调用它** —— 只有手动脚本。
+# 也就是说保留期配置写了却从未生效。这一组测试锁住"归档确实被调度了"。
+
+
+@pytest.mark.asyncio
+async def test_archive_job_is_registered(monkeypatch):
+    """启动后归档 job 必须在 job 列表里。"""
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", True)
+    monkeypatch.setattr(settings, "archive_cron", "0 3 * * *")
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "archive_cleanup" in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_archive_job_absent_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "archive_cleanup" not in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_archive_alone_still_starts_scheduler(monkeypatch):
+    """采集与分析都关掉、只开归档时，调度器仍要起来。
+
+    否则 `start()` 会在"全都关了"的判断里直接 return，归档静默失效 ——
+    正是归档此前从未运行的那类问题。
+    """
+    monkeypatch.setattr(settings, "scheduler_enabled", False)
+    monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert sched.scheduler.running
+        assert [j["id"] for j in sched.get_jobs()] == ["archive_cleanup"]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_archive_job_next_run_follows_cron(monkeypatch):
+    """cron 表达式真的生效（改成 4 点，下次运行就应落在 4 点）。"""
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", True)
+    monkeypatch.setattr(settings, "archive_cron", "0 4 * * *")
+    monkeypatch.setattr(settings, "timezone", "UTC")
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        job = next(j for j in sched.get_jobs() if j["id"] == "archive_cleanup")
+        assert job["next_run_time"] is not None
+        assert "T04:00:00" in job["next_run_time"]
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_run_archive_records_a_run(monkeypatch, tmp_path):
+    """_run_archive 跑完必须留下一条 archive_runs 记录，trigger=scheduler。"""
+    from app.db import get_connection
+    from app.repositories.archive_runs import ArchiveRunRepository
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "sched_archive.db"))
+    from app.db import init_db
+
+    with get_connection() as conn:
+        init_db(conn)
+
+    UnifiedScheduler(_make_fake_registry())._run_archive()
+
+    with get_connection() as conn:
+        runs = ArchiveRunRepository(conn).list_recent()
+    assert len(runs) == 1
+    assert runs[0]["trigger"] == "scheduler"
+    assert runs[0]["status"] == "success"
+
+
+def test_run_archive_swallows_errors(monkeypatch, tmp_path):
+    """归档失败不能让调度器崩掉 —— 失败已记进历史，下一个 cron 还要照跑。"""
+    from app.db import get_connection, init_db
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "sched_archive_fail.db"))
+    with get_connection() as conn:
+        init_db(conn)
+
+    def boom(self, conn, *, trigger):
+        raise RuntimeError("archive exploded")
+
+    monkeypatch.setattr("app.archive.RawDataArchiver.run_and_record", boom)
+
+    events: list[str] = []
+    sched = UnifiedScheduler(_make_fake_registry())
+    monkeypatch.setattr(
+        sched,
+        "_logger",
+        MagicMock(
+            info=lambda event, **kw: events.append(event),
+            warning=lambda event, **kw: events.append(event),
+            error=lambda event, **kw: events.append(event),
+        ),
+    )
+
+    sched._run_archive()  # 不应抛出
+
+    assert "unified_scheduler.archive_failed" in events

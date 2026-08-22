@@ -570,6 +570,26 @@ def _sqlite_ddl() -> str:
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- 归档运行历史：每次 RawDataArchiver.run() 记一行。
+            -- 此前归档只有手动脚本、跑完不留痕，前端 /archive 页因此只能显示
+            -- "暂无运行历史接口"。
+            CREATE TABLE IF NOT EXISTS archive_runs (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at              TIMESTAMP NOT NULL,
+                finished_at             TIMESTAMP NOT NULL,
+                duration_ms             INTEGER DEFAULT 0,
+                trigger                 TEXT NOT NULL,
+                dry_run                 INTEGER DEFAULT 0,
+                status                  TEXT NOT NULL,
+                raw_archived            INTEGER DEFAULT 0,
+                unprocessed_archived    INTEGER DEFAULT 0,
+                signals_archived        INTEGER DEFAULT 0,
+                logs_deleted            INTEGER DEFAULT 0,
+                raw_archive_pruned      INTEGER DEFAULT 0,
+                signals_archive_pruned  INTEGER DEFAULT 0,
+                error_message           TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -591,8 +611,11 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
             CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
             CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON raw_projects_archive(archived_at);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_archived_at ON project_signals_archive(archived_at);
+            CREATE INDEX IF NOT EXISTS idx_archive_runs_started ON archive_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
             CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
@@ -967,6 +990,24 @@ def _postgres_ddl() -> str:
                 created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- 归档运行历史（见 SQLite 分支同名表的注释）
+            CREATE TABLE IF NOT EXISTS archive_runs (
+                id                      SERIAL PRIMARY KEY,
+                started_at              TIMESTAMPTZ NOT NULL,
+                finished_at             TIMESTAMPTZ NOT NULL,
+                duration_ms             INTEGER DEFAULT 0,
+                trigger                 TEXT NOT NULL,
+                dry_run                 INTEGER DEFAULT 0,
+                status                  TEXT NOT NULL,
+                raw_archived            INTEGER DEFAULT 0,
+                unprocessed_archived    INTEGER DEFAULT 0,
+                signals_archived        INTEGER DEFAULT 0,
+                logs_deleted            INTEGER DEFAULT 0,
+                raw_archive_pruned      INTEGER DEFAULT 0,
+                signals_archive_pruned  INTEGER DEFAULT 0,
+                error_message           TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -988,8 +1029,11 @@ def _postgres_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
             CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
             CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON raw_projects_archive(archived_at);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_archived_at ON project_signals_archive(archived_at);
+            CREATE INDEX IF NOT EXISTS idx_archive_runs_started ON archive_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
             CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);

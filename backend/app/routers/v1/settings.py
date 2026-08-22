@@ -188,6 +188,11 @@ def get_settings_config() -> SettingsConfigResponse:
         "RAW_PROJECTS_RETENTION_DAYS": settings.raw_projects_retention_days,
         "PROJECT_SIGNALS_RETENTION_DAYS": settings.project_signals_retention_days,
         "COLLECTION_LOGS_RETENTION_DAYS": settings.collection_logs_retention_days,
+        "UNPROCESSED_RAW_RETENTION_DAYS": settings.unprocessed_raw_retention_days,
+        "RAW_ARCHIVE_RETENTION_DAYS": settings.raw_archive_retention_days,
+        "SIGNALS_ARCHIVE_RETENTION_DAYS": settings.signals_archive_retention_days,
+        "ARCHIVE_SCHEDULER_ENABLED": settings.archive_scheduler_enabled,
+        "ARCHIVE_CRON": settings.archive_cron,
         "SCHEDULER_MISFIRE_GRACE_SECONDS": settings.scheduler_misfire_grace_seconds,
     }
 
