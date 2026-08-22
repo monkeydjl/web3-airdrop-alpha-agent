@@ -92,6 +92,19 @@ jobs:
           cache-to: type=gha,mode=max
           load: true
 
+      # 先出一份人能读的表格。此前只跑 SARIF 那一步，失败时日志里只有
+      # `exit code 1`，没有任何漏洞明细 —— 这个 job 从 08-09 起就一直红着，
+      # 却没人能说出是哪个 CVE。exit-code: 0 保证它只负责"让人看见"，
+      # 判定仍由下面的 SARIF 步骤负责。
+      - name: Trivy scan (human-readable, non-blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: airdrop-alpha:scan-${{ github.sha }}
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
+
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
