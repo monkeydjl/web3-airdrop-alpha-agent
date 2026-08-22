@@ -2,7 +2,7 @@
 
 > 本文档是基于《Web3 Airdrop Alpha Agent System（完整版工程方案）》拆解出的**可执行的工程路线图**。
 > 目标：把一份"方案/PPT 级"的设计，转成"团队拿到就能开工"的实施计划。
-> 适用范围：MVP → V2 → V3 全周期。**实现状态**：W1–W4 已完成（见 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)）；本文保留规划全文，与代码冲突时以实现现状表 + 代码为准。
+> 适用范围：MVP → V2 → V3 全周期。**实现状态**：见 [`PHASES.md`](PHASES.md)（原 `IMPLEMENTATION_STATUS.md` 已于 `0966179` 删除，状态改由 PHASES 承担）；本文保留规划全文，与代码冲突时以实现现状 + 代码为准。
 
 ---
 

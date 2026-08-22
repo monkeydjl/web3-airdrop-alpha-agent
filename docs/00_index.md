@@ -11,9 +11,9 @@
 
 | 编号 | 主题 | 现有文档（索引） | 状态 |
 | --- | --- | --- | --- |
-| 00 | Project | [`Web3 Airdrop Alpha Agent System.md`](Web3 Airdrop Alpha Agent System.md)、`README.md`、`CHANGELOG.md`、[`PROJECT_BOOTSTRAP_OVERVIEW.md`](PROJECT_BOOTSTRAP_OVERVIEW.md)、[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)、[`PROJECT_BOOTSTRAP_CHECKLIST_V2.md`](PROJECT_BOOTSTRAP_CHECKLIST_V2.md)、[`PROJECT_BOOTSTRAP_AUDIT_REPORT_V2.md`](PROJECT_BOOTSTRAP_AUDIT_REPORT_V2.md) | ✅ |
+| 00 | Project | [`Web3 Airdrop Alpha Agent System.md`](Web3 Airdrop Alpha Agent System.md)、`README.md`、[`CHANGELOG.md`](../CHANGELOG.md)、[`PHASES.md`](PHASES.md)（实现状态）、[`HANDOFF.md`](../HANDOFF.md) | ✅ |
 | 01 | Product | [`01_product.md`](01_product.md)、[`USER_STORIES.md`](USER_STORIES.md) | ✅ |
-| 02 | Architecture | [`02_architecture.md`](02_architecture.md)、[`ENGINEERING_ROADMAP.md`](ENGINEERING_ROADMAP.md)、[`COLLECTION_ANALYSIS_HANDOFF.md`](COLLECTION_ANALYSIS_HANDOFF.md) | ✅ |
+| 02 | Architecture | [`02_architecture.md`](02_architecture.md)、[`ENGINEERING_ROADMAP.md`](ENGINEERING_ROADMAP.md) | ✅ |
 | 03 | Backend | `backend/app/`（代码）+ `CONVENTIONS.md` | ✅ |
 | 04 | Frontend | [`FRONTEND_SPEC.md`](FRONTEND_SPEC.md)、`DESIGN_TOKENS.md`、[`adr/ADR-013-nextjs-primary-frontend.md`](adr/ADR-013-nextjs-primary-frontend.md) | ✅ |
 | 05 | Database | [`DATABASE_DDL.md`](DATABASE_DDL.md) | ✅ |
@@ -26,8 +26,15 @@
 | 12 | Operations | [`OPERATIONS.md`](OPERATIONS.md) | ✅ |
 | 13 | Monitoring | [`OBSERVABILITY.md`](OBSERVABILITY.md) | ✅ |
 | 14 | Decisions (ADR) | `docs/adr/`（ADR-001~013 + `TEMPLATE.md`） | ✅ |
-| 15 | Changelog | [`CHANGELOG.md`](../CHANGELOG.md)、[`DESIGN_REVIEW_CHANGELOG.md`](DESIGN_REVIEW_CHANGELOG.md) | ✅ |
-| 16 | Direction | [`SYSTEM_DIRECTION_CHANGE.md`](SYSTEM_DIRECTION_CHANGE.md)（v2.0 自动扫描）、[`DATA_SOURCE_STRATEGY.md`](DATA_SOURCE_STRATEGY.md)（自动采集视角）、[`COLLECTION_ANALYSIS_HANDOFF.md`](COLLECTION_ANALYSIS_HANDOFF.md) | ✅ |
+| 15 | Changelog | [`CHANGELOG.md`](../CHANGELOG.md) | ✅ |
+| 16 | Direction | [`SYSTEM_DIRECTION_CHANGE.md`](SYSTEM_DIRECTION_CHANGE.md)（v2.0 自动扫描）、[`DATA_SOURCE_STRATEGY.md`](DATA_SOURCE_STRATEGY.md)（自动采集视角） | ✅ |
+
+> **2026-08-22 更正**：本表原先索引 6 个已在 `0966179`（移除遗留 HTML 原型与过时文件）
+> 中删除的文档 —— `PROJECT_BOOTSTRAP_OVERVIEW.md`、`IMPLEMENTATION_STATUS.md`、
+> `PROJECT_BOOTSTRAP_CHECKLIST_V2.md`、`PROJECT_BOOTSTRAP_AUDIT_REPORT_V2.md`、
+> `COLLECTION_ANALYSIS_HANDOFF.md`、`DESIGN_REVIEW_CHANGELOG.md`。
+> 索引却一直标着 ✅，是 CI 的 Docs Link Check 把它们查出来的。
+> 实现状态现由 [`PHASES.md`](PHASES.md) 承担。
 
 ---
 
