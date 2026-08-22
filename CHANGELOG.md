@@ -8,7 +8,14 @@
 
 ## [Unreleased]
 
-### Fixed — Trivy job 里叠着第二个独立故障：SARIF 上传无权限（2026-08-22）
+### Fixed — Trivy job 里叠着第二个独立故障：SARIF 上传无权限（2026-08-22，已验证）
+
+**验证结果**（PR #5 合并后 master `05741b3` 上那次 push 运行的实测）：
+`Upload Trivy results` **success**，整个 job **success**，
+且 `code-scanning/analyses` 里**第一次出现 `ref=refs/heads/master` 的记录**
+（`results_count=0`，Trivy 0.74.0）—— 此前所有记录都只有 `refs/pull/*`，
+这正是「上传只在 PR 事件下成功」的直接证据。
+master 上三个 workflow（`CI` / `Security Scan` / `Docs Link Check`）**全部 success**。
 
 合并 PR #4 之后，`Docker Image Trivy Scan` 在 master 上**仍然红着**，
 但原因和之前完全不同：
@@ -56,10 +63,14 @@ Trivy 先 exit 1，上传成不成功根本轮不到显现。
 
 两处都不改变扫描做什么、拦什么。
 
-### Merged — PR #4 已合入 master（2026-08-22）
+### Merged — PR #4 与 #5 已合入 master，远程全绿（2026-08-22）
 
-`release/v2-consolidation` → `master`，合并 commit `d1b710b`，
-46 个 commit、283 个文件。合并前 12 项检查全绿：
+| PR | 合并 commit | 内容 |
+|---|---|---|
+| #4 | `d1b710b` | 46 个 commit、283 个文件：归档子系统、编码修复、门禁修复、上线修复 |
+| #5 | `05741b3` | Trivy job 的 `security-events: write` 权限 + 触发器修复 |
+
+合并 #4 前 12 项检查全绿：
 
 ```
 Full Backend Test Suite   2648 passed, 4 skipped
@@ -71,6 +82,9 @@ Check Markdown Links      0 死链（此前 6）
 另有 Lint & Format Check / Type Check (mypy) / pip-audit /
 Detect Secrets / Dependency Review / Trivy
 ```
+
+**master 最终状态（`05741b3` 实测）**：`CI` / `Security Scan` / `Docs Link Check`
+三个 workflow 全部 success。这是 2026-08-09 以来 master 第一次全绿。
 
 dependabot PR #3 已关闭 —— 其 nanoid 修复已 cherry-pick 进 #4（保留原作者）。
 关闭时说明了它卡 5 天的真实原因（假检查名，非代码问题）。

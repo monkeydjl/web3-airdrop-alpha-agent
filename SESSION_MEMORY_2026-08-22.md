@@ -182,9 +182,12 @@ next build               → 编译成功（4.8s），收尾 spawn EPERM = 沙�
 
 ## 遗留问题 / 下一步
 
-1. **合并 PR #5**（`security.yml` 的 `security-events: write` 权限 + 触发器修复）。
-   合并后**去看 master 上那次 push 运行**：`Upload Trivy results` 是否终于成功、
-   `code-scanning/alerts` 是否不再是空的。**这是唯一的验证方式，我没有提前声称成功**
+1. ~~**合并 PR #5**~~ → **已合并并验证**（`05741b3`）：
+   `Upload Trivy results` **success**、整个 job success，
+   且 `code-scanning/analyses` 里**第一次出现 `ref=refs/heads/master` 的记录**
+   （此前所有记录都只有 `refs/pull/*` —— 这正是「上传只在 PR 事件下成功」的
+   直接证据）。**master 上 `CI` / `Security Scan` / `Docs Link Check`
+   三个 workflow 全部 success，是 08-09 以来第一次全绿**
 2. **编码损坏**：一型 487 处待人工判定（`DATA_SOURCE_STRATEGY.md` 占 367 处且
    无干净底本）、二型 `API_SPEC.md` 70 处只检测不修复、三型 2 处只登记
 3. **Python 版本口径不一致**：镜像/CI/mypy 用 3.12，本地 venv 3.11.9。
@@ -266,6 +269,12 @@ numpy 里唯一的 `from setuptools import ...` 在 `numpy/distutils`（构建�
 dependabot PR #3 已关闭并说明真实原因。
 
 ### 五、合并之后才露出来的第二个故障（并更正我自己的说法）
+
+**已修复并验证** —— PR #5 合并后 master（`05741b3`）实测：
+`Upload Trivy results` **success**、整个 job success、
+`code-scanning/analyses` 里**第一次出现 `ref=refs/heads/master`**
+（`results_count=0`，Trivy 0.74.0）。
+master 三个 workflow（`CI` / `Security Scan` / `Docs Link Check`）**全部 success**。
 
 合并触发 push 事件，`Docker Image Trivy Scan` 在 master 上**仍然红着** ——
 但原因完全不同：
