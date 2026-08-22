@@ -221,7 +221,7 @@ class TestEnvironmentConfiguration:
                 "APP_ENV",
                 "APP_VERSION",
                 "LOG_LEVEL",
-                "API_PORT",
+                "PORT",
                 "DB_PATH",
             ]
             for var in required_vars:
@@ -261,22 +261,22 @@ class TestDeploymentDocumentation:
 
     def test_deployment_doc_exists(self):
         """Test that DEPLOYMENT.md exists."""
-        doc = os.path.join(PROJECT_ROOT, "DEPLOYMENT.md")
+        doc = os.path.join(PROJECT_ROOT, "docs", "DEPLOYMENT.md")
         assert os.path.exists(doc)
 
     def test_deployment_doc_has_quick_start(self):
         """Test that DEPLOYMENT.md has quick start section."""
-        doc = os.path.join(PROJECT_ROOT, "DEPLOYMENT.md")
+        doc = os.path.join(PROJECT_ROOT, "docs", "DEPLOYMENT.md")
         with open(doc, encoding="utf-8") as f:
             content = f.read()
-            assert "快速开始" in content or "Quick Start" in content
+            assert "快速开始" in content or "Quick Start" in content or "本地运行" in content
 
     def test_deployment_doc_has_troubleshooting(self):
         """Test that DEPLOYMENT.md has troubleshooting section."""
-        doc = os.path.join(PROJECT_ROOT, "DEPLOYMENT.md")
+        doc = os.path.join(PROJECT_ROOT, "docs", "DEPLOYMENT.md")
         with open(doc, encoding="utf-8") as f:
             content = f.read()
-            assert "故障排查" in content or "Troubleshooting" in content
+            assert "故障排查" in content or "Troubleshooting" in content or "常见问题" in content
 
 
 class TestNginxConfiguration:

@@ -26,10 +26,15 @@ from app.main import create_app
 def client(tmp_path):
     """创建测试客户端，每个测试使用独立数据库。"""
     db_path = tmp_path / "test.db"
+    prev_db_path = settings.db_path
+    prev_fallback = settings.seed_fallback_enabled
     settings.db_path = str(db_path)
+    settings.seed_fallback_enabled = False
     init_db()
     app = create_app(db_override=lambda: None)
-    return TestClient(app)
+    yield TestClient(app)
+    settings.db_path = prev_db_path
+    settings.seed_fallback_enabled = prev_fallback
 
 
 class TestCollectionsEndpoints:

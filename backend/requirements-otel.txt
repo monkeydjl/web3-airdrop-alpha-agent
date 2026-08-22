@@ -1,0 +1,31 @@
+# ──────────────────────────────────────────────────────────────────────────
+# 可观测性 —— 链路追踪（OpenTelemetry），**可选依赖**
+#
+# 用法（仅在启用链路追踪时需要）：
+#   pip install -r requirements.txt -r requirements-otel.txt
+#
+# 缺这些包不影响主流程：app/tracing.py 捕获 ImportError 后降级为 no-op
+# tracer。实测 OTEL_ENABLED=true 且缺包时，应用正常启动、/health 200，
+# 仅打一条 tracing.unavailable 警告。
+#
+# ⚠ 这里**刻意保留区间约束而非精确版本**：
+#   本次依赖锁定作业时本机无法访问 PyPI，无法验证具体版本可装、可跑，
+#   也没有任何测试覆盖这条路径。凭记忆写死一个版本号，会让人以为"已锁定
+#   已验证"，实际是未经证实的猜测 —— 比不锁更危险。
+#
+#   首次真正启用追踪时请：装 → 跑通 → 把实测版本回填成 == → 更新本注释。
+#
+# 版本相关约束（来自 OTel 生态惯例，非本地实测）：
+#   - opentelemetry-instrumentation-* 与 opentelemetry-sdk/api 需版本配套，
+#     混搭不同代际会在运行时报 API 不兼容
+#   - exporter-otlp 需与 collector 的 OTLP 协议版本兼容
+#     （compose 里固定 otel/opentelemetry-collector-contrib:0.103.0）
+# ──────────────────────────────────────────────────────────────────────────
+
+opentelemetry-sdk>=1.24.0
+opentelemetry-api>=1.24.0
+opentelemetry-exporter-otlp>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.49b0
+opentelemetry-instrumentation-httpx>=0.49b0
+opentelemetry-instrumentation-sqlite3>=0.49b0
+opentelemetry-instrumentation-psycopg>=0.49b0

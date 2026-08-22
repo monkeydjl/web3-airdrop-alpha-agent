@@ -1,7 +1,7 @@
 'use client';
 
 import type { Label } from '@/lib/types';
-import { confColor, formatPct, labelStyles, labelZh, reasonTone } from '@/lib/format';
+import { confColor, formatPct, labelStyles, labelZh } from '@/lib/format';
 import type { ReactNode } from 'react';
 import { Inbox } from 'lucide-react';
 
@@ -11,32 +11,6 @@ export function LabelBadge({ label, className = '' }: { label: string; className
     <span className={`badge ${s.badge} ${className}`} title={label}>
       {labelZh(label)}
     </span>
-  );
-}
-
-type CardVariant = 'dash' | 'ins' | 'ops' | 'pd';
-
-const cardVariantClass: Record<CardVariant, string> = {
-  dash: 'dash-card',
-  ins: 'ins-card',
-  ops: 'ops-card',
-  pd: 'pd-card',
-};
-
-export function Card({
-  children,
-  variant = 'dash',
-  className = '',
-  ...rest
-}: {
-  children: ReactNode;
-  variant?: CardVariant;
-  className?: string;
-} & React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div className={`${cardVariantClass[variant]} ${className}`} {...rest}>
-      {children}
-    </div>
   );
 }
 
@@ -134,34 +108,6 @@ export function ConfidenceBar({ value }: { value: number }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-    </div>
-  );
-}
-
-export function ReasonChips({ reasons }: { reasons?: string[] | null }) {
-  if (!reasons?.length) {
-    return <p className="text-sm text-ink-faint">暂无评分理由</p>;
-  }
-  return (
-    <div className="flex flex-wrap gap-2">
-      {reasons.map((r) => {
-        const tone = reasonTone(r);
-        const cls =
-          tone === 'pos'
-            ? 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm'
-            : tone === 'neg'
-              ? 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
-              : tone === 'warn'
-                ? 'bg-watch-soft text-watch dark:bg-watch/15 dark:text-watch'
-                : 'bg-surface-3 text-ink-muted';
-        const prefix = tone === 'pos' ? '+' : tone === 'neg' ? '−' : tone === 'warn' ? '!' : '·';
-        return (
-          <span key={r} className={`badge ${cls}`}>
-            <span className="mr-1 opacity-70">{prefix}</span>
-            {r}
-          </span>
-        );
-      })}
     </div>
   );
 }

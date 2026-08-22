@@ -13,6 +13,7 @@ import time
 import structlog
 
 from app.agents.base import AgentError, BaseAgent, PipelineState
+from app.agents.heat_signals import HeatSignalProvider, get_heat_signal_provider
 from app.models import NarrativeResult
 
 logger = structlog.get_logger(__name__)
@@ -143,11 +144,19 @@ class NarrativeAgent(BaseAgent):
     """Narrative Agent - Sector cycle analysis.
 
     MVP: Uses static SECTOR_PROFILE configuration
-    V2: Adds real-time Twitter/VC/KOL signals
+    V2 (C3): Adds real-time Twitter/VC/KOL signals via HeatSignalProvider
     """
 
-    def __init__(self):
+    def __init__(self, heat_provider: HeatSignalProvider | None = None):
         super().__init__("narrative")
+        # 允许注入自定义 provider（测试用）；否则用全局单例
+        self._heat_provider = heat_provider
+
+    def _get_heat_provider(self) -> HeatSignalProvider:
+        """获取热度信号 provider（惰性初始化）。"""
+        if self._heat_provider is not None:
+            return self._heat_provider
+        return get_heat_signal_provider()
 
     async def run(self, state: PipelineState) -> PipelineState:
         """Execute narrative analysis.
@@ -165,17 +174,31 @@ class NarrativeAgent(BaseAgent):
             # Get sector
             sector = state.project.sector or "Unknown"
 
-            # Get sector profile
+            # Get sector profile (static baseline)
             profile = SECTOR_PROFILE.get(sector, DEFAULT_PROFILE)
 
-            # Calculate heat score
+            # Calculate base heat score
             base_heat = profile["base_heat"]
             momentum = profile["momentum"]
             stage = profile["stage"]
 
             # MVP: Simple momentum adjustment
-            # V2: Add real-time signals (Twitter volume, VC flow, etc.)
-            heat_score = min(1.0, base_heat * momentum)
+            static_heat = min(1.0, base_heat * momentum)
+
+            # V2 (C3): Apply dynamic heat signal multiplier
+            # 失败时 multiplier=1.0，不影响静态 heat_score（降级路径）
+            try:
+                multiplier = self._get_heat_provider().get_multiplier(sector)
+                heat_score = min(1.0, max(0.0, static_heat * multiplier))
+            except Exception as e:
+                self.logger.warning(
+                    "narrative.heat_signal_failed",
+                    project_id=state.project.id,
+                    sector=sector,
+                    error=str(e),
+                    fallback="static_heat",
+                )
+                heat_score = static_heat
 
             # Map stage to timing
             timing = stage_to_timing(stage)

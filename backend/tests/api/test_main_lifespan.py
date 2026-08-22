@@ -25,8 +25,8 @@ class _FakeRegistry:
         self.collectors.append(collector)
 
 
-class _FakeCollectionScheduler:
-    instances: ClassVar[list[_FakeCollectionScheduler]] = []
+class _FakeUnifiedScheduler:
+    instances: ClassVar[list[_FakeUnifiedScheduler]] = []
 
     def __init__(self, registry: object, on_collection: object) -> None:
         self.registry = registry
@@ -42,22 +42,7 @@ class _FakeCollectionScheduler:
     def shutdown(self, *, wait: bool) -> None:
         self.shutdown_calls.append(wait)
         if self.raise_on_shutdown:
-            raise RuntimeError("collection shutdown failed")
-
-
-class _FakeAnalysisScheduler:
-    instances: ClassVar[list[_FakeAnalysisScheduler]] = []
-
-    def __init__(self) -> None:
-        self.start_calls = 0
-        self.shutdown_calls: list[bool] = []
-        self.instances.append(self)
-
-    def start(self) -> None:
-        self.start_calls += 1
-
-    def shutdown(self, *, wait: bool) -> None:
-        self.shutdown_calls.append(wait)
+            raise RuntimeError("unified shutdown failed")
 
 
 class _TrackingConn:
@@ -87,14 +72,12 @@ class _TrackingConn:
 
 
 def _patch_non_testing_dependencies(monkeypatch) -> None:
-    _FakeCollectionScheduler.instances.clear()
-    _FakeAnalysisScheduler.instances.clear()
+    _FakeUnifiedScheduler.instances.clear()
     monkeypatch.setattr(main_module.settings, "app_env", "development")
     monkeypatch.setattr(main_module.settings, "collection_auto_run_enabled", False)
     # 采集器注册表现由 app.collectors.factory 统一构建并进程内共享
     monkeypatch.setattr(main_module, "get_default_registry", _FakeRegistry)
-    monkeypatch.setattr(main_module, "CollectionScheduler", _FakeCollectionScheduler)
-    monkeypatch.setattr(main_module, "AnalysisScheduler", _FakeAnalysisScheduler)
+    monkeypatch.setattr(main_module, "UnifiedScheduler", _FakeUnifiedScheduler)
     monkeypatch.setattr(main_module, "CollectionRepository", lambda *a, **k: object())
 
 
@@ -149,8 +132,7 @@ def test_testing_lifespan_sets_scheduler_states_to_none(monkeypatch) -> None:
 
     with TestClient(application):
         assert application.state.collector_registry is None
-        assert application.state.collection_scheduler is None
-        assert application.state.analysis_scheduler is None
+        assert application.state.unified_scheduler is None
 
 
 def test_non_testing_lifespan_starts_and_stops_each_scheduler_once(monkeypatch) -> None:
@@ -179,16 +161,12 @@ def test_non_testing_lifespan_starts_and_stops_each_scheduler_once(monkeypatch) 
     application = main_module.create_app()
 
     with TestClient(application):
-        collection_scheduler = _FakeCollectionScheduler.instances[0]
-        analysis_scheduler = _FakeAnalysisScheduler.instances[0]
-        assert collection_scheduler.start_calls == 1
-        assert analysis_scheduler.start_calls == 1
+        unified_scheduler = _FakeUnifiedScheduler.instances[0]
+        assert unified_scheduler.start_calls == 1
         assert application.state.collector_registry is not None
-        assert application.state.collection_scheduler is collection_scheduler
-        assert application.state.analysis_scheduler is analysis_scheduler
+        assert application.state.unified_scheduler is unified_scheduler
 
-    assert collection_scheduler.shutdown_calls == [True]
-    assert analysis_scheduler.shutdown_calls == [True]
+    assert unified_scheduler.shutdown_calls == [True]
     assert owned.close_calls == 1
 
 
@@ -233,12 +211,10 @@ def test_shutdown_failure_does_not_prevent_second_scheduler_shutdown(monkeypatch
     application = main_module.create_app()
 
     with TestClient(application):
-        collection_scheduler = _FakeCollectionScheduler.instances[0]
-        analysis_scheduler = _FakeAnalysisScheduler.instances[0]
-        collection_scheduler.raise_on_shutdown = True
+        unified_scheduler = _FakeUnifiedScheduler.instances[0]
+        unified_scheduler.raise_on_shutdown = True
 
-    assert collection_scheduler.shutdown_calls == [True]
-    assert analysis_scheduler.shutdown_calls == [True]
+    assert unified_scheduler.shutdown_calls == [True]
     assert owned.close_calls == 1
 
 
@@ -373,11 +349,11 @@ def test_app_owned_connection_closes_once_on_startup_failure_after_get_connectio
         lambda *a, **k: MagicMock(),
     )
 
-    class BoomCollectionScheduler(_FakeCollectionScheduler):
+    class BoomUnifiedScheduler(_FakeUnifiedScheduler):
         def start(self) -> None:
             raise RuntimeError("collector/scheduler startup boom")
 
-    monkeypatch.setattr(main_module, "CollectionScheduler", BoomCollectionScheduler)
+    monkeypatch.setattr(main_module, "UnifiedScheduler", BoomUnifiedScheduler)
 
     application = main_module.create_app()
     with pytest.raises(RuntimeError, match="startup boom"), TestClient(application):
@@ -417,11 +393,11 @@ def test_borrowed_override_never_closed_on_startup_failure(monkeypatch) -> None:
         lambda *a, **k: MagicMock(),
     )
 
-    class BoomCollectionScheduler(_FakeCollectionScheduler):
+    class BoomUnifiedScheduler(_FakeUnifiedScheduler):
         def start(self) -> None:
             raise RuntimeError("borrowed-path startup boom")
 
-    monkeypatch.setattr(main_module, "CollectionScheduler", BoomCollectionScheduler)
+    monkeypatch.setattr(main_module, "UnifiedScheduler", BoomUnifiedScheduler)
 
     application = main_module.create_app(db_override=borrowed)
     with pytest.raises(RuntimeError, match="borrowed-path startup boom"), TestClient(application):
@@ -500,7 +476,7 @@ def test_on_collection_persist_then_process_with_daily_run_id_then_analysis(
 
     application = main_module.create_app()
     with TestClient(application):
-        on_collection = _FakeCollectionScheduler.instances[0].on_collection
+        on_collection = _FakeUnifiedScheduler.instances[0].on_collection
         result = _make_result("defillama")
         import asyncio
 
@@ -556,7 +532,7 @@ def test_on_collection_persist_failure_zero_writer_emitter(monkeypatch) -> None:
 
     application = main_module.create_app()
     with TestClient(application):
-        on_collection = _FakeCollectionScheduler.instances[0].on_collection
+        on_collection = _FakeUnifiedScheduler.instances[0].on_collection
         with contextlib.suppress(RuntimeError):
             asyncio.run(on_collection("defillama", _make_result()))
 
@@ -604,7 +580,7 @@ def test_flags_all_false_on_collection_zero_economic_calls(monkeypatch) -> None:
 
     application = main_module.create_app()
     with TestClient(application):
-        on_collection = _FakeCollectionScheduler.instances[0].on_collection
+        on_collection = _FakeUnifiedScheduler.instances[0].on_collection
         asyncio.run(on_collection("defillama", _make_result()))
 
     # process is called once after persist (gate lives inside process → zero writer/emitter)
@@ -748,8 +724,8 @@ def test_scheduled_failure_isolation_per_provider(monkeypatch, source_id: str, f
 
     application = main_module.create_app()
     with TestClient(application):
-        assert _FakeCollectionScheduler.instances, "scheduler must start despite economic failures"
-        on_collection = _FakeCollectionScheduler.instances[0].on_collection
+        assert _FakeUnifiedScheduler.instances, "scheduler must start despite economic failures"
+        on_collection = _FakeUnifiedScheduler.instances[0].on_collection
         asyncio.run(on_collection(source_id, _make_result(source_id)))
         # other source unaffected
         asyncio.run(on_collection("github", _make_result("github")))

@@ -2,7 +2,7 @@
 
 > 本文档是基于《Web3 Airdrop Alpha Agent System（完整版工程方案）》拆解出的**可执行的工程路线图**。
 > 目标：把一份"方案/PPT 级"的设计，转成"团队拿到就能开工"的实施计划。
-> 适用范围：MVP → V2 → V3 全周期。**实现状态**：W1–W4 已完成（见 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)）；本文保留规划全文，与代码冲突时以实现现状表 + 代码为准。
+> 适用范围：MVP → V2 → V3 全周期。**实现状态**：见 [`PHASES.md`](PHASES.md)（原 `IMPLEMENTATION_STATUS.md` 已于 `0966179` 删除，状态改由 PHASES 承担）；本文保留规划全文，与代码冲突时以实现现状 + 代码为准。
 
 ---
 
@@ -1524,18 +1524,18 @@ push/PR → lint(ruff) → test(pytest + coverage) → build(docker) → 发布(
 ---
 
 ## 17. 验收标准（Definition of Done · MVP）
-- [ ] `POST /run` 端到端跑通，写入 ≥ N 个项目到 `projects` 表
-- [ ] 每个项目含合法 `score`(0-100)、`label`、`reason`（≥2 条）
-- [ ] `GET /projects` 按 score 降序返回；过滤参数可用；tie-break 规则生效（§7.8）
-- [ ] `GET /project/{id}` 返回四 agent 明细
-- [ ] `POST /re-score/{id}` 正确更新评分；幂等（重复调用不产生新 id，§6.2.3）
-- [ ] 缺失字段场景按 §7.6 降级，`meta.missing_count ≥3` 时 label 降一档
-- [ ] 单页 Dashboard 可预览 Top 项目与分布
+- [x] `POST /run` 端到端跑通，写入 ≥ N 个项目到 `projects` 表
+- [x] 每个项目含合法 `score`(0-100)、`label`、`reason`（≥2 条）
+- [x] `GET /projects` 按 score 降序返回；过滤参数可用；tie-break 规则生效（§7.8）
+- [x] `GET /project/{id}` 返回四 agent 明细
+- [x] `POST /re-score/{id}` 正确更新评分；幂等（重复调用不产生新 id，§6.2.3）
+- [x] 缺失字段场景按 §7.6 降级，`meta.missing_count ≥3` 时 label 降一档
+- [x] 单页 Dashboard 可预览 Top 项目与分布
 - [ ] `docker compose up` 可启动并访问；`/health` 返回 healthy
-- [ ] `pytest` 全绿；行覆盖率 ≥ 80%（§14.8）
-- [ ] golden 回归集（§14.6）通过
-- [ ] 配置权重 `Σ=1.0` 启动断言通过（§15.4）
-- [ ] README 含启动/使用/架构说明
+- [x] `pytest` 全绿；行覆盖率 ≥ 80%（§14.8）
+- [x] golden 回归集（§14.6）通过
+- [x] 配置权重 `Σ=1.0` 启动断言通过（§15.4）
+- [x] README 含启动/使用/架构说明
 
 > V2/V3 额外验收项随对应里程碑补充（LLM 降级测试、安全扫描、可观测性面板等，见 §19/§20/§21）。
 

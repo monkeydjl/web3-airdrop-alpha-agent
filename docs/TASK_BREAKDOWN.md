@@ -44,10 +44,10 @@
 | W1-08 | .env.example + .gitignore | 环境变量模板（PORT/DB_PATH/OPENAI_API_KEY/API_KEY 等）；gitignore 含 .env/data/backups | 文件完整 | — | 0.5h |
 
 ### 验收门
-- [ ] `curl localhost:8000/health` → 200 healthy
-- [ ] `init_db()` 幂等（重复调用不报错）
-- [ ] 配置 Σ=1.0 启动断言通过
-- [ ] 单元测试：config 加载 + 模型校验全绿
+- [x] `curl localhost:8000/health` → 200 healthy
+- [x] `init_db()` 幂等（重复调用不报错）
+- [x] 配置 Σ=1.0 启动断言通过
+- [x] 单元测试：config 加载 + 模型校验全绿
 
 ### 风险缓解
 - W1-03 Pydantic 模型定义后立即跑契约测试（§14.3），防后期返工
@@ -87,9 +87,9 @@
 | W2-11 | 单元测试补全 | 每个 Agent `run()` + 评分公式 + 归一化/去重（~50 个用例） | 行覆盖率 ≥ 80%，agents/scorer/orchestrator ≥ 90% | W2-03~09 | 4h |
 
 ### 验收门
-- [ ] 单元测试全绿（~50 用例）
-- [ ] LayerX golden 用例通过（score=67, label=WATCH）
-- [ ] 集成测试：Orchestrator 全链路跑通
+- [x] 单元测试全绿（~50 用例）
+- [x] LayerX golden 用例通过（score=67, label=WATCH）
+- [x] 集成测试：Orchestrator 全链路跑通
 - [ ] 覆盖率：行 ≥ 80%，关键模块 ≥ 90%
 
 ### 风险缓解
@@ -128,10 +128,10 @@
 | W3-09 | API 测试补全 | 4 端点 × 正常/异常路径（400/404/422/500）；POST /run 幂等性 | ~15 个用例全绿 | W3-01~04 | 3h |
 
 ### 验收门
-- [ ] API 测试通过（~15 用例）
-- [ ] Dashboard 可预览 Top 项目与分布
-- [ ] 筛选/排序交互正常
-- [ ] 4 端点响应结构统一
+- [x] API 测试通过（~15 用例）
+- [x] Dashboard 可预览 Top 项目与分布
+- [x] 筛选/排序交互正常
+- [x] 4 端点响应结构统一
 
 ### 风险缓解
 - W3-06 Chart.js CDN 国内访问问题：备选 ECharts 或本地打包

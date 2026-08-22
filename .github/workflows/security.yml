@@ -29,22 +29,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python 3.13
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
       - name: Install pip-audit
         run: pip install pip-audit
 
       - name: Audit dependencies
         run: |
+          # requirements.txt 现已是精确锁定（==），pip-audit 能给出确定结论；
+          # 此前全是浮动 >=，审计的是"某个可能版本"，结果不可复现。
+          # requirements.lock.txt 分支保留：若将来改用 pip-compile 产出全量
+          # 锁文件（含间接依赖），优先审计它。
           if [ -f backend/requirements.lock.txt ]; then
             pip-audit -r backend/requirements.lock.txt --strict
-          elif [ -f backend/requirements.txt ]; then
-            pip-audit -r backend/requirements.txt --strict
           else
-            echo "⚠️ No requirements file found, skipping audit"
+            pip-audit -r backend/requirements.txt --strict
+            pip-audit -r backend/requirements-dev.txt --strict
+            # OTel 为可选依赖且未锁版本（见文件内说明），单独审计但不阻断
+            if [ -f backend/requirements-otel.txt ]; then
+              pip-audit -r backend/requirements-otel.txt || \
+                echo "::warning::OTel 可选依赖审计未通过（未锁版本，不阻断构建）"
+            fi
           fi
         continue-on-error: false
 
@@ -83,6 +91,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
+
+      # 先出一份人能读的表格。此前只跑 SARIF 那一步，失败时日志里只有
+      # `exit code 1`，没有任何漏洞明细 —— 这个 job 从 08-09 起就一直红着，
+      # 却没人能说出是哪个 CVE。exit-code: 0 保证它只负责"让人看见"，
+      # 判定仍由下面的 SARIF 步骤负责。
+      - name: Trivy scan (human-readable, non-blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: airdrop-alpha:scan-${{ github.sha }}
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
 
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@master

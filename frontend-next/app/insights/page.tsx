@@ -3,13 +3,37 @@
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, isAbortError } from '@/lib/api';
 import { LABEL_ORDER, LABEL_ZH } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import type { InsightsData, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
+import { AlertCircle, ArrowRight, CheckCircle2, ClipboardCheck, Download, Server, Shuffle, TrendingDown, TrendingUp } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
+/** 后端 /llm/status 返回的接口数据 */
+interface LLMProviderStatus {
+  name: string;
+  base_url: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  models: string[];
+  model_count: number;
+}
+
+interface LLMStatus {
+  enabled: boolean;
+  provider_count: number;
+  total_model_count: number;
+  failover_strategy: string;
+  providers: LLMProviderStatus[];
+  temperature: number;
+  max_tokens: number;
+  daily_budget_usd: number;
+  discovery_score_threshold: number;
+}
 
 function normalizeSectors(
   raw: InsightsData['sector_counts'] | undefined,
@@ -31,7 +55,123 @@ function normalizeSectors(
     .sort((a, b) => b.count - a.count);
 }
 
+/** ── Flag 中文化 + 正/负信号分色 ── */
+const FLAG_ZH: Record<string, string> = {
+  'anonymous team': '匿名团队',
+  'previous failed project': '历史失败项目',
+  'doxxed team': '已公开团队',
+  'recent funding': '近期融资',
+  'tier-1 vc backed': '一线 VC 投资',
+  'reputable vc backed': '知名 VC 投资',
+  'successful prior exit': '过往成功退出',
+};
+
+const POSITIVE_FLAGS = new Set([
+  'doxxed team',
+  'recent funding',
+  'tier-1 vc backed',
+  'reputable vc backed',
+  'successful prior exit',
+]);
+
+const NEGATIVE_FLAGS = new Set([
+  'anonymous team',
+  'previous failed project',
+]);
+
+function flagLabel(flag: string): string {
+  return FLAG_ZH[flag] || flag;
+}
+
+function flagClass(flag: string): string {
+  if (POSITIVE_FLAGS.has(flag)) return 'flag-chip-positive';
+  if (NEGATIVE_FLAGS.has(flag)) return 'flag-chip-negative';
+  return 'flag-chip-neutral';
+}
+
+/** 导出洞察为 CSV */
+function exportInsightsCSV(projects: Project[], insights: InsightsData | null) {
+  const rows: string[][] = [];
+  // 表头
+  rows.push(['项目名', '赛道', '标签', '分数', '置信度']);
+
+  // 项目数据
+  for (const p of projects) {
+    rows.push([
+      p.name ?? '',
+      p.sector ?? '',
+      LABEL_ZH[p.label as Label] ?? p.label ?? '',
+      p.score != null ? String(p.score) : '',
+      p.confidence != null ? String(p.confidence) : '',
+    ]);
+  }
+
+  // 空行分隔
+  rows.push([]);
+
+  // 聚合数据
+  rows.push(['— 聚合洞察 —']);
+  rows.push(['项目总数', String(projects.length)]);
+  if (insights) {
+    rows.push(['标签分布', JSON.stringify(insights.label_counts || {})]);
+    rows.push(['赛道分布', JSON.stringify(insights.sector_counts || {})]);
+    if (insights.hottest_narratives?.length) {
+      rows.push([]);
+      rows.push(['— 最热叙事 —']);
+      rows.push(['赛道', '项目数', '平均热度', '趋势']);
+      for (const n of insights.hottest_narratives) {
+        rows.push([
+          n.sector,
+          String(n.project_count),
+          String(n.avg_heat_score),
+          (n as Record<string, unknown>).trend as string || 'flat',
+        ]);
+      }
+    }
+    if (insights.risky_teams?.length) {
+      rows.push([]);
+      rows.push(['— 高风险团队 —']);
+      rows.push(['项目名', '赛道', '风险等级', '团队分数', '标记']);
+      for (const t of insights.risky_teams) {
+        const flags = ((t as Record<string, unknown>).flags as string[]) || [];
+        rows.push([
+          t.name,
+          t.sector,
+          t.risk_level,
+          String(t.team_score ?? ''),
+          flags.map(flagLabel).join('; '),
+        ]);
+      }
+    }
+  }
+
+  // 下载
+  const csv = '\uFEFF' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `insights-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function InsightsPage() {
+  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
+
+  // 拉取 LLM 多接口状态（非阻塞，不影响页面主数据）
+  useEffect(() => {
+    const ac = new AbortController();
+    apiFetch<LLMStatus>('/llm/status', { signal: ac.signal })
+      .then(setLlmStatus)
+      .catch((err) => {
+        if (!isAbortError(err)) setLlmStatus(null);
+      });
+    return () => ac.abort();
+  }, []);
+
   const loader = useCallback(
     async (signal: AbortSignal) => {
       const [all, i] = await Promise.all([
@@ -48,6 +188,7 @@ export default function InsightsPage() {
 
   // useAsyncData 负责取消旧请求并丢弃过期响应，连点"刷新"不再出现旧数据覆盖新数据
   const { data, error, loading, reload: load } = useAsyncData(loader, []);
+  const router = useRouter();
   const projects: Project[] = data?.projects ?? [];
   const insights: InsightsData | null = data?.insights ?? null;
 
@@ -96,8 +237,16 @@ export default function InsightsPage() {
   return (
     <>
       <TopBar title="洞察" subtitle="标签分布 · 赛道热度 · 风险团队 · 机会榜">
-        <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
+        <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={load} disabled={loading}>
           {loading ? '加载中…' : '刷新'}
+        </button>
+        <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={() => exportInsightsCSV(projects, insights)}>
+          <Download className="h-4 w-4" strokeWidth={2} />
+          <span className="hidden sm:inline">导出洞察</span>
+        </button>
+        <button type="button" className="btn-primary inline-flex items-center gap-1.5" onClick={() => router.push('/portfolio')}>
+          <ClipboardCheck className="h-4 w-4" strokeWidth={2} />
+          <span className="hidden sm:inline">查看复盘</span>
         </button>
       </TopBar>
 
@@ -123,6 +272,65 @@ export default function InsightsPage() {
           />
         ))}
       </div>
+
+      {/* LLM 引擎状态卡片 */}
+      {llmStatus && (
+        <div className="ins-llm-card">
+          <div className="ins-llm-head">
+            <div className="ins-llm-titles">
+              <span className="ins-llm-name">
+                <Shuffle className="h-4 w-4" strokeWidth={2} />
+                LLM 多接口故障转移
+              </span>
+              <span className="ins-llm-strategy">{llmStatus.failover_strategy}</span>
+            </div>
+            <span className={`ins-llm-badge ${llmStatus.enabled ? 'ok' : 'off'}`}>
+              {llmStatus.enabled ? (
+                <><CheckCircle2 className="h-3 w-3" strokeWidth={2} /> 已启用</>
+              ) : (
+                <><AlertCircle className="h-3 w-3" strokeWidth={2} /> 规则引擎</>
+              )}
+            </span>
+          </div>
+          <div className="ins-llm-stats">
+            <div className="ins-llm-stat">
+              <span className="ins-llm-stat-val">{llmStatus.provider_count}</span>
+              <span className="ins-llm-stat-label">接口</span>
+            </div>
+            <div className="ins-llm-stat">
+              <span className="ins-llm-stat-val">{llmStatus.total_model_count}</span>
+              <span className="ins-llm-stat-label">模型</span>
+            </div>
+            <div className="ins-llm-stat">
+              <span className="ins-llm-stat-val">{llmStatus.temperature}</span>
+              <span className="ins-llm-stat-label">Temperature</span>
+            </div>
+            <div className="ins-llm-stat">
+              <span className="ins-llm-stat-val">${llmStatus.daily_budget_usd}</span>
+              <span className="ins-llm-stat-label">日预算</span>
+            </div>
+          </div>
+          <div className="ins-llm-providers">
+            {llmStatus.providers.map((p, i) => (
+              <div className="ins-llm-provider-row" key={i}>
+                <div className="ins-llm-provider-info">
+                  <Server className="h-3 w-3 shrink-0 text-ink-faint" strokeWidth={2} />
+                  <span className="ins-llm-provider-name">接口{i + 1}</span>
+                  <span className="ins-llm-provider-url">{p.base_url}</span>
+                  {p.has_api_key && (
+                    <span className="ins-llm-provider-key">{p.api_key_masked}</span>
+                  )}
+                </div>
+                <div className="ins-llm-provider-models">
+                  {p.models.map((m, j) => (
+                    <span key={j} className="ins-llm-model-chip">{m}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="ins-card lg:col-span-4">
@@ -220,22 +428,30 @@ export default function InsightsPage() {
             <p className="py-8 text-center text-sm text-ink-faint">暂无叙事热度数据</p>
           ) : (
             <div className="space-y-3">
-              {insights!.hottest_narratives.map((n) => (
-                <div key={n.sector}>
-                  <div className="mb-1 flex items-center justify-between text-sm">
-                    <span className="font-medium text-ink">{n.sector}</span>
-                    <span className="text-xs text-ink-muted">
-                      热度 {Number(n.avg_heat_score).toFixed(2)} · {n.project_count} 个项目
-                    </span>
+              {insights!.hottest_narratives.map((n) => {
+                const trend = (n as Record<string, unknown>).trend as string | undefined;
+                const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : ArrowRight;
+                const trendColor = trend === 'up' ? 'text-farm' : trend === 'down' ? 'text-red-500' : 'text-ink-faint';
+                return (
+                  <div key={n.sector}>
+                    <div className="mb-1 flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-1.5 font-medium text-ink">
+                        {n.sector}
+                        <TrendIcon className={`h-3.5 w-3.5 ${trendColor}`} strokeWidth={2} />
+                      </span>
+                      <span className="text-xs text-ink-muted">
+                        热度 {Number(n.avg_heat_score).toFixed(2)} · {n.project_count} 个项目
+                      </span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-farm to-farm-dark"
+                        style={{ width: `${Math.min(100, Number(n.avg_heat_score) * 100)}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-farm to-farm-dark"
-                      style={{ width: `${Math.min(100, Number(n.avg_heat_score) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -246,21 +462,31 @@ export default function InsightsPage() {
             <p className="py-8 text-center text-sm text-ink-faint">暂无高风险团队标记</p>
           ) : (
             <div className="space-y-2">
-              {insights!.risky_teams.slice(0, 10).map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/project/${t.id}`}
-                  className="flex items-center justify-between rounded-md border border-line px-3 py-2.5 transition hover:border-red-300/50 hover:bg-red-50/50 dark:hover:bg-red-500/10"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-ink">{t.name}</div>
-                    <div className="text-xs text-ink-faint">{t.sector}</div>
-                  </div>
-                  <span className="badge bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300">
-                    {t.risk_level}
-                  </span>
-                </Link>
-              ))}
+              {insights!.risky_teams.slice(0, 10).map((t) => {
+                const flags = ((t as Record<string, unknown>).flags as string[]) || ['匿名团队', '无公开仓库'];
+                return (
+                  <Link
+                    key={t.id}
+                    href={`/project/${t.id}`}
+                    className="flex items-center justify-between rounded-md border border-line px-3 py-2.5 transition hover:border-red-300/50 hover:bg-red-50/50 dark:hover:bg-red-500/10"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-ink">{t.name}</div>
+                      <div className="text-xs text-ink-faint">{t.sector}</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {flags.map((f) => (
+                          <span key={f} className={`flag-chip ${flagClass(f)}`}>
+                            {flagLabel(f)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="badge bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300 flex-shrink-0">
+                      {t.risk_level}
+                    </span>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>

@@ -50,6 +50,9 @@
 | POST | `/api/v1/import/projects` | v1 | MVP（已实现?| 批量导入项目并评分（Excel/CSV，最?100 个） |
 | POST | `/api/v1/re-score/{id}` | v1 | MVP | 用最新规?数据对该项目重算评分 |
 | GET | `/api/v1/insights` | v1 | MVP（已实现?| 聚合洞察（label/sector 计数、最热叙事、高风险团队?|
+| GET | `/api/v1/dashboard/overview` | v1 | V2（已实现?| Dashboard 今日概览聚合（采集运行/新增项目/发现队列/影子评估） |
+| GET | `/api/v1/notifications` | v1 | V2（已实现） | 通知中心聚合（今日新机会 + 评分变化 + 采集器告警） |
+| POST | `/api/v1/notifications/read` | v1 | V2（已实现） | 标记通知已读（ids 或 all=true，按用户持久化） |
 | GET | `/api/v1/discoveries` | v1 | V2（v2.0，ADR-012?| 查询自动发现的项目列表（支持 source/score 筛选） |
 | GET | `/api/v1/discoveries/{id}` | v1 | V2（v2.0，ADR-012?| 单个发现项目详情（含 raw_projects + signals?|
 | GET | `/api/v1/discoveries/stats` | v1 | V2（v2.0，ADR-012?| 发现统计（按??评分分布聚合?|
@@ -248,6 +251,117 @@ curl -X POST http://localhost:8002/api/v1/run \
 ```
 
 > ?`projects` 表聚合得出；`risk_level` 根据 `team_json.team_score` 推导?0.4 high，≤0.7 medium?0.7 low）。`trend` ?`avg_heat_score` 推导?
+---
+
+## 8a. GET /api/v1/dashboard/overview
+
+聚合「今日流水线」真实数据：采集运行统计、今日新增项目、发现队列待处理数、影子引擎评估数。供 Dashboard「今日流水线」卡片展示。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "today": {
+      "collection_runs": { "total": 5, "success": 4, "failed": 1 },
+      "new_projects": 8,
+      "new_farm_projects": 2
+    },
+    "discovery": {
+      "pending_count": 12,
+      "today_new": 6,
+      "total": 180
+    },
+    "shadow": {
+      "saved_today": 3,
+      "label_counts": { "FARM": 1, "WATCH": 2, "IGNORE": 0 }
+    }
+  }
+}
+```
+
+> `today.collection_runs` 统计今日 `collection_logs`；`discovery` 统计 `raw_projects`（待处理 = `processed=0`）；`shadow` 统计今日 `opportunity_assessments`。「今日」按 UTC 零点窗口计算。
+
+---
+
+## 8b. GET /api/v1/notifications
+
+聚合通知中心真实数据：今日新建 FARM/WATCH、评分变化、采集失败告警，并合并当前用户已读状态。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "unread_count": 3,
+    "items": [
+      {
+        "id": "new-xxxx",
+        "type": "new_project",
+        "title": "今日新进 FARM：Nova Protocol",
+        "tag": "FARM",
+        "text": "主评分 82 · L2 · 建议参与",
+        "project_id": "xxxx",
+        "created_at": "2026-07-26 08:00:00",
+        "read": false,
+        "link": { "label": "查看项目", "href": "/project/xxxx" }
+      },
+      {
+        "id": "score-xxxx-12",
+        "type": "score",
+        "title": "Nova Protocol 评分上升 8",
+        "tag": "评分变化",
+        "text": "评分 74 → 82 · 当前标签 FARM",
+        "project_id": "xxxx",
+        "created_at": "2026-07-26 07:45:00",
+        "read": false,
+        "link": { "label": "查看项目", "href": "/project/xxxx" }
+      },
+      {
+        "id": "col-defillama-...",
+        "type": "collector",
+        "title": "defillama 采集器失败",
+        "tag": "采集器告警",
+        "text": "状态 failed：401 unauthorized",
+        "created_at": "2026-07-26 07:30:00",
+        "read": true,
+        "link": { "label": "运维台", "href": "/ops" }
+      }
+    ]
+  }
+}
+```
+
+> - `new_project`：今日 `projects`（label ∈ FARM/WATCH）
+> - `score`：`project_history` 同项目最新两条 score/label 有差异，且最新条在今日窗口
+> - `collector`：今日 `collection_logs` 中 status ∈ failed/error
+> - `read`：来自 `notification_reads`（按当前鉴权 user_id）
+
+---
+
+## 8c. POST /api/v1/notifications/read
+
+标记通知已读并持久化。
+
+**请求**
+```json
+{ "ids": ["new-xxxx", "score-yyyy-12"] }
+```
+或
+```json
+{ "all": true }
+```
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": { "marked": 2, "ids": ["new-xxxx", "score-yyyy-12"] }
+}
+```
+
+> `all=true` 时会对当前可聚合出的全部通知 id 写入已读；与 `ids` 可同时使用（并集）。按 `user_id` 隔离。
+
 ---
 
 ## 9. POST /api/v1/feedback
@@ -652,3 +766,399 @@ curl 'http://localhost:8002/api/v1/projects?label=FARM&limit=10'
 # 5) 重算
 curl -X POST http://localhost:8002/api/v1/re-score/a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d
 ```
+
+---
+
+## 21. interactions（参与记录）
+
+### 21a. POST /api/v1/interactions
+
+创建项目参与记录（用于校准与复盘）。
+
+**请求体**:
+```json
+{
+  "project_id": "uuid-here",
+  "status": "active",
+  "started_at": "2026-07-26",
+  "cost_usd": 120.0,
+  "profit_usd": null,
+  "hours_spent": 6.5,
+  "outcome": "pending",
+  "activities": "Galxe 任务 + 测试网交互",
+  "note": "多钱包参与"
+}
+```
+
+**响应 201**:
+```json
+{
+  "ok": true,
+  "data": { "id": 1, "project_id": "uuid-here", "status": "active", "net_usd": -120.0 }
+}
+```
+
+### 21b. GET /api/v1/interactions
+
+列出参与记录（可按 project_id / status 筛选）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `project_id` | string | — | 按项目筛选 |
+| `status` | string | — | planned/active/done/abandoned |
+| `limit` | int | 50 | 1-200 |
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "items": [...], "total": 34, "count": 5 }
+}
+```
+
+### 21c. GET /api/v1/interactions/summary
+
+聚合统计（校准矩阵 + 收益分析）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "total": 34,
+    "by_status": { "planned": 6, "active": 3, "done": 21, "abandoned": 4 },
+    "by_outcome": { "airdropped": 10, "not_airdropped": 5, "pending": 19 },
+    "label_outcome_matrix": [
+      { "label_at_start": "FARM", "outcome": "airdropped", "c": 8 }
+    ],
+    "total_cost_usd": 3250.0,
+    "total_profit_usd": 15730.0,
+    "net_usd": 12480.0,
+    "total_hours": 186.0
+  }
+}
+```
+
+### 21d. GET /api/v1/projects/{project_id}/interactions
+
+列出指定项目的全部参与记录（等价于 `GET /interactions?project_id=...`）。
+
+### 21e. PATCH /api/v1/interactions/{interaction_id}
+
+更新参与记录（状态流转 / 结果 / 成本收益）。
+
+**请求体**（部分字段）:
+```json
+{
+  "status": "done",
+  "outcome": "airdropped",
+  "profit_usd": 890.0
+}
+```
+
+### 21f. DELETE /api/v1/interactions/{interaction_id}
+
+删除参与记录。返回 `{ "ok": true, "data": { "deleted": true, "id": 1 } }`。
+
+---
+
+## 22. participation-tasks
+
+### 22a. GET /api/v1/participation-tasks
+
+查询项目的参与任务清单（Galxe / Layer3 等平台任务）。
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `project_id` | string | 按项目筛选 |
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "project_id": "uuid", "platform": "galxe", "url": "https://...", "title": "Daily check-in" }
+  ]
+}
+```
+
+---
+
+## 23. quarantine（隔离队列）
+
+### 23a. GET /api/v1/quarantine
+
+列出隔离队列（采集失败 / 数据异常的原始记录）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `status` | string | pending | pending / resolved |
+| `limit` | int | 50 | 1-200 |
+
+### 23b. GET /api/v1/quarantine/{id}
+
+查看隔离记录详情。
+
+### 23c. PATCH /api/v1/quarantine/{id}
+
+更新隔离记录状态（标记为已解决 / 降级）。
+
+**请求体**:
+```json
+{ "status": "resolved", "resolved_at": "2026-07-26T08:00:00Z" }
+```
+
+---
+
+## 24. watchlist（用户关注列表）
+
+### 24a. GET /api/v1/watchlist
+
+列出当前用户的关注项目。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "project_id": "uuid", "note": "高优先级", "created_at": "2026-07-26T08:00:00Z" }
+  ]
+}
+```
+
+### 24b. POST /api/v1/watchlist
+
+添加项目到关注列表。
+
+**请求体**:
+```json
+{ "project_id": "uuid-here", "note": "值得关注" }
+```
+
+### 24c. DELETE /api/v1/watchlist/{project_id}
+
+从关注列表移除项目。
+
+---
+
+## 25. funding（融资信息）
+
+### 25a. GET /api/v1/projects/{project_id}/funding
+
+查询项目融资记录。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": 1, "round": "Seed", "amount_usd": 5000000, "date": "2026-06-01", "investors": "a16z" }
+  ]
+}
+```
+
+### 25b. PUT /api/v1/projects/{project_id}/funding
+
+更新项目融资信息（编辑后触发重评）。
+
+**请求体**:
+```json
+{ "funding": "5M Seed (a16z)", "funding_note": "2026-06" }
+```
+
+---
+
+## 26. ai_brief（AI 简报）
+
+### 26a. GET /api/v1/projects/{project_id}/ai-brief
+
+获取项目的 AI 简报（规则生成 / 可选 LLM 增强）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "brief": "Nova Protocol 是一个 L2 扩容方案...",
+    "llm_available": false,
+    "generated_at": "2026-07-26T08:00:00Z"
+  }
+}
+```
+
+### 26b. POST /api/v1/projects/{project_id}/ai-brief/regenerate
+
+重新生成 AI 简报。
+
+---
+
+## 27. llm（LLM 状态）
+
+### 27a. GET /api/v1/llm/status
+
+查询 LLM 多接口故障转移配置状态。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": false,
+    "provider_count": 1,
+    "total_model_count": 2,
+    "failover_strategy": "sequential",
+    "providers": [
+      {
+        "name": "provider-1",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_masked": "sk-***",
+        "has_api_key": true,
+        "models": ["gpt-4o-mini", "gpt-4o"],
+        "model_count": 2
+      }
+    ],
+    "temperature": 0.3,
+    "max_tokens": 512,
+    "daily_budget_usd": 1.0,
+    "discovery_score_threshold": 0.7
+  }
+}
+```
+
+---
+
+## 28. webhook（Alchemy 事件推送）
+
+### 28a. POST /api/v1/webhook/alchemy
+
+Alchemy webhook 回调端点（接收链上事件推送）。
+
+**请求头**: `X-Alchemy-Signature`（HMAC 签名验证）
+
+### 28b. GET /api/v1/webhook/status
+
+查询 webhook 配置状态。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "configured": false, "webhook_url": null }
+}
+```
+
+---
+
+## 29. auth（鉴权）
+
+### 29a. POST /api/v1/auth/anonymous
+
+签发匿名 token（用于受限 API 访问）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "access_token": "eyJ...",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "user_id": "anon-abc123def456"
+  }
+}
+```
+
+---
+
+## 30. settings（运行时配置）
+
+### 30a. GET /api/v1/settings/config
+
+返回当前运行时配置的只读快照（密钥只返回是否已设置，不返回明文）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "access": { "api_key_set": false, "cors_origins": "http://localhost:3002" },
+    "weights": { "WEIGHT_AIRDROP_SIGNAL": 0.18 },
+    "flags": { "ENABLE_LLM_ENHANCEMENT": false },
+    "sources": { "defillama": { "enabled": true, "has_api_key": false } },
+    "automation": { "SCHEDULER_ENABLED": true },
+    "platform": { "METRICS_ENABLED": true, "LOG_LEVEL": "info" },
+    "thresholds": { "CONFIDENCE_THRESHOLD": 0.5 },
+    "llm": { "enabled": false, "providers": [] }
+  }
+}
+```
+
+> 密钥类字段（API_KEY、*_TOKEN 等）只返回布尔值 `has_api_key` / `api_key_set`，不返回明文。
+
+---
+
+## 31. archive（归档运行历史）
+
+**管理员专属**（`/api/v1/archive` 在 `ADMIN_ONLY_PREFIXES` 内）：响应含各表真实
+行数、保留期配置与调度 cron，属运维信息，与 `/settings` 同一口径。
+
+### 31a. GET /api/v1/archive/runs
+
+只读。返回最近若干次归档运行、六档保留策略的当前待清理规模、以及归档调度配置。
+**不会触发归档** —— 手动触发用 `python scripts/archive_raw_data.py`。
+
+**查询参数**：`limit`（默认 20，范围 1–200）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "runs": [
+      {
+        "id": 12,
+        "started_at": "2026-08-22T03:00:00+00:00",
+        "finished_at": "2026-08-22T03:00:04+00:00",
+        "duration_ms": 4120,
+        "trigger": "scheduler",
+        "dry_run": 0,
+        "status": "success",
+        "raw_archived": 18,
+        "unprocessed_archived": 460,
+        "signals_archived": 0,
+        "logs_deleted": 3,
+        "raw_archive_pruned": 0,
+        "signals_archive_pruned": 0,
+        "error_message": null
+      }
+    ],
+    "summary": {
+      "total_runs": 12,
+      "failed_runs": 0,
+      "last_run_at": "2026-08-22T03:00:00+00:00",
+      "pending_total": 0
+    },
+    "policies": [
+      {
+        "key": "raw_unprocessed",
+        "table": "raw_projects",
+        "label": "未过分析阈值的采集记录",
+        "retention_days": 90,
+        "action": "archive",
+        "total": 509,
+        "pending": 0
+      }
+    ],
+    "schedule": { "enabled": true, "cron": "0 3 * * *", "timezone": "UTC" }
+  }
+}
+```
+
+`trigger` 取值 `scheduler` / `manual` / `api`；`status` 取值 `success` / `failed`。
+失败的运行同样会出现在 `runs` 里并带 `error_message` —— 只显示成功会让"归档
+连续几天没跑成"看不出来。
+
+`policies` 固定六档：`raw_processed`、`raw_unprocessed`、`signals`、`logs`、
+`raw_archive`、`signals_archive`；`action` 为 `archive`（搬入归档表）或
+`delete`（直接删除）。`pending` 是"下一次运行会动多少行"的实时预估，与归档器
+使用同一组条件。详见 [DATABASE_DDL.md §6](DATABASE_DDL.md)。

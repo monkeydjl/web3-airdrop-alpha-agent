@@ -3,11 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
+# 版本 / requires-python 与根 pyproject.toml 保持一致。此前两份分别写
+# 1.0.0/>=3.10 与 0.1.0/>=3.11，而 Docker 镜像用 python:3.12、CI 也是 3.12，
+# 三处口径不一致会让"支持哪个 Python"这个问题没有答案。
 name = "web3-airdrop-alpha"
-version = "1.0.0"
+version = "0.1.0"
 description = "Multi-agent Web3 airdrop opportunity identification system"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.12",
     "uvicorn[standard]==0.35.6",
@@ -19,6 +22,13 @@ dependencies = [
     "pandas==2.2.3",
     "psycopg[binary]>=3.2",
     "alembic>=1.13.0",
+    "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-exporter-otlp>=1.24.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-httpx>=0.49b0",
+    "opentelemetry-instrumentation-sqlite3>=0.49b0",
+    "opentelemetry-instrumentation-psycopg>=0.49b0",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +53,10 @@ addopts = [
     "--cov=app",
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",
+    # 覆盖率下限与根 pyproject / CI 对齐。此前本文件没有这一行，而 pytest 从
+    # backend/ 运行时用的正是本文件——等于本地跑 pytest 完全不校验覆盖率，
+    # 只有 CI 显式传 --cov-fail-under=80 才拦得住。
+    "--cov-fail-under=80",
 ]
 
 [tool.coverage.run]
@@ -50,7 +64,8 @@ source = ["app"]
 omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.mypy]
-python_version = "3.13"
+# 与 CI / Dockerfile 的 Python 3.12 对齐（此前写 3.13，而运行时根本不是 3.13）
+python_version = "3.12"
 mypy_path = "."
 ignore_missing_imports = true
 strict_optional = false

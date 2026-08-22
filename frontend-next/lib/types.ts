@@ -29,6 +29,8 @@ export interface Project {
   funding?: FundingInfo | null;
   signals?: Record<string, unknown> | null;
   funding_note?: string | null;
+  sub_scores?: Record<string, number> | null;
+  weight_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -93,6 +95,8 @@ export interface CollectionSource {
   configReady: boolean;
   last_sync?: string | null;
   sync_status?: string | null;
+  /** 今日 API 调用次数（后端真实统计，可能缺省） */
+  apiCallsToday?: number | null;
 }
 
 /** 把后端形状摊平成 UI 形状。 */
@@ -119,6 +123,7 @@ export function normalizeCollectionSource(raw: CollectionSourceApi): CollectionS
     configReady,
     last_sync: raw.status?.last_sync ?? null,
     sync_status: raw.status?.sync_status ?? null,
+    apiCallsToday: raw.status?.api_calls_today ?? null,
   };
 }
 

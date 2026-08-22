@@ -147,6 +147,31 @@ def apply_signals_to_kwargs(meta: Any) -> dict[str, Any]:
     return kwargs
 
 
+def signals_view(project: Any) -> dict[str, Any]:
+    """把 meta.signals 展平到项目字典顶层，供只读消费方使用。
+
+    存储侧刻意把扩展信号收在 `meta["signals"]` 里（避免宽表迁移，见本模块头部
+    注释），但 `projects` 表本身**没有** has_testnet / has_task_portal 等列。
+    于是任何直接 `project.get("has_testnet")` 的读取方都会恒拿到 None：
+    参与清单据此判断，结果 281 个项目全部落到「无信号」兜底分支，生成的任务
+    千篇一律（实测最高分项目也只有 5 条通用任务）。
+
+    这里返回浅拷贝，顶层已有的键**优先**（顶层是权威值，meta 只是补充），
+    避免把已迁移到真实列的字段又被旧快照覆盖。
+    """
+    if project is None:
+        return {}
+    base: dict[str, Any] = dict(project)
+    sig = parse_meta(base.get("meta")).get("signals")
+    if not isinstance(sig, dict):
+        return base
+    for key, value in sig.items():
+        # 顶层缺失才用 meta 里的值；顶层显式为 False/0 也算有效观测，不覆盖。
+        if base.get(key) is None:
+            base[key] = value
+    return base
+
+
 def funding_public_view(meta: Any) -> dict[str, Any]:
     """API-facing funding block from meta.signals."""
     s = parse_meta(meta).get("signals") or {}

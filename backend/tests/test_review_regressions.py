@@ -835,7 +835,7 @@ class TestSecretsNeverReachClientsOrLogs:
         from app.main import create_app
 
         # 模拟 psycopg OperationalError 携带的完整 DSN
-        secret = "postgresql://airdrop:P4ssw0rd_PROD@db:5432/airdrop"  # noqa: S105
+        secret = "postgresql://airdrop:P4ssw0rd_PROD@db:5432/airdrop"
 
         async def boom(**kwargs):
             raise RuntimeError(f"connection failed (dsn={secret})")
@@ -893,7 +893,63 @@ class TestProductionConfigCannotBeBypassed:
         # §4.2 要求 >= 32 字符；原实现只校验非空，一个字符也能过
         with pytest.raises(ValueError, match="API_KEY"):
             Settings(_env_file=None, app_env="production", api_key="x")
-        Settings(_env_file=None, app_env="production", api_key="a" * 32)
+        # 合法长度通过（需同时配备 AUTH_TOKEN_SECRET 与非 localhost 的 CORS，
+        # 否则会被生产自检拒绝）
+        Settings(
+            _env_file=None,
+            app_env="production",
+            api_key="a" * 32,
+            auth_token_secret="b" * 48,
+            cors_origins="https://app.example.com",
+        )
+
+    def test_missing_auth_token_secret_is_rejected_in_production(self):
+        """回归：docker-compose 曾漏传 AUTH_TOKEN_SECRET，导致容器 CrashLoop。
+
+        这条自检本身是对的（宁可不启动也不要签名密钥每次重启就变），此处锁死
+        它的存在，避免有人为了"让容器起来"而把校验删掉。
+        """
+        with pytest.raises(ValueError, match="AUTH_TOKEN_SECRET"):
+            Settings(
+                _env_file=None,
+                app_env="production",
+                api_key="a" * 32,
+                auth_token_secret="",
+                cors_origins="https://app.example.com",
+            )
+
+    @pytest.mark.parametrize(
+        "origins",
+        [
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
+            "https://app.example.com,http://localhost:3002",
+        ],
+    )
+    def test_localhost_cors_is_rejected_in_production(self, origins):
+        """生产环境 CORS 含 localhost/127.0.0.1 必须拒绝启动。
+
+        cors_origins 的默认值就是 localhost，忘配会把真实前端域名全部挡掉，
+        表现为"上线后所有接口跨域失败"，除浏览器控制台外几乎无迹可寻。
+        """
+        with pytest.raises(ValueError, match="CORS_ORIGINS"):
+            Settings(
+                _env_file=None,
+                app_env="production",
+                api_key="a" * 32,
+                auth_token_secret="b" * 48,
+                cors_origins=origins,
+            )
+
+    def test_real_domain_cors_passes_in_production(self):
+        s = Settings(
+            _env_file=None,
+            app_env="production",
+            api_key="a" * 32,
+            auth_token_secret="b" * 48,
+            cors_origins="https://app.example.com,https://admin.example.com",
+        )
+        assert s.cors_origins_list == ["https://app.example.com", "https://admin.example.com"]
 
 
 class TestRateLimiting:

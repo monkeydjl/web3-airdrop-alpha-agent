@@ -11,6 +11,7 @@
 
 from math import isfinite
 from pathlib import Path
+from typing import Any
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,17 +51,35 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
+    log_file: str = ""  # 可选：日志文件路径（空 = 仅 stdout）
 
     # ── 数据库 ────────────────────────────────────
     db_path: str = "data/airdrop.db"
-    # 设置后走 PostgreSQL（测试: docker-compose.postgres.yml → :5433）
+    # 后端选择："sqlite"（默认）或 "postgres"（A2, ADR-004）
+    # 设为 "postgres" 时若 DATABASE_URL 为空，则自动从 POSTGRES_* 组装连接串
+    db_backend: str = "sqlite"
+    # 直接指定完整 PG 连接串（优先级高于 POSTGRES_* 分项组装）
     # 例: postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test
     database_url: str | None = None
+    # PostgreSQL 连接分项（DB_BACKEND=postgres 且 DATABASE_URL 未设置时使用）
+    postgres_host: str = "127.0.0.1"
+    postgres_port: int = 5433
+    postgres_user: str = "airdrop"
+    # 本地开发默认值，生产必须由 POSTGRES_PASSWORD 覆盖（GO_LIVE_CHECKLIST P0-2.2）。
+    # 非硬编码凭据：真实密码只经环境变量注入，从不入库/入镜像。
+    postgres_password: str = "airdrop_test"  # noqa: S105
+    postgres_db: str = "airdrop_test"
     # 同步路由在线程池并发执行，SQLite 写锁需要等待窗口而非立即报错
     sqlite_busy_timeout_seconds: float = 10.0
 
     # ── API 鉴权 ──────────────────────────────────
     api_key: str = ""  # 空 = 无鉴权（MVP 模式）
+    # V2 匿名 token（ADR-008）：HMAC-SHA256 签名的 Bearer token
+    # 当 api_key 非空时启用鉴权层：
+    #   - api_key 本身作为管理员令牌（完整权限）
+    #   - auth_token_secret 用于签发/校验匿名 token
+    auth_token_secret: str = ""  # 空 = 随机生成（重启后失效，仅适合 MVP）
+    auth_token_ttl_hours: int = 72  # 匿名 token 有效期
 
     # ── LLM 配置 (ADR-001, ADR-012 分级使用) ─────
     openai_api_key: str = ""
@@ -73,11 +92,42 @@ class Settings(BaseSettings):
     # v2.0 分级使用：仅 discovery_score ≥ 此阈值的项目启用 LLM（ADR-012）
     llm_discovery_score_threshold: float = 0.7
 
+    # ── LLM 多接口/多模型故障转移 (v2.1) ──────────
+    # 每个接口一组编号变量，格式直观，不会弄混：
+    #   LLM_BASEURL_1=https://api.openai.com/v1
+    #   LLM_API_KEY_1=sk-xxx
+    #   LLM_MODELS_1_1=gpt-4o-mini
+    #   LLM_MODELS_1_2=gpt-4o
+    #
+    #   LLM_BASEURL_2=https://api.deepseek.com/v1
+    #   LLM_API_KEY_2=sk-yyy
+    #   LLM_MODELS_2_1=deepseek-chat
+    #   LLM_MODELS_2_2=deepseek-reasoner
+    #
+    # 故障转移：接口1连不上 → 切接口2；模型1失败 → 切模型2
+    # 最多支持 5 个接口，每接口最多 5 个模型
+    # 未配置编号接口时，回退到上方 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL 单接口模式
+
     # ── 采集质量阈值 (ADR-012) ───────────────────
     discovery_score_analysis_threshold: float = 0.3
     raw_projects_retention_days: int = 30
     project_signals_retention_days: int = 90
     collection_logs_retention_days: int = 90
+
+    # ── 归档保留期与调度 ─────────────────────────
+    # 未过分析阈值的采集记录（processed=0）的保留期。
+    # 实测这类记录占 raw_projects 的 73%（509/693），且**永远不会**被标记
+    # processed=1（低于 discovery_score_analysis_threshold 就不立项），
+    # 因此原来"只归档 processed=1"的条件让它们无限累积。
+    # 单独给一个更长的保留期：它们仍是复盘"当时为什么没立项"的依据。
+    unprocessed_raw_retention_days: int = 90
+    # 归档表自身的保留期（此前 DATABASE_DDL.md 写了 180/365 天但零实现，
+    # 归档表只进不出）。
+    raw_archive_retention_days: int = 180
+    signals_archive_retention_days: int = 365
+    # 归档任务调度：默认每天 03:00，在所有采集 job（08:00-10:30）之前跑完
+    archive_scheduler_enabled: bool = True
+    archive_cron: str = "0 3 * * *"
 
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
@@ -93,6 +143,24 @@ class Settings(BaseSettings):
 
     # ── 并发控制 (ADR-007) ───────────────────────
     max_concurrent_projects: int = 10
+    # fetcher 并发闸（§10.1）：限制全局 HTTP 并发请求数
+    fetcher_semaphore_size: int = 10
+    # fetcher 磁盘缓存目录（§10.1）：空 = 仅内存缓存
+    fetcher_cache_dir: str = "cache"
+    # fetcher 默认缓存 TTL（秒）
+    fetcher_cache_ttl_seconds: int = 3600
+    # fetcher 熔断器配置（§10.1）
+    fetcher_circuit_breaker_threshold: int = 5
+    fetcher_circuit_breaker_timeout_seconds: int = 60
+
+    # ── 热度信号增强 (C3, §6.4 V2) ──────────────
+    # 从 project_signals 表聚合 Twitter 讨论量 + VC 融资信号，
+    # 动态调制 sector heat_score。失败时降级到静态 SECTOR_PROFILE。
+    heat_signal_enabled: bool = True
+    heat_signal_ttl_seconds: int = 300  # 缓存 TTL（5min）
+    heat_signal_lookback_hours: int = 72  # 信号回溯窗口
+    heat_signal_max_multiplier: float = 1.3  # 信号上限乘子
+    heat_signal_min_multiplier: float = 0.7  # 信号下限乘子
 
     # ── 调度配置 (ADR-005, ADR-012 双调度) ──────
     scheduler_enabled: bool = True
@@ -218,15 +286,91 @@ class Settings(BaseSettings):
     metrics_path: str = "/metrics"
     health_check_path: str = "/health"
 
+    # ── OpenTelemetry 链路追踪 ────────────────────
+    # 主开关：设为 true 则启用 OTel SDK + 自动埋点，通过 OTLP 导出到 OTel Collector
+    otel_enabled: bool = False
+    # 导出器端点（标准 OTEL_EXPORTER_OTLP_ENDPOINT 也生效，这里仅用于日志）
+    otel_endpoint: str = "http://otel-collector:4317"
+    # 服务名称（标准 OTEL_SERVICE_NAME 覆盖此值）
+    otel_service_name: str = "airdrop-alpha"
+    # 采样率，仅用于日志记录；实际采样由 SDK 环境变量 OTEL_TRACES_SAMPLER 控制
+    otel_sample_rate: float = 1.0
+
     # ── 种子数据 ──────────────────────────────────
     seed_on_startup: bool = True
     seed_data_path: str = "scripts/seed.py"
+    # 外部采集源全量失败时回退到内置 seed 数据（§10.2 / V2 B2）
+    seed_fallback_enabled: bool = True
 
     # ── 计算属性 ──────────────────────────────────
     @property
     def is_llm_enabled(self) -> bool:
-        """LLM 是否启用（需配置 API key + Feature Flag）。"""
-        return bool(self.openai_api_key) and self.enable_llm_enhancement
+        """LLM 是否启用（需配置至少一个接口的 API key + Feature Flag）。"""
+        has_key = bool(self.openai_api_key)
+        if not has_key:
+            # 检查编号接口是否有 API key
+            import os
+
+            for i in range(1, 6):
+                if os.environ.get(f"LLM_API_KEY_{i}", "").strip():
+                    has_key = True
+                    break
+        return has_key and self.enable_llm_enhancement
+
+    @property
+    def llm_providers(self) -> list[dict[str, Any]]:
+        """解析多接口配置，返回 provider 列表。
+
+        每个接口一组编号环境变量：
+            LLM_BASEURL_1, LLM_API_KEY_1, LLM_MODELS_1_1, LLM_MODELS_1_2, ...
+            LLM_BASEURL_2, LLM_API_KEY_2, LLM_MODELS_2_1, ...
+
+        返回格式：
+            [{"base_url": ..., "api_key": ..., "name": "provider-1", "models": ["model1", "model2"]}, ...]
+
+        未配置编号接口时，回退到单接口 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL。
+        """
+        import os
+
+        providers: list[dict[str, Any]] = []
+
+        for i in range(1, 6):
+            base_url = os.environ.get(f"LLM_BASEURL_{i}", "").strip()
+            if not base_url:
+                continue
+            api_key = os.environ.get(f"LLM_API_KEY_{i}", "").strip()
+
+            # 收集该接口下的所有模型（LLM_MODELS_{i}_1, LLM_MODELS_{i}_2, ...）
+            models: list[str] = []
+            for j in range(1, 6):
+                model = os.environ.get(f"LLM_MODELS_{i}_{j}", "").strip()
+                if model:
+                    models.append(model)
+
+            providers.append(
+                {
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "name": f"provider-{i}",
+                    "models": models,
+                }
+            )
+
+        if providers:
+            return providers
+
+        # 回退到单接口模式
+        if self.openai_api_key:
+            return [
+                {
+                    "base_url": self.openai_base_url,
+                    "api_key": self.openai_api_key,
+                    "name": "openai",
+                    "models": [self.llm_model] if self.llm_model else [],
+                }
+            ]
+
+        return []
 
     @property
     def is_production(self) -> bool:
@@ -270,6 +414,29 @@ class Settings(BaseSettings):
         if not isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("sample rate must be finite and between 0 and 1")
         return value
+
+    @model_validator(mode="after")
+    def _resolve_db_backend(self):
+        """DB_BACKEND=postgres 时自动组装 DATABASE_URL（A2, ADR-004）。
+
+        两种 PG 激活路径：
+        1. 直接设 DATABASE_URL=postgresql://…（已有行为，优先级最高）
+        2. DB_BACKEND=postgres（验收标准用法）→ 从 POSTGRES_* 分项组装
+
+        反向同步：若 DATABASE_URL 指向 PG 但 DB_BACKEND 未显式设为 postgres，
+        自动修正 db_backend 以保持一致（is_postgres() 两端都对齐）。
+        """
+        url = (self.database_url or "").strip()
+        is_pg_url = url.startswith("postgresql://") or url.startswith("postgres://")
+        if self.db_backend == "postgres":
+            if not url:
+                self.database_url = (
+                    f"postgresql://{self.postgres_user}:{self.postgres_password}"
+                    f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+                )
+        elif is_pg_url:
+            self.db_backend = "postgres"
+        return self
 
     @model_validator(mode="after")
     def validate_opportunity_economic_flag_rollout(self):
@@ -322,6 +489,24 @@ class Settings(BaseSettings):
                 )
             if self.host == "0.0.0.0" and not api_key:
                 errors.append("生产环境绑定 0.0.0.0 时必须设置 API_KEY")
+
+            # P1-3：生产环境 AUTH_TOKEN_SECRET 必须设置（匿名 token 才稳定）
+            if not self.auth_token_secret:
+                errors.append(
+                    "生产环境必须设置 AUTH_TOKEN_SECRET（匿名 token 每次重启后失效；"
+                    "建议用 secrets.token_urlsafe(48) 生成固定值）"
+                )
+
+            # cors_origins 的默认值是 localhost（见字段定义）。生产忘配就会把真实
+            # 前端域名全部挡在门外——表现为"上线后所有接口跨域失败"，而这种故障
+            # 除了浏览器控制台几乎无迹可寻。宁可拒绝启动，也不要静默错配。
+            localhost_origins = [o for o in self.cors_origins_list if "localhost" in o or "127.0.0.1" in o]
+            if localhost_origins:
+                errors.append(
+                    "生产环境 CORS_ORIGINS 不能包含 localhost/127.0.0.1"
+                    f"（当前 {', '.join(localhost_origins)}）——请设为实际前端域名"
+                )
+
             if errors:
                 raise ValueError("不安全的生产配置: " + "; ".join(errors))
 

@@ -8,7 +8,7 @@ import { ParticipationTasks } from '@/components/ParticipationTasks';
 import { TopBar } from '@/components/TopBar';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Plus } from 'lucide-react';
 import {
   formatPct,
   relativeTime,
@@ -47,6 +47,17 @@ const SIGNAL_CHECKS: { key: string; label: string }[] = [
   { key: 'has_github', label: 'GitHub' },
   { key: 'has_twitter', label: '社媒' },
 ];
+
+const DIMENSIONS = [
+  { id: 'airdrop_signal', weight: '0.18' },
+  { id: 'narrative_timing', weight: '0.15' },
+  { id: 'execution', weight: '0.13' },
+  { id: 'team_reputation', weight: '0.12' },
+  { id: 'risk', weight: '0.12' },
+  { id: 'competition', weight: '0.10' },
+  { id: 'tokenomics', weight: '0.10' },
+  { id: 'transparency', weight: '0.10' },
+] as const;
 
 function num(v: unknown, fallback = 0): number {
   const n = typeof v === 'number' ? v : Number(v);
@@ -297,6 +308,7 @@ export default function ProjectPage() {
   const risk = project.risk || {};
   const tokenomics = project.tokenomics || {};
   const signals = (project.signals || {}) as Record<string, unknown>;
+  const subScores = (project.sub_scores ?? {}) as Record<string, number>;
   const heat = num(narrative.heat_score);
   const teamScore = num(team.score ?? team.team_score, 0.5);
   const tokenRisk = num(risk.token_risk, 0.5);
@@ -306,6 +318,9 @@ export default function ProjectPage() {
   const reasons = Array.isArray(project.reason) ? project.reason : [];
   const site = safeExternalUrl(project.url);
   const score = project.score ?? 0;
+  const evalTime = project.updated_at
+    ? new Date(project.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : '—';
 
   return (
     <>
@@ -323,6 +338,17 @@ export default function ProjectPage() {
           <ArrowLeft className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">返回</span>
         </Link>
+        <button
+          type="button"
+          className="btn-primary inline-flex items-center gap-1.5"
+          onClick={() => {
+            const el = document.getElementById('pd-participation');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          <span className="hidden sm:inline">记录参与</span>
+        </button>
       </TopBar>
 
     <div className="app-content animate-fade-in">
@@ -375,6 +401,14 @@ export default function ProjectPage() {
         </div>
 
         <div className="flex flex-wrap items-end gap-x-7 gap-y-4 lg:flex-col lg:items-end lg:text-right">
+          <div className="flex gap-7 lg:flex-col lg:gap-3.5">
+            {/* 「排名」原先写死为 1（后端无排名接口），任何项目都显示"排名第 1"，
+                属于误导信息 —— 直接不展示，改为展示真实的置信度 */}
+            <div className="pd-mini-stat">
+              <span className="pd-mini-value">评于 {evalTime}</span>
+              <span className="pd-mini-label">权威引擎 score-v1.4</span>
+            </div>
+          </div>
           <ScoreRing score={score} label={project.label} />
           <div className="min-w-[140px] lg:w-36">
             <div className="mb-1.5 flex justify-between gap-3 font-mono text-[11px] tracking-wide text-ink-muted">
@@ -510,6 +544,31 @@ export default function ProjectPage() {
             </div>
           </section>
 
+          {/* 8 dim scores */}
+          <section className="border-t border-line py-5">
+            <SecHead title="8 维子分" meta={project.weight_version || 'v1.2'} />
+            <div className="pd-dims">
+              {DIMENSIONS.map((dim) => {
+                const val = subScores[dim.id] ?? 0;
+                const pct = Math.round(val);
+                const fillClass = val >= 80 ? '' : val >= 65 ? 'pd-fill-70' : 'pd-fill-45';
+                return (
+                  <div className="pd-dim" key={dim.id}>
+                    <span className="pd-dim-name">{dim.id}</span>
+                    <span className="pd-dim-weight">×{dim.weight}</span>
+                    <div className="pd-dim-bar">
+                      <div className={`pd-dim-bar-fill ${fillClass}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="pd-dim-value">{val}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-xs text-ink-faint">
+              <span className="font-mono">{project.weight_version || 'v1.2'}</span> · 阈值 FARM≥65 / WATCH≥50
+            </p>
+          </section>
+
           {/* signals */}
           <section className="border-t border-line py-5">
             <SecHead title="可核验信号" meta="meta.signals" />
@@ -536,7 +595,7 @@ export default function ProjectPage() {
           </section>
 
           {/* participation */}
-          <section className="border-t border-line py-5">
+          <section id="pd-participation" className="border-t border-line py-5">
             <SecHead title="参与清单" meta="participation" />
             <ParticipationTasks projectId={project.id} />
           </section>

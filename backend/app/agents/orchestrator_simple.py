@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app import tracing as _tracing
 from app.agents.base import (
     AgentContext,
     AgentError,
@@ -31,29 +32,42 @@ from app.agents.tokenomics import TokenomicsAgent
 from app.config import settings
 from app.models import RunResponse
 from app.repository import ProjectRepository
+from app.tracing import end_span_with_error
 
 logger = structlog.get_logger(__name__)
 
 
 class SimpleOrchestrator:
-    """Simple MVP Orchestrator - Sequential project execution.
+    """Simple Orchestrator - Bounded parallel project execution (ADR-007 Level 1).
 
     Executes the complete pipeline for each project:
     - Runs 4 analysis agents in parallel per project
     - Runs Scorer to produce final score
     - Returns aggregated results
 
-    MVP constraint: Projects processed serially (no cross-project concurrency).
-    V2: Will add asyncio.Semaphore for bounded parallelism.
+    Concurrency (ADR-007):
+    - Level 1: Multiple projects run concurrently, bounded by an
+      asyncio.Semaphore (settings.max_concurrent_projects). A single project
+      failure is isolated and never blocks the rest of the batch.
+    - Level 2: Per-project agent parallelism via asyncio.gather (in
+      _run_single_project).
     """
 
-    def __init__(self):
-        """Initialize orchestrator with agents."""
+    def __init__(self, max_concurrent: int | None = None):
+        """Initialize orchestrator with agents and concurrency control.
+
+        Args:
+            max_concurrent: Maximum number of projects to process concurrently.
+                Defaults to settings.max_concurrent_projects.
+        """
         self.narrative = NarrativeAgent()
         self.team = TeamAgent()
         self.risk = RiskAgent()
         self.tokenomics = TokenomicsAgent()
         # Scorer initialized per-run with sector_counts
+        self._semaphore = asyncio.Semaphore(
+            max_concurrent if max_concurrent is not None else settings.max_concurrent_projects
+        )
 
     async def run_pipeline(
         self,
@@ -80,25 +94,61 @@ class SimpleOrchestrator:
         )
 
         # Calculate sector counts for competition scoring
+        # Merge batch counts with global DB counts (ADR-010 V2 cache)
         sector_counts = self._calculate_sector_counts(projects)
+        if save_to_db:
+            try:
+                repo = ProjectRepository()
+                global_counts = repo.global_sector_counts(sectors={s for s in sector_counts if s})
+                # 合并：DB 全库计数 + 当前批次 = 竞争度基准
+                for sector, db_count in global_counts.items():
+                    sector_counts[sector] = sector_counts.get(sector, 0) + db_count
+            except Exception as e:
+                logger.warning(
+                    "orchestrator.global_sector_counts_failed",
+                    run_id=context.run_id,
+                    error=str(e),
+                    fallback="batch_only_counts",
+                )
 
-        # Process each project sequentially (MVP)
-        states: list[PipelineState] = []
+        # Process projects with bounded concurrency (ADR-007 Level 1)
+        # Each project's exceptions are isolated — one failure never blocks others.
+        async def _process_with_semaphore(project: RawProject, idx: int) -> PipelineState:
+            async with self._semaphore:
+                logger.info(
+                    "orchestrator.project_start",
+                    run_id=context.run_id,
+                    project_id=project.id,
+                    project_name=project.name,
+                    progress=f"{idx + 1}/{len(projects)}",
+                )
+                try:
+                    return await self._run_single_project(project, context, sector_counts)
+                except Exception as e:
+                    # Safety net: _run_single_project already catches, but if
+                    # something escapes, don't let it kill the batch.
+                    logger.error(
+                        "orchestrator.project_unexpected_error",
+                        project_id=project.id,
+                        error=str(e),
+                    )
+                    state = PipelineState(project=project, context=context)
+                    state.add_error(
+                        AgentError(
+                            agent_name="orchestrator",
+                            kind="unexpected_error",
+                            message=str(e),
+                            project_id=project.id,
+                        )
+                    )
+                    return state
+
+        states: list[PipelineState] = await asyncio.gather(
+            *(_process_with_semaphore(p, i) for i, p in enumerate(projects)),
+            return_exceptions=False,  # exceptions are caught inside _run_single_project
+        )
         errors: list[dict[str, str]] = []
-
-        for idx, project in enumerate(projects):
-            logger.info(
-                "orchestrator.project_start",
-                run_id=context.run_id,
-                project_id=project.id,
-                project_name=project.name,
-                progress=f"{idx + 1}/{len(projects)}",
-            )
-
-            state = await self._run_single_project(project, context, sector_counts)
-            states.append(state)
-
-            # Collect errors
+        for state in states:
             for error in state.errors:
                 errors.append(error.to_dict())
 
@@ -169,6 +219,16 @@ class SimpleOrchestrator:
             persisted_project_rows=persisted_project_rows,
         )
 
+    async def _run_agent_span(self, agent_name: str, project_id: str, coro) -> Any:
+        """Wrap an agent coroutine with a named span."""
+        with _tracing.tracer.start_as_current_span(f"airdrop.agent.{agent_name}") as span:
+            span.set_attribute("project_id", project_id)
+            try:
+                return await coro
+            except Exception as exc:
+                end_span_with_error(span, exc)
+                raise
+
     async def _run_single_project(
         self,
         project: RawProject,
@@ -198,82 +258,105 @@ class SimpleOrchestrator:
             context=context,
         )
 
-        try:
-            # Stage 1: Run analysis agents in parallel
-            logger.info(
-                "orchestrator.analysis_start",
-                project_id=project.id,
-                project_name=project.name,
-            )
+        with _tracing.tracer.start_as_current_span("airdrop.project") as span:
+            span.set_attribute("project_id", project.id)
+            span.set_attribute("project_name", project.name)
+            span.set_attribute("run_id", context.run_id)
 
-            # Stage 1a: 独立 agent 并行执行（Risk 依赖 Tokenomics 结果，故拆到 1b）
-            stage1_results = await asyncio.gather(
-                self.narrative.run(state),
-                self.team.run(state),
-                self.tokenomics.run(state),
-                return_exceptions=True,
-            )
-            # Stage 1b: Tokenomics 就绪后再跑 Risk，保证 token_risk 用真实解锁数据
-            risk_result = await asyncio.gather(self.risk.run(state), return_exceptions=True)
+            try:
+                # Stage 1: Run analysis agents in parallel
+                logger.info(
+                    "orchestrator.analysis_start",
+                    project_id=project.id,
+                    project_name=project.name,
+                )
 
-            # Merge results back into state
-            # Note: Each agent modifies state in-place, so we just need to check for exceptions
-            results = [stage1_results[0], stage1_results[1], risk_result[0], stage1_results[2]]
-            agent_names = ["narrative", "team", "risk", "tokenomics"]
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    error = AgentError(
-                        agent_name=agent_names[idx],
-                        kind="execution_error",
-                        message=str(result),
-                        project_id=project.id,
-                    )
-                    state.add_error(error)
+                # Stage 1a: 独立 agent 并行执行（Risk 依赖 Tokenomics 结果，故拆到 1b）
+                stage1_results = await asyncio.gather(
+                    self._run_agent_span("narrative", project.id, self.narrative.run(state)),
+                    self._run_agent_span("team", project.id, self.team.run(state)),
+                    self._run_agent_span("tokenomics", project.id, self.tokenomics.run(state)),
+                    return_exceptions=True,
+                )
+                # Stage 1b: Tokenomics 就绪后再跑 Risk，保证 token_risk 用真实解锁数据
+                risk_result = await asyncio.gather(
+                    self._run_agent_span("risk", project.id, self.risk.run(state)),
+                    return_exceptions=True,
+                )
 
-            analysis_duration = (time.time() - state_start) * 1000
-            logger.info(
-                "orchestrator.analysis_complete",
-                project_id=project.id,
-                duration_ms=analysis_duration,
-                narrative_present=state.narrative is not None,
-                team_present=state.team is not None,
-                risk_present=state.risk is not None,
-                tokenomics_present=state.tokenomics is not None,
-            )
+                # Merge results back into state
+                # Note: Each agent modifies state in-place, so we just need to check for exceptions
+                results = [stage1_results[0], stage1_results[1], risk_result[0], stage1_results[2]]
+                agent_names = ["narrative", "team", "risk", "tokenomics"]
+                for idx, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        error = AgentError(
+                            agent_name=agent_names[idx],
+                            kind="execution_error",
+                            message=str(result),
+                            project_id=project.id,
+                        )
+                        state.add_error(error)
 
-            # Stage 2: Run Scorer
-            scorer = ScorerAgent(sector_counts=sector_counts)
-            state = await scorer.run(state)
+                analysis_duration = (time.time() - state_start) * 1000
+                logger.info(
+                    "orchestrator.analysis_complete",
+                    project_id=project.id,
+                    duration_ms=analysis_duration,
+                    narrative_present=state.narrative is not None,
+                    team_present=state.team is not None,
+                    risk_present=state.risk is not None,
+                    tokenomics_present=state.tokenomics is not None,
+                )
 
-            # Mark completion
-            state.completed_at = datetime.now(UTC)
+                # Stage 2: Run Scorer
+                scorer = ScorerAgent(sector_counts=sector_counts)
+                with _tracing.tracer.start_as_current_span("airdrop.agent.scorer") as scorer_span:
+                    scorer_span.set_attribute("project_id", project.id)
+                    try:
+                        state = await scorer.run(state)
+                    except Exception as exc:
+                        end_span_with_error(scorer_span, exc)
+                        raise
+                    if state.score is not None:
+                        scorer_span.set_attribute("score", state.score)
+                        scorer_span.set_attribute("label", state.label or "")
 
-            total_duration = (time.time() - state_start) * 1000
-            logger.info(
-                "orchestrator.project_complete",
-                project_id=project.id,
-                project_name=project.name,
-                score=state.score,
-                label=state.label,
-                confidence=state.confidence,
-                duration_ms=total_duration,
-            )
+                # Mark completion
+                state.completed_at = datetime.now(UTC)
 
-        except Exception as e:
-            # Catch any unexpected errors
-            error = AgentError(
-                agent_name="orchestrator",
-                kind="unexpected_error",
-                message=str(e),
-                project_id=project.id,
-            )
-            state.add_error(error)
+                total_duration = (time.time() - state_start) * 1000
+                span.set_attribute("score", state.score)
+                span.set_attribute("label", state.label or "")
+                span.set_attribute("duration_ms", total_duration)
 
-            logger.error(
-                "orchestrator.project_failed",
-                project_id=project.id,
-                error=str(e),
-            )
+                logger.info(
+                    "orchestrator.project_complete",
+                    project_id=project.id,
+                    project_name=project.name,
+                    score=state.score,
+                    label=state.label,
+                    confidence=state.confidence,
+                    duration_ms=total_duration,
+                )
+
+            except Exception as e:
+                # Catch any unexpected errors
+                error = AgentError(
+                    agent_name="orchestrator",
+                    kind="unexpected_error",
+                    message=str(e),
+                    project_id=project.id,
+                )
+                state.add_error(error)
+
+                end_span_with_error(span, e)
+
+                logger.error(
+                    "orchestrator.project_failed",
+                    project_id=project.id,
+                    error=str(e),
+                )
 
         return state
 

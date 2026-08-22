@@ -30,7 +30,9 @@ POSTGRES_INIT_ADVISORY_LOCK_ID = 7_314_738_183_274_209_024
 
 
 def is_postgres() -> bool:
-    """True when DATABASE_URL points at PostgreSQL."""
+    """True when DATABASE_URL points at PostgreSQL or DB_BACKEND=postgres."""
+    if getattr(settings, "db_backend", "") == "postgres":
+        return True
     url = (settings.database_url or "").strip()
     return url.startswith("postgresql://") or url.startswith("postgres://")
 
@@ -452,6 +454,142 @@ def _sqlite_ddl() -> str:
                 collected_at       TIMESTAMP NOT NULL
             );
 
+            -- 用户 Watchlist（ADR-008 V2）
+            CREATE TABLE IF NOT EXISTS watchlist (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
+                note        TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, user_id)
+            );
+
+            -- 通知已读状态（按用户 + 稳定 notification_id）
+            CREATE TABLE IF NOT EXISTS notification_reads (
+                user_id          TEXT NOT NULL,
+                notification_id  TEXT NOT NULL,
+                read_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, notification_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notification_reads_user
+                ON notification_reads(user_id);
+
+            -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
+            CREATE TABLE IF NOT EXISTS weight_changelog (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_version    TEXT,
+                to_version      TEXT,
+                weights_json    TEXT NOT NULL,
+                sample_size     INTEGER,
+                metrics_json    TEXT,
+                triggered_by    TEXT,
+                status          TEXT DEFAULT 'candidate',
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- ── V2 新表（§5.4） ──────────────────────
+            CREATE TABLE IF NOT EXISTS quarantine (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id      TEXT,
+                raw_data        TEXT NOT NULL,
+                failure_reason  TEXT NOT NULL,
+                severity        TEXT DEFAULT 'warning',
+                status          TEXT DEFAULT 'pending',
+                resolved_at     TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS project_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id      TEXT NOT NULL,
+                run_id          TEXT NOT NULL,
+                score           INTEGER,
+                label           TEXT,
+                stage           TEXT,
+                weight_version  TEXT,
+                snapshot        TEXT NOT NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                action      TEXT NOT NULL,
+                "user"      TEXT NOT NULL,
+                detail      TEXT,
+                ip          TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS llm_eval_changelog (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                eval_date       TIMESTAMP NOT NULL,
+                sample_count    INTEGER NOT NULL,
+                rule_accuracy   REAL NOT NULL,
+                llm_accuracy    REAL NOT NULL,
+                llm_cost_usd    REAL NOT NULL,
+                decision        TEXT NOT NULL,
+                detail          TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS metrics (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id      TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                detail      TEXT,
+                timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS narratives (
+                sector      TEXT PRIMARY KEY,
+                aliases     TEXT,
+                base_heat   REAL,
+                stage       TEXT,
+                momentum    REAL,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS dedup_keys (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                dedup_key   TEXT UNIQUE NOT NULL,
+                project_id  TEXT NOT NULL,
+                name_raw    TEXT NOT NULL,
+                sector_raw  TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name  TEXT NOT NULL,
+                prompt_key  TEXT NOT NULL,
+                version     TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                is_default  INTEGER DEFAULT 0,
+                created_by  TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 归档运行历史：每次 RawDataArchiver.run() 记一行。
+            -- 此前归档只有手动脚本、跑完不留痕，前端 /archive 页因此只能显示
+            -- "暂无运行历史接口"。
+            CREATE TABLE IF NOT EXISTS archive_runs (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at              TIMESTAMP NOT NULL,
+                finished_at             TIMESTAMP NOT NULL,
+                duration_ms             INTEGER DEFAULT 0,
+                trigger                 TEXT NOT NULL,
+                dry_run                 INTEGER DEFAULT 0,
+                status                  TEXT NOT NULL,
+                raw_archived            INTEGER DEFAULT 0,
+                unprocessed_archived    INTEGER DEFAULT 0,
+                signals_archived        INTEGER DEFAULT 0,
+                logs_deleted            INTEGER DEFAULT 0,
+                raw_archive_pruned      INTEGER DEFAULT 0,
+                signals_archive_pruned  INTEGER DEFAULT 0,
+                error_message           TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -473,8 +611,11 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
             CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
             CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON raw_projects_archive(archived_at);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_archived_at ON project_signals_archive(archived_at);
+            CREATE INDEX IF NOT EXISTS idx_archive_runs_started ON archive_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
             CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
@@ -490,6 +631,29 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_run_source ON opportunity_economic_snapshots(run_id, source_id);
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_identity ON opportunity_economic_snapshots(source_id, dedup_key);
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_collected ON opportunity_economic_snapshots(collected_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_watchlist_project ON watchlist(project_id);
+            CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
+            CREATE INDEX IF NOT EXISTS idx_weight_changelog_created ON weight_changelog(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_feedback_signal ON feedback(signal);
+            CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine(status);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_reason ON quarantine(failure_reason);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_created ON quarantine(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_project_history_project ON project_history(project_id);
+            CREATE INDEX IF NOT EXISTS idx_project_history_run ON project_history(run_id);
+            CREATE INDEX IF NOT EXISTS idx_project_history_created ON project_history(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+            CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs("user");
+            CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_llm_eval_date ON llm_eval_changelog(eval_date DESC);
+            CREATE INDEX IF NOT EXISTS idx_metrics_run_id ON metrics(run_id);
+            CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(metric_name);
+            CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_narratives_stage ON narratives(stage);
+            CREATE INDEX IF NOT EXISTS idx_dedup_key ON dedup_keys(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_dedup_project ON dedup_keys(project_id);
+            CREATE INDEX IF NOT EXISTS idx_prompt_agent ON prompt_versions(agent_name);
+            CREATE INDEX IF NOT EXISTS idx_prompt_version ON prompt_versions(agent_name, version);
     """
 
 
@@ -710,6 +874,140 @@ def _postgres_ddl() -> str:
                 collected_at       TIMESTAMPTZ NOT NULL
             );
 
+            -- 用户 Watchlist（ADR-008 V2）
+            CREATE TABLE IF NOT EXISTS watchlist (
+                id          SERIAL PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
+                note        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, user_id)
+            );
+
+            -- 通知已读状态（按用户 + 稳定 notification_id）
+            CREATE TABLE IF NOT EXISTS notification_reads (
+                user_id          TEXT NOT NULL,
+                notification_id  TEXT NOT NULL,
+                read_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, notification_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notification_reads_user
+                ON notification_reads(user_id);
+
+            -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
+            CREATE TABLE IF NOT EXISTS weight_changelog (
+                id              SERIAL PRIMARY KEY,
+                from_version    TEXT,
+                to_version      TEXT,
+                weights_json    TEXT NOT NULL,
+                sample_size     INTEGER,
+                metrics_json    TEXT,
+                triggered_by    TEXT,
+                status          TEXT DEFAULT 'candidate',
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- ── V2 新表（§5.4） ──────────────────────
+            CREATE TABLE IF NOT EXISTS quarantine (
+                id              SERIAL PRIMARY KEY,
+                project_id      TEXT,
+                raw_data        TEXT NOT NULL,
+                failure_reason  TEXT NOT NULL,
+                severity        TEXT DEFAULT 'warning',
+                status          TEXT DEFAULT 'pending',
+                resolved_at     TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS project_history (
+                id              SERIAL PRIMARY KEY,
+                project_id      TEXT NOT NULL,
+                run_id          TEXT NOT NULL,
+                score           INTEGER,
+                label           TEXT,
+                stage           TEXT,
+                weight_version  TEXT,
+                snapshot        TEXT NOT NULL,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id          SERIAL PRIMARY KEY,
+                action      TEXT NOT NULL,
+                "user"      TEXT NOT NULL,
+                detail      TEXT,
+                ip          TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS llm_eval_changelog (
+                id              SERIAL PRIMARY KEY,
+                eval_date       TIMESTAMPTZ NOT NULL,
+                sample_count    INTEGER NOT NULL,
+                rule_accuracy   REAL NOT NULL,
+                llm_accuracy    REAL NOT NULL,
+                llm_cost_usd    REAL NOT NULL,
+                decision        TEXT NOT NULL,
+                detail          TEXT,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS metrics (
+                id          SERIAL PRIMARY KEY,
+                run_id      TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                detail      TEXT,
+                timestamp   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS narratives (
+                sector      TEXT PRIMARY KEY,
+                aliases     TEXT,
+                base_heat   REAL,
+                stage       TEXT,
+                momentum    REAL,
+                updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS dedup_keys (
+                id          SERIAL PRIMARY KEY,
+                dedup_key   TEXT UNIQUE NOT NULL,
+                project_id  TEXT NOT NULL,
+                name_raw    TEXT NOT NULL,
+                sector_raw  TEXT NOT NULL,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id          SERIAL PRIMARY KEY,
+                agent_name  TEXT NOT NULL,
+                prompt_key  TEXT NOT NULL,
+                version     TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                is_default  INTEGER DEFAULT 0,
+                created_by  TEXT NOT NULL,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 归档运行历史（见 SQLite 分支同名表的注释）
+            CREATE TABLE IF NOT EXISTS archive_runs (
+                id                      SERIAL PRIMARY KEY,
+                started_at              TIMESTAMPTZ NOT NULL,
+                finished_at             TIMESTAMPTZ NOT NULL,
+                duration_ms             INTEGER DEFAULT 0,
+                trigger                 TEXT NOT NULL,
+                dry_run                 INTEGER DEFAULT 0,
+                status                  TEXT NOT NULL,
+                raw_archived            INTEGER DEFAULT 0,
+                unprocessed_archived    INTEGER DEFAULT 0,
+                signals_archived        INTEGER DEFAULT 0,
+                logs_deleted            INTEGER DEFAULT 0,
+                raw_archive_pruned      INTEGER DEFAULT 0,
+                signals_archive_pruned  INTEGER DEFAULT 0,
+                error_message           TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -731,8 +1029,11 @@ def _postgres_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status);
             CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
             CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON raw_projects_archive(archived_at);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
             CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_archive_archived_at ON project_signals_archive(archived_at);
+            CREATE INDEX IF NOT EXISTS idx_archive_runs_started ON archive_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project_id);
             CREATE INDEX IF NOT EXISTS idx_feedback_outcome ON feedback(outcome) WHERE outcome IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
@@ -748,6 +1049,29 @@ def _postgres_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_run_source ON opportunity_economic_snapshots(run_id, source_id);
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_identity ON opportunity_economic_snapshots(source_id, dedup_key);
             CREATE INDEX IF NOT EXISTS idx_opportunity_economic_snapshots_collected ON opportunity_economic_snapshots(collected_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_watchlist_project ON watchlist(project_id);
+            CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
+            CREATE INDEX IF NOT EXISTS idx_weight_changelog_created ON weight_changelog(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_feedback_signal ON feedback(signal);
+            CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine(status);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_reason ON quarantine(failure_reason);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_created ON quarantine(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_project_history_project ON project_history(project_id);
+            CREATE INDEX IF NOT EXISTS idx_project_history_run ON project_history(run_id);
+            CREATE INDEX IF NOT EXISTS idx_project_history_created ON project_history(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+            CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs("user");
+            CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_llm_eval_date ON llm_eval_changelog(eval_date DESC);
+            CREATE INDEX IF NOT EXISTS idx_metrics_run_id ON metrics(run_id);
+            CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(metric_name);
+            CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_narratives_stage ON narratives(stage);
+            CREATE INDEX IF NOT EXISTS idx_dedup_key ON dedup_keys(dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_dedup_project ON dedup_keys(project_id);
+            CREATE INDEX IF NOT EXISTS idx_prompt_agent ON prompt_versions(agent_name);
+            CREATE INDEX IF NOT EXISTS idx_prompt_version ON prompt_versions(agent_name, version);
     """
 
 

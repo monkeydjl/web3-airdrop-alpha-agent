@@ -360,18 +360,11 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         def register(self, c: object) -> None:
             self.collectors.append(c)
 
-    class _CollSched:
-        def __init__(self, registry: object, on_collection: object) -> None:  # noqa: ARG002
+    class _UnifiedSched:
+        def __init__(self, registry: object, on_collection: object = None) -> None:  # noqa: ARG002
             self.on_collection = on_collection
             schedulers.append(self)
 
-        def start(self) -> None:
-            return None
-
-        def shutdown(self, *, wait: bool) -> None:  # noqa: ARG002
-            return None
-
-    class _AnalSched:
         def start(self) -> None:
             return None
 
@@ -399,8 +392,7 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         main_module.settings.collection_auto_run_enabled = False
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(main_module, "get_default_registry", lambda: _Reg()))
-            stack.enter_context(patch.object(main_module, "CollectionScheduler", _CollSched))
-            stack.enter_context(patch.object(main_module, "AnalysisScheduler", _AnalSched))
+            stack.enter_context(patch.object(main_module, "UnifiedScheduler", _UnifiedSched))
             stack.enter_context(patch.object(main_module, "CollectionRepository", _PersistRepo))
             stack.enter_context(patch.object(main_module, "init_db", lambda: None))
             stack.enter_context(

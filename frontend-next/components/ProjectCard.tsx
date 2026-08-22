@@ -1,9 +1,9 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
-import { formatPct, sourceZh, stageZh, tierZh } from '@/lib/format';
+import { formatPct, reasonTone, sourceZh, stageZh, tierZh } from '@/lib/format';
 
 export function ProjectCard({ project, rank }: { project: Project; rank?: number }) {
   return (
@@ -40,9 +40,18 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
       </div>
 
       {project.reason?.length ? (
-        <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-ink-faint">
-          {project.reason.slice(0, 2).join(' · ')}
-        </p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {project.reason.slice(0, 2).map((r, i) => {
+            const tone = reasonTone(r);
+            const sign = tone === 'pos' ? '+' : tone === 'neg' ? '−' : tone === 'warn' ? '!' : '·';
+            return (
+              <span key={i} className="reason-chip">
+                <span className={`reason-sign reason-${tone}`}>{sign}</span>
+                <span className="truncate min-w-0">{r}</span>
+              </span>
+            );
+          })}
+        </div>
       ) : (
         <p className="mt-3 text-xs text-ink-faint">置信度 {formatPct(project.confidence ?? 0)}</p>
       )}

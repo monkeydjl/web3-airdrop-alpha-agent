@@ -101,6 +101,13 @@ log/
 data/cache/
 data/tmp/
 data/processed/
+# pytest 临时工作目录（测试 fixture 生成，偶发文件锁会干扰 git/rg 扫描）
+data/tmp2/
+data/pytest_tmp/
+.pytest_workdir/
+backend/.pytest_tmp/
+# fetcher 磁盘缓存（§10.1）
+backend/cache/
 backups/
 !backups/.gitkeep
 
@@ -165,3 +172,8 @@ tmp-*
 # Pytest coverage in CI
 coverage.lcov
 junit-*.xml
+
+# UTF-8 修复中间产物（scripts/repair_utf8_docs.py 生成）
+# .partial 是含占位符的半成品，不该进仓库；选择题清单是过程文件。
+*.md.partial
+docs/_utf8_worklist.json

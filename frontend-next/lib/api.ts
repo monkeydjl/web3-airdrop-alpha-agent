@@ -1,4 +1,4 @@
-﻿export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
 
 export interface ApiResponse<T> {
   ok: boolean;
@@ -16,6 +16,15 @@ export function isAbortError(err: unknown): boolean {
   );
 }
 
+/**
+ * 鉴权由服务端的 `proxy.ts` 注入 X-API-Key（读服务端环境变量 BACKEND_API_KEY /
+ * API_KEY），密钥不出服务端。
+ *
+ * **刻意不再支持 NEXT_PUBLIC_API_KEY 客户端兜底**：Next.js 会把所有
+ * `NEXT_PUBLIC_*` 变量内联进浏览器 bundle，任何访客都能在 DevTools 里读到管理员
+ * 密钥——那等于把鉴权直接送人。需要本地直连后端调试时，请让后端 API_KEY 留空
+ * （MVP 无鉴权模式），而不是把密钥暴露给浏览器。
+ */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   let res: Response;

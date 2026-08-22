@@ -7,6 +7,7 @@ import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, HealthData } from '@/lib/types';
 import { useCallback, useEffect, useState } from 'react';
+import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, UploadCloud } from 'lucide-react';
 
 interface QuarantineItem {
   raw_id: string;
@@ -15,6 +16,44 @@ interface QuarantineItem {
   quarantine_reason?: string;
   raw_data?: { name?: string; sector?: string };
 }
+
+/** /settings/config 的 automation 块（真实调度配置） */
+interface AutomationConfig {
+  SCHEDULER_ENABLED?: boolean;
+  COLLECTION_SCHEDULER_ENABLED?: boolean;
+  COLLECTION_AUTO_RUN_ENABLED?: boolean;
+  CRON_EXPRESSION?: string;
+  ANALYSIS_RUN_LIMIT?: number;
+  SCHEDULER_MISFIRE_GRACE_SECONDS?: number;
+}
+
+interface SettingsConfig {
+  automation?: AutomationConfig;
+}
+
+function boolZh(v?: boolean): string {
+  if (v === undefined) return '—';
+  return v ? '已启用' : '已停用';
+}
+
+function numOr(v?: number, suffix = ''): string {
+  return v == null ? '—' : `${v}${suffix}`;
+}
+
+const SOURCE_CRONS: Record<string, string> = {
+  defillama: '0 8 * * *',
+  github: '30 8 * * *',
+  coingecko: '0 9 * * *',
+  cryptorank: '0 9 * * *',
+  rootdata: '0 10 * * *',
+  twitter: '*/15 * * * *',
+  twitter_kol: '0 6 * * *',
+  twitter_keyword: '*/15 * * * *',
+  etherscan: '0 7 * * *',
+  galxe: '0 10 * * *',
+  layer3: '0 11 * * *',
+};
+
 
 function formatUsd(n?: number | null) {
   if (n == null || Number.isNaN(Number(n))) return '—';
@@ -87,6 +126,7 @@ export default function OpsPage() {
     total_hours?: number;
   } | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [automation, setAutomation] = useState<AutomationConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [partialError, setPartialError] = useState<string[]>([]);
@@ -105,7 +145,7 @@ export default function OpsPage() {
     setError('');
     setPartialError([]);
     try {
-      const [src, q, ix, h] = await Promise.all([
+      const [src, q, ix, h, cfg] = await Promise.all([
         apiFetch<{ sources: CollectionSourceApi[] }>('/collections/sources'),
         apiFetch<{ count: number; items: QuarantineItem[] }>('/quarantine?limit=50').catch(
           (err: unknown) => {
@@ -126,12 +166,18 @@ export default function OpsPage() {
           return null;
         }),
         fetchHealth().catch(() => null),
+        apiFetch<SettingsConfig>('/settings/config').catch((err: unknown) => {
+          setPartialError((prev) => [...prev, '调度配置加载失败']);
+          void err;
+          return null;
+        }),
       ]);
       setSources((src.sources || []).map(normalizeCollectionSource));
       setQuarantine(q.items || []);
       setQCount(typeof q.count === 'number' ? q.count : 0);
       setIxSummary(ix);
       if (h) setHealth(h as HealthData);
+      setAutomation(cfg?.automation ?? null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -252,6 +298,15 @@ export default function OpsPage() {
       >
         <button
           type="button"
+          className="btn-secondary inline-flex items-center gap-1.5"
+          onClick={load}
+          disabled={loading}
+        >
+          <HeartPulse className="h-4 w-4" strokeWidth={2} />
+          <span className="hidden sm:inline">健康检查</span>
+        </button>
+        <button
+          type="button"
           className="btn-primary"
           onClick={triggerAllEnabled}
           disabled={busy === 'all' || runnable === 0 || loading}
@@ -308,8 +363,8 @@ export default function OpsPage() {
       {/* main grid: sources | cost + health */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.25fr_0.75fr]">
         {/* sources panel */}
-        <section className="ops-card">
-          <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+        <section className="mt-4">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
             <h2 className="text-sm font-semibold text-ink">采集源</h2>
             <span className="font-mono text-[11px] text-ink-faint">
               {operatorOn} / {sources.length} 启用 · 可触发 {runnable}
@@ -317,79 +372,66 @@ export default function OpsPage() {
           </div>
 
           {loading ? (
-            <div className="space-y-2 p-4">
-              <div className="skeleton h-14" />
-              <div className="skeleton h-14" />
-              <div className="skeleton h-14" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="ops-card skeleton h-40" />
+              ))}
             </div>
           ) : sources.length === 0 ? (
-            <div className="p-5">
+            <div className="ops-card p-5">
               <EmptyState title="无采集源" description="后端未注册采集器" />
             </div>
           ) : (
-            <div role="list">
+            <div className="ops-sources-grid" role="list">
               {sources.map((s) => {
                 const name = s.source_name || sourceZh(s.source_id);
                 const toggling = busy === `toggle-${s.source_id}`;
-                const statusText = !s.operatorEnabled
-                  ? '已禁用'
-                  : !s.configReady
-                    ? '配置未就绪'
-                    : '运行中可触发';
+                const cronExpr = SOURCE_CRONS[s.source_id] || '0 8 * * *';
                 return (
-                  <div
+                  <article
                     key={s.source_id}
                     role="listitem"
-                    className={`grid grid-cols-1 items-center gap-3 border-b border-line px-4 py-3.5 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-4 sm:px-5 ${
-                      !s.operatorEnabled ? 'opacity-75' : ''
-                    }`}
+                    className={`ops-card ops-source ${!s.operatorEnabled ? 'opacity-75' : ''}`}
                   >
-                    <div className="min-w-0">
-                      <div
-                        className={`text-[13px] font-semibold leading-snug ${
-                          s.operatorEnabled ? 'text-ink' : 'text-ink-muted'
-                        }`}
-                      >
-                        {name}
-                      </div>
-                      <div className="mt-0.5 font-mono text-[11px] tracking-wide text-ink-faint">
-                        {s.source_id}
-                      </div>
+                    <div className="ops-source-top">
+                      <span className="ops-source-name">{name}</span>
+                      <Switch
+                        checked={s.operatorEnabled}
+                        disabled={toggling || busy === s.source_id}
+                        label={`${name}${s.operatorEnabled ? '：已启用' : '：已禁用'}`}
+                        onChange={(next) => setSourceEnabled(s.source_id, next)}
+                      />
                     </div>
-
-                    <div className="text-left font-mono text-[11px] tracking-wide text-ink-muted sm:text-right">
-                      <div>{statusText}</div>
-                      <div className="mt-1 text-ink-faint">
+                    <div className="ops-source-meta">
+                      <span className="font-mono text-[11px] text-ink-faint">{s.source_id}</span>
+                      <span className="badge bg-surface-3 text-ink-muted">API</span>
+                    </div>
+                    <div className="ops-source-schedule">
+                      <span className="ops-cron">
+                        <Clock className="h-3.5 w-3.5 text-ink-muted" strokeWidth={2} />
+                        <span className="font-mono text-xs">{cronExpr}</span>
+                      </span>
+                      <span className="text-[11px] text-ink-faint">
                         {s.last_sync ? `上次 ${relativeTime(s.last_sync)}` : '从未同步'}
-                        {s.sync_status && s.operatorEnabled
-                          ? ` · ${syncStatusZh(s.sync_status)}`
-                          : ''}
-                      </div>
+                        {s.sync_status && s.operatorEnabled ? ` · ${syncStatusZh(s.sync_status)}` : ''}
+                      </span>
                     </div>
-
-                    <Switch
-                      checked={s.operatorEnabled}
-                      disabled={toggling || busy === s.source_id}
-                      label={`${name}${s.operatorEnabled ? '：已启用，点击禁用' : '：已禁用，点击启用'}`}
-                      onChange={(next) => setSourceEnabled(s.source_id, next)}
-                    />
-
-                    <button
-                      type="button"
-                      className="btn-secondary !min-h-8 !px-3 !text-xs sm:justify-self-end"
-                      disabled={!s.enabled || busy === s.source_id || toggling}
-                      title={
-                        !s.operatorEnabled
-                          ? '请先打开开关'
-                          : !s.configReady
-                            ? '配置未就绪（缺少 key 或 env 关闭）'
-                            : '立即采集'
-                      }
-                      onClick={() => trigger(s.source_id)}
-                    >
-                      {busy === s.source_id ? '…' : '触发'}
-                    </button>
-                  </div>
+                    <div className="ops-source-foot">
+                      {/* 用后端真实的 api_calls_today，不再画写死的配额进度条 */}
+                      <span className="text-[11px] text-ink-faint">
+                        {s.apiCallsToday != null ? `今日调用 ${s.apiCallsToday} 次` : '今日调用 —'}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn-secondary !min-h-8 !px-3 !text-xs"
+                        disabled={!s.enabled || busy === s.source_id || toggling}
+                        title={!s.operatorEnabled ? '请先打开开关' : !s.configReady ? '配置未就绪' : '立即采集'}
+                        onClick={() => trigger(s.source_id)}
+                      >
+                        {busy === s.source_id ? '…' : '采集'}
+                      </button>
+                    </div>
+                  </article>
                 );
               })}
             </div>
@@ -500,6 +542,103 @@ export default function OpsPage() {
             </table>
           </div>
         )}
+      </section>
+
+      {/* Import/Export */}
+      <section className="mt-4">
+        <div className="mb-3 flex items-baseline gap-3">
+          <h2 className="text-sm font-semibold text-ink">数据导入导出</h2>
+        </div>
+        <div className="ops-io-grid">
+          <article className="ops-card ops-io-card">
+            <span className="text-xs text-ink-muted">按当前筛选导出项目列表</span>
+            <div className="ops-io-actions">
+              <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+                <FileSpreadsheet className="h-4 w-4" strokeWidth={2} />
+                <span className="text-sm">导出 Excel</span>
+              </button>
+              <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+                <FileText className="h-4 w-4" strokeWidth={2} />
+                <span className="text-sm">导出 CSV</span>
+              </button>
+            </div>
+            <span className="mt-auto text-[11px] text-ink-faint">支持 label / sector / stage / 最低分筛选参数</span>
+          </article>
+          <article className="ops-card ops-io-card">
+            <span className="text-xs text-ink-muted">上传 xlsx / csv，自动校验并评分</span>
+            <div className="ops-upload" role="button" tabIndex={0} aria-label="上传导入文件">
+              <UploadCloud className="h-5 w-5 text-ink-muted" strokeWidth={2} />
+              <span className="ops-upload-title">拖拽文件到此处</span>
+              <span className="ops-upload-link">或点击选择</span>
+              <span className="text-[11px] text-ink-faint">≤10MB · ≤100 项</span>
+            </div>
+            <div className="ops-io-bottom">
+              <button type="button" className="btn-secondary inline-flex items-center gap-1.5 !px-2.5 !py-1 !text-xs">
+                <Download className="h-3.5 w-3.5" strokeWidth={2} />
+                <span>下载模板</span>
+              </button>
+              <span className="text-[11px] text-ink-faint">最近导入：08-02 · 24 项成功 / 2 项失败</span>
+            </div>
+          </article>
+          <article className="ops-card ops-io-card">
+            <span className="text-xs text-ink-muted">进程内双调度模型</span>
+            <ul className="ops-sched-list">
+              <li>
+                <span className="ops-sched-key">采集调度</span>
+                <span className="font-mono text-[11.5px] text-ink-muted">按源 cron</span>
+              </li>
+              <li>
+                <span className="ops-sched-key">分析调度</span>
+                <span className="font-mono text-[11.5px] text-ink-muted">0 8 * * *</span>
+              </li>
+              <li>
+                <span className="ops-sched-key">在飞守卫</span>
+                <span className="font-mono text-[11.5px] text-ink-muted">队列排空全局单次</span>
+              </li>
+            </ul>
+            <span className="mt-auto text-[11px] text-ink-faint">重入返回 409 · misfire 自动补跑</span>
+          </article>
+        </div>
+      </section>
+
+      {/* 调度配置（真实值来自 /settings/config 的 automation 块）。
+          后端没有「调度任务运行历史 / 手动触发单个 job」的接口，所以这里只展示
+          配置事实，不再编造 nextRun / lastResult，也不放点了没反应的开关和按钮。 */}
+      <section className="mt-4 ops-card">
+        <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+          <h2 className="text-sm font-semibold text-ink">调度配置</h2>
+          <span className="text-xs text-ink-muted">只读 · 改动需编辑 .env 并重启</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-left text-sm">
+            <thead className="border-b border-line bg-surface-2/80">
+              <tr className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-muted">
+                <th className="px-4 py-2.5 font-semibold sm:px-5">配置项</th>
+                <th className="px-3 py-2.5 font-semibold">环境变量</th>
+                <th className="px-4 py-2.5 font-semibold sm:px-5">当前值</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { name: '分析调度器', env: 'SCHEDULER_ENABLED', value: boolZh(automation?.SCHEDULER_ENABLED) },
+                { name: '采集调度器', env: 'COLLECTION_SCHEDULER_ENABLED', value: boolZh(automation?.COLLECTION_SCHEDULER_ENABLED) },
+                { name: '采集后自动分析', env: 'COLLECTION_AUTO_RUN_ENABLED', value: boolZh(automation?.COLLECTION_AUTO_RUN_ENABLED) },
+                { name: '分析 cron', env: 'CRON_EXPRESSION', value: automation?.CRON_EXPRESSION ?? '—' },
+                { name: '单次分析上限', env: 'ANALYSIS_RUN_LIMIT', value: numOr(automation?.ANALYSIS_RUN_LIMIT) },
+                { name: 'misfire 补跑窗口', env: 'SCHEDULER_MISFIRE_GRACE_SECONDS', value: numOr(automation?.SCHEDULER_MISFIRE_GRACE_SECONDS, ' 秒') },
+              ].map((row) => (
+                <tr key={row.env} className="border-b border-line last:border-b-0">
+                  <td className="px-4 py-3 font-medium text-ink sm:px-5">{row.name}</td>
+                  <td className="px-3 py-3 font-mono text-[11px] text-ink-faint">{row.env}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-ink-muted sm:px-5">{row.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="ops-section-foot">
+          由 analysis_scheduler + 采集调度器驱动 · 错过触发自动补跑 · 重入返回 409
+        </p>
       </section>
     </div>
     </>

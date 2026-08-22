@@ -1,0 +1,32 @@
+# Alertmanager 配置
+# 引用：docker-compose.prod.yml（alertmanager 服务）
+# 通知渠道：Telegram（原生 telegram_configs）
+# 在 .env 中设置 TELEGRAM_BOT_TOKEN 与 TELEGRAM_CHAT_ID
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'job']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'telegram'
+
+receivers:
+  - name: 'telegram'
+    telegram_configs:
+      # 占位符会在容器启动时由脚本替换为 .env 中的真实值（不落盘、不进 git）。
+      # 不写引号：chat_id 是 int64，替换后必须是无引号的数字才能通过 YAML 解析
+      - bot_token: __TELEGRAM_BOT_TOKEN__
+        chat_id: __TELEGRAM_CHAT_ID__
+        api_url: 'https://api.telegram.org'
+        parse_mode: 'HTML'
+        send_resolved: true
+        message: |
+          🚨 <b>Web3 Airdrop Alpha - Alert</b>
+
+          {{ range .Alerts }}
+          <b>{{ .Labels.severity | upper }}</b>: {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}

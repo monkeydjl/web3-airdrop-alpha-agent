@@ -14,7 +14,7 @@ on:
     branches: [master, main]
 
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.12"
   PYTHON_VERSION_FILE: "backend/requirements.txt"
 
 concurrency:
@@ -39,15 +39,15 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             backend/requirements.txt
+            backend/requirements-dev.txt
             pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          # 装锁定版本的 dev 依赖（含 ruff），不再散装 `pip install ruff` ——
+          # 散装等于不锁版本，本地绿 CI 红多半由此而来
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run ruff check
         run: python -m ruff check .
@@ -75,15 +75,14 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             backend/requirements.txt
+            backend/requirements-dev.txt
             pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-          pip install pytest pytest-cov
+          # pytest / pytest-cov 已锁定在 requirements-dev.txt 里，不再散装安装
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run full backend test suite
         run: >-
@@ -103,6 +102,56 @@ jobs:
         with:
           name: coverage-report
           path: backend/coverage.xml
+
+  # ── Phase 2b: Coverage Gate ──────────────
+  #
+  # 为什么单独拆一个 job：`master` 的分支保护把 `Coverage Gate` 列为必过检查，
+  # 但仓库里从来没有任何 job 叫这个名字 —— 覆盖率门槛只以 `--cov-fail-under=80`
+  # 参数的形式藏在上面 test 那步里面。结果这个必过检查永远处于 pending，
+  # 任何 PR 的 mergeStateStatus 恒为 BLOCKED（dependabot PR #3 就这样卡了 5 天）。
+  #
+  # 两个修法里选了「让这个名字真实存在」而不是「从必过列表删掉它」：
+  # 后者是放宽门禁，前者不是。
+  #
+  # 这个 job 不重跑测试（那要 7 分半），只下载 test 阶段已上传的 coverage.xml
+  # 并独立断言行覆盖率。它与 `--cov-fail-under` 不是重复劳动：
+  # 参数写在命令行里，哪天被人调低或删掉不会有任何提示；这个 job 把阈值
+  # 固化成一道独立的、名字可见的闸门。
+  coverage-gate:
+    name: Coverage Gate
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+
+      - name: Assert line coverage >= 80%
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          THRESHOLD = 80.0
+
+          root = ET.parse("coverage.xml").getroot()
+          # coverage.py 的 Cobertura 输出把总行覆盖率放在根节点的 line-rate（0~1）
+          rate = root.get("line-rate")
+          if rate is None:
+              print("::error::coverage.xml 里没有 line-rate 属性，无法判定覆盖率")
+              sys.exit(1)
+
+          pct = float(rate) * 100
+          covered = root.get("lines-covered")
+          valid = root.get("lines-valid")
+          print(f"行覆盖率: {pct:.2f}%  ({covered}/{valid} 行)  门槛: {THRESHOLD}%")
+
+          if pct + 1e-9 < THRESHOLD:
+              print(f"::error::覆盖率 {pct:.2f}% 低于门槛 {THRESHOLD}%")
+              sys.exit(1)
+          print("✅ 覆盖率门槛通过")
+          PY
 
   # ── Phase 3: Docker Build ────────────────
   docker-build:
@@ -160,15 +209,15 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             backend/requirements.txt
+            backend/requirements-dev.txt
             pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-          pip install mypy
+          # mypy 已锁定在 requirements-dev.txt 里，不再散装安装 ——
+          # mypy 小版本间的检查结果会变，散装会让 CI 结果不可复现
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run mypy
         run: mypy app --config-file pyproject.toml

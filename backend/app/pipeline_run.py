@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 
+from app import tracing as _tracing
 from app.agents.base import RawProject
 from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import run_orchestrator
@@ -33,6 +34,7 @@ from app.metrics import (
     update_db_gauges,
 )
 from app.opportunity.service import OpportunityService
+from app.seed import get_seed_raw_projects
 from app.utils.normalize import create_dedup_key
 
 logger = structlog.get_logger(__name__)
@@ -193,25 +195,33 @@ async def execute_analysis_pipeline(
     的数据，不共享队列，并发无害。守卫理由见 `app/inflight.py`。
     """
     if projects is not None and len(projects) > 0:
-        return await _run_pipeline(
-            projects=projects,
-            enable_llm=enable_llm,
-            trigger=trigger,
-            limit=limit,
-            save_to_db=save_to_db,
-        )
+        try:
+            return await _run_pipeline(
+                projects=projects,
+                enable_llm=enable_llm,
+                trigger=trigger,
+                limit=limit,
+                save_to_db=save_to_db,
+            )
+        except Exception:
+            PIPELINE_RUNS.labels(trigger=trigger, status="failed").inc()
+            raise
 
     with claim_run(QUEUE_DRAIN_KEY) as acquired:
         if not acquired:
             logger.info("pipeline.queue_drain_rejected", trigger=trigger)
             raise QueueDrainInProgressError("An analysis queue drain is already in progress")
-        return await _run_pipeline(
-            projects=None,
-            enable_llm=enable_llm,
-            trigger=trigger,
-            limit=limit,
-            save_to_db=save_to_db,
-        )
+        try:
+            return await _run_pipeline(
+                projects=None,
+                enable_llm=enable_llm,
+                trigger=trigger,
+                limit=limit,
+                save_to_db=save_to_db,
+            )
+        except Exception:
+            PIPELINE_RUNS.labels(trigger=trigger, status="failed").inc()
+            raise
 
 
 async def _run_pipeline(
@@ -228,7 +238,7 @@ async def _run_pipeline(
         settings.opportunity_shadow_enabled,
         settings.opportunity_shadow_sample_rate,
     )
-    PIPELINE_RUNS.labels(trigger=trigger).inc()
+    PIPELINE_RUNS.labels(trigger=trigger, status="started").inc()
     start_time = time.perf_counter()
 
     raw_projects: list[RawProject]
@@ -243,6 +253,13 @@ async def _run_pipeline(
             min_discovery_score=settings.discovery_score_analysis_threshold,
             limit=limit if limit is not None else settings.analysis_run_limit,
         )
+
+    # §10.2 降级兜底：外部采集源全挂时回退到内置 seed 数据
+    if not raw_projects and from_repository and settings.seed_fallback_enabled:
+        logger.warning("pipeline.seed_fallback_activated", trigger=trigger)
+        raw_projects = get_seed_raw_projects()
+        # seed 数据无 raw_ids，不走 mark_processed 出队路径
+        from_repository = False
 
     if not raw_projects:
         run_id = f"api-run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"
@@ -265,12 +282,17 @@ async def _run_pipeline(
         }
 
     run_id = f"api-run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"
-    response = await run_orchestrator(
-        projects=raw_projects,
-        run_id=run_id,
-        enable_llm=enable_llm,
-        save_to_db=save_to_db,
-    )
+    with _tracing.tracer.start_as_current_span("airdrop.pipeline.run") as span:
+        span.set_attribute("run_id", run_id)
+        span.set_attribute("trigger", trigger)
+        span.set_attribute("project_count", len(raw_projects))
+
+        response = await run_orchestrator(
+            projects=raw_projects,
+            run_id=run_id,
+            enable_llm=enable_llm,
+            save_to_db=save_to_db,
+        )
     marked = 0
     if from_repository:
         # 只有真正写进 projects 的项目才允许出队（save_to_db=False 时不落库，
@@ -341,6 +363,7 @@ async def _run_pipeline(
         summary=result,
         errors=response.errors,
     )
+    PIPELINE_RUNS.labels(trigger=trigger, status="completed").inc()
     return result
 
 

@@ -1,64 +1,200 @@
-# 代码审查与修复报告 · Web3 Airdrop Alpha Agent System
+# 代码评审报告 — 2026-08-21
 
-审查日期：2026-07-26 ｜ 范围：`backend/`（FastAPI + SQLite/PostgreSQL 多智能体评分系统）与 `frontend-next/`（Next.js 16 / React 19）
+> 评审方式：对本轮改动做对抗性自审 —— 不读注释推断行为，而是**构造攻击输入实跑**。
+> 四次尝试派独立 subagent 评审均异常退出（无结果返回），因此本报告是我自己
+> 用探针脚本逐项打靶的结果，并明确标注哪些结论有实测支撑、哪些没有。
+> 上一版报告（08-20 那轮的独立评审）内容仍然有效，本文件覆盖的是 08-21 的改动。
 
-## 概览
+## 结论
 
-本次对全仓 169 个 Python 模块与全部前端组件做了系统性审查，聚焦正确性、并发/事务、安全、SQLite↔PostgreSQL 行为一致性、异步事件循环与前端数据竞争。共确认并修复 **30 处后端缺陷 + 5 处前端缺陷**，另做 1 处性能优化、4 项增强，并新增 19 个回归测试锁定修复。
+**可以交付，但有 1 个必须让所有者知道的待改进项**（推断规则准确率），
+以及 1 个环境层面的不一致（Python 版本）需要所有者决定。
 
-修复后基线：后端 **1823 项测试全部通过**（原 1804 + 新增 19），`ruff`（含 bandit 安全规则集）零告警；前端改动文件全部通过 TypeScript 解析校验，`lib` 层严格模式类型检查通过。所有改动已写回本地项目磁盘。
+本轮**发现并修复了 1 个此前一直坏着的质量闸门**：`check_terminology.py --all`
+实跑失败（3 文件 5 处），而且这个脚本自己零测试覆盖，所以没人知道它坏了。
+详见下文「已修复」一节。
 
-> 说明：审查在云端沙箱进行。由于沙箱无法访问 PyPI，运行测试时用你本机 venv 中的依赖搭建了等价环境，并为 `respx` 编写了轻量兼容层——这些仅用于云端验证，不改动你的项目。
+其余没有发现新的安全漏洞或数据污染面。最危险的一类代码（会改写文档正文的
+编码修复工具）经过 8 组对抗测试，未能绕过其校验。
 
-## 严重缺陷（数据丢失 / 功能整体失效 / 安全）
+---
 
-**数据层 · SQLite 保存清空列（数据丢失）** — `repository.py` 的 `save()` 用 `INSERT OR REPLACE`，其本质是 DELETE+INSERT，会把未列出的列（`recommendation` / `weight_version` / `raw_signals` / `raw_signals_hash`）清空、`created_at` 重置。即 seed/导入的数据在首次重新评分后即被破坏，而 PostgreSQL 分支用 `ON CONFLICT DO UPDATE` 却会保留——同一调用两端行为不一致。已改为 SQLite `UPSERT`（3.24+），与 Postgres 语义对齐。
+## 已修复（本轮发现即改）：术语闸门坏了且零测试覆盖
 
-**数据层 · 列表接口在 Postgres 上必 500** — `repository.py` 等多处用 `fetchone()[0]` 取 COUNT，而 Postgres 走 `dict_row`，`row[0]` 抛 `KeyError`。`GET /projects`、`/discoveries`、归档统计全部受影响。统一改用兼容两端的 `scalar()`。
+- **文件**：`scripts/check_terminology.py`
+- **问题**：它是防止「评分决策引擎」术语回退的**唯一**机械闸门（CLAUDE.md §1），
+  但实跑 `--all` 直接失败。更关键的是**它自己一行测试都没有** ——
+  坏了也没有任何信号。
+- **根因不在文档**：5 处命中里 3 处是**不该改的** —— `CLAUDE.md` 那行正在定义
+  禁用词清单本身，`SESSION_MEMORY_2026-07-26.md` 那行引用历史 git commit
+  message（改它就是篡改记录）。闸门缺少表达"这里必须写出禁用词"的手段。
+- **影响**：闸门长期红着 → 团队会习惯性忽略它 → 真正的术语回退就混进来了。
+  另外它此前只挂 pre-commit，`git commit --no-verify` 一句就绕过，CI 不管。
+- **已做**：加行级豁免（`terminology-ok`，逐行显式、可 grep 审计、**不做整文件
+  豁免**）；修掉 1 处真实回退（`docs/DEPLOYMENT_REPORT_FINAL.md:115`）；
+  补 **27 个测试**并把 `--all` 结果固化成测试（让 CI 也守这道门）。
+  现在退出码 0，且负向验证确认它还能拦（见下文第 8 条）。
 
-**API · 开启鉴权后跨域整体失效** — 中间件注册顺序使 `APIKeyMiddleware` 在 `CORSMiddleware` 外层，浏览器预检 `OPTIONS`（不带自定义头）被 401 拦截，且所有错误响应不带 CORS 头。已调整为 CORS 最外层，并在鉴权中间件放行 `OPTIONS`。
+---
 
-**评分 · 稀疏项目被整条吞成 None** — Scorer 的“保证 ≥2 条 reason”兜底条件写错且只从 `optional` 取，可能返回 1 条 reason，触发 `ScoreResult` 校验失败，被外层 `except` 吞成 `score=None`。这类记录还因此永不落 `processed`，每次定时任务重复重跑同一批失败项，形成队列堵塞。已改为无条件补齐至 2 条（含按标签的确定性兜底）。
+## 待改进（P1）：上下文推断规则的准确率是小样本假象
 
-**采集 · 每个定时采集任务静默空转** — `scheduler.py` 引用了不存在的 `result.duplicate_count`（实为 `items_duplicate`），在持久化回调前即抛 `AttributeError`，导致所有定时源采集结果从不落库、从不触发分析。异常兜底分支又用了错误的构造参数会二次抛 `TypeError` 掩盖原始错误。均已修复。
+- **文件**：`scripts/repair_utf8_docs.py`（`repair_by_context`）
+- **问题**：四条推断规则最初只在 5 个干净文档上量准确率，全部 100%。
+  我扩到全仓 **140 个既有文档**复测，数字掉下来了：
 
-**安全 · Etherscan/CryptoRank 的 API Key 落日志与数据库** — 两个采集器把 key 放在 URL query 里，httpx 异常信息含完整 URL，`str(e)` 被写入 structlog 日志和 `collection_logs.error_message` 永久留存。新增 `app/utils/redact.py` 统一脱敏，并在持久化写入与两个采集器的日志/健康检查处接入。
+  | 规则 | 5 文档样本 | 140 文档样本 |
+  |---|---|---|
+  | 括号 + 后紧跟表格竖线 | — | **518/518 = 100%** |
+  | 括号 + 之后无括号 | 312/312 | 3469/3484 = 99.57% |
+  | 句末句号（行尾空白） | 210/210 | 2360/2375 = 99.37% |
+  | 箭头（前缀 e286 全填 `→`） | 72/72 | 912/989 = **92.21%** |
 
-**Opportunity · 校准报告在正常数据形态下崩溃** — 聚簇自助重采样（cohort bootstrap）在“单项目多 cohort”这一生产常态下，重采样长度会超过固定的 `coverage_denominator`，触发 `ValueError` 使整份校准报告中断。已将 bootstrap 统计的 denominator 改为按重采样自身长度计算。
+  真实反例：括号内部本身含逗号（`（**真实域名，含 localhost …）`）、
+  行尾恰好是右书名号 `」`、缩进架构图里的 `↓` 被填成 `→`。
 
-## 主要缺陷（并发 / 事务 / 逻辑）
+- **影响**：**本次的实际输出没有受影响**，因为还有一道更硬的检验挡着 ——
+  在有底本的两个文件上，规则推断与底本对齐**独立**推断同一批位置，
+  实测 105 处可核对、**冲突 0**。也就是说这批规则这次没写错字。
+  但规则本身不够稳，如果以后有人在没有底本的文件上单独依赖它，就会写错字。
+- **建议**：按上表收紧（箭头只在"非缩进行且左右紧邻非空白"时填），
+  或干脆退回人工选择题。已如实记入 `docs/ENCODING_REPAIR.md` §6「还没做的事」，
+  **没有假装它已解决**。
 
-事务与并发：`archive.py` 用 `with conn:` 在 `DbConnection` 上会调用 `close()` 而非提交，归档整批被丢弃却仍报告成功——改为显式提交/回滚；`quarantine.py` 的 fallback 缺少 `rollback`，Postgres 首条失败后进入 aborted 事务掩盖真实异常——补齐回滚；`repository.save()` / `update_meta_signals` 对 `meta` 列做无锁读改写会丢信号——接入 `begin_serialized_write()` + Postgres `FOR UPDATE`。
+## 需所有者决定（P1）：Python 版本口径不一致
 
-Postgres 兼容：`feedback.py` 两个写端点用 SQLite 专属的 `cursor.lastrowid`，在 Postgres 上插入成功却返回 500 导致客户端重试产生重复行——新增 `insert_returning_id()` 走 `RETURNING`；`db.py` 的 `datetime('now')→NOW()` 改写未处理时区，非 UTC 服务器会偏移——改为 `NOW() AT TIME ZONE 'UTC'`。
+- **文件**：`docker/Dockerfile`、`.github/workflows/ci.yml`、`backend/pyproject.toml`
+- **问题**：镜像与 CI 用 **3.12**，mypy 配置也写 `python_version = "3.12"`，
+  但本地 venv 是 **3.11.9**，`pyproject.toml` 只声明 `requires-python = ">=3.11"`。
+- **影响**：**本地跑通 2524 个测试的解释器，和生产镜像里跑的不是同一个。**
+  3.11 → 3.12 有实际行为差异（如 `datetime.utcnow` 弃用告警、
+  `asyncio` 细节），本地全绿不能证明镜像里也绿。
+- **建议**：两条路 —— 统一到 3.12（要重建本地 venv 并重跑全套，约 35 分钟），
+  或把镜像降到 3.11 与本地对齐。**我没擅自改**，因为两种选择的代价不同，
+  该由所有者定。
 
-Agent 数据依赖：`orchestrator_simple.py` 把 4 个 agent 放同一 `gather`，而 Risk 读取 Tokenomics 的结果、二者却在竞态中 Risk 先执行，导致 Risk 恒用默认值、每个项目都带上错误的“risk estimate uncertain”标记。已拆为两阶段：Narrative/Team/Tokenomics 并行 → Risk。
+---
 
-其他：`pipeline_run.py` 的 `top_projects` 取输入前 10 而非按分数前 10（与 API 文档不符）——改为按分数排序；`rate_limiter.py` 中 Twitter 采集器用 `twitter_kol`/`twitter_keyword` 作 source_id 却未登记，回落到宽 5 倍的默认限流——补登记；每日配额计数从不重置形成进程级永久锁定——加入按 UTC 自然日滚动重置；`funding.py` 的 `_parse_date` 对无偏移字符串返回 naive datetime，与 aware `now` 相减崩溃——统一补 UTC；`defillama`/`galxe` 对 `null` 字段 `.lower()`/`.get()` 崩溃——加兜底；`collections.py` 分页参数无约束可致全表导出/Postgres 负 OFFSET 报错，且注册表漏了 RootData——补 `Query` 约束与注册；Opportunity 显式概率证据绕过来源等级下限，U 档（权重 0）证据可覆盖 A 档规则结论——补 `minimum_grade="B"`。
+## 已核实无问题的点（附验证方式）
 
-## 前端缺陷
+这部分同样重要 —— 让所有者知道哪些地方确实被查过了。
 
-`ThemeProvider` 的 `!ready` 早返回会在挂载后切换根元素类型，使整棵子树卸载重挂——每次访问重复触发所有 `useEffect`（含付费的 `/ai-brief` POST）并丢失用户输入。已改为始终渲染同一 Provider，并在 `layout.tsx` head 注入首帧前主题脚本消除白屏闪烁。
+### 1. 编码修复工具无法被绕过（8 组对抗测试）
 
-存储型 XSS：`ParticipationTasks` 与项目详情页把采集来源（可控性弱）的 URL 直接放进 `href`，`javascript:` 伪协议可执行。新增 `safeExternalUrl()` 仅放行 http/https。`InteractionPanel` 对 `net_usd` 直接 `.toFixed()`，后端若以字符串序列化 Decimal 会抛错白屏——改为 `Number(...)` 包裹。`next.config.js` 的开发用 loopback 代理会打进生产构建导致线上 502——加 `NODE_ENV`/`API_PROXY_TARGET` 守卫。
+对 `apply_choices()` 构造了 7 种恶意答案，全部被拒且**文本未被改动**：
 
-## 优化与增强
+| 攻击 | 结果 |
+|---|---|
+| 候选集外的汉字 | 拒绝 |
+| 多字符答案 | 拒绝 |
+| 空串 | 忽略 |
+| ASCII 字符 | 拒绝 |
+| 换行符 | 拒绝 |
+| 占位符本身 | 拒绝 |
+| 合法候选 | **接受**（对照组，证明校验不是一律拒绝） |
 
-优化：`db.py` 的 `executescript` 在 Postgres 上每条 DDL 泄漏一个游标（`init_db` 约 90 条），改为复用单游标并在结束关闭。
+另外两组：指向越界下标、指向非占位符位置的答案，均被拒绝。
 
-增强：新增启动期安全自检——生产环境下 `CORS_ORIGINS='*'` 与凭据同用、或 `API_KEY` 为空时直接拒绝启动；新增 `safeExternalUrl` 外链白名单；主题预渲染脚本消除 FOUC；文档与代码对齐（FARM 阈值 65）。新增 `tests/test_review_regressions.py` 共 19 个回归测试，覆盖 Scorer 最少 reason、UPSERT 保列、密钥脱敏、限流键与每日重置、funding 时区、生产配置校验等关键修复点。
+### 2. `--apply` 不会在半成品状态误写原文件
 
-## 已核验的“非缺陷”
+读代码确认分支后实跑：三个文件都仍有待定处，输出全部落在 `.md.partial`，
+原文件字节数未变。
 
-审查中对若干疑似项做了核验后判定为误报，未做改动：`InteractionPanel` 提交的交互体与 `lib/types.ts` 声明不符——但后端 `InteractionCreate` 模型实际是宽松的（`wallet_count` 默认 1、assessment 可选），面板可正常工作，仅 TS 类型偏严；`app/project/[id]` 目录未发现会破坏路由的错误命名子目录。
+### 3. 校验器真能拦住"改写正文"
 
-## 验证
+在 `6823d18` 的干净底本上人工制造 305 处损坏，再喂进四种"修复结果"实跑：
 
-- 后端：`pytest` 1823 passed（新增 19 回归用例）；`ruff`（E/F/I/N/W/UP/B/SIM/ARG/RUF/S 全集）零告警。
-- 两处最高风险改动（UPSERT、Agent 重排序）经独立对抗式复核确认正确，且被既有测试与新回归用例双重锁定。
-- 前端 7 个改动文件通过 TypeScript 解析校验；`lib/format.ts` + `lib/types.ts` 严格模式类型检查通过。
-- 全部 38 个改动文件已写回本地 `E:\Github\Web3 Airdrop Alpha Agent System`（0 拒绝）。
+| 输入 | 退出码 | 判定 |
+|---|---|---|
+| 正确修复（就是原文） | 0 | **通过** |
+| 替换一个字符（`运维` → `运堆`） | 1 | 拦下 |
+| 插入改写标记（`## ` → `## 【改写】`） | 1 | 拦下 |
+| 删掉 300 字 | 1 | 拦下 |
 
-## 建议的后续项（本次未做，供参考）
+第一行是对照组，证明校验不是"一律拒绝"那种假严格。
+另外验证了它对半成品占位符（U+FFFD）的放行**不会被滥用** ——
+把占位符换成候选集外的字仍然 `[FAIL]`（实测报出
+`应为 b'\xe8\xa1'，实为 b'\xe9\x8c'`）。
 
-将 `interactions`/`feedback`/`insights`/`export_import` 等以 `async def` 承载阻塞式同步 DB 的路由改为 `def`（交由线程池），可根治单请求拖垮事件循环的问题（`opportunity.py` 已是此正确写法，可作范式）；为 `raw_projects(source_id, dedup_key)` 加唯一索引并把 check-then-insert 收敛为 `ON CONFLICT`，消除并发重复行；引入实际生效的入站限流（`rate_limit_*` 配置目前未接线）。
+### 4. 二型损坏检测的误报已归零
+
+判据"半角 `?` 紧贴中文"天生容易误报。实测确认三个误报源全部被排除：
+mermaid 判定节点（`docs/GIT_STRATEGY.md` 2 处）、行内代码示例、
+以及 `check_encoding.py` **自己的文档字符串**（4 处 —— 描述判据的文字和符合判据
+的损坏长得一样）。加入围栏代码块 + 行内代码排除后，全仓只剩真正损坏的
+`docs/API_SPEC.md`。有一条测试专门断言"检查脚本必须过自己的检查"。
+
+### 5. 没有第三种编码损坏
+
+按同样思路扫了全仓非 md 文本（`.py/.ts/.tsx/.yml/.json/.txt/.ps1/.css`）：
+**0 处**。二型只影响文档。
+
+### 6. 依赖锁定完整
+
+逐包比对 pin 值与本机实际安装版本：
+`requirements.txt` **13/13 一致**、`requirements-dev.txt` **7/7 一致**，
+合计 **20/20** —— 也就是说锁的是真正跑过 2524 个测试的那批版本，不是凭记忆写的。
+
+干净 venv 只装 `requirements.txt` → 41 包装成、应用启动、`/health` 200、
+`/metrics` 200（10806 字节）、`_OTEL_AVAILABLE False`（证明缺 OTel 能降级）。
+再装 dev 依赖 → 22 测试通过。生产镜像 `COPY backend/requirements.txt` 单文件，
+**不会误装 pytest/ruff/mypy**。
+
+### 7. 全套门禁
+
+`pytest` 2524 passed / 4 skipped / 87.86% cov / exit 0（新增 41 个测试后重跑中）；
+`ruff check` 全绿；`ruff format --check` 246 文件已格式化；
+`mypy app` 115 文件无问题；`check_terminology.py --all` 退出码 0（**修复后**）；
+`check_encoding.py` 483 文件、4 个已登记损坏按预期警告；
+前端 `tsc --noEmit` 与 `eslint` 均无输出（通过）。
+
+### 8. 术语闸门修复后确实还能拦（负向验证）
+
+修完不能只看"变绿了"。实跑三组：
+- 新写一行含禁用术语、**无豁免标记** → 退出码 1，被拦
+- 豁免标记只作用于本行 → 第二行无标记的照样被拦（`:2:`）
+- 「评分决策引擎」「规则引擎」「旁路机会引擎」等正确写法 → 全部放行
+
+审计当前豁免：全仓 5 处 `terminology-ok` 标记里，**真正起豁免作用的只有 2 处**
+（另 3 处是文档/代码里提到这个标记名，所在行不含禁用词）。
+两处真豁免分别是 CLAUDE.md 定义禁用词清单本身、会话记忆引用历史 commit
+message —— 都属"必须写出禁用词才能表达意思"。
+
+---
+
+## 我无法验证的部分（诚实清单）
+
+1. **OTel 追踪的正向路径**：7 个 `opentelemetry-*` 包本机装不上（PyPI 不可达），
+   所以"装了包时能正常上报 span"**没有验证过**。
+   我只验证了降级路径，并补了 18 个测试锁住它
+   （`backend/tests/test_tracing_degraded.py`）——
+   其中最关键的一条是"运维在生产打开了 `OTEL_ENABLED` 但镜像没装 OTel 包"，
+   此时必须记 warning 继续跑、不能让应用启动失败。
+   `app/tracing.py` 覆盖率因此从 **44% 升到 58%**（实测数字）；
+   剩下 42% 就是需要真装 OTel 才能走到的分支。
+   另外把两处 `# pragma: no cover - deps always installed` 注释改掉了 ——
+   那句话是错的（依赖并非总是安装），现在指向 `requirements-otel.txt`。
+2. **Docker 实际构建**：本轮没跑 `docker compose build`。上一轮（08-20）跑过并
+   验证容器 `Up (healthy)`，但那之后改了 `Dockerfile` 的 COPY 行与 requirements
+   拆分，**新镜像未实测**。
+3. **PostgreSQL 并发路径**：`test_pg_concurrent_rescore.py` 因本机无 PG 而 skip。
+4. **前端 `next build` 的收尾阶段**：`Compiled successfully` 已达到，
+   但结束时报 `spawn EPERM`（沙箱禁止 Node 捕获子进程输出），
+   所以完整产物生成未确认。`tsc` 与 `eslint` 单独跑均通过。
+5. **二型损坏的 70 处原文**：只能确认"这里丢了字"，无法确认丢的是什么 ——
+   底本之后文档被大幅改写（10065 → 26694 字符），无法整体对照。
+
+---
+
+## 一个自我更正记录
+
+本报告中的准确率表格推翻了我自己在 CHANGELOG 初稿里写的
+「每条规则都在干净底本上量过准确率、只留 100% 的」。那句话在 5 个文档的样本下
+成立，在 140 个文档下不成立。原判断与更正**都保留**在 CHANGELOG、
+`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里，没有抹掉痕迹 ——
+接手的人需要知道哪些结论被推翻过。
+
+---
+
+_评审日期：2026-08-21 · 编码专题见 `docs/ENCODING_REPAIR.md` ·
+交接见 `HANDOFF.md` · 上一轮独立评审结论见 git 历史中的本文件早期版本_

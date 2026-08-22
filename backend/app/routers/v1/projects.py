@@ -128,6 +128,7 @@ def list_projects(
     min_score: int | None = Query(None, ge=0, le=100, description="最低分数"),
     sort_by: SortBy = Query(SortBy.SCORE, description="排序字段"),
     sort_order: SortOrder = Query(SortOrder.DESC, description="排序顺序"),
+    auto_discovered: bool | None = Query(None, description="筛选自动发现项目 (true) 或手动录入 (false)"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -154,6 +155,7 @@ def list_projects(
         min_score=min_score,
         sort_by=sort_by,
         sort_order=sort_order,
+        auto_discovered=auto_discovered,
     )
 
     # Query from database
@@ -168,9 +170,10 @@ def list_projects(
             min_score=min_score,
             sort_by=sort_by.value,
             sort_order=sort_order.value,
+            auto_discovered=auto_discovered,
         )
 
-        # Convert to response format
+        # Convert to response format — include discovery metadata for Dashboard
         projects = [
             {
                 "id": p["id"],
@@ -180,6 +183,9 @@ def list_projects(
                 "score": p["score"],
                 "label": p["label"],
                 "confidence": p["confidence"],
+                "discovery_source": p.get("discovery_source"),
+                "discovered_at": str(p["discovered_at"]) if p.get("discovered_at") else None,
+                "auto_discovered": bool(p.get("auto_discovered", False)),
             }
             for p in db_projects
         ]
@@ -211,6 +217,7 @@ def list_projects(
                 "sector": sector,
                 "stage": stage,
                 "min_score": min_score,
+                "auto_discovered": auto_discovered,
             },
             "sort": {
                 "by": sort_by.value,
@@ -289,6 +296,9 @@ def get_project(
         if reason is not None and not isinstance(reason, list):
             reason = [str(reason)]
 
+        sub_scores = _parse_json_field(project.get("sub_scores"))
+        weight_version = project.get("weight_version")
+
         from app.services.project_signals import funding_public_view, parse_meta
 
         meta = parse_meta(project.get("meta"))
@@ -316,6 +326,8 @@ def get_project(
                     "funding": funding,
                     "signals": signals,
                     "funding_note": meta.get("funding_note"),
+                    "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
+                    "weight_version": weight_version or "v1.2",
                     "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
                     "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
                 }

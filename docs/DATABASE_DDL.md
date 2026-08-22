@@ -217,18 +217,32 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 -- ============================================
 CREATE TABLE IF NOT EXISTS weight_changelog (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_version    TEXT NOT NULL,              -- 旧版本
-    to_version      TEXT NOT NULL,              -- 新版本
-    old_weights     TEXT NOT NULL,              -- 旧权重 JSON
-    new_weights     TEXT NOT NULL,              -- 新权重 JSON
-    trigger_samples INTEGER,                    -- 触发样本数
-    metrics_before  TEXT,                       -- 变更前指标 JSON
-    metrics_after   TEXT,                       -- 变更后指标 JSON
-    changed_by      TEXT NOT NULL,              -- 变更触发者
-    created_at      TIMESTAMP DEFAULT (datetime('now'))
+    from_version    TEXT,                         -- 旧版本
+    to_version      TEXT,                         -- 新版本
+    weights_json    TEXT NOT NULL,                -- 权重 JSON（与 calibrate_weights.py 一致）
+    sample_size     INTEGER,                      -- 触发样本数
+    metrics_json    TEXT,                         -- 指标 JSON（J / recall / FPR）
+    triggered_by    TEXT,                         -- 变更触发者
+    status          TEXT DEFAULT 'candidate',     -- candidate / baseline / active
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_weight_changelog_created ON weight_changelog(created_at DESC);
+
+-- ============================================
+-- 2.8b watchlist 表（用户关注列表，ADR-008 V2）
+-- ============================================
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,                   -- 关联项目
+    user_id     TEXT,                             -- 用户标识（MVP 缺省 default）
+    note        TEXT,                             -- 用户备注
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_project ON watchlist(project_id);
+CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
 
 -- ============================================
@@ -415,6 +429,7 @@ CREATE TABLE IF NOT EXISTS raw_projects_archive (
 
 CREATE INDEX IF NOT EXISTS idx_archive_dedup ON raw_projects_archive(dedup_key);
 CREATE INDEX IF NOT EXISTS idx_archive_discovered ON raw_projects_archive(discovered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON raw_projects_archive(archived_at);
 
 
 -- ============================================
@@ -434,6 +449,31 @@ CREATE TABLE IF NOT EXISTS project_signals_archive (
 
 CREATE INDEX IF NOT EXISTS idx_signals_archive_project ON project_signals_archive(project_id);
 CREATE INDEX IF NOT EXISTS idx_signals_archive_captured ON project_signals_archive(captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signals_archive_archived_at ON project_signals_archive(archived_at);
+
+-- ============================================
+-- 2.19b archive_runs 表（归档运行历史，2026-08-22 起）
+-- 归档此前只有手动脚本、跑完不留痕，前端只能显示「暂无运行历史接口」。
+-- 每次 RawDataArchiver.run_and_record() 记一行，成功与失败都记。
+-- ============================================
+CREATE TABLE IF NOT EXISTS archive_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at              TIMESTAMP NOT NULL,
+    finished_at             TIMESTAMP NOT NULL,
+    duration_ms             INTEGER DEFAULT 0,
+    trigger                 TEXT NOT NULL,          -- scheduler / manual / api
+    dry_run                 INTEGER DEFAULT 0,
+    status                  TEXT NOT NULL,          -- success / failed
+    raw_archived            INTEGER DEFAULT 0,
+    unprocessed_archived    INTEGER DEFAULT 0,
+    signals_archived        INTEGER DEFAULT 0,
+    logs_deleted            INTEGER DEFAULT 0,
+    raw_archive_pruned      INTEGER DEFAULT 0,
+    signals_archive_pruned  INTEGER DEFAULT 0,
+    error_message           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_runs_started ON archive_runs(started_at DESC);
 
 -- ============================================
 -- 2.20 Opportunity v2.0 Shadow 证据与不可变评估快照
@@ -598,8 +638,9 @@ data_sources (1) ──── (N) raw_projects
 
 raw_projects (1) ──── (1) projects（processed 后回填 project_id）
 
-raw_projects_archive ─── 独立表（raw_projects 30 天归档）
+raw_projects_archive ─── 独立表（raw_projects：已立项 30 天 / 未过阈值 90 天）
 project_signals_archive ─── 独立表（project_signals 90 天归档）
+archive_runs ─── 独立表（每次归档运行一行，含失败）
 
 quarantine ─── (N) projects (可选关联)
 
@@ -633,24 +674,45 @@ prompt_versions ─── 独立表（记录 Prompt 版本）
 | dedup_keys | 永久 | — |
 | prompt_versions | 永久 | — |
 | **data_sources** | 永久（配置表） | — |
-| **raw_projects** | 30 天热数据 | 归档至 `raw_projects_archive`，> 180 天删除（见下方归档脚本） |
-| **project_signals** | 90 天热数据 | 归档至 `project_signals_archive`，> 365 天删除 |
-| **collection_logs** | 90 天 | `DELETE FROM collection_logs WHERE started_at < datetime('now', '-90 days')` |
-| **raw_projects_archive** | 180 天 | `DELETE FROM raw_projects_archive WHERE archived_at < datetime('now', '-180 days')` |
-| **project_signals_archive** | 365 天 | `DELETE FROM project_signals_archive WHERE archived_at < datetime('now', '-365 days')` |
+| **raw_projects**（已立项，`processed = 1`） | 30 天热数据 | 归档至 `raw_projects_archive` |
+| **raw_projects**（未过阈值，`processed = 0`） | 90 天热数据 | 归档至 `raw_projects_archive`（见 §6.2） |
+| **project_signals** | 90 天热数据 | 归档至 `project_signals_archive` |
+| **collection_logs** | 90 天 | 直接删除，无归档表 |
+| **raw_projects_archive** | 180 天 | 直接删除（归档表是最后一级） |
+| **project_signals_archive** | 365 天 | 直接删除 |
 
-### 6.1 采集数据归档脚本（v2.0，每日 cron 执行）
+保留期全部可配置，见 `.env.example`「数据保留策略」段。
+
+### 6.1 采集数据归档（v2.0）
+
+**实现方式**：`backend/app/archive.py` 的 `RawDataArchiver`，由 `UnifiedScheduler`
+按 `ARCHIVE_CRON`（默认 `0 3 * * *`）调度；也可手动
+`python scripts/archive_raw_data.py [--dry-run]`。每次运行都写一行
+`archive_runs`（含失败），通过 `GET /api/v1/archive/runs` 或前端 `/archive` 页查看。
+
+> **2026-08-22 更正**：本节此前给的示意 SQL 是
+> `WHERE discovered_at < datetime('now','-30 days')`，**没有 `processed` 条件**，
+> 与实现不符（实现一直带 `processed = 1`）。文档看起来"什么都归档"，实际
+> 只归档已立项的记录 —— 差异见 §6.2。下面的 SQL 已改为与实现一致。
 
 ```sql
--- 1. raw_projects 归档：30 天前未处理的采集记录
+-- 1. raw_projects 归档（已立项）：30 天前、processed = 1
 INSERT INTO raw_projects_archive (raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score)
 SELECT raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score
 FROM raw_projects
-WHERE discovered_at < datetime('now', '-30 days');
+WHERE processed = 1 AND discovered_at < datetime('now', '-30 days');
 
-DELETE FROM raw_projects WHERE discovered_at < datetime('now', '-30 days');
+DELETE FROM raw_projects WHERE processed = 1 AND discovered_at < datetime('now', '-30 days');
 
--- 2. project_signals 归档：90 天前信号
+-- 2. raw_projects 归档（未过阈值）：90 天前、processed = 0
+INSERT INTO raw_projects_archive (raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score)
+SELECT raw_id, source_id, dedup_key, raw_data, discovered_at, processed, processed_at, project_id, discovery_score
+FROM raw_projects
+WHERE processed = 0 AND discovered_at < datetime('now', '-90 days');
+
+DELETE FROM raw_projects WHERE processed = 0 AND discovered_at < datetime('now', '-90 days');
+
+-- 3. project_signals 归档：90 天前信号
 INSERT INTO project_signals_archive (signal_id, project_id, dedup_key, signal_type, signal_source, signal_data, signal_strength, captured_at)
 SELECT signal_id, project_id, dedup_key, signal_type, signal_source, signal_data, signal_strength, captured_at
 FROM project_signals
@@ -658,13 +720,55 @@ WHERE captured_at < datetime('now', '-90 days');
 
 DELETE FROM project_signals WHERE captured_at < datetime('now', '-90 days');
 
--- 3. collection_logs 清理：90 天前日志直接删除
+-- 4. collection_logs 清理：90 天前日志直接删除
 DELETE FROM collection_logs WHERE started_at < datetime('now', '-90 days');
 
--- 4. 归档表清理：raw_projects_archive 180 天、project_signals_archive 365 天
+-- 5. 归档表清理：raw_projects_archive 180 天、project_signals_archive 365 天
 DELETE FROM raw_projects_archive WHERE archived_at < datetime('now', '-180 days');
 DELETE FROM project_signals_archive WHERE archived_at < datetime('now', '-365 days');
 ```
+
+### 6.2 为什么未处理记录需要单独一档
+
+`processed` 只有在采集记录被提升为正式项目时才置 1，而提升的前提是
+`discovery_score >= DISCOVERY_SCORE_ANALYSIS_THRESHOLD`（默认 0.3）。低分记录
+永远不会被提升，因此**永远不满足 `processed = 1 AND 超期` 这个条件**。
+
+实测（2026-08-22，本地库 693 行 `raw_projects`）：
+
+| 分组 | 行数 | 占比 | `discovery_score` |
+|---|---|---|---|
+| `processed = 1` | 184 | 27% | 全部 ≥ 0.3 |
+| `processed = 0` | 509 | 73% | 全部 < 0.3 |
+
+且这 509 行里没有任何一行存在同 `dedup_key` 的高分兄弟记录，所以佐证逻辑
+（`_corroborating_rows()`）也不会把它们救回来 —— 它们是纯粹的死数据。
+
+按最近一次采集运行的 460 条低分记录估算（`raw_data` 平均 474 B，最大 1185 B）：
+
+| 时间 | 行数 | 体积 |
+|---|---|---|
+| 1 个月 | ≈ 13,800 | ≈ 6.2 MB |
+| 1 年 | ≈ 167,900 | ≈ 75.9 MB |
+| 3 年 | ≈ 503,700 | ≈ 227.7 MB |
+
+**处理方式：归档而非删除。** 它们是复盘"当时为什么没立项"、以及日后调整
+阈值时做回溯验证的唯一依据，直接删掉就再也拿不回来了。
+
+### 6.3 时间戳格式陷阱（实现细节）
+
+归档表的 `archived_at` 走 SQLite `DEFAULT CURRENT_TIMESTAMP`，写出来是
+`'2026-08-22 02:08:51'`（**空格**分隔、无微秒、无时区）；而 `discovered_at` /
+`captured_at` / `started_at` 由应用层用 `datetime.isoformat()` 写入，形如
+`'2026-08-15T14:51:16.959145+00:00'`（**T** 分隔）。
+
+SQLite 的 TIMESTAMP 实际是 TEXT，`<` 是字符串比较。空格是 `0x20`、`T` 是 `0x54`，
+所以拿 ISO 格式的 cutoff 去比 `archived_at`，**当天写入的行会被判成"早于今天零点"**。
+实测（保留期设 0 天、行刚写入）：ISO cutoff 命中 1 行（刚归档的数据当场被删），
+空格 cutoff 命中 0 行。
+
+因此 `RawDataArchiver` 有两个 cutoff 方法：`_cutoff()`（ISO，给应用层写的列）
+与 `_cutoff_db_default()`（空格，给 `archived_at`）。两者不可混用。
 
 ---
 

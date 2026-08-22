@@ -21,21 +21,22 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from app.analysis_scheduler import AnalysisScheduler
 from app.collectors.base import CollectorResult
 from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
-from app.collectors.scheduler import CollectionScheduler
 from app.config import settings
 from app.db import get_connection, init_db
 from app.inflight import QueueDrainInProgressError
 from app.metrics import MetricsExporter
 from app.pipeline_run import execute_analysis_pipeline
+from app.scheduler import UnifiedScheduler
+from app.tracing import instrument_fastapi_app, setup_tracing
 from app.utils.redact import configure_logging
 
 # 进程启动即安装脱敏 processor（SECURITY.md §3.3）。放在模块层而非 lifespan：
 # 采集器与脚本可能在应用启动前就开始打日志。
 configure_logging()
+setup_tracing()
 
 logger = structlog.get_logger(__name__)
 
@@ -63,6 +64,18 @@ def create_app(db_override=None) -> FastAPI:
             llm_enabled=settings.is_llm_enabled,
             collection_scheduler_enabled=settings.collection_scheduler_enabled,
         )
+
+        # 采集源"开了但缺 key"必须显式告警：这类源的 is_enabled() 返回 False，
+        # 于是整源静默不跑。GitHub 尤其致命——execution 维度占 13% 权重，缺了
+        # 会让所有项目的开发活跃度恒为空，而运维看不到任何异常。
+        if settings.github_enabled and not settings.github_token:
+            logger.warning(
+                "app.collector_disabled_missing_credential",
+                source="github",
+                reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索需要 token，本源不会运行",
+                impact="execution 维度（权重 0.13）的 GitHub 活跃度信号将始终缺失",
+            )
+
         if db_override is None:
             init_db()
 
@@ -173,41 +186,31 @@ def create_app(db_override=None) -> FastAPI:
                                 error=str(exc),
                             )
 
-                collection_scheduler = CollectionScheduler(
+                unified_scheduler = UnifiedScheduler(
                     registry,
                     on_collection=on_collection,
                 )
-                collection_scheduler.start()
-                try:
-                    analysis_scheduler = AnalysisScheduler()
-                    analysis_scheduler.start()
-                except Exception:
-                    # 第二个调度器启动失败时回收已启动的第一个，避免孤儿调度线程
-                    collection_scheduler.shutdown(wait=False)
-                    raise
+                unified_scheduler.start()
 
                 application.state.collector_registry = registry
-                application.state.collection_scheduler = collection_scheduler
-                application.state.analysis_scheduler = analysis_scheduler
+                application.state.unified_scheduler = unified_scheduler
             else:
                 application.state.collector_registry = None
-                application.state.collection_scheduler = None
-                application.state.analysis_scheduler = None
+                application.state.unified_scheduler = None
 
             yield
         finally:
             logger.info("app.shutdown")
-            for attr in ("collection_scheduler", "analysis_scheduler"):
-                scheduler = getattr(application.state, attr, None)
-                if scheduler:
-                    try:
-                        scheduler.shutdown(wait=True)
-                    except Exception as exc:
-                        logger.error(
-                            "app.shutdown.scheduler_error",
-                            component=attr,
-                            error=str(exc),
-                        )
+            unified_scheduler = getattr(application.state, "unified_scheduler", None)
+            if unified_scheduler:
+                try:
+                    unified_scheduler.shutdown(wait=True)
+                except Exception as exc:
+                    logger.error(
+                        "app.shutdown.scheduler_error",
+                        component="unified_scheduler",
+                        error=str(exc),
+                    )
             if app_owns_conn:
                 try:
                     app_conn.close()
@@ -287,12 +290,21 @@ def create_app(db_override=None) -> FastAPI:
     # ── 请求日志中间件 ──────────────────────────
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-        """记录请求日志（结构化）。"""
+        """记录请求日志（结构化）并附加免责声明响应头。"""
         import time
+
+        from app.metrics import HTTP_REQUESTS
 
         start = time.time()
         response = await call_next(request)
         duration = (time.time() - start) * 1000
+
+        # SECURITY.md §7.5：所有响应携带免责声明头
+        response.headers["X-Disclaimer"] = "Not investment advice. For informational purposes only."
+
+        # HTTP 请求计数（按状态码分档：2xx/3xx/4xx/5xx）
+        status_class = f"{response.status_code // 100}xx"
+        HTTP_REQUESTS.labels(method=request.method, status_class=status_class).inc()
 
         logger.info(
             "api.request.completed",
@@ -459,18 +471,29 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 注册路由 ────────────────────────────────
     from app.routers.v1 import (
+        action_queue,
         ai_brief,
+        archive,
+        auth,
         collections,
+        dashboard,
         export_import,
         feedback,
         funding,
         insights,
         interactions,
+        llm,
+        notifications,
         opportunity,
         participation,
         projects,
         quarantine,
         run,
+        watchlist,
+        webhook,
+    )
+    from app.routers.v1 import (
+        settings as settings_router,
     )
 
     app.include_router(run.router, prefix="/api/v1", tags=["v1"])
@@ -481,10 +504,22 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(insights.router, prefix="/api/v1", tags=["v1"])
     app.include_router(quarantine.router, prefix="/api/v1", tags=["v1"])
     app.include_router(ai_brief.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(auth.router, prefix="/api/v1", tags=["v1"])
     app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(action_queue.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(archive.router, prefix="/api/v1", tags=["v1"])
     app.include_router(funding.router, prefix="/api/v1", tags=["v1"])
     app.include_router(opportunity.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(llm.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(webhook.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(dashboard.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(notifications.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
+
+    # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
+    instrument_fastapi_app(app)
 
     return app
 
