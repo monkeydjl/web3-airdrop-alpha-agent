@@ -20,22 +20,28 @@ check_terminology.py --all → exit 0
 
 **代码已推远程分支 `release/v2-consolidation`，PR #4 已开，master 未动。**
 远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`。
-PR #4 的 **11 项 CI 检查全部 pass**（含 `Full Backend Test Suite` 7m34s、
-`Docker Build Check` 含 `/health` 冒烟、`Docker Image Trivy Scan`）。
+PR #4 的 **12 项 CI 检查全部 pass**（含 `Full Backend Test Suite` 7m42s、
+`Coverage Gate` 88.21%、`Docker Build Check` 含 `/health` 冒烟、
+`Docker Image Trivy Scan`），`mergeStateStatus = CLEAN`，**可以合并**。
 
-⚠ **但 PR 仍无法合并**，`mergeStateStatus = BLOCKED`。原因不在代码：
-`master` 分支保护要求 5 个必过检查，其中 **3 个在仓库里没有任何 job 会产出** ——
-要求 `Lint (ruff)` 而实际 job 名为 `Lint & Format Check`；要求 `Test (pytest)`
-而实际为 `Full Backend Test Suite`；要求 `Coverage Gate` 而覆盖率门禁在 pytest
-步骤内部、不是独立 job。这 3 项永远 pending（dependabot PR #3 卡 5 天同因）。
-门禁看着有 5 道、实际只有 2 道生效。
-**下一个会话最该先问所有者的一件事**：改保护规则名对齐实际 job 名，
-还是改 job 名对齐保护规则？未擅自改动 —— 改分支保护属于放宽门禁。
+分支保护的检查名错配已修（所有者选了「改保护规则名对齐实际 job 名」）：
+- `Lint (ruff)` → `Lint & Format Check`、`Test (pytest)` → `Full Backend Test Suite`（纯改名）
+- `Coverage Gate` 不是改名能解决的 —— 它需要一个真实存在的 job。
+  新增 `coverage-gate`（不重跑测试，只下载 `coverage.xml` 独立断言行覆盖率）。
+  选「让名字真实存在」而非「从必过列表删掉它」：后者是放宽门禁，前者不是
+- 改保护时逐项比对了改前改后（服务器回读）：只有 5 个检查名变化，
+  其余保护项（`strict` / `enforce_admins` / 强推 / 删除 / 评审 / 推送限制等）
+  全部保持原值；必过检查数量 5 → 5 未减少，且改后每个名字都对应真实 job。
+  原始配置已存为回滚点
 
 > 为什么选 PR 而非直推：dry-run 通过（fast-forward、非强推、密钥扫描干净），
 > 所有者是 owner 且 `enforce_admins: false`，技术上推得进去。但那等于绕过一道
 > 形式存在、实际不生效的门禁，而 283 个文件、6.8 万行删除（其中 6.6 万来自单个
 > 遗留原型清理 commit `0966179`）的改动不该这样落地。
+
+⚠ **dependabot PR #3 仍是 `BLOCKED`，但原因已不同**：它的 `Docker Image Trivy Scan`
+还是 5 天前那次 36 HIGH 的失败结果（分支停在 nanoid 那一个 commit，没有 Trivy 修复）。
+**合并 PR #4 之后直接关掉 PR #3 即可** —— 它的 nanoid 修复已 cherry-pick 进 #4。
 
 ## 08-22 做了什么
 
@@ -225,8 +231,11 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 
 ## 下一步（按优先级）
 
-- [ ] **问所有者：master 分支保护那 3 个对不上的检查名怎么修**（改规则名 vs 改 job 名）。
-      **这是目前唯一挡着 PR #4 合并的东西**，代码侧 11 项检查已全绿
+- [ ] **合并 PR #4**（`mergeStateStatus = CLEAN`，12 项检查全绿，可以合了），
+      合完**关掉 dependabot PR #3** —— 它的 nanoid 修复已 cherry-pick 进 #4，
+      它自己那次 Trivy 失败是 5 天前 36 HIGH 的旧结果
+- [x] ~~**问所有者：分支保护那 3 个对不上的检查名怎么修**~~ → **已修**，
+      所有者选了改保护规则名对齐实际 job 名（详见开头）
 - [ ] **决定 Python 版本口径**：`docker/Dockerfile` 与 CI 用 **3.12**、mypy 配置
       也写 3.12，但本地 venv 是 **3.11.9**，`pyproject.toml` 只声明 `>=3.11`。
       **本地测过的解释器和镜像里跑的不是同一个。** 统一到 3.12 需要重建本地
@@ -257,6 +266,7 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 | `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
 | `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
 | `Docs Link Check` | 6 条死链 | **0** |
+| 分支保护必过检查 | 5 个里 3 个是假名字 | **5 个全部对应真实 job** |
 
 **Trivy 那项的教训：一个只报「失败」不报「为什么」的门禁，等于没有门禁。**
 它红了 13 天，因为 workflow 只让 Trivy 输出 SARIF 到文件 —— 失败时日志只剩
@@ -276,7 +286,39 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 **npm audit 那项**：9 个高危全源自 `nanoid < 3.3.18` 经 postcss 传染。
 修法是 **cherry-pick dependabot PR #3 的原始 commit**（`16e4763`），
 不是自己写版本号 —— 本机 npm registry 不可达（`EPERM`），编不出可信的
-`integrity` 哈希。顺带解掉了 PR #3 卡 5 天的问题。
+`integrity` 哈希。
+
+### 第四项：分支保护的检查名错配（所有者决定后修）
+
+这一项和上面三项性质不同 —— 不是某个检查红了，而是**门禁本身是假的**：
+`master` 要求 5 个必过检查，其中 3 个名字在仓库里没有任何 job 会产出，
+于是永远 pending，任何 PR 恒为 `BLOCKED`。看着 5 道门，实际只有 2 道生效。
+
+所有者选了「改保护规则名对齐实际 job 名」。执行时发现三项里有一项**不能靠改名解决**：
+
+- `Lint (ruff)` → `Lint & Format Check`、`Test (pytest)` → `Full Backend Test Suite`
+  是纯改名
+- **`Coverage Gate` 需要一个真实存在的 job**。覆盖率门槛此前只以
+  `--cov-fail-under=80` 参数藏在测试步骤内部 —— 闸门是真的、名字是假的，
+  而分支保护匹配的正是名字。新增 `coverage-gate` job：不重跑测试（那要 7 分半），
+  只下载测试阶段已上传的 `coverage.xml` 独立断言行覆盖率。
+  这不是与 `--cov-fail-under` 重复劳动：命令行里的阈值被谁调低都不会有提示，
+  而这是一道名字可见、能独立失败的闸门。
+  **选「让名字真实存在」而非「从必过列表删掉它」—— 后者是放宽门禁，前者不是。**
+
+**闸门先被验证过能失败**，因为不会失败的覆盖率闸门比没有闸门更糟。
+人造边界样本六个全部符合预期：恰好 80.00% 放行（边界不得误拒）、79.99% 拦、
+79.00% 拦、缺 `line-rate` 属性拦（不得静默当成通过）、0% 拦、100% 放行。
+浮点比较用 `pct + 1e-9 < THRESHOLD` 以免二进制误差把真正的 80.0% 判成不及格。
+CI 实跑：**88.21%（10493/11896 行）通过**。
+
+**改保护时逐项比对了改前改后**（服务器回读，不是复述请求）：只有 `contexts`
+里 5 个名字变化；`strict` / `enforce_admins` / 强推 / 删除 / 评审 / 推送限制 /
+线性历史 / 会话解决 / `block_creations` / `lock_branch` 全部保持原值。
+必过检查数量 5 → 5 未减少，且改后 5 个名字**每一个都对应真实 job**。
+原始配置已存为回滚点。
+
+结果：PR #4 `BLOCKED` → **`CLEAN`**，12 项检查全绿。
 
 ## 如何运行与验证
 
@@ -437,6 +479,19 @@ CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
 **08-22 又加一例**：`Docker Image Trivy Scan` 红了 13 天，但它只报「失败」不报
 「为什么」—— SARIF 写进文件，日志只剩 `exit code 1`。同一个模式：
 闸门存在、但它的输出无法被人读取，于是等于不存在。修法是让它先打印再判定。
+
+**08-22 第三例，最彻底的一种**：`master` 分支保护的 5 个必过检查里，
+**3 个名字根本没有对应的 job**。这不是闸门坏了，是闸门**从来不存在** ——
+它们永远 pending，把所有 PR 一律判为 `BLOCKED`。
+表面上比别人严（要 5 道），实际只有 2 道生效，而且这个错配把
+dependabot PR #3 卡了整 5 天没人发现原因。
+其中 `Coverage Gate` 尤其典型：**门槛是真的（`--cov-fail-under=80` 一直在跑），
+但名字是假的**，而分支保护匹配的是名字 —— 一个真实生效的检查，
+因为没有名字，在门禁体系里等于不存在。
+
+**统一起来的教训**：闸门的「存在」有三个独立条件 —— 它得**跑**、
+它的结果得**能被读到**、它还得有个**别人引用得上的名字**。
+缺任何一条，它对使用者就是不存在的，而且从外面看不出来。
 
 ## 本环境的操作陷阱（省下重新踩的时间）
 

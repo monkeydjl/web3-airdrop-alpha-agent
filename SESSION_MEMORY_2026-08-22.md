@@ -182,12 +182,10 @@ next build               → 编译成功（4.8s），收尾 spawn EPERM = 沙�
 
 ## 遗留问题 / 下一步
 
-1. **master 分支保护有 3 个必过检查名对不上，任何 PR 恒为 BLOCKED**
-   —— 要求 `Lint (ruff)` / `Test (pytest)` / `Coverage Gate`，
-   而仓库里实际 job 名是 `Lint & Format Check` / `Full Backend Test Suite`，
-   覆盖率门禁在 pytest 步骤内部、不是独立 job。这 3 项永远 pending。
-   **下个会话先请所有者定夺**：改保护规则名 vs 改 job 名。未擅自改动，
-   因为改分支保护属于放宽门禁
+1. **合并 PR #4**（`mergeStateStatus = CLEAN`，12 项检查全绿），
+   合完**关掉 dependabot PR #3** —— 它的 nanoid 修复已 cherry-pick 进 #4。
+   ⚠ PR #3 自己仍是 `BLOCKED`，但原因已不同：它的 `Docker Image Trivy Scan`
+   还是 5 天前那次 36 HIGH 的旧结果（它的分支上没有 Trivy 修复），不必去修它
 2. **编码损坏**：一型 487 处待人工判定（`DATA_SOURCE_STRATEGY.md` 占 367 处且
    无干净底本）、二型 `API_SPEC.md` 70 处只检测不修复、三型 2 处只登记
 3. **Python 版本口径不一致**：镜像/CI/mypy 用 3.12，本地 venv 3.11.9。
@@ -226,6 +224,7 @@ dry-run 通过（fast-forward、非强推、密钥扫描干净），但查分支
 | `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
 | `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
 | `Docs Link Check` | 6 条死链 | **0** |
+| 分支保护必过检查（第四项，见下） | 5 个里 3 个是假名字 | **5 个全对应真实 job** |
 
 **Trivy 那项的关键教训：一个只报「失败」不报「为什么」的门禁，等于没有门禁。**
 它红了 13 天，因为 workflow 只让 Trivy 输出 SARIF 到文件 —— 失败时日志只剩
@@ -261,9 +260,57 @@ numpy 里唯一的 `from setuptools import ...` 在 `numpy/distutils`（构建�
 
 ### PR #4 最终状态
 
-11 项检查**全部 pass**（含 `Full Backend Test Suite` 7m34s、
+**12 项检查全部 pass**（含 `Full Backend Test Suite` 7m42s、`Coverage Gate` 88.21%、
 `Docker Build Check` 含 `/health` 冒烟、`Docker Image Trivy Scan`）。
-`mergeStateStatus` 仍是 `BLOCKED`，唯一原因就是上面那 3 个不存在的检查名。
+`mergeStateStatus` 从 `BLOCKED` 变为 **`CLEAN`**，可以合并。
+
+### 四、分支保护的检查名错配（所有者选了「改保护规则名」后修）
+
+这一项性质和上面三项不同 —— 不是某个检查红了，而是**门禁本身是假的**。
+
+原状：`master` 要求 5 个必过检查，其中 3 个名字在仓库里没有任何 job 会产出，
+于是永远 pending，任何 PR 恒为 `BLOCKED`（dependabot PR #3 卡整 5 天正是此因）。
+表面上比别人严（要 5 道门），实际只有 2 道生效。
+
+所有者选了「改保护规则名对齐实际 job 名」。执行时发现三项里有一项**改名解决不了**：
+
+| 必过检查名 | 处理 |
+|---|---|
+| `Lint (ruff)` | → `Lint & Format Check`（纯改名） |
+| `Test (pytest)` | → `Full Backend Test Suite`（纯改名） |
+| `Coverage Gate` | **需要新建一个真实 job** |
+
+**为什么 `Coverage Gate` 特殊**：覆盖率门槛一直在跑，但它只以
+`--cov-fail-under=80` 参数的形式藏在测试步骤内部 —— **闸门是真的、名字是假的**，
+而分支保护匹配的正是名字。一个真实生效的检查，因为没有名字，
+在门禁体系里等于不存在。
+
+新增 `coverage-gate` job（`name: Coverage Gate`）：不重跑测试（那要 7 分半），
+只下载测试阶段已上传的 `coverage.xml` 并独立断言行覆盖率。
+这**不是**与 `--cov-fail-under` 重复劳动 —— 写在命令行里的阈值被谁调低或删掉
+都不会有任何提示，而这是一道名字可见、能独立失败的闸门。
+**选「让名字真实存在」而不是「从必过列表删掉它」：后者是放宽门禁，前者不是。**
+
+**闸门先被验证过能失败**（不会失败的覆盖率闸门比没有闸门更糟）。
+人造边界样本逐个实测，六个全部符合预期：
+
+```
+恰好 80.00%          → 放行（边界不得误拒）
+79.99%               → 拦
+79.00%               → 拦
+缺 line-rate 属性     → 拦（不得静默当成通过）
+0%                   → 拦
+100%                 → 放行
+```
+
+浮点比较用 `pct + 1e-9 < THRESHOLD`，避免二进制表示误差把真正的 80.0%
+判成不及格。CI 实跑：**88.21%（10493/11896 行）通过**。
+
+**改分支保护时逐项比对了改前改后**（服务器回读，不是复述我发的请求）：
+只有 `contexts` 里 5 个名字变化；`strict` / `enforce_admins` / 强推 / 删除 /
+评审 / 推送限制 / 线性历史 / 会话解决 / `block_creations` / `lock_branch`
+全部保持原值。必过检查数量 **5 → 5 未减少**，且改后 5 个名字
+**每一个都对应真实 job**。改前配置已存为回滚点。
 
 ## 这轮踩过的坑（给下一个会话）
 

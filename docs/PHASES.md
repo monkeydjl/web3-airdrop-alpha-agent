@@ -80,13 +80,15 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 ### 运维 — 推送上线与 CI 长期红灯清理（2026-08-22 完成）
 
 **结论：完成。** 41 个积压 commit 推上远程分支并开 PR #4，
-借 CI 查清并修掉三项**先于本次改动就红着**的检查。
+借 CI 查清并修掉三项**先于本次改动就红着**的检查，
+以及一项**从未真正生效过的门禁配置**。
 
 | 检查 | 修前 | 修后 |
 |---|---|---|
 | `Docker Image Trivy Scan` | 36 HIGH（08-09 起每次红） | **0** |
 | `Frontend Lint & Build`（npm audit） | 9 HIGH（08-13 起红） | **0** |
 | `Docs Link Check` | 6 条死链 | **0** |
+| 分支保护必过检查 | 5 个里 3 个是假名字 | **5 个全对应真实 job** |
 
 - Trivy：34 个来自基础镜像 util-linux 家族（`apt-get upgrade` 解决）；
   剩下 2 个的真来源是 `pip/_vendor/vendor.txt`（pip 内嵌依赖清单，
@@ -102,6 +104,18 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 - **教训二：报告自相矛盾时，先怀疑取数口径。** Trivy 报 setuptools 70.3.0
   而镜像里已是 84.0.0 —— 按「再升一次」提交的那版一个漏洞也没少；
   加诊断打出 `PkgPath = None` 才找到真来源
+- **分支保护错配（所有者选「改保护规则名」）**：5 个必过检查里 3 个名字
+  在仓库里没有任何 job 会产出 → 永远 pending → 任何 PR 恒 `BLOCKED`。
+  其中 `Coverage Gate` 改名解决不了：覆盖率门槛一直在跑，
+  但只以 `--cov-fail-under=80` 参数藏在测试步骤内部 —— **闸门是真的、名字是假的**，
+  而分支保护匹配的是名字。新增 `coverage-gate` 独立 job
+  （不重跑测试，只下载 `coverage.xml` 断言，CI 实测 88.21% 通过）；
+  选「让名字真实存在」而非「删掉这条要求」，因为后者是放宽门禁。
+  闸门先用人造边界样本验证过能失败（80.00% 放行 / 79.99% 拦 / 缺属性拦，六例全对）。
+  改保护时逐项比对改前改后：只有 5 个名字变化，其余保护项全部原值，数量 5 → 5 未减少
+- **教训三：闸门的「存在」有三个独立条件** —— 它得**跑**、结果得**能被读到**、
+  还得有个**别人引用得上的名字**。缺任何一条，它对使用者就是不存在的，
+  而且从外面看不出来。本轮三项各缺一条
 
 ### 运维 — 归档子系统落地（2026-08-22 完成）
 
@@ -150,19 +164,20 @@ mypy app                      → no issues in 117 source files
 next build                    → 编译成功，收尾 spawn EPERM（沙箱限制，非代码问题）
 ```
 
-**远程 CI 基线（PR #4，08-22 实测 11 项全 pass）**：
+**远程 CI 基线（PR #4，08-22 实测 12 项全 pass，`mergeStateStatus = CLEAN`）**：
 
 ```
-Lint & Format Check       pass   29s
-Type Check (mypy)         pass   36s
-Full Backend Test Suite   pass   7m34s   ← Python 3.12 上跑绿
-Frontend Lint & Build     pass   30s     ← 含 npm audit（此前 9 high）
+Lint & Format Check       pass   32s
+Type Check (mypy)         pass   35s
+Full Backend Test Suite   pass   7m42s   ← Python 3.12 上跑绿
+Coverage Gate             pass    3s     ← 新增独立 job，88.21%（10493/11896 行）
+Frontend Lint & Build     pass   37s     ← 含 npm audit（此前 9 high）
 Docker Build Check        pass   24s     ← 含起容器 + /health 冒烟
-Docker Image Trivy Scan   pass   1m28s   ← 此前 36 HIGH
-Check Markdown Links      pass   42s     ← 此前 6 条死链
-pip-audit (CVE Scan)      pass   39s
-Detect Secrets            pass   17s
-Dependency Review         pass    9s
+Docker Image Trivy Scan   pass   45s     ← 此前 36 HIGH
+Check Markdown Links      pass   46s     ← 此前 6 条死链
+pip-audit (CVE Scan)      pass   46s
+Detect Secrets            pass   18s
+Dependency Review         pass    7s
 Trivy                     pass    3s
 ```
 
@@ -171,14 +186,9 @@ Trivy                     pass    3s
 
 ## 未决事项（跨阶段）
 
-- **代码已推远程分支 `release/v2-consolidation`，PR #4 已开，master 未动**。
-  ⚠ **PR 无法合并，但不是代码问题**：`master` 分支保护要求 5 个必过检查，
-  其中 **3 个在仓库里没有任何 job 会产出** —— 要求 `Lint (ruff)` 而实际 job 名为
-  `Lint & Format Check`；要求 `Test (pytest)` 而实际为 `Full Backend Test Suite`；
-  要求 `Coverage Gate` 而覆盖率门禁在 pytest 步骤内部、不是独立 job。
-  这 3 项永远 pending，因此 `mergeStateStatus` 恒为 `BLOCKED`
-  （dependabot PR #3 卡 5 天同因）。门禁看着有 5 道、实际只有 2 道生效。
-  **需所有者定夺**：改保护规则名 vs 改 job 名。未擅自改动 —— 改分支保护属于放宽门禁
+- **代码已推远程分支 `release/v2-consolidation`，PR #4 已开且 `CLEAN`，可以合并**。
+  master 仍未动。合并后关掉 dependabot PR #3（其 nanoid 修复已 cherry-pick 进 #4；
+  它自己仍 `BLOCKED`，但原因是它分支上那次 5 天前的 36 HIGH Trivy 旧结果）。
 - **文档编码损坏三型，共 559 处待处理**：
   - 一型（非法 UTF-8）1116 处 → 已定 629 处（56.4%），**487 处**待人工判定。
     `DATA_SOURCE_STRATEGY.md` 占 367 处且无干净历史底本。

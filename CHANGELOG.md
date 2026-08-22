@@ -80,15 +80,48 @@
 动机是这个 job 红了 13 天却无人能说出原因 —— 一个只报「失败」不报「为什么」的
 门禁，实际效果等于没有门禁。
 
-### 未解决 — master 分支保护有 3 个检查名对不上（2026-08-22）
+### Fixed — master 分支保护有 3 个检查名对不上（2026-08-22 已修）
 
-`master` 的 `required_status_checks` 要求 5 项，其中 **3 项在仓库里没有任何 job 会产出**：
+**原判断（保留原文）**：`master` 的 `required_status_checks` 要求 5 项，
+其中 **3 项在仓库里没有任何 job 会产出**：
 要求 `Lint (ruff)` 而实际 job 名为 `Lint & Format Check`；要求 `Test (pytest)`
 而实际为 `Full Backend Test Suite`；要求 `Coverage Gate` 而覆盖率门禁在 pytest
 步骤内部、不是独立 job。这 3 项会永远 pending，因此任何 PR 的 `mergeStateStatus`
 恒为 `BLOCKED`（dependabot PR #3 卡 5 天正是此因）。
 门禁看着有 5 道、实际只有 2 道生效。修法二选一：改保护规则的名字对齐实际 job 名，
 或改 job 名对齐保护规则。**未擅自改动** —— 修改分支保护属于放宽门禁，需所有者决定。
+
+**所有者选了第一种（改保护规则名对齐实际 job 名）。已按此执行：**
+
+- **`Coverage Gate` 不是改名能解决的 —— 它需要一个真实存在的 job**。
+  覆盖率门槛此前只以 `--cov-fail-under=80` 参数的形式藏在测试步骤内部：
+  闸门是真的，名字是假的，而分支保护匹配的正是名字。
+  新增 `coverage-gate` job（`name: Coverage Gate`）：不重跑测试（那要 7 分半），
+  只下载测试阶段已上传的 `coverage.xml` 并独立断言行覆盖率。
+  这**不是**与 `--cov-fail-under` 重复劳动 —— 写在命令行里的阈值被谁调低或删掉
+  都不会有任何提示，而这是一道名字可见、能独立失败的闸门。
+  选「让名字真实存在」而不是「从必过列表删掉它」：后者是放宽门禁，前者不是。
+
+- 另两项是纯改名：`Lint (ruff)` → `Lint & Format Check`、
+  `Test (pytest)` → `Full Backend Test Suite`。
+
+- **闸门本身先被验证过能失败**，因为一个不会失败的覆盖率闸门比没有闸门更糟。
+  用人造边界样本逐个实测：恰好 80.00% 放行（边界不得误拒）、79.99% 拦、
+  79.00% 拦、缺 `line-rate` 属性拦（不得静默当成通过）、0% 拦、100% 放行 ——
+  六个全部符合预期。浮点比较用 `pct + 1e-9 < THRESHOLD`，
+  避免二进制表示误差把真正的 80.0% 判成不及格。
+  CI 实跑结果：**88.21%（10493/11896 行）通过**。
+
+- **改分支保护时逐项比对了改前改后**（服务器回读，不是复述请求）：
+  仅 `contexts` 5 个名字变化，`strict` / `enforce_admins` / `allow_force_pushes` /
+  `allow_deletions` / `required_reviews` / `restrictions` /
+  `required_linear_history` / `required_conversation_resolution` /
+  `block_creations` / `lock_branch` 全部保持原值。
+  必过检查数量 **5 → 5，未减少**，且改后 5 个名字**每一个都对应真实 job**。
+  改前的原始配置已存为回滚点。
+
+结果：PR #4 的 `mergeStateStatus` 从 `BLOCKED` 变为 **`CLEAN`**。
+门禁从「看着 5 道实际 2 道」变成「5 道全部真实生效」。
 
 ### Fixed — 归档从未真正运行过（2026-08-22）
 
