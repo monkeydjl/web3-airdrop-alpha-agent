@@ -6,7 +6,7 @@ import { apiFetch, fetchHealth } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, HealthData } from '@/lib/types';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, UploadCloud } from 'lucide-react';
 
 interface QuarantineItem {
@@ -25,10 +25,26 @@ interface AutomationConfig {
   CRON_EXPRESSION?: string;
   ANALYSIS_RUN_LIMIT?: number;
   SCHEDULER_MISFIRE_GRACE_SECONDS?: number;
+  ARCHIVE_SCHEDULER_ENABLED?: boolean;
+  ARCHIVE_CRON?: string;
 }
 
 interface SettingsConfig {
   automation?: AutomationConfig;
+  /** 各采集源的真实配置，含 cron —— 用于替代原先写死的 SOURCE_CRONS 表 */
+  sources?: Record<string, { cron?: string; kol_cron?: string; keyword_cron?: string }>;
+}
+
+/**
+ * 一次导入的结果。刻意保留 `errors`：后端会在部分行有问题时**照样导入合法行**
+ * 并把逐行错误放在 `validation_errors` 里，只报「成功 N 项」会把它们藏掉。
+ */
+interface ImportOutcome {
+  filename: string;
+  at: string;
+  projectCount: number;
+  topScore: number | null;
+  errors: string[];
 }
 
 function boolZh(v?: boolean): string {
@@ -40,19 +56,32 @@ function numOr(v?: number, suffix = ''): string {
   return v == null ? '—' : `${v}${suffix}`;
 }
 
-const SOURCE_CRONS: Record<string, string> = {
-  defillama: '0 8 * * *',
-  github: '30 8 * * *',
-  coingecko: '0 9 * * *',
-  cryptorank: '0 9 * * *',
-  rootdata: '0 10 * * *',
-  twitter: '*/15 * * * *',
-  twitter_kol: '0 6 * * *',
-  twitter_keyword: '*/15 * * * *',
-  etherscan: '0 7 * * *',
-  galxe: '0 10 * * *',
-  layer3: '0 11 * * *',
-};
+/**
+ * 从 /settings/config 的 sources 块取某个源的真实 cron。
+ *
+ * 这里此前是一张写死的对照表 `SOURCE_CRONS`。实测下来 11 项里有 **5 项是错的**：
+ *   cryptorank  写 `0 9 * * *`   实际 `15 9 * * *`
+ *   rootdata    写 `0 10 * * *`  实际 `45 9 * * *`
+ *   twitter_kol 写 `0 6 * * *`   实际每小时一次    ← 前端说一天一次
+ *   etherscan   写 `0 7 * * *`   实际每 6 小时一次
+ *   layer3      写 `0 11 * * *`  实际 `30 10 * * *`
+ * 运维台是用来判断"这个源什么时候会自己跑"的，显示错的排期比不显示更糟。
+ * （上面刻意不写出含斜杠星号的 cron 字面量：那个组合会提前结束本注释块。）
+ *
+ * twitter 在后端拆成 `kol_cron` / `keyword_cron` 两个字段（没有 `cron`），
+ * 所以要按 source_id 分别取。
+ */
+function cronOf(
+  sourceId: string,
+  sources?: Record<string, { cron?: string; kol_cron?: string; keyword_cron?: string }>,
+): string | undefined {
+  if (!sources) return undefined;
+  if (sourceId === 'twitter_kol') return sources.twitter?.kol_cron;
+  if (sourceId === 'twitter_keyword' || sourceId === 'twitter') {
+    return sources.twitter?.keyword_cron;
+  }
+  return sources[sourceId]?.cron;
+}
 
 
 function formatUsd(n?: number | null) {
@@ -74,6 +103,9 @@ function syncStatusZh(s?: string | null) {
   if (s === 'not_registered') return '未注册';
   return s;
 }
+
+/** 导入导出的取数逻辑抽在 lib/download.ts，那里可被 node 直接加载做单测 */
+import { API_PREFIX, downloadFile, errorMessageFromBody, validateUploadFile } from '@/lib/download';
 
 function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -127,10 +159,13 @@ export default function OpsPage() {
   } | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [automation, setAutomation] = useState<AutomationConfig | null>(null);
+  const [runtimeSources, setRuntimeSources] = useState<SettingsConfig['sources']>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [partialError, setPartialError] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportOutcome | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(
     null,
   );
@@ -178,6 +213,7 @@ export default function OpsPage() {
       setIxSummary(ix);
       if (h) setHealth(h as HealthData);
       setAutomation(cfg?.automation ?? null);
+      setRuntimeSources(cfg?.sources);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -279,6 +315,102 @@ export default function OpsPage() {
   };
 
   const operatorOn = sources.filter((s) => s.operatorEnabled).length;
+
+  /** 导出项目列表（Excel / CSV）。走后端 /export/projects，不是前端自己拼 CSV。 */
+  const exportProjects = async (format: 'excel' | 'csv') => {
+    setBusy(`export-${format}`);
+    try {
+      const name = await downloadFile(
+        `/export/projects?format=${format}`,
+        format === 'excel' ? 'projects.xlsx' : 'projects.csv',
+      );
+      showToast(`已导出 ${name}`, 'success');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '导出失败', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** 下载导入模板（后端 /export/template 生成，含示例行与字段说明） */
+  const downloadTemplate = async () => {
+    setBusy('template');
+    try {
+      const name = await downloadFile('/export/template', 'import_template.xlsx');
+      showToast(`已下载 ${name}`, 'success');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '下载模板失败', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * 上传并导入。
+   *
+   * 三件事必须自己做，不能交给 apiFetch：
+   * 1. 用 FormData，且**不能设 Content-Type** —— 手动设会覆盖掉 multipart
+   *    的 boundary，后端解析直接失败。apiFetch 恰好写死了 application/json。
+   * 2. 前端先挡掉超限文件。后端有 10MB / 100 项上限，但等传完再被拒
+   *    是白等一次上传。
+   * 3. 导入成功后 `load()` 刷新，否则页面上的统计还是导入前的旧值。
+   */
+  const importProjects = async (file: File) => {
+    const reject = validateUploadFile(file.name, file.size);
+    if (reject) {
+      showToast(reject, 'error');
+      return;
+    }
+
+    setBusy('import');
+    setImportResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      // 注意：不要设 Content-Type，交给浏览器生成带 boundary 的 multipart 头
+      const res = await fetch(`${API_PREFIX}/import/projects`, { method: 'POST', body: form });
+      const text = await res.text();
+
+      if (!res.ok) {
+        throw new Error(errorMessageFromBody(text, res.status, '导入'));
+      }
+
+      let json: {
+        ok?: boolean;
+        data?: { project_count?: number; top_score?: number; validation_errors?: string[] };
+      };
+      try {
+        json = JSON.parse(text) as typeof json;
+      } catch {
+        throw new Error(`导入失败：后端返回非 JSON（HTTP ${res.status}）`);
+      }
+      if (json.ok === false) {
+        throw new Error(errorMessageFromBody(text, res.status, '导入'));
+      }
+
+      const data = json.data ?? {};
+      const errors = data.validation_errors ?? [];
+      setImportResult({
+        filename: file.name,
+        at: new Date().toISOString(),
+        projectCount: data.project_count ?? 0,
+        topScore: typeof data.top_score === 'number' ? data.top_score : null,
+        errors,
+      });
+      showToast(
+        `导入 ${data.project_count ?? 0} 项${errors.length ? ` · ${errors.length} 行有问题` : ''}`,
+        errors.length ? 'info' : 'success',
+      );
+      load();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '导入失败', 'error');
+    } finally {
+      setBusy(null);
+      // 清空 input，否则选同一个文件不会再触发 change
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const runnable = sources.filter((s) => s.enabled).length;
   const net = ixSummary?.net_usd ?? 0;
 
@@ -386,7 +518,7 @@ export default function OpsPage() {
               {sources.map((s) => {
                 const name = s.source_name || sourceZh(s.source_id);
                 const toggling = busy === `toggle-${s.source_id}`;
-                const cronExpr = SOURCE_CRONS[s.source_id] || '0 8 * * *';
+                const cronExpr = cronOf(s.source_id, runtimeSources);
                 return (
                   <article
                     key={s.source_id}
@@ -409,7 +541,7 @@ export default function OpsPage() {
                     <div className="ops-source-schedule">
                       <span className="ops-cron">
                         <Clock className="h-3.5 w-3.5 text-ink-muted" strokeWidth={2} />
-                        <span className="font-mono text-xs">{cronExpr}</span>
+                        <span className="font-mono text-xs">{cronExpr ?? '—'}</span>
                       </span>
                       <span className="text-[11px] text-ink-faint">
                         {s.last_sync ? `上次 ${relativeTime(s.last_sync)}` : '从未同步'}
@@ -553,32 +685,106 @@ export default function OpsPage() {
           <article className="ops-card ops-io-card">
             <span className="text-xs text-ink-muted">按当前筛选导出项目列表</span>
             <div className="ops-io-actions">
-              <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-1.5"
+                onClick={() => exportProjects('excel')}
+                disabled={busy === 'export-excel' || busy === 'export-csv'}
+              >
                 <FileSpreadsheet className="h-4 w-4" strokeWidth={2} />
-                <span className="text-sm">导出 Excel</span>
+                <span className="text-sm">{busy === 'export-excel' ? '导出中…' : '导出 Excel'}</span>
               </button>
-              <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-1.5"
+                onClick={() => exportProjects('csv')}
+                disabled={busy === 'export-excel' || busy === 'export-csv'}
+              >
                 <FileText className="h-4 w-4" strokeWidth={2} />
-                <span className="text-sm">导出 CSV</span>
+                <span className="text-sm">{busy === 'export-csv' ? '导出中…' : '导出 CSV'}</span>
               </button>
             </div>
-            <span className="mt-auto text-[11px] text-ink-faint">支持 label / sector / stage / 最低分筛选参数</span>
+            <span className="mt-auto text-[11px] text-ink-faint">
+              导出全部项目 · 后端支持 label / sector / stage / 最低分筛选参数
+            </span>
           </article>
           <article className="ops-card ops-io-card">
             <span className="text-xs text-ink-muted">上传 xlsx / csv，自动校验并评分</span>
-            <div className="ops-upload" role="button" tabIndex={0} aria-label="上传导入文件">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importProjects(f);
+              }}
+            />
+            <div
+              className="ops-upload"
+              role="button"
+              tabIndex={0}
+              aria-label="上传导入文件"
+              aria-busy={busy === 'import'}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const f = e.dataTransfer.files?.[0];
+                if (f) importProjects(f);
+              }}
+            >
               <UploadCloud className="h-5 w-5 text-ink-muted" strokeWidth={2} />
-              <span className="ops-upload-title">拖拽文件到此处</span>
+              <span className="ops-upload-title">
+                {busy === 'import' ? '导入中…' : '拖拽文件到此处'}
+              </span>
               <span className="ops-upload-link">或点击选择</span>
               <span className="text-[11px] text-ink-faint">≤10MB · ≤100 项</span>
             </div>
             <div className="ops-io-bottom">
-              <button type="button" className="btn-secondary inline-flex items-center gap-1.5 !px-2.5 !py-1 !text-xs">
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-1.5 !px-2.5 !py-1 !text-xs"
+                onClick={downloadTemplate}
+                disabled={busy === 'template'}
+              >
                 <Download className="h-3.5 w-3.5" strokeWidth={2} />
-                <span>下载模板</span>
+                <span>{busy === 'template' ? '下载中…' : '下载模板'}</span>
               </button>
-              <span className="text-[11px] text-ink-faint">最近导入：08-02 · 24 项成功 / 2 项失败</span>
+              {/* 只显示本次会话真实发生过的导入。此处此前写死「08-02 · 24 项成功 /
+                  2 项失败」—— 后端没有导入历史接口，那串数字纯属编造。
+                  没导入过就说没有，不假造历史。 */}
+              <span className="text-[11px] text-ink-faint">
+                {importResult
+                  ? `最近导入：${relativeTime(importResult.at)} · ${importResult.filename} · ${importResult.projectCount} 项${
+                      importResult.errors.length ? ` · ${importResult.errors.length} 行有问题` : ''
+                    }`
+                  : '本次会话尚未导入（后端无导入历史接口）'}
+              </span>
             </div>
+            {importResult && importResult.errors.length > 0 ? (
+              <details className="mt-2 text-[11px] text-ink-muted">
+                <summary className="cursor-pointer">
+                  展开 {importResult.errors.length} 条校验问题
+                </summary>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+                  {importResult.errors.slice(0, 20).map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+                {importResult.errors.length > 20 ? (
+                  <p className="mt-1 text-ink-faint">
+                    仅显示前 20 条，共 {importResult.errors.length} 条
+                  </p>
+                ) : null}
+              </details>
+            ) : null}
           </article>
           <article className="ops-card ops-io-card">
             <span className="text-xs text-ink-muted">进程内双调度模型</span>
@@ -589,7 +795,10 @@ export default function OpsPage() {
               </li>
               <li>
                 <span className="ops-sched-key">分析调度</span>
-                <span className="font-mono text-[11.5px] text-ink-muted">0 8 * * *</span>
+                {/* 真实值，不再写死 —— 下面「调度配置」表里也是这一项 */}
+                <span className="font-mono text-[11.5px] text-ink-muted">
+                  {automation?.CRON_EXPRESSION ?? '—'}
+                </span>
               </li>
               <li>
                 <span className="ops-sched-key">在飞守卫</span>
@@ -626,6 +835,11 @@ export default function OpsPage() {
                 { name: '分析 cron', env: 'CRON_EXPRESSION', value: automation?.CRON_EXPRESSION ?? '—' },
                 { name: '单次分析上限', env: 'ANALYSIS_RUN_LIMIT', value: numOr(automation?.ANALYSIS_RUN_LIMIT) },
                 { name: 'misfire 补跑窗口', env: 'SCHEDULER_MISFIRE_GRACE_SECONDS', value: numOr(automation?.SCHEDULER_MISFIRE_GRACE_SECONDS, ' 秒') },
+                // 归档子系统的配置此前整个运维台都没展示。它是真实在跑的
+                // 定时任务（03:00），运维台不列出来，看这一页的人不会知道
+                // 每天凌晨有个作业在删数据。
+                { name: '归档调度器', env: 'ARCHIVE_SCHEDULER_ENABLED', value: boolZh(automation?.ARCHIVE_SCHEDULER_ENABLED) },
+                { name: '归档 cron', env: 'ARCHIVE_CRON', value: automation?.ARCHIVE_CRON ?? '—' },
               ].map((row) => (
                 <tr key={row.env} className="border-b border-line last:border-b-0">
                   <td className="px-4 py-3 font-medium text-ink sm:px-5">{row.name}</td>
