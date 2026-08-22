@@ -116,6 +116,16 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 - **教训三：闸门的「存在」有三个独立条件** —— 它得**跑**、结果得**能被读到**、
   还得有个**别人引用得上的名字**。缺任何一条，它对使用者就是不存在的，
   而且从外面看不出来。本轮三项各缺一条
+- **教训四（合并后才学到）：一个 job 的红灯不等于一个故障。**
+  合并 PR #4 后 `Docker Image Trivy Scan` 仍然红，但 `Run Trivy scan` 已经
+  success，是 `Upload Trivy results` 报 `Resource not accessible by integration`
+  —— 仓库默认令牌权限 `read`，而 `upload-sarif` 需要 `security-events: write`。
+  **一个 job 里叠了两个独立故障**，漏洞那个把权限那个挡住了（Trivy 先 exit 1，
+  上传成不成功轮不到显现）。逐步骤走完 08-09 以来每次 master 运行才看清：
+  上传**从第一天起就在所有非 PR 运行里失败**。
+  修法：只在这一个 job 上声明权限，不动仓库默认值（PR #5，`05741b3`）。
+  **已验证**：`code-scanning/analyses` 里第一次出现 `refs/heads/master` 记录。
+  所以「修好了」必须在修完之后**再看一次实际结果**，不能靠推理提前下结论
 
 ### 运维 — 归档子系统落地（2026-08-22 完成）
 
@@ -186,9 +196,10 @@ Trivy                     pass    3s
 
 ## 未决事项（跨阶段）
 
-- **代码已推远程分支 `release/v2-consolidation`，PR #4 已开且 `CLEAN`，可以合并**。
-  master 仍未动。合并后关掉 dependabot PR #3（其 nanoid 修复已 cherry-pick 进 #4；
-  它自己仍 `BLOCKED`，但原因是它分支上那次 5 天前的 36 HIGH Trivy 旧结果）。
+- ~~代码待合并~~ → **PR #4（`d1b710b`）与 PR #5（`05741b3`）均已合入 master**。
+  dependabot PR #3 已关闭（nanoid 修复已 cherry-pick 进 #4）。
+  **master 实测三个 workflow（`CI` / `Security Scan` / `Docs Link Check`）
+  全部 success —— 2026-08-09 以来第一次全绿。**
 - **文档编码损坏三型，共 559 处待处理**：
   - 一型（非法 UTF-8）1116 处 → 已定 629 处（56.4%），**487 处**待人工判定。
     `DATA_SOURCE_STRATEGY.md` 占 367 处且无干净历史底本。

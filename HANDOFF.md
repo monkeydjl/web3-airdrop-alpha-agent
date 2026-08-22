@@ -18,25 +18,32 @@ check_encoding.py        → exit 0（489 文件，5 个已登记损坏）
 check_terminology.py --all → exit 0
 ```
 
-**PR #4 已于 2026-08-22 合入 master**，合并 commit `d1b710b`
-（merge commit 方式，保留全部 46 个 commit 的历史）。
-远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`。
-合并前 12 项检查全绿（`Full Backend Test Suite` 2648 passed、
+**PR #4 与 #5 均已于 2026-08-22 合入 master，远程全绿。**
+远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`，当前 master = `05741b3`。
+
+| PR | 合并 commit | 内容 |
+|---|---|---|
+| #4 | `d1b710b` | 46 个 commit、283 个文件：归档子系统、编码修复、门禁修复、上线修复 |
+| #5 | `05741b3` | Trivy job 的 `security-events: write` 权限 + 触发器修复 |
+
+合并 #4 前 12 项检查全绿（`Full Backend Test Suite` 2648 passed、
 `Coverage Gate` 88.21%、`Docker Build Check` 含 `/health` 冒烟、
 `Docker Image Trivy Scan` 0 HIGH、`npm audit` 0 vulnerabilities、
 `Check Markdown Links` 0 死链）。
 dependabot PR #3 已关闭（其 nanoid 修复已 cherry-pick 进 #4，保留原作者）。
 
-⚠ **有一个 PR #5 待合并**：合并 #4 触发 push 事件后，
-`Docker Image Trivy Scan` 在 master 上**仍然红着**，但原因换了 ——
-Trivy 扫描本身 success（0 漏洞，白天那些修复有效），
-是 `Upload Trivy results` 报 `Resource not accessible by integration`：
-仓库默认 workflow 令牌权限是 `read`，而 `upload-sarif` 需要
-`security-events: write`。PR #5 只在这一个 job 上补了权限声明
-（不动仓库默认值），并顺带把 push 路径过滤加上 `security.yml` 自己
-+ 加 `workflow_dispatch`（否则改这个 workflow 根本触发不了它，验证不了）。
-**合并 #5 后必须回来看 master 上那次运行**：`Upload` 是否终于成功、
-`code-scanning/alerts` 是否不再为空 —— 这是唯一的验证方式。
+**master 最终状态（`05741b3` 实测）**：`CI` / `Security Scan` / `Docs Link Check`
+三个 workflow **全部 success —— 2026-08-09 以来第一次全绿**。
+
+合并 #4 时又露出一个此前被掩盖的故障：`Docker Image Trivy Scan` 在 master 上
+仍然红着，但 Trivy 扫描本身 success（0 漏洞），是 `Upload Trivy results` 报
+`Resource not accessible by integration` —— 仓库默认 workflow 令牌权限是 `read`，
+而 `upload-sarif` 需要 `security-events: write`。PR #5 只在这一个 job 上补了权限
+（**不动仓库默认值**），并把 push 路径过滤加上 `security.yml` 自己 + 加
+`workflow_dispatch`（否则改这个 workflow 根本触发不了它、验证不了）。
+**已实测生效**：`05741b3` 上 `Upload Trivy results` success，
+且 `code-scanning/analyses` 里第一次出现 `ref=refs/heads/master` 的记录
+（此前所有记录都只有 `refs/pull/*`，正是「只在 PR 事件下能上传」的直接证据）。
 
 分支保护的检查名错配已修（所有者选了「改保护规则名对齐实际 job 名」）：
 - `Lint (ruff)` → `Lint & Format Check`、`Test (pytest)` → `Full Backend Test Suite`（纯改名）
@@ -239,9 +246,8 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 
 ## 下一步（按优先级）
 
-- [ ] **合并 PR #5**（Trivy job 的 `security-events: write` 权限 + 触发器修复），
-      合并后**回来看 master 上那次 push 运行**：`Upload Trivy results` 是否成功、
-      `code-scanning/alerts` 是否不再为空。**我没有提前声称它会成功**
+- [x] ~~**合并 PR #5**~~ → 已合并（`05741b3`），**已验证** `Upload Trivy results`
+      success、`code-scanning/analyses` 首次出现 `refs/heads/master` 记录
 - [x] ~~**合并 PR #4**~~ → 已合并（`d1b710b`），dependabot PR #3 已关闭
 - [x] ~~**问所有者：分支保护那 3 个对不上的检查名怎么修**~~ → **已修**，
       所有者选了改保护规则名对齐实际 job 名（详见开头）
