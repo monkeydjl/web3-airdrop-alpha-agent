@@ -55,10 +55,23 @@ function normalizeSectors(
     .sort((a, b) => b.count - a.count);
 }
 
-/** ── Flag 中文化 + 正/负信号分色 ── */
+/**
+ * ── Flag 中文化 + 正/负信号分色 ──
+ *
+ * 真值来源是后端 `app/agents/team.py` 的 `FLAG_ADJUSTMENTS`：那里每个 flag 都带
+ * 一个正负分数调整，正负号决定了它是好信号还是坏信号。
+ *
+ * 这里此前漏了 `wash-trading VC`（后端给的是 **-0.20**，明确的负面信号）。
+ * 漏掉的后果不是"少显示一个"，而是**显示成中性灰 + 英文原文** ——
+ * 一个扣分项被渲染得像无关紧要的补充说明。
+ *
+ * `backend/tests/api/test_insights.py` 里有一条断言把这张表和后端
+ * `FLAG_ADJUSTMENTS` 钉在一起：后端加新 flag 而这里没跟上，CI 会红。
+ */
 const FLAG_ZH: Record<string, string> = {
   'anonymous team': '匿名团队',
   'previous failed project': '历史失败项目',
+  'wash-trading VC': '刷量 VC',
   'doxxed team': '已公开团队',
   'recent funding': '近期融资',
   'tier-1 vc backed': '一线 VC 投资',
@@ -77,6 +90,7 @@ const POSITIVE_FLAGS = new Set([
 const NEGATIVE_FLAGS = new Set([
   'anonymous team',
   'previous failed project',
+  'wash-trading VC',
 ]);
 
 function flagLabel(flag: string): string {

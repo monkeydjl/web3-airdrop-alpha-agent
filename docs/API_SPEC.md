@@ -1087,13 +1087,23 @@ Alchemy webhook 回调端点（接收链上事件推送）。
     "sources": { "defillama": { "enabled": true, "has_api_key": false } },
     "automation": { "SCHEDULER_ENABLED": true },
     "platform": { "METRICS_ENABLED": true, "LOG_LEVEL": "info" },
-    "thresholds": { "CONFIDENCE_THRESHOLD": 0.5 },
+    "thresholds": {
+      "CONFIDENCE_THRESHOLD": 0.5,
+      "LABEL_FARM_THRESHOLD": 65.0,
+      "LABEL_WATCH_THRESHOLD": 50.0
+    },
     "llm": { "enabled": false, "providers": [] }
   }
 }
 ```
 
 > 密钥类字段（API_KEY、*_TOKEN 等）只返回布尔值 `has_api_key` / `api_key_set`，不返回明文。
+
+> `thresholds.LABEL_FARM_THRESHOLD` / `LABEL_WATCH_THRESHOLD` 是标签分档下限，
+> 真值来自 `app.agents.scorer.LABEL_THRESHOLDS`（不是环境变量），本端点做查表暴露。
+> 前端不得自行写死这两个数：它们已经调过一次（v1.1 把 FARM 从 70 降到 65），
+> 写死的副本不会跟着变，只会静默变成错的。`tests/api/test_settings.py`
+> 里有断言把本端点与 scorer 常量钉在一起。
 
 ---
 

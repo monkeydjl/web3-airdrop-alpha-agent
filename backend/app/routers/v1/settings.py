@@ -69,6 +69,24 @@ def _safe_providers() -> list[dict[str, Any]]:
     ]
 
 
+def _label_threshold(label: str) -> int:
+    """取某个标签（FARM / WATCH）的分数下限。
+
+    真值只有一处：`app.agents.scorer.LABEL_THRESHOLDS`。在这里做一次查表而不是
+    抄一份常量，是因为这两个数已经被调过一次（v1.1：FARM 70 → 65）。抄一份就意味着
+    下次再调时有两个地方要改，而漏改的那个不会报错、只会静默说谎。
+
+    在函数内导入以避免与 scorer 形成模块级循环导入。
+    """
+    from app.agents.scorer import LABEL_THRESHOLDS
+
+    for threshold, name in LABEL_THRESHOLDS:
+        if name == label:
+            return threshold
+    # 标签名拼错时宁可让调用方看到 0，也不要静默返回一个像真值的数字
+    return 0
+
+
 @router.get(
     "/settings/config",
     response_model=SettingsConfigResponse,
@@ -215,6 +233,12 @@ def get_settings_config() -> SettingsConfigResponse:
         "LLM_DAILY_BUDGET_USD": settings.llm_daily_budget_usd,
         "LLM_TEMPERATURE": settings.llm_temperature,
         "LLM_MAX_TOKENS": settings.llm_max_tokens,
+        # 标签分档来自 scorer.LABEL_THRESHOLDS（不是环境变量）。之所以要在这里
+        # 暴露出去：前端项目详情页原本把「FARM≥65 / WATCH≥50」写死在文案里，
+        # 而这两个数**已经改过一次**（v1.1 把 FARM 从 70 下调到 65）。
+        # 写死的文案不会跟着改，只会静默变成错的。
+        "LABEL_FARM_THRESHOLD": float(_label_threshold("FARM")),
+        "LABEL_WATCH_THRESHOLD": float(_label_threshold("WATCH")),
     }
 
     return SettingsConfigResponse(

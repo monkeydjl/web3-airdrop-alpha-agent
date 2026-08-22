@@ -1,14 +1,12 @@
 'use client';
 
 import {
-  AlarmClock,
   Bell,
   CheckCheck,
   Inbox,
   Radio,
   Sparkles,
   TrendingUp,
-  Wallet,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -17,7 +15,18 @@ import { EmptyState, Toast } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { relativeTime } from '@/lib/format';
 
-type NtfType = 'all' | 'score' | 'deadline' | 'collector' | 'funding' | 'ai' | 'new_project';
+/**
+ * 通知类型。
+ *
+ * **只列后端真的会产出的类型**：`app/routers/v1/notifications.py` 聚合三类——
+ * `new_project`（今日新建且 FARM/WATCH）、`score`（最新两条评分有变化）、
+ * `collector`（今日采集失败）。
+ *
+ * 此前这里还有 `deadline` / `funding` / `ai` 三种，后端从不产出，于是侧栏
+ * 常驻三个永远显示 0 的分类入口——点进去永远是空列表。一个永远为空的入口
+ * 不是"暂时没数据"，而是在承诺一个不存在的功能。
+ */
+type NtfType = 'all' | 'new_project' | 'score' | 'collector';
 type DotTone = 'info' | 'success' | 'warning' | 'error' | 'brand';
 
 interface NotificationItem {
@@ -60,19 +69,13 @@ interface MarkReadData {
 const TYPE_DOT: Record<string, DotTone> = {
   new_project: 'success',
   score: 'success',
-  deadline: 'warning',
   collector: 'error',
-  funding: 'brand',
-  ai: 'info',
 };
 
 const TYPE_TAG: Record<string, string> = {
   new_project: '新机会',
   score: '评分变化',
-  deadline: '截止提醒',
   collector: '采集器告警',
-  funding: '资金与融资',
-  ai: 'AI 摘要',
 };
 
 function mapApiItem(item: ApiNotification): NotificationItem {
@@ -101,10 +104,7 @@ const NAV_ITEMS: { key: NtfType; label: string; icon: typeof Inbox }[] = [
   { key: 'all', label: '全部', icon: Inbox },
   { key: 'new_project', label: '新机会', icon: Sparkles },
   { key: 'score', label: '评分变化', icon: TrendingUp },
-  { key: 'deadline', label: '截止提醒', icon: AlarmClock },
   { key: 'collector', label: '采集器', icon: Radio },
-  { key: 'funding', label: '资金与融资', icon: Wallet },
-  { key: 'ai', label: 'AI 摘要', icon: Sparkles },
 ];
 
 export default function NotificationsPage() {
@@ -146,8 +146,8 @@ export default function NotificationsPage() {
   const filtered = activeType === 'all' ? items : items.filter((n) => n.type === activeType);
 
   const unreadCount = items.filter((n) => !n.read).length;
-  const scoreUpCount = items.filter((n) => n.type === 'score' || n.type === 'new_project').length;
-  const deadlineCount = items.filter((n) => n.type === 'deadline').length;
+  const newOpportunityCount = items.filter((n) => n.type === 'new_project').length;
+  const scoreChangeCount = items.filter((n) => n.type === 'score').length;
   const collectorAlertCount = items.filter((n) => n.type === 'collector' && !n.read).length;
 
   const handleMarkAllRead = async () => {
@@ -216,16 +216,19 @@ export default function NotificationsPage() {
             <span className="ntf-stat-s">当前列表</span>
           </div>
           <div className="ntf-stat">
-            <span className="ntf-stat-k">新机会 / 评分</span>
-            <span className="ntf-stat-v">{scoreUpCount}</span>
-            <span className="ntf-stat-s">今日相关</span>
+            <span className="ntf-stat-k">新机会</span>
+            <span className="ntf-stat-v">{newOpportunityCount}</span>
+            <span className="ntf-stat-s">今日新建 FARM / WATCH</span>
           </div>
+          {/* 原先这里是「截止时间临近」，副标题写着「有数据时显示」——
+              但后端从不产出 deadline 类通知，所以它永远是 0。
+              换成后端真的会产出的「评分变化」。 */}
           <div className="ntf-stat">
-            <span className="ntf-stat-k">截止时间临近</span>
+            <span className="ntf-stat-k">评分变化</span>
             <span className="ntf-stat-v" data-tone="warn">
-              {deadlineCount}
+              {scoreChangeCount}
             </span>
-            <span className="ntf-stat-s">有数据时显示</span>
+            <span className="ntf-stat-s">最新两次打分有变动</span>
           </div>
           <div className="ntf-stat">
             <span className="ntf-stat-k">采集器告警</span>

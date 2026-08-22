@@ -75,6 +75,22 @@ export function tierZh(tier?: string | null): string {
   }
 }
 
+/**
+ * 数据来源中文名。
+ *
+ * 覆盖范围必须与后端真的会写进 `projects.source` 的值一致，来源有三处：
+ * 1. 各采集器的 `source_id`（`app/collectors/*.py` 里 `source_id="..."`）
+ * 2. 种子数据 `seed`（`app/seed.py`）
+ * 3. Excel/CSV 导入 `import`（`app/routers/v1/export_import.py`）
+ *
+ * 此前这张表**漏了 `rootdata` 和 `import`**，多了一个后端从不产出的 `manual`。
+ * 漏掉的后果：导入的项目在详情页「数据来源」一栏显示英文 `import`，
+ * rootdata 采到的项目显示 `rootdata`——中文界面里突然冒出原始标识。
+ * 多出来的 `manual` 是死条目，且会让人以为系统支持手动录入。
+ *
+ * `backend/tests/test_frontend_enum_parity.py` 有断言把这张表和后端实际
+ * 产出的来源集合钉在一起：后端加新采集器而这里没跟上，CI 会红。
+ */
 export function sourceZh(source?: string | null): string {
   if (!source) return '—';
   const map: Record<string, string> = {
@@ -82,6 +98,7 @@ export function sourceZh(source?: string | null): string {
     github: 'GitHub',
     coingecko: 'CoinGecko',
     cryptorank: 'CryptoRank',
+    rootdata: 'RootData',
     etherscan: 'Etherscan',
     twitter: 'Twitter',
     twitter_kol: 'Twitter KOL',
@@ -89,7 +106,7 @@ export function sourceZh(source?: string | null): string {
     galxe: 'Galxe',
     layer3: 'Layer3',
     seed: '种子数据',
-    manual: '手动',
+    import: '文件导入',
   };
   return map[source.toLowerCase()] || source;
 }
