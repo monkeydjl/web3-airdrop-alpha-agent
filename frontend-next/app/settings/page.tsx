@@ -3,16 +3,12 @@
 import {
   BrainCircuit,
   CalendarClock,
-  Eye,
-  EyeOff,
   Info,
   KeyRound,
   Layers,
-  Plus,
   RotateCcw,
   Server,
   Shuffle,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { TopBar } from '@/components/TopBar';
@@ -80,18 +76,14 @@ interface RuntimeConfig {
   llm?: LLMStatus & { providers?: LLMProviderStatus[] };
 }
 
-/** 可编辑的 provider 配置行（前端 mock 状态） */
-interface EditableProvider {
-  id: number;
+/** LLM 接口的只读展示视图，字段一对一来自 GET /llm/status 的 providers[] */
+interface ProviderView {
+  name: string;
   baseurl: string;
-  apikey: string;
+  apiKeyMasked?: string;
+  hasApiKey: boolean;
   models: string[];
 }
-
-const DEFAULT_PROVIDERS: EditableProvider[] = [
-  { id: 1, baseurl: 'https://api.openai.com/v1', apikey: '', models: ['gpt-4o-mini', 'gpt-4o'] },
-  { id: 2, baseurl: '', apikey: '', models: [] },
-];
 
 interface WeightRow {
   name: string;
@@ -206,29 +198,37 @@ function SettingRow({
   );
 }
 
-function SecretInput({ placeholder, value }: { placeholder?: string; value?: string }) {
-  const [visible, setVisible] = useState(false);
+/**
+ * 只读配置值。
+ *
+ * 这个页面整体是只读快照（后端没有配置写入接口），但此前很多行用的是
+ * `<input defaultValue="...">` —— 长得像输入框、能点、能改，改完什么也不会
+ * 发生。更糟的是那些 `defaultValue` 大多是**写死的字面量**，不是后端返回的
+ * 真实值：两边碰巧一致时看不出问题，哪天 .env 改了，页面还在自信地显示旧值。
+ *
+ * 所以统一改成纯展示，并且值缺失时显示「—」而不是回退到某个猜测的默认值：
+ * 「不知道」和「是这个值」必须能被区分开。
+ */
+function ReadonlyValue({ value, mono }: { value?: unknown; mono?: boolean }) {
+  const text =
+    value === undefined || value === null || value === ''
+      ? '—'
+      : typeof value === 'boolean'
+        ? value
+          ? '已启用'
+          : '已停用'
+        : String(value);
   return (
-    <div className="set-secret-wrap">
-      <input
-        type={visible ? 'text' : 'password'}
-        className="set-input"
-        data-mono="true"
-        placeholder={placeholder}
-        defaultValue={value}
-        aria-label={placeholder || '密钥'}
-      />
-      <button
-        type="button"
-        className="set-secret-eye"
-        onClick={() => setVisible((v) => !v)}
-        aria-label="显示或隐藏密钥"
-      >
-        {visible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-      </button>
-    </div>
+    <span className="set-readonly-value" data-mono={mono ? 'true' : undefined}>
+      {text}
+    </span>
   );
 }
+
+// 原先这里有一个 SecretInput 组件（带小眼睛切换明文/密文的密钥输入框）。
+// 已删除：本页没有写入接口，而后端 /settings/config 的 sources 块给的是
+// `has_api_key` 布尔值、从不返回密钥内容 —— 也就是说这个框既写不进去、
+// 也没有值可显示。留着它只会诱导人往里填密钥。
 
 // ── 主页面 ──
 
@@ -237,7 +237,7 @@ export default function SettingsPage() {
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
-  const [providers, setProviders] = useState<EditableProvider[]>(DEFAULT_PROVIDERS);
+  const [providers, setProviders] = useState<ProviderView[]>([]);
   const [llmOn, setLlmOn] = useState(false);
 
   // 拉取后端运行时配置 + LLM 状态
@@ -251,19 +251,24 @@ export default function SettingsPage() {
       if (llm) {
         setLlmStatus(llm);
         setLlmOn(llm.enabled);
-        if (llm.providers && llm.providers.length > 0) {
-          setProviders(
-            llm.providers.map((p, i) => ({
-              id: i + 1,
-              baseurl: p.base_url,
-              apikey: '',
-              models: p.models,
-            })),
-          );
-        }
+        // 接口列表完全来自后端。此前在 llm.providers 为空时保留写死的
+        // `api.openai.com` + `gpt-4o-mini/gpt-4o` 默认值 —— 那会让「后端一个
+        // 接口都没配」看起来像「已经配好了 OpenAI」。
+        setProviders(
+          (llm.providers ?? []).map((p) => ({
+            name: p.name,
+            baseurl: p.base_url,
+            apiKeyMasked: p.api_key_masked,
+            hasApiKey: p.has_api_key,
+            models: p.models ?? [],
+          })),
+        );
+      } else {
+        setProviders([]);
       }
     } catch {
-      // API 不可用时保持默认值
+      // API 不可用时不编造配置：清空，页面显示「—」
+      setProviders([]);
     }
   }, []);
 
@@ -286,7 +291,7 @@ export default function SettingsPage() {
       enabled: rt.enabled ?? s.enabled,
       fields: s.fields.map((field) => {
         if (field.password) {
-          return { ...field, value: '', placeholder: rt.has_api_key ? '已设置（点击修改）' : field.placeholder };
+          return { ...field, value: '', placeholder: rt.has_api_key ? '已设置' : '未设置' };
         }
         if (field.env.endsWith('BASE_URL') && rt.base_url) {
           return { ...field, value: rt.base_url };
@@ -294,7 +299,10 @@ export default function SettingsPage() {
         if (field.env.endsWith('TIMEOUT') && rt.timeout != null) {
           return { ...field, value: String(rt.timeout) };
         }
-        return field;
+        // 后端没给这个字段的真实值（如 TWITTER_KOL_ACCOUNTS 不在
+        // /settings/config 里）。此前是回落到写死的字面量，看起来像真值；
+        // 现在留空，由 ReadonlyValue 渲染成「—」，把「不知道」表达出来。
+        return { ...field, value: '' };
       }),
     };
   });
@@ -312,41 +320,13 @@ export default function SettingsPage() {
     value: typeof weightValues[w.env] === 'number' ? weightValues[w.env] : w.value,
   }));
 
-  const addProvider = () => {
-    if (providers.length >= 5) return;
-    setProviders([...providers, { id: providers.length + 1, baseurl: '', apikey: '', models: [] }]);
-  };
+  /** automation 块的窄化视图，省掉每处都写 `runtimeConfig?.automation?.X` */
+  const automation = (runtimeConfig?.automation ?? {}) as Record<string, unknown>;
 
-  const removeProvider = (idx: number) => {
-    if (providers.length <= 1) return;
-    setProviders(providers.filter((_, i) => i !== idx).map((p, i) => ({ ...p, id: i + 1 })));
-  };
-
-  const updateProvider = (idx: number, field: keyof EditableProvider, value: string) => {
-    setProviders(providers.map((p, i) => (i === idx ? { ...p, [field]: value } : p)));
-  };
-
-  const addProviderModel = (idx: number) => {
-    setProviders(providers.map((p, i) => (i === idx ? { ...p, models: [...p.models, ''] } : p)));
-  };
-
-  const updateProviderModel = (pIdx: number, mIdx: number, value: string) => {
-    setProviders(
-      providers.map((p, i) =>
-        i === pIdx
-          ? { ...p, models: p.models.map((m, j) => (j === mIdx ? value : m)) }
-          : p,
-      ),
-    );
-  };
-
-  const removeProviderModel = (pIdx: number, mIdx: number) => {
-    setProviders(
-      providers.map((p, i) =>
-        i === pIdx ? { ...p, models: p.models.filter((_, j) => j !== mIdx) } : p,
-      ),
-    );
-  };
+  // 原先这里有 addProvider / removeProvider / updateProvider /
+  // addProviderModel / updateProviderModel / removeProviderModel 六个函数，
+  // 全部删掉了：它们只改前端本地 state，后端没有配置写入接口，
+  // 改完刷新页面就没了。留着等于给一个不存在的功能配齐了按钮。
 
   const enabledFlags = flags.filter((f) => f.enabled).length;
   const weightSum = WEIGHTS_RUNTIME.reduce((s, w) => s + w.value, 0);
@@ -463,16 +443,15 @@ export default function SettingsPage() {
                           {field.label}
                           <span className="set-source-env">{field.env}</span>
                         </label>
+                        {/* 全部只读。密钥字段刻意只显示「已设置 / 未设置」——
+                            后端 /settings/config 的 sources 块给的是
+                            `has_api_key` 布尔值，本来就不返回密钥内容，
+                            前端也不该提供一个能填密钥的输入框（填了不生效，
+                            还会让人以为配好了）。 */}
                         {field.password ? (
-                          <SecretInput placeholder={field.placeholder} value={field.value} />
+                          <ReadonlyValue value={field.placeholder} mono />
                         ) : (
-                          <input
-                            type="text"
-                            className="set-input"
-                            data-mono={field.mono ? 'true' : undefined}
-                            defaultValue={field.value}
-                            placeholder={field.placeholder}
-                          />
+                          <ReadonlyValue value={field.value} mono={field.mono} />
                         )}
                       </div>
                     ))}
@@ -504,73 +483,70 @@ export default function SettingsPage() {
                   </span>
                 </div>
 
-                {/* LLM 启用开关 */}
+                {/* LLM 启用开关 —— 只读。此前它是可点的，但 onChange 只改
+                    前端 state：拨过去显示「已启用」，后端 ENABLE_LLM_ENHANCEMENT
+                    一动不动，刷新页面就弹回来。这是本页最容易误导人的一个控件，
+                    因为它看上去像是「我刚把 LLM 打开了」。 */}
                 <div className="set-llm-toggle">
                   <div className="set-llm-toggle-texts">
                     <span className="set-llm-toggle-name">LLM 增强总开关</span>
                     <span className="set-llm-toggle-env">ENABLE_LLM_ENHANCEMENT</span>
                     <span className="set-llm-toggle-desc">
                       {llmStatus
-                        ? `${llmStatus.provider_count} 个接口 · ${llmStatus.total_model_count} 个模型 · 故障转移链路已就绪`
+                        ? `${llmStatus.provider_count} 个接口 · ${llmStatus.total_model_count} 个模型 · ${
+                            llmOn ? '已启用' : '未启用（当前走规则引擎）'
+                          }`
                         : '配置至少一个接口的 API Key 后可启用'}
                     </span>
                   </div>
                   <div className="set-switch-row">
-                    <Switch checked={llmOn} onChange={setLlmOn} label="LLM 增强" />
+                    <Switch
+                      checked={llmOn}
+                      onChange={() => {}}
+                      disabled
+                      label="LLM 增强状态（只读）"
+                    />
                     <span className="set-switch-state">{llmOn ? '已启用' : '已停用'}</span>
                   </div>
                 </div>
 
-                {/* 接口卡片列表 */}
+                {/* 接口卡片列表 —— 只读。
+                    此前这一块是完全可编辑的：能改 Base URL、能填 API Key、
+                    能增删接口和模型，而后端**没有任何配置写入接口**，
+                    点完什么也不会发生。填进去的密钥不但不生效，还会让人
+                    以为已经配好了。而且默认值写死成 `api.openai.com` +
+                    `gpt-4o-mini/gpt-4o`，与真实配置无关。
+                    现在改成展示 /llm/status 返回的真实接口与模型。 */}
+                {providers.length === 0 ? (
+                  <div className="set-llm-model-empty">
+                    后端未配置任何 LLM 接口（LLM_API_KEY / OPENAI_API_KEY 为空）
+                  </div>
+                ) : null}
                 {providers.map((provider, pIdx) => (
-                  <div className="set-llm-provider" key={pIdx}>
+                  <div className="set-llm-provider" key={provider.name || pIdx}>
                     <div className="set-llm-provider-head">
                       <div className="set-llm-provider-titles">
                         <span className="set-llm-provider-name">
                           <Server className="h-3.5 w-3.5" strokeWidth={2} />
                           接口 {pIdx + 1}
+                          {provider.name ? ` · ${provider.name}` : ''}
                         </span>
                         <span className="set-llm-provider-envs">
-                          LLM_BASEURL_{pIdx + 1} · LLM_API_KEY_{pIdx + 1}
+                          {provider.hasApiKey ? '凭证已设置' : '凭证未设置'} · 只读
                         </span>
                       </div>
-                      {providers.length > 1 && (
-                        <button
-                          type="button"
-                          className="set-llm-provider-remove"
-                          onClick={() => removeProvider(pIdx)}
-                          aria-label={`删除接口 ${pIdx + 1}`}
-                        >
-                          <X className="h-3.5 w-3.5" strokeWidth={2} />
-                        </button>
-                      )}
                     </div>
                     <div className="set-llm-provider-body">
                       <div className="set-llm-field">
-                        <label className="set-llm-field-label">
-                          Base URL
-                          <span className="set-llm-field-env">LLM_BASEURL_{pIdx + 1}</span>
-                        </label>
-                        <input
-                          type="text"
-                          className="set-input"
-                          data-mono="true"
-                          placeholder="https://api.openai.com/v1"
-                          value={provider.baseurl}
-                          onChange={(e) => updateProvider(pIdx, 'baseurl', e.target.value)}
-                        />
+                        <label className="set-llm-field-label">Base URL</label>
+                        <ReadonlyValue value={provider.baseurl} mono />
                       </div>
                       <div className="set-llm-field">
-                        <label className="set-llm-field-label">
-                          API Key
-                          <span className="set-llm-field-env">LLM_API_KEY_{pIdx + 1}</span>
-                        </label>
-                        <SecretInput
-                          placeholder={
-                            llmStatus?.providers?.[pIdx]?.api_key_masked
-                              ? `已设置 ${llmStatus.providers[pIdx].api_key_masked}`
-                              : 'sk-…'
-                          }
+                        <label className="set-llm-field-label">API Key</label>
+                        {/* 后端返回的已是掩码串，前端不做二次处理也不显示原值 */}
+                        <ReadonlyValue
+                          value={provider.apiKeyMasked || (provider.hasApiKey ? '已设置' : '未设置')}
+                          mono
                         />
                       </div>
                       <div className="set-llm-models">
@@ -578,40 +554,15 @@ export default function SettingsPage() {
                           <span className="set-llm-models-title">
                             模型列表
                             <span className="set-llm-models-env">
-                              LLM_MODELS_{pIdx + 1}_1, LLM_MODELS_{pIdx + 1}_2, …
+                              按顺序故障转移 · 共 {provider.models.length} 个
                             </span>
                           </span>
-                          <button
-                            type="button"
-                            className="btn-secondary px-2 py-0.5 text-xs inline-flex items-center gap-1"
-                            onClick={() => addProviderModel(pIdx)}
-                          >
-                            <Plus className="h-3 w-3" strokeWidth={2} />
-                            添加模型
-                          </button>
                         </div>
                         <div className="set-llm-model-list">
                           {provider.models.map((model, mIdx) => (
-                            <div className="set-llm-model-row" key={mIdx}>
-                              <span className="set-llm-model-env">LLM_MODELS_{pIdx + 1}_{mIdx + 1}</span>
-                              <input
-                                type="text"
-                                className="set-input set-llm-model-input"
-                                data-mono="true"
-                                placeholder="model-name"
-                                value={model}
-                                onChange={(e) => updateProviderModel(pIdx, mIdx, e.target.value)}
-                              />
-                              {provider.models.length > 1 && (
-                                <button
-                                  type="button"
-                                  className="set-llm-model-remove"
-                                  onClick={() => removeProviderModel(pIdx, mIdx)}
-                                  aria-label="删除模型"
-                                >
-                                  <X className="h-3 w-3" strokeWidth={2} />
-                                </button>
-                              )}
+                            <div className="set-llm-model-row" key={model || mIdx}>
+                              <span className="set-llm-model-env">模型 {mIdx + 1}</span>
+                              <ReadonlyValue value={model} mono />
                             </div>
                           ))}
                           {provider.models.length === 0 && (
@@ -630,30 +581,22 @@ export default function SettingsPage() {
                   </div>
                 ))}
 
-                {/* 添加接口按钮 */}
-                {providers.length < 5 && (
-                  <button type="button" className="set-llm-add-provider" onClick={addProvider}>
-                    <Plus className="h-4 w-4" strokeWidth={2} />
-                    <span>添加接口（最多 5 个）</span>
-                  </button>
-                )}
-
                 {/* LLM 通用参数 */}
                 <div className="set-subhead">
                   通用参数 <span className="set-subhead-note">所有接口共享</span>
                 </div>
                 <SettingRow label="Temperature" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_TEMPERATURE ?? llmStatus?.temperature ?? 0.3)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_TEMPERATURE ?? llmStatus?.temperature} />
                 </SettingRow>
                 <SettingRow label="Max Tokens" env="LLM_MAX_TOKENS" desc="单次调用上限">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens ?? 512)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens} />
                 </SettingRow>
                 <SettingRow label="每日预算" env="LLM_DAILY_BUDGET_USD" desc="超出后自动降级回规则引擎">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_DAILY_BUDGET_USD ?? llmStatus?.daily_budget_usd ?? 1.0)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_DAILY_BUDGET_USD ?? llmStatus?.daily_budget_usd} />
                   <span className="set-unit">USD / 天</span>
                 </SettingRow>
                 <SettingRow label="LLM 启用阈值" env="LLM_DISCOVERY_SCORE_THRESHOLD" desc="仅 discovery_score ≥ 此值的项目走 LLM">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.LLM_DISCOVERY_SCORE_THRESHOLD ?? llmStatus?.discovery_score_threshold ?? 0.7)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_DISCOVERY_SCORE_THRESHOLD ?? llmStatus?.discovery_score_threshold} />
                 </SettingRow>
 
                 <div className="set-subhead">
@@ -680,13 +623,13 @@ export default function SettingsPage() {
 
                 <div className="set-subhead">质量阈值</div>
                 <SettingRow label="分析阈值" env="DISCOVERY_SCORE_ANALYSIS_THRESHOLD" desc="discovery_score ≥ 此值才进入分析管道">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.DISCOVERY_SCORE_ANALYSIS_THRESHOLD ?? 0.3)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.DISCOVERY_SCORE_ANALYSIS_THRESHOLD} />
                 </SettingRow>
                 <SettingRow label="置信度阈值" env="CONFIDENCE_THRESHOLD" desc="低于此值的评分标记为低置信">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.CONFIDENCE_THRESHOLD ?? 0.5)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.CONFIDENCE_THRESHOLD} />
                 </SettingRow>
                 <SettingRow label="缺字段降级阈值" env="MISSING_FIELDS_THRESHOLD" desc="缺失字段数超过此值触发降级">
-                  <input type="text" className="set-input" data-size="sm" defaultValue={String(runtimeConfig?.thresholds?.MISSING_FIELDS_THRESHOLD ?? 3)} />
+                  <ReadonlyValue value={runtimeConfig?.thresholds?.MISSING_FIELDS_THRESHOLD} />
                   <span className="set-unit">个</span>
                 </SettingRow>
               </div>
@@ -727,22 +670,26 @@ export default function SettingsPage() {
                   </div>
                 </SettingRow>
                 <SettingRow label="分析 cron" env="CRON_EXPRESSION" desc="每日全量分析时间">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue={String(runtimeConfig?.automation?.CRON_EXPRESSION ?? '0 8 * * *')} />
+                  <ReadonlyValue value={automation.CRON_EXPRESSION} mono />
                 </SettingRow>
                 <SettingRow label="DefiLlama 采集" env="DEFILLAMA_CRON">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="0 8 * * *" />
+                  <ReadonlyValue value={runtimeConfig?.sources?.defillama?.cron} mono />
                 </SettingRow>
                 <SettingRow label="GitHub 采集" env="GITHUB_CRON">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="30 8 * * *" />
+                  <ReadonlyValue value={runtimeConfig?.sources?.github?.cron} mono />
                 </SettingRow>
                 <SettingRow label="CoinGecko 采集" env="COINGECKO_CRON">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="0 9 * * *" />
+                  <ReadonlyValue value={runtimeConfig?.sources?.coingecko?.cron} mono />
                 </SettingRow>
                 <SettingRow label="Twitter 关键词" env="TWITTER_KEYWORD_CRON" desc="高频监听">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue="*/15 * * * *" />
+                  <ReadonlyValue value={runtimeConfig?.sources?.twitter?.keyword_cron} mono />
+                </SettingRow>
+                <SettingRow label="misfire 补跑窗口" env="SCHEDULER_MISFIRE_GRACE_SECONDS" desc="错过触发后仍允许补跑的时间窗">
+                  <ReadonlyValue value={automation.SCHEDULER_MISFIRE_GRACE_SECONDS} />
+                  <span className="set-unit">秒</span>
                 </SettingRow>
                 <SettingRow label="单次分析上限" env="ANALYSIS_RUN_LIMIT" desc="从 raw_projects 取的最大条数">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="100" />
+                  <ReadonlyValue value={automation.ANALYSIS_RUN_LIMIT} />
                   <span className="set-unit">条 / 次</span>
                 </SettingRow>
 
@@ -750,16 +697,34 @@ export default function SettingsPage() {
                   保留策略 <span className="set-subhead-note">到期由归档管道转入冷存储</span>
                 </div>
                 <SettingRow label="原始项目快照" env="RAW_PROJECTS_RETENTION_DAYS" desc="raw_projects 表">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="30" />
+                  <ReadonlyValue value={automation.RAW_PROJECTS_RETENTION_DAYS} />
                   <span className="set-unit">天</span>
                 </SettingRow>
                 <SettingRow label="信号与指标" env="PROJECT_SIGNALS_RETENTION_DAYS" desc="project_signals 表">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="90" />
+                  <ReadonlyValue value={automation.PROJECT_SIGNALS_RETENTION_DAYS} />
                   <span className="set-unit">天</span>
                 </SettingRow>
                 <SettingRow label="采集日志" env="COLLECTION_LOGS_RETENTION_DAYS" desc="collection_logs 表">
-                  <input type="text" className="set-input" data-size="sm" defaultValue="90" />
+                  <ReadonlyValue value={automation.COLLECTION_LOGS_RETENTION_DAYS} />
                   <span className="set-unit">天</span>
+                </SettingRow>
+                {/* 以下四项此前整个页面都没展示，但它们是真实生效的配置
+                    （归档子系统 08-22 落地时加的）。设置页漏掉它们，等于
+                    读者以为归档只有前三个保留期。 */}
+                <SettingRow label="未处理原始数据" env="UNPROCESSED_RAW_RETENTION_DAYS" desc="discovery_score 过低从未进分析的行">
+                  <ReadonlyValue value={automation.UNPROCESSED_RAW_RETENTION_DAYS} />
+                  <span className="set-unit">天</span>
+                </SettingRow>
+                <SettingRow label="原始归档表" env="RAW_ARCHIVE_RETENTION_DAYS" desc="raw_projects_archive 二次清理">
+                  <ReadonlyValue value={automation.RAW_ARCHIVE_RETENTION_DAYS} />
+                  <span className="set-unit">天</span>
+                </SettingRow>
+                <SettingRow label="信号归档表" env="SIGNALS_ARCHIVE_RETENTION_DAYS" desc="project_signals_archive 二次清理">
+                  <ReadonlyValue value={automation.SIGNALS_ARCHIVE_RETENTION_DAYS} />
+                  <span className="set-unit">天</span>
+                </SettingRow>
+                <SettingRow label="归档调度" env="ARCHIVE_CRON" desc={`归档调度器${automation.ARCHIVE_SCHEDULER_ENABLED === false ? '已停用' : '已启用'}`}>
+                  <ReadonlyValue value={automation.ARCHIVE_CRON} mono />
                 </SettingRow>
               </div>
             </section>
@@ -793,10 +758,23 @@ export default function SettingsPage() {
                   ))}
                 </div>
                 <SettingRow label="指标路径" env="METRICS_PATH" desc="Prometheus metrics 端点">
-                  <input type="text" className="set-input" data-mono="true" data-size="md" defaultValue={runtimeConfig?.platform?.METRICS_PATH ?? '/metrics'} />
+                  <ReadonlyValue value={runtimeConfig?.platform?.METRICS_PATH} mono />
                 </SettingRow>
                 <SettingRow label="日志级别" env="LOG_LEVEL" desc="debug / info / warn / error">
-                  <input type="text" className="set-input" data-mono="true" data-size="sm" defaultValue={runtimeConfig?.platform?.LOG_LEVEL ?? 'info'} />
+                  <ReadonlyValue value={runtimeConfig?.platform?.LOG_LEVEL} mono />
+                </SettingRow>
+                {/* 这三项也是真实生效但页面从没展示过的 */}
+                <SettingRow label="日志格式" env="LOG_FORMAT" desc="json（结构化）/ console">
+                  <ReadonlyValue value={runtimeConfig?.platform?.LOG_FORMAT} mono />
+                </SettingRow>
+                <SettingRow label="链路追踪" env="OTEL_ENABLED" desc={`服务名 ${runtimeConfig?.platform?.OTEL_SERVICE_NAME ?? '—'}`}>
+                  <ReadonlyValue value={runtimeConfig?.platform?.OTEL_ENABLED} />
+                </SettingRow>
+                <SettingRow label="数据库后端" env="DB_BACKEND" desc="sqlite / postgresql">
+                  <ReadonlyValue value={runtimeConfig?.platform?.DB_BACKEND} mono />
+                </SettingRow>
+                <SettingRow label="运行环境" env="APP_ENV" desc="development / production">
+                  <ReadonlyValue value={runtimeConfig?.platform?.APP_ENV} mono />
                 </SettingRow>
               </div>
             </section>

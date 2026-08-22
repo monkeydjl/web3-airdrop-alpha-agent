@@ -236,7 +236,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # 与本地开发机对齐（node v24.18.1）。此前写 "22"，而前端单测靠
+          # Node 原生执行 TypeScript（类型擦除）来跑 `.ts` 源文件 —— 这个能力
+          # 在 22.x 上是要开关的、在 24 上默认可用。本地 24 能过、CI 22 不能过
+          # 是最难查的一类失败，所以直接把两边钉成同一个大版本。
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend-next/package-lock.json
 
@@ -245,6 +249,12 @@ jobs:
 
       - name: Run typecheck
         run: npm run typecheck
+
+      # 前端此前完全没有单测。lib/download.ts 里全是解析别人给的字符串
+      # （HTTP 头、错误响应体、文件名），这类代码失败时不抛错，只会静默地
+      # 把一个错值当对值用下去 —— 正是必须被测试钉住的地方。
+      - name: Run frontend unit tests
+        run: npm test
 
       - name: Run build
         run: npm run build

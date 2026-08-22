@@ -9,6 +9,11 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // 测试文件必须写成 `import ... from './download.ts'`（带扩展名）：
+    // Node 24 直接执行 TypeScript 时不做扩展名补全，省掉扩展名就找不到文件。
+    // 这个选项让 tsc 接受这种写法；它只在 noEmit 下合法，而本项目本来就是
+    // noEmit（编译交给 Next/SWC）。
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
