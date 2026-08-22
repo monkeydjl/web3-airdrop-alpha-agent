@@ -30,6 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = REPO_ROOT / "frontend-next"
 PORTFOLIO_PAGE = FRONTEND / "app" / "portfolio" / "page.tsx"
 REVIEW_PAGE = FRONTEND / "app" / "review" / "page.tsx"
+NOTIFICATIONS_PAGE = FRONTEND / "app" / "notifications" / "page.tsx"
+NOTIFICATIONS_ROUTER = REPO_ROOT / "backend" / "app" / "routers" / "v1" / "notifications.py"
 
 
 def _read(path: Path) -> str:
@@ -156,6 +158,58 @@ class TestReviewBatchLimit:
         assert not invalid, f"复盘页提供了后端不接受的 outcome：{sorted(invalid)}，提交会被 422 拒绝。"
 
 
+class TestNotificationTypes:
+    """通知中心的分类入口必须与后端真的会产出的通知类型完全一致。
+
+    后端 `notifications.py` 只聚合三类：`new_project` / `score` / `collector`。
+    前端此前还列了 `deadline` / `funding` / `ai`，后端从不产出——于是侧栏常驻
+    三个永远显示 0 的入口，点进去永远是空列表。
+
+    **一个永远为空的入口不是「暂时没数据」，而是在承诺一个不存在的功能**。
+    这里双向断言：既不能漏（后端有而前端没有 → 该类通知没有分类可看），
+    也不能多（前端有而后端没有 → 承诺了不存在的功能）。
+    """
+
+    @staticmethod
+    def _backend_types() -> set[str]:
+        """从路由源码里取出所有 `"type": "<x>"` 字面量。
+
+        比起在这里再抄一份清单，解析源码的好处是后端加新类型时这里会自动跟上，
+        只在前端漏掉时才失败。
+        """
+        src = NOTIFICATIONS_ROUTER.read_text(encoding="utf-8")
+        kinds = set(re.findall(r'"type":\s*"(\w+)"', src))
+        assert kinds, (
+            f"没能从 {NOTIFICATIONS_ROUTER.name} 解出任何 type 字面量 —— "
+            "写法变了，请更新本测试；否则下面的断言会因空集合而假通过。"
+        )
+        return kinds
+
+    def test_frontend_covers_every_backend_type(self) -> None:
+        frontend = _literal_union(_read(NOTIFICATIONS_PAGE), "NtfType", NOTIFICATIONS_PAGE)
+        missing = self._backend_types() - frontend
+        assert not missing, f"后端会产出这些通知类型但前端没有分类：{sorted(missing)}，这类通知在侧栏无处可看。"
+
+    def test_frontend_has_no_phantom_types(self) -> None:
+        frontend = _literal_union(_read(NOTIFICATIONS_PAGE), "NtfType", NOTIFICATIONS_PAGE)
+        # 'all' 是前端自己的「全部」聚合视图，不对应后端类型
+        phantom = frontend - self._backend_types() - {"all"}
+        assert not phantom, (
+            f"前端列了后端从不产出的通知类型：{sorted(phantom)}。"
+            "它们会成为永远显示 0 的入口 —— 那是在承诺一个不存在的功能，"
+            "要么后端补上，要么前端删掉。"
+        )
+
+    def test_type_label_and_dot_tables_match_types(self) -> None:
+        """中文名表与配色表必须覆盖后端类型，且不含幽灵条目。"""
+        src = _read(NOTIFICATIONS_PAGE)
+        backend = self._backend_types()
+        for table in ("TYPE_TAG", "TYPE_DOT"):
+            keys = _object_keys(src, table, NOTIFICATIONS_PAGE)
+            assert not (backend - keys), f"{table} 缺这些后端类型：{sorted(backend - keys)}"
+            assert not (keys - backend), f"{table} 含后端不产出的类型：{sorted(keys - backend)}"
+
+
 class TestParsersFailLoudly:
     """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
 
@@ -166,6 +220,9 @@ class TestParsersFailLoudly:
         review = _read(REVIEW_PAGE)
         assert _number_const(review, "BATCH_LIMIT", REVIEW_PAGE) > 0
         assert len(_literal_union(review, "Outcome", REVIEW_PAGE)) >= 2
+        notifications = _read(NOTIFICATIONS_PAGE)
+        assert len(_literal_union(notifications, "NtfType", NOTIFICATIONS_PAGE)) >= 3
+        assert len(TestNotificationTypes._backend_types()) >= 3
 
     def test_missing_declarations_raise(self) -> None:
         with pytest.raises(AssertionError):
