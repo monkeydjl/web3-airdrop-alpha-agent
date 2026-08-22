@@ -105,6 +105,42 @@ jobs:
           exit-code: "0"
           ignore-unfixed: true
 
+      # 临时诊断：table 输出不含 PkgPath，而剩下 2 个 HIGH 的来源自相矛盾 ——
+      # 镜像里 setuptools 是 84.0.0（Trivy 自己列出 setuptools-84.0.0.dist-info
+      # 且 0 漏洞），却仍报 70.3.0；msgpack 更是完全没出现在任何 dist-info 路径里。
+      # Trivy 同时警告 "Third-party SBOM may lead to inaccurate vulnerability
+      # detection"，所以要先看清它究竟从哪个文件读到这两个版本，再决定怎么修。
+      # 定位完这一步就删掉。
+      - name: Trivy JSON (diagnose PkgPath)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: airdrop-alpha:scan-${{ github.sha }}
+          format: "json"
+          output: "trivy-diag.json"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Show PkgPath of remaining findings
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open("trivy-diag.json"))
+          for res in d.get("Results", []):
+              vulns = res.get("Vulnerabilities") or []
+              if not vulns:
+                  continue
+              print(f'--- Target: {res.get("Target")}  Type: {res.get("Type")}  Class: {res.get("Class")}')
+              for v in vulns:
+                  print(f'  {v.get("VulnerabilityID"):24} {v.get("PkgName"):14} '
+                        f'installed={v.get("InstalledVersion"):12} fixed={v.get("FixedVersion")}')
+                  print(f'    PkgPath   = {v.get("PkgPath")}')
+                  print(f'    PkgID     = {v.get("PkgID")}')
+                  ident = v.get("PkgIdentifier") or {}
+                  print(f'    PURL      = {ident.get("PURL")}')
+                  print(f'    Layer     = {(v.get("Layer") or {}).get("DiffID")}')
+          PY
+
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
