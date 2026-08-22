@@ -18,11 +18,25 @@ check_encoding.py        → exit 0（489 文件，5 个已登记损坏）
 check_terminology.py --all → exit 0
 ```
 
-**代码已推远程分支 `release/v2-consolidation`，PR #4 已开，master 未动。**
+**PR #4 已于 2026-08-22 合入 master**，合并 commit `d1b710b`
+（merge commit 方式，保留全部 46 个 commit 的历史）。
 远程是 `github.com/monkeydjl/web3-airdrop-alpha-agent.git`。
-PR #4 的 **12 项 CI 检查全部 pass**（含 `Full Backend Test Suite` 7m42s、
+合并前 12 项检查全绿（`Full Backend Test Suite` 2648 passed、
 `Coverage Gate` 88.21%、`Docker Build Check` 含 `/health` 冒烟、
-`Docker Image Trivy Scan`），`mergeStateStatus = CLEAN`，**可以合并**。
+`Docker Image Trivy Scan` 0 HIGH、`npm audit` 0 vulnerabilities、
+`Check Markdown Links` 0 死链）。
+dependabot PR #3 已关闭（其 nanoid 修复已 cherry-pick 进 #4，保留原作者）。
+
+⚠ **有一个 PR #5 待合并**：合并 #4 触发 push 事件后，
+`Docker Image Trivy Scan` 在 master 上**仍然红着**，但原因换了 ——
+Trivy 扫描本身 success（0 漏洞，白天那些修复有效），
+是 `Upload Trivy results` 报 `Resource not accessible by integration`：
+仓库默认 workflow 令牌权限是 `read`，而 `upload-sarif` 需要
+`security-events: write`。PR #5 只在这一个 job 上补了权限声明
+（不动仓库默认值），并顺带把 push 路径过滤加上 `security.yml` 自己
++ 加 `workflow_dispatch`（否则改这个 workflow 根本触发不了它，验证不了）。
+**合并 #5 后必须回来看 master 上那次运行**：`Upload` 是否终于成功、
+`code-scanning/alerts` 是否不再为空 —— 这是唯一的验证方式。
 
 分支保护的检查名错配已修（所有者选了「改保护规则名对齐实际 job 名」）：
 - `Lint (ruff)` → `Lint & Format Check`、`Test (pytest)` → `Full Backend Test Suite`（纯改名）
@@ -34,14 +48,8 @@ PR #4 的 **12 项 CI 检查全部 pass**（含 `Full Backend Test Suite` 7m42s�
   全部保持原值；必过检查数量 5 → 5 未减少，且改后每个名字都对应真实 job。
   原始配置已存为回滚点
 
-> 为什么选 PR 而非直推：dry-run 通过（fast-forward、非强推、密钥扫描干净），
-> 所有者是 owner 且 `enforce_admins: false`，技术上推得进去。但那等于绕过一道
-> 形式存在、实际不生效的门禁，而 283 个文件、6.8 万行删除（其中 6.6 万来自单个
-> 遗留原型清理 commit `0966179`）的改动不该这样落地。
-
-⚠ **dependabot PR #3 仍是 `BLOCKED`，但原因已不同**：它的 `Docker Image Trivy Scan`
-还是 5 天前那次 36 HIGH 的失败结果（分支停在 nanoid 那一个 commit，没有 Trivy 修复）。
-**合并 PR #4 之后直接关掉 PR #3 即可** —— 它的 nanoid 修复已 cherry-pick 进 #4。
+> 门禁现在是真的生效了，所以 PR #5 那两个 commit 也走了 PR、没有直推 ——
+> 刚把门修成真的，不该由我第一个绕过去。
 
 ## 08-22 做了什么
 
@@ -231,9 +239,10 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 
 ## 下一步（按优先级）
 
-- [ ] **合并 PR #4**（`mergeStateStatus = CLEAN`，12 项检查全绿，可以合了），
-      合完**关掉 dependabot PR #3** —— 它的 nanoid 修复已 cherry-pick 进 #4，
-      它自己那次 Trivy 失败是 5 天前 36 HIGH 的旧结果
+- [ ] **合并 PR #5**（Trivy job 的 `security-events: write` 权限 + 触发器修复），
+      合并后**回来看 master 上那次 push 运行**：`Upload Trivy results` 是否成功、
+      `code-scanning/alerts` 是否不再为空。**我没有提前声称它会成功**
+- [x] ~~**合并 PR #4**~~ → 已合并（`d1b710b`），dependabot PR #3 已关闭
 - [x] ~~**问所有者：分支保护那 3 个对不上的检查名怎么修**~~ → **已修**，
       所有者选了改保护规则名对齐实际 job 名（详见开头）
 - [ ] **决定 Python 版本口径**：`docker/Dockerfile` 与 CI 用 **3.12**、mypy 配置
@@ -455,6 +464,17 @@ npm run typecheck && npm run lint && npm run build
    实际是 **GitHub Actions 的 job 日志是 UTF-16LE 带 BOM**，用 UTF-8 解码得到
    空字符串。按前两字节嗅探 `raw[:2] in (b'\xff\xfe', b'\xfe\xff')` 才读得到。
    *教训：读不到内容时，先确认编码，再断言"没有内容"*
+10. 我说过「`Docker Image Trivy Scan` 红 13 天是因为 36 个高危」，
+    还说「SARIF 上传成功但 code scanning 告警数为 0」——**两句都只对一半**。
+    合并 PR #4 触发 push 后这个 job 仍然红，但 `Run Trivy scan` 是 success、
+    `Upload Trivy results` 才是 failure（`Resource not accessible by integration`，
+    仓库默认令牌权限是 `read` 而 `upload-sarif` 需要 `security-events: write`）。
+    **一个 job 里叠着两个独立故障**，漏洞那个把权限那个挡住了 ——
+    Trivy 先 exit 1，上传成不成功轮不到显现。逐步骤走完 08-09 以来每次 master
+    运行才看清：上传**从第一天起就在所有非 PR 运行里失败**。
+    我观察到的「告警数为 0」正是它的直接后果，我却把它当成 SARIF 机制的怪癖。
+    *教训：一个 job 的红灯不等于一个故障 —— 修好前面那个，后面那个才会露出来。
+    所以「修好了」必须在修完之后再看一次实际结果，不能在推之前靠推理下结论*
 
 CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
 "原判断 + 更正"两条，没有抹掉痕迹。

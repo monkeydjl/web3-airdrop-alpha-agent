@@ -8,6 +8,73 @@
 
 ## [Unreleased]
 
+### Fixed — Trivy job 里叠着第二个独立故障：SARIF 上传无权限（2026-08-22）
+
+合并 PR #4 之后，`Docker Image Trivy Scan` 在 master 上**仍然红着**，
+但原因和之前完全不同：
+
+```
+Run Trivy scan          success   ← Trivy 本身 0 漏洞，修复是有效的
+Upload Trivy results    failure   ← Resource not accessible by integration
+```
+
+**实测原因**：仓库默认 workflow 令牌权限是 `read`
+（`actions/permissions/workflow` → `default_workflow_permissions: read`），
+而 `upload-sarif` 需要 `security-events: write`。
+`pull_request` 事件下这一步能成功（PR #4 的记录确实在 `code-scanning/analyses`
+里，`ref` 为 `refs/pull/4/merge`），但 `push` 事件下同一步骤被拒。
+
+修法是**只在 `container-scan` 这一个 job 上声明所需权限**，
+而不是把仓库默认改成 write —— 默认 `read` 是对的，
+一个 job 需要更多权限不该成为放宽所有 workflow 令牌的理由。
+
+**这同时更正了前一条记录的说法**（原文保留在下方）。我此前写「这个 job 红 13 天
+是因为 36 个高危」「SARIF 上传成功但告警数为 0」，两句都只对一半：
+**一个 job 里叠了两个独立故障**，漏洞那个把权限那个挡住了 ——
+Trivy 先 exit 1，上传成不成功根本轮不到显现。
+逐步骤走了 08-09 以来 master 上这个 workflow 的每一次运行：
+
+| 日期 | commit | 事件 | Run Trivy scan | Upload |
+|---|---|---|---|---|
+| 08-22 | d1b710b | push | **success** | failure |
+| 08-17 | 3d6d7ef | schedule | failure | failure |
+| 08-13 | d77d827 | push | failure | failure |
+| 08-13 | 237b23c | push | failure | failure |
+| 08-10 | fd0cb60 | schedule | failure | failure |
+| 08-09 | fd0cb60 | push | failure | failure |
+
+**上传从第一天起就在所有非 PR 运行里失败**，只是没人看见，因为扫描先失败了。
+修好一道闸门，露出了它背后的下一道。此前观察到的「告警数为 0」正是这件事的可见症状。
+
+顺带修两个让上一个修复无法验证的问题：
+
+- **push 路径过滤不包含 `security.yml` 自己** —— 改这个 workflow 不会触发它。
+  想验证权限修复，得顺手改个 requirements 或 Dockerfile，或者等周一的定时任务。
+  对一个红了 13 天的 job 来说这是很糟的处境。
+- **加了 `workflow_dispatch`**（手动触发）。这个 job 之所以一直没人诊断，
+  部分原因就是复现一次运行得先凑出一个符合路径过滤的提交。
+
+两处都不改变扫描做什么、拦什么。
+
+### Merged — PR #4 已合入 master（2026-08-22）
+
+`release/v2-consolidation` → `master`，合并 commit `d1b710b`，
+46 个 commit、283 个文件。合并前 12 项检查全绿：
+
+```
+Full Backend Test Suite   2648 passed, 4 skipped
+Coverage Gate             88.21%（10493/11896 行），门槛 80%
+Docker Build Check        镜像构建成功 + 容器响应 /health
+Docker Image Trivy Scan   0 HIGH（此前 36）
+Frontend Lint & Build     npm audit 0 vulnerabilities（此前 9 high）
+Check Markdown Links      0 死链（此前 6）
+另有 Lint & Format Check / Type Check (mypy) / pip-audit /
+Detect Secrets / Dependency Review / Trivy
+```
+
+dependabot PR #3 已关闭 —— 其 nanoid 修复已 cherry-pick 进 #4（保留原作者）。
+关闭时说明了它卡 5 天的真实原因（假检查名，非代码问题）。
+
 ### Fixed — CI 三处长期红灯（2026-08-22）
 
 推送 37 个积压 commit 时开了 PR #4，借 CI 把三项长期失败的检查查清并修掉。

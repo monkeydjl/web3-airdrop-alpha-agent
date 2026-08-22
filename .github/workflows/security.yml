@@ -16,10 +16,18 @@ on:
       - "docker/Dockerfile"
       - "frontend-next/package.json"
       - "frontend-next/package-lock.json"
+      # 改这个 workflow 自己也要能触发它 —— 否则修完扫描逻辑或权限
+      # 都没法在 push 事件下验证，只能等每周一的定时任务。
+      # 实测踩过：`security-events: write` 那次修完，因为路径过滤不含
+      # 本文件，合并后压根没跑起来。
+      - ".github/workflows/security.yml"
   pull_request:
     branches: [master, main]
   schedule:
     - cron: "0 6 * * 1" # 每周一 06:00 UTC
+  # 手动触发。这个 job 红了 13 天却无人能复现，部分原因就是只能等
+  # push/定时 —— 想验证一次修复得先凑出一个符合路径过滤的提交。
+  workflow_dispatch:
 
 jobs:
   # ── Dependency Audit ──────────────────────
@@ -75,6 +83,23 @@ jobs:
   container-scan:
     name: Docker Image Trivy Scan
     runs-on: ubuntu-latest
+    # 上传 SARIF 到 code scanning 需要 `security-events: write`。
+    #
+    # 仓库的默认 workflow 令牌权限是 `read`（实测
+    # `actions/permissions/workflow` → `default_workflow_permissions: read`），
+    # 这是安全的默认值，不该为了这一个步骤把整仓改成 write。
+    # 所以在这个 job 上按最小必要显式声明。
+    #
+    # 为什么之前没暴露：`pull_request` 事件下 upload-sarif 能成功上传
+    # （PR #4 上的同一个 job 全绿，analyses 里确实有 refs/pull/4/merge 的记录），
+    # 但 `push` 事件下同一步骤报
+    # `Resource not accessible by integration`。合并 PR #4 触发 push 之后，
+    # Trivy 扫描本身已经 0 漏洞通过，job 却因为上传失败仍判 failure ——
+    # 也就是说这道闸门此前 13 天的红灯里，混着两个独立故障：
+    # 真实漏洞（已修）与权限不足（此处修）。前者掩盖了后者。
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
