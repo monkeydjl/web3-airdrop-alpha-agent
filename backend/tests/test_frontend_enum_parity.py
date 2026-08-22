@@ -32,6 +32,8 @@ PORTFOLIO_PAGE = FRONTEND / "app" / "portfolio" / "page.tsx"
 REVIEW_PAGE = FRONTEND / "app" / "review" / "page.tsx"
 NOTIFICATIONS_PAGE = FRONTEND / "app" / "notifications" / "page.tsx"
 NOTIFICATIONS_ROUTER = REPO_ROOT / "backend" / "app" / "routers" / "v1" / "notifications.py"
+FORMAT_LIB = FRONTEND / "lib" / "format.ts"
+COLLECTORS_DIR = REPO_ROOT / "backend" / "app" / "collectors"
 
 
 def _read(path: Path) -> str:
@@ -68,6 +70,19 @@ def _literal_union(src: str, decl: str, where: Path) -> set[str]:
     match = re.search(rf"type\s+{re.escape(decl)}\s*=\s*([^;]+);", src, re.S)
     assert match, f"在 {where.name} 里找不到 `type {decl} = ...;`"
     return set(re.findall(r"'([^']+)'", match.group(1)))
+
+
+def _inline_map_keys(src: str, func: str, where: Path) -> set[str]:
+    """取函数体内 `const map: Record<string, string> = { a: '..' }` 的键。
+
+    `format.ts` 里这些映射写在函数内部而不是模块级常量，所以先切到函数体
+    再找那一个 `map` 声明。
+    """
+    fn = re.search(rf"export function {re.escape(func)}\([^)]*\)[^{{]*\{{(.*?)\n\}}", src, re.S)
+    assert fn, f"在 {where.name} 里找不到 `export function {func}(...)`。函数若被改名或改写，请同步更新本测试。"
+    body = re.search(r"const map: Record<string, string> = \{(.*?)\n  \};", fn.group(1), re.S)
+    assert body, f"{func} 里找不到 `const map: Record<string, string> = {{...}}`"
+    return set(re.findall(r"^\s*([A-Za-z_][\w]*)\s*:", body.group(1), re.M))
 
 
 def _backend_literal_args(name: str) -> set[str]:
@@ -210,6 +225,47 @@ class TestNotificationTypes:
             assert not (keys - backend), f"{table} 含后端不产出的类型：{sorted(keys - backend)}"
 
 
+class TestSourceLabels:
+    """`sourceZh()` 必须覆盖后端真的会写进 `projects.source` 的全部取值。
+
+    后端写入 source 的地方有三类：
+    1. 各采集器的 `source_id`（`app/collectors/*.py`）
+    2. 种子数据 `seed`
+    3. Excel/CSV 导入 `import`
+
+    实测这张表曾漏掉 `rootdata` 和 `import`，多出一个后端从不产出的 `manual`。
+    漏掉 → 中文界面里直接显示原始标识；多出来 → 让人以为系统支持手动录入。
+    """
+
+    @staticmethod
+    def _backend_sources() -> set[str]:
+        ids: set[str] = set()
+        for path in COLLECTORS_DIR.glob("*.py"):
+            ids |= set(re.findall(r'source_id="(\w+)"', path.read_text(encoding="utf-8")))
+        assert ids, (
+            f"没能从 {COLLECTORS_DIR.name}/ 解出任何 source_id —— "
+            "采集器写法变了，请更新本测试；否则断言会因空集合而假通过。"
+        )
+        # 非采集器来源：种子数据与文件导入，两者都会写进 projects.source
+        return ids | {"seed", "import"}
+
+    def test_covers_every_backend_source(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "sourceZh", FORMAT_LIB)
+        missing = self._backend_sources() - labelled
+        assert not missing, f"这些后端来源在 sourceZh 里没有中文名：{sorted(missing)}，界面会直接显示原始标识。"
+
+    def test_no_phantom_sources(self) -> None:
+        """允许一个例外：裸 `twitter`。
+
+        采集器只声明 `twitter_kol` / `twitter_keyword`，但 `agents/collector.py`
+        在归类时会同时匹配裸 `twitter`（历史数据里存在这个值），所以它的中文名
+        必须保留。其余多出来的条目都是死条目。
+        """
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "sourceZh", FORMAT_LIB)
+        phantom = labelled - self._backend_sources() - {"twitter"}
+        assert not phantom, f"sourceZh 里这些来源后端并不产出：{sorted(phantom)}。死条目会让人以为系统支持这种来源。"
+
+
 class TestParsersFailLoudly:
     """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
 
@@ -223,6 +279,8 @@ class TestParsersFailLoudly:
         notifications = _read(NOTIFICATIONS_PAGE)
         assert len(_literal_union(notifications, "NtfType", NOTIFICATIONS_PAGE)) >= 3
         assert len(TestNotificationTypes._backend_types()) >= 3
+        assert len(_inline_map_keys(_read(FORMAT_LIB), "sourceZh", FORMAT_LIB)) >= 8
+        assert len(TestSourceLabels._backend_sources()) >= 8
 
     def test_missing_declarations_raise(self) -> None:
         with pytest.raises(AssertionError):
@@ -231,3 +289,5 @@ class TestParsersFailLoudly:
             _number_const("const OTHER = 1;", "BATCH_LIMIT", REVIEW_PAGE)
         with pytest.raises(AssertionError):
             _literal_union("type Other = 'a';", "Outcome", REVIEW_PAGE)
+        with pytest.raises(AssertionError):
+            _inline_map_keys("export function other() {\n}\n", "sourceZh", FORMAT_LIB)
