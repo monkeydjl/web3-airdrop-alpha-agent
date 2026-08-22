@@ -115,7 +115,12 @@ def get_insights() -> InsightsResponse:
         team = _safe_json(project.get("team_json"))
         team_score = team.get("team_score")
         if isinstance(team_score, (int, float)):
-            risk_level = "high" if team_score < 0.4 else ("medium" if team_score <= 0.7 else "low")
+            # 分档真值是 `agents/team.py::score_to_risk_level`（现已由
+            # TeamResult.risk_level 承载）。这里不再抄一份行内三元表达式：
+            # 抄第四份的代价是下次调阈值时有四处要改。
+            from app.agents.team import score_to_risk_level
+
+            risk_level: str | None = score_to_risk_level(float(team_score))
         else:
             risk_level = None
 

@@ -12,28 +12,58 @@ export function labelZh(label: string): string {
   return label;
 }
 
+/**
+ * 部署阶段中文名 —— 对应 `projects.stage`，由采集器写入。
+ *
+ * **这张表只认部署口径**（`ideation` / `testnet` / `mainnet`）。
+ * 此前它同时收录了叙事生命周期的 `growth` / `peak` / `mature` / `early` / `late`，
+ * 于是「阶段」这两个字在界面上悄悄代表了两种完全不同的含义：
+ * 一个说的是「代码上到哪张网了」，一个说的是「赛道热度处于周期哪一段」。
+ * 一张表同时接受两套词汇，等于把口径错配变成了看不出来的错配 ——
+ * 传错词汇不会显示原文，而是显示另一套口径下一个看着很合理的中文。
+ * 叙事生命周期请用 `lifecycleStageZh`。
+ */
 export function stageZh(stage?: string | null): string {
   if (!stage) return '—';
   const map: Record<string, string> = {
     ideation: '构想期',
     testnet: '测试网',
     mainnet: '主网',
-    growth: '成长期',
-    peak: '高峰期',
-    mature: '成熟期',
-    early: '早期',
-    late: '后期',
   };
   return map[stage.toLowerCase()] || stage;
 }
 
+/**
+ * 叙事生命周期中文名 —— 对应 `NarrativeResult.stage`
+ * （后端 pattern 限定 `early|growth|peak|mature`）。
+ *
+ * 与 `stageZh` 刻意分开：两者取值域不相交，混用必须显形。
+ */
+export function lifecycleStageZh(stage?: string | null): string {
+  if (!stage) return '—';
+  const map: Record<string, string> = {
+    early: '早期',
+    growth: '成长期',
+    peak: '高峰期',
+    mature: '成熟期',
+  };
+  return map[stage.toLowerCase()] || stage;
+}
+
+/**
+ * 入场时机中文名 —— 对应 `NarrativeResult.timing`
+ * （后端 pattern 限定 `early|peak|late`）。
+ *
+ * 曾经多一个 `growth: '上升期'` 条目。实测穷举 `stage_to_timing()` 的全部
+ * 4 个合法输入，输出只可能是 `early` / `peak` / `late`，**`growth` 不可达** ——
+ * 那一行是永远走不到的死代码，却让人以为系统还有第四种时机判断。
+ */
 export function timingZh(timing?: string | null): string {
   if (!timing) return '—';
   const map: Record<string, string> = {
     early: '早期窗口',
     peak: '过热',
     late: '偏晚',
-    growth: '上升期',
   };
   return map[timing.toLowerCase()] || timing;
 }

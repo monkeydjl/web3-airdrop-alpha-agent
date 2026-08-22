@@ -4,7 +4,7 @@ import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
-import { LABEL_ORDER, LABEL_ZH } from '@/lib/format';
+import { LABEL_ORDER, LABEL_ZH, riskLevelZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import type { InsightsData, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
@@ -103,6 +103,29 @@ function flagClass(flag: string): string {
   return 'flag-chip-neutral';
 }
 
+/**
+ * 「高风险团队」列表右侧徽章的配色。
+ *
+ * 这个列表实测返回 **270 条**，其中 `high` 只有 71 条、`medium` 有 199 条 ——
+ * 也就是说 **74% 的条目是「中」**。此前徽章一律写死红底红字，于是四分之三的
+ * 中风险项目被渲染成和高风险一模一样的红色警告。
+ *
+ * **同一种视觉强度代表两种严重程度，等于把分级取消掉了**：用户看到满屏红色，
+ * 要么全都当真（于是把 199 个中风险当高危处理），要么全都不当真（于是漏掉
+ * 真正的 71 个）。两种反应都比不分色更糟。
+ *
+ * 分档真值是后端 `app/agents/team.py::score_to_risk_level`（<0.4 high /
+ * 0.4–0.7 medium / >0.7 low）。本端点只会返回 high 与 medium 两档
+ * （low 不算「高风险团队」，不进这个列表），所以这里只需覆盖这两个 ——
+ * 但仍保留 default 分支，后端将来放宽档位时会显示成中性灰而不是消失。
+ */
+function riskBadgeClass(level: string): string {
+  if (level === 'high') return 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300';
+  if (level === 'medium')
+    return 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300';
+  return 'bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300';
+}
+
 /** 导出洞察为 CSV */
 function exportInsightsCSV(projects: Project[], insights: InsightsData | null) {
   const rows: string[][] = [];
@@ -147,11 +170,11 @@ function exportInsightsCSV(projects: Project[], insights: InsightsData | null) {
       rows.push(['— 高风险团队 —']);
       rows.push(['项目名', '赛道', '风险等级', '团队分数', '标记']);
       for (const t of insights.risky_teams) {
-        const flags = ((t as Record<string, unknown>).flags as string[]) || [];
+        const flags = ((t as Record<string, unknown>).flags as string[] | undefined) ?? [];
         rows.push([
           t.name,
           t.sector,
-          t.risk_level,
+          riskLevelZh(String(t.risk_level ?? '')),
           String(t.team_score ?? ''),
           flags.map(flagLabel).join('; '),
         ]);
@@ -477,7 +500,14 @@ export default function InsightsPage() {
           ) : (
             <div className="space-y-2">
               {insights!.risky_teams.slice(0, 10).map((t) => {
-                const flags = ((t as Record<string, unknown>).flags as string[]) || ['匿名团队', '无公开仓库'];
+                // 后端恒定返回 flags 数组（缺标记时为空数组），这里不编造兜底内容。
+                // 曾经写的兜底是 ['匿名团队', '无公开仓库'] —— 一旦后端某天不发这个键，
+                // 界面就会替后端凭空断言「这个团队是匿名的、没有公开仓库」。
+                // 其中 '无公开仓库' 后端根本不存在这个 flag。
+                // **编造一个看起来合理的默认值，比留空危险得多**：读者无法分辨
+                // 「系统查到了这两条」和「系统什么都没查到」。
+                const flags = ((t as Record<string, unknown>).flags as string[] | undefined) ?? [];
+                const level = String(t.risk_level ?? '');
                 return (
                   <Link
                     key={t.id}
@@ -487,16 +517,18 @@ export default function InsightsPage() {
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-ink">{t.name}</div>
                       <div className="text-xs text-ink-faint">{t.sector}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {flags.map((f) => (
-                          <span key={f} className={`flag-chip ${flagClass(f)}`}>
-                            {flagLabel(f)}
-                          </span>
-                        ))}
-                      </div>
+                      {flags.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {flags.map((f) => (
+                            <span key={f} className={`flag-chip ${flagClass(f)}`}>
+                              {flagLabel(f)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <span className="badge bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300 flex-shrink-0">
-                      {t.risk_level}
+                    <span className={`badge flex-shrink-0 ${riskBadgeClass(level)}`}>
+                      {riskLevelZh(level)}
                     </span>
                   </Link>
                 );

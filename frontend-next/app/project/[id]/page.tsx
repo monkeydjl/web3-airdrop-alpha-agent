@@ -11,6 +11,7 @@ import { apiFetch, isAbortError } from '@/lib/api';
 import { ArrowLeft, Plus } from 'lucide-react';
 import {
   formatPct,
+  lifecycleStageZh,
   relativeTime,
   riskLevelZh,
   safeExternalUrl,
@@ -359,6 +360,19 @@ export default function ProjectPage() {
   const farmThreshold = runtimeCfg?.thresholds?.LABEL_FARM_THRESHOLD;
   const watchThreshold = runtimeCfg?.thresholds?.LABEL_WATCH_THRESHOLD;
 
+  // 后端真实字段名是 `team_flags`（`flags` 从不出现在 API 里）。
+  // 保留 `flags` 作次选只为兼容任何旧形状。
+  const teamFlags: string[] = Array.isArray(team.team_flags)
+    ? (team.team_flags as string[])
+    : Array.isArray(team.flags)
+      ? (team.flags as string[])
+      : [];
+
+  // 解锁压力真实出在 `risk` 块（`RiskResult.unlock_pressure`）；tokenomics 块里
+  // 只有 `unlock_penalty`（一个 0~1 的数）。此前「代币经济」那一格读
+  // `tokenomics.unlock_pressure`，因此永远显示「—」；该格已删除，压力只在
+  // 左侧「风险」面板显示一次。
+
   return (
     <>
       {toast ? <Toast message={toast.message} type={toast.type} /> : null}
@@ -520,7 +534,12 @@ export default function ProjectPage() {
                   <Fact label="时机" value={timingZh(String(narrative.timing ?? ''))} />
                   <Fact
                     label="阶段"
-                    value={stageZh(String(narrative.stage ?? project.stage ?? ''))}
+                    /* 这里是叙事面板，「阶段」指赛道生命周期（early/growth/peak/mature），
+                       与页头显示的部署阶段（testnet/mainnet/ideation）是两套词汇。
+                       此前这里在 narrative.stage 缺失时兜底到 project.stage，
+                       于是那 7 个没有叙事结果的项目会在生命周期这一格显示「主网」——
+                       一个来自另一套口径、但看着完全合理的答案。缺就显示「—」。 */
+                    value={lifecycleStageZh(String(narrative.stage ?? ''))}
                   />
                 </dl>
               </div>
@@ -533,9 +552,11 @@ export default function ProjectPage() {
                   <Fact
                     label="Flags"
                     value={
-                      Array.isArray(team.flags) && team.flags.length
-                        ? (team.flags as string[]).join(', ')
-                        : '无'
+                      /* 后端字段名是 `team_flags`。此前这里读 `team.flags`，
+                         而 API 从不返回这个键，所以这一行永远显示「无」——
+                         哪怕项目确实带着「匿名团队」这样的风险标记。
+                         保留 `flags` 作次选只为兼容任何旧形状。 */
+                      teamFlags.length ? teamFlags.join(', ') : '无'
                     }
                   />
                 </dl>
@@ -564,10 +585,10 @@ export default function ProjectPage() {
                       tokenomics.team_share != null ? formatPct(num(tokenomics.team_share)) : '—'
                     }
                   />
-                  <Fact
-                    label="解锁压力"
-                    value={riskLevelZh(String(tokenomics.unlock_pressure ?? ''))}
-                  />
+                  {/* 原先这里还有一行「解锁压力」读 `tokenomics.unlock_pressure`，
+                      但该键只存在于 `risk` 块（已在左侧「风险」面板显示），
+                      tokenomics 块里只有下面这个 unlock_penalty。
+                      去掉后不再有一格永远显示「—」，也不与风险面板重复。 */}
                   <Fact
                     label="解锁惩罚"
                     value={
