@@ -103,6 +103,56 @@ jobs:
           name: coverage-report
           path: backend/coverage.xml
 
+  # ── Phase 2b: Coverage Gate ──────────────
+  #
+  # 为什么单独拆一个 job：`master` 的分支保护把 `Coverage Gate` 列为必过检查，
+  # 但仓库里从来没有任何 job 叫这个名字 —— 覆盖率门槛只以 `--cov-fail-under=80`
+  # 参数的形式藏在上面 test 那步里面。结果这个必过检查永远处于 pending，
+  # 任何 PR 的 mergeStateStatus 恒为 BLOCKED（dependabot PR #3 就这样卡了 5 天）。
+  #
+  # 两个修法里选了「让这个名字真实存在」而不是「从必过列表删掉它」：
+  # 后者是放宽门禁，前者不是。
+  #
+  # 这个 job 不重跑测试（那要 7 分半），只下载 test 阶段已上传的 coverage.xml
+  # 并独立断言行覆盖率。它与 `--cov-fail-under` 不是重复劳动：
+  # 参数写在命令行里，哪天被人调低或删掉不会有任何提示；这个 job 把阈值
+  # 固化成一道独立的、名字可见的闸门。
+  coverage-gate:
+    name: Coverage Gate
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+
+      - name: Assert line coverage >= 80%
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          THRESHOLD = 80.0
+
+          root = ET.parse("coverage.xml").getroot()
+          # coverage.py 的 Cobertura 输出把总行覆盖率放在根节点的 line-rate（0~1）
+          rate = root.get("line-rate")
+          if rate is None:
+              print("::error::coverage.xml 里没有 line-rate 属性，无法判定覆盖率")
+              sys.exit(1)
+
+          pct = float(rate) * 100
+          covered = root.get("lines-covered")
+          valid = root.get("lines-valid")
+          print(f"行覆盖率: {pct:.2f}%  ({covered}/{valid} 行)  门槛: {THRESHOLD}%")
+
+          if pct + 1e-9 < THRESHOLD:
+              print(f"::error::覆盖率 {pct:.2f}% 低于门槛 {THRESHOLD}%")
+              sys.exit(1)
+          print("✅ 覆盖率门槛通过")
+          PY
+
   # ── Phase 3: Docker Build ────────────────
   docker-build:
     name: Docker Build Check
