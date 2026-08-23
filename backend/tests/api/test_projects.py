@@ -4,9 +4,13 @@ Reference:
 - backend/app/routers/v1/projects.py
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
+from app.db import get_connection, init_db
 from app.main import create_app
 
 
@@ -289,3 +293,89 @@ class TestEdgeCases:
         response = client.get("/api/v1/projects?sector=L2测试")
         # Should handle gracefully
         assert response.status_code == 200
+
+
+class TestLegacyRowBackfill:
+    """历史行（本次改动之前打的分）缺 `risk_level` 时的补算行为。
+
+    分档逻辑 `score_to_risk_level()` 早就存在，但当初只打日志、没有字段承载，
+    所以老 `team_json` 里没有 `risk_level` 这个键；而前端详情页一直在读它，
+    于是「团队风险」那一格永远空白 —— 看起来像「这个项目没有风险评估」。
+
+    补算是安全的：`risk_level` 由 `team_score` 唯一决定，而 `team_score` 是
+    落库的，等于重放同一个映射，不是猜测。
+
+    对照组同样重要：`farming_cost` 的输入 `has_points_program` 不在 projects
+    表里，无法忠实重放，所以历史行**不补**该键 —— 宁可让前端显示「—」，
+    也不端出一个看起来很像真值的猜测。
+    """
+
+    @pytest.fixture
+    def client(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "legacy_rows.db"
+        monkeypatch.setattr(settings, "db_path", str(db_path))
+        monkeypatch.setattr(settings, "api_key", "")
+        monkeypatch.setattr(settings, "app_env", "testing")
+        init_db()
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO projects (id, name, sector, stage, score, label, confidence,
+                                  source, team_json, risk_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-1",
+                "Legacy Project",
+                "L2",
+                "testnet",
+                70,
+                "FARM",
+                0.9,
+                "seed",
+                # 刻意模拟老形状：只有当年真的会落库的三个键
+                json.dumps({"team_score": 0.85, "team_flags": ["doxxed team"], "team_type": "doxxed"}),
+                json.dumps(
+                    {
+                        "token_risk": 0.4,
+                        "risk_flags": [],
+                        "unlock_pressure": "medium",
+                        "sybil_difficulty": "high",
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return TestClient(create_app(db_override=lambda: None))
+
+    def test_legacy_row_gets_risk_level(self, client):
+        response = client.get("/api/v1/projects/legacy-1")
+        assert response.status_code == 200
+        team = response.json()["data"]["project"]["team"]
+        # team_score=0.85 > 0.7 -> low（与 score_to_risk_level 一致）
+        assert team["risk_level"] == "low", (
+            "历史行没有补上 risk_level —— 前端「团队风险」会显示空白，看起来像「这个项目没有风险评估」。"
+        )
+
+    def test_legacy_row_keeps_farming_cost_absent(self, client):
+        response = client.get("/api/v1/projects/legacy-1")
+        risk = response.json()["data"]["project"]["risk"]
+        assert "farming_cost" not in risk, (
+            "farming_cost 的输入不在 projects 表里，无法忠实重放；"
+            "补一个默认值会把猜测伪装成真值。缺就该让前端显示「—」。"
+        )
+
+    def test_backfill_does_not_fabricate_when_score_missing(self, client):
+        """`team_score` 缺失时不得凭空造一个档位。"""
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO projects (id, name, source, team_json) VALUES (?, ?, ?, ?)",
+            ("legacy-2", "No Score", "seed", json.dumps({"team_type": "unknown"})),
+        )
+        conn.commit()
+        conn.close()
+
+        response = client.get("/api/v1/projects/legacy-2")
+        team = response.json()["data"]["project"]["team"]
+        assert "risk_level" not in team, "没有 team_score 就无从推导档位，不该编一个出来。"

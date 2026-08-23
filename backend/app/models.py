@@ -44,6 +44,37 @@ class TeamResult(BaseModel):
     team_flags: list[str] = Field(default_factory=list, description="团队风险标记")
     team_type: str = Field(..., pattern=r"^(doxxed|semi_anon|anon|unknown)$")
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def risk_level(self) -> str:
+        """团队风险档（low/medium/high），由 team_score 唯一决定。
+
+        `agents/team.py` 早就有 `score_to_risk_level()`，但只用于打印日志，
+        没有字段承载 —— 于是前端详情页与 `services/ai_brief.py` 都在读
+        `team_json.risk_level`，而落库的 281 条数据里**这个键出现 0 次**，
+        两处永远拿到空值。`routers/v1/insights.py` 则第三次重算了同一套分档。
+
+        做成 computed_field 而不是普通字段：分档必须由 team_score 唯一决定，
+        不允许外部传入一个与分数矛盾的档位。
+        """
+        from app.agents.team import score_to_risk_level
+
+        return score_to_risk_level(self.team_score)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_computed_risk_level(cls, data):
+        """允许把自己 dump 出来的 dict 再喂回来。
+
+        与 `TokenomicsResult._drop_computed_risk` 同因同治：computed_field 会出现在
+        `model_dump()` 里，而 `extra="forbid"` 会把它当非法额外字段，于是任何从
+        `team_json` 回放的导入/重算路径都会硬失败。丢弃传入值并重算，保证
+        risk_level 永远由 team_score 唯一决定。
+        """
+        if isinstance(data, dict) and "risk_level" in data:
+            data = {key: value for key, value in data.items() if key != "risk_level"}
+        return data
+
 
 class RiskResult(BaseModel):
     """Risk Agent 输出。"""
@@ -59,6 +90,15 @@ class RiskResult(BaseModel):
         default="medium",
         pattern=r"^(low|medium|high)$",
         description="女巫攻击难度（DATA_SCORING_DICT §5.4 sybil_factor 输入）",
+    )
+    # 同一个毛病的第二例：`assess_farming_cost()` 早就在算，但结果只进日志
+    # （risk.py 里那行注释写着 "not in RiskResult but useful for logging"），
+    # 而前端详情页「交互成本」与 ai_brief 都在读 risk.farming_cost —— 落库的
+    # 281 条里这个键出现 0 次，两处一直显示兜底值。
+    farming_cost: str = Field(
+        default="medium",
+        pattern=r"^(low|medium|high)$",
+        description="交互成本（gas + 时间投入），来自 assess_farming_cost()",
     )
 
 

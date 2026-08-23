@@ -227,7 +227,9 @@ class RiskAgent(BaseAgent):
             # Assess sybil difficulty
             sybil_difficulty = assess_sybil_difficulty(state.project)
 
-            # Assess farming cost (not in RiskResult but useful for logging)
+            # Assess farming cost（此前注释写着 "not in RiskResult but useful for
+            # logging" —— 结果前端「交互成本」与 ai_brief 都在读 risk.farming_cost，
+            # 落库数据里这个键出现 0 次，两处一直显示兜底值。现已进字段。）
             farming_cost = assess_farming_cost(state.project)
 
             # Infer unlock pressure
@@ -242,6 +244,7 @@ class RiskAgent(BaseAgent):
                 risk_flags=risk_flags,
                 unlock_pressure=unlock_pressure,
                 sybil_difficulty=sybil_difficulty,
+                farming_cost=farming_cost,
             )
 
             # Update state

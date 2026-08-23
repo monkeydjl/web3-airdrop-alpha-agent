@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -33,6 +34,8 @@ REVIEW_PAGE = FRONTEND / "app" / "review" / "page.tsx"
 NOTIFICATIONS_PAGE = FRONTEND / "app" / "notifications" / "page.tsx"
 NOTIFICATIONS_ROUTER = REPO_ROOT / "backend" / "app" / "routers" / "v1" / "notifications.py"
 FORMAT_LIB = FRONTEND / "lib" / "format.ts"
+DISCOVERIES_PAGE = FRONTEND / "app" / "discoveries" / "page.tsx"
+WORKFLOW_PANEL = FRONTEND / "components" / "OpportunityWorkflowPanel.tsx"
 COLLECTORS_DIR = REPO_ROOT / "backend" / "app" / "collectors"
 
 
@@ -83,6 +86,18 @@ def _inline_map_keys(src: str, func: str, where: Path) -> set[str]:
     body = re.search(r"const map: Record<string, string> = \{(.*?)\n  \};", fn.group(1), re.S)
     assert body, f"{func} 里找不到 `const map: Record<string, string> = {{...}}`"
     return set(re.findall(r"^\s*([A-Za-z_][\w]*)\s*:", body.group(1), re.M))
+
+
+def _option_ids(src: str, decl: str, where: Path) -> set[str]:
+    """取 `const <decl>: {...}[] = [{ id: 'a', label: '..' }, ...]` 的全部 id。
+
+    空字符串 id 是「不选」占位（渲染成「—」），不参与枚举比对。
+    """
+    match = re.search(rf"const\s+{re.escape(decl)}\s*:[^=]*=\s*\[(.*?)\n\];", src, re.S)
+    assert match, f"在 {where.name} 里找不到 `const {decl}: ...[] = [...]`。这张表若被改名或改写，请同步更新本测试。"
+    ids = set(re.findall(r"id:\s*'([^']*)'", match.group(1)))
+    assert ids, f"{where.name} 的 {decl} 里没解析到任何 `id: '...'`，解析器已失效。"
+    return ids - {""}
 
 
 def _backend_literal_args(name: str) -> set[str]:
@@ -266,6 +281,171 @@ class TestSourceLabels:
         assert not phantom, f"sourceZh 里这些来源后端并不产出：{sorted(phantom)}。死条目会让人以为系统支持这种来源。"
 
 
+class TestNoHardcodedSourceList:
+    """发现页的来源下拉不得再私藏一份采集器清单。
+
+    实测那份硬编码清单当时确实与后端一致 —— 但这属于「碰巧对上」：后端加一个
+    采集器，下拉就会漏掉它，而漏掉的表现是「筛选不到」，不是报错。
+    现已改为读 `GET /collections/sources`；这条断言防止有人把清单加回来。
+    """
+
+    def test_page_reads_sources_from_backend(self) -> None:
+        src = _read(DISCOVERIES_PAGE)
+        # 必须匹配真正的调用，不能只搜路径字符串 —— 文件顶部的注释里也写着
+        # 「GET /collections/sources」，只搜路径的话把调用改坏了测试仍会绿。
+        # 这是本仓反复出现的坑：描述规则的文本与遵守规则的代码长得一模一样。
+        assert re.search(r"apiFetch<[^>]*>\(\s*'/collections/sources'", src), (
+            "发现页没有真的调用 apiFetch('/collections/sources') —— "
+            "一旦回到硬编码，后端新增采集器时这个下拉会静默漏掉它。"
+        )
+
+    def test_no_hardcoded_source_id_list(self) -> None:
+        src = _read(DISCOVERIES_PAGE)
+        # 一行里同时出现 3 个以上已知 source_id，基本可断定是一份硬编码清单
+        known = TestSourceLabels._backend_sources()
+        for line_no, line in enumerate(src.splitlines(), 1):
+            hits = {name for name in known if f"'{name}'" in line or f'"{name}"' in line}
+            assert len(hits) < 3, (
+                f"{DISCOVERIES_PAGE.name}:{line_no} 看起来又写死了一份采集源清单"
+                f"（同行出现 {sorted(hits)}）。真值是 GET /collections/sources。"
+            )
+
+
+class TestOpportunityWorkflowEnums:
+    """旁路机会引擎面板的三张中文表必须与后端枚举一致。
+
+    这个面板是全前端最大的一处枚举集中地（工作流状态 7 个、资格 3 个、存活 3 个）。
+    漏一项的表现与其它页一样：界面上突然冒出一个英文枚举值。
+    多一项更隐蔽 —— 它承诺了一个后端永远不会给出的状态。
+    """
+
+    @staticmethod
+    def _backend_workflow_states() -> set[str]:
+        from app.opportunity.workflow import WorkflowState
+
+        values = set(get_args(WorkflowState))
+        assert values, "解析 WorkflowState 失败，取到空集合。"
+        return values
+
+    def test_state_labels_match_backend(self) -> None:
+        src = _read(WORKFLOW_PANEL)
+        labelled = _object_keys(src, "STATE_ZH", WORKFLOW_PANEL)
+        backend = self._backend_workflow_states()
+        assert not backend - labelled, f"这些工作流状态没有中文名：{sorted(backend - labelled)}"
+        assert not labelled - backend, f"STATE_ZH 里这些状态后端不产出：{sorted(labelled - backend)}"
+
+    @pytest.mark.parametrize(
+        ("decl", "alias"),
+        [("ELIGIBILITY_OPTS", "EligibilityResult"), ("SURVIVAL_OPTS", "SurvivalResult")],
+    )
+    def test_option_lists_match_backend(self, decl: str, alias: str) -> None:
+        ids = _option_ids(_read(WORKFLOW_PANEL), decl, WORKFLOW_PANEL)
+        backend = _backend_literal_args(alias)
+        assert not backend - ids, f"{decl} 漏了后端取值：{sorted(backend - ids)}"
+        assert not ids - backend, f"{decl} 里这些取值后端不接受：{sorted(ids - backend)}，提交会被 422 拒绝。"
+
+
+class TestStageVocabularies:
+    """两套「阶段」词汇必须分开，且各自不得收录对方的取值。
+
+    系统里有两个都叫 stage 的东西，含义完全不同：
+
+    - `projects.stage` —— **部署阶段**，采集器写入，取值 ideation/testnet/mainnet
+      （「代码上到哪张网了」）
+    - `NarrativeResult.stage` —— **叙事生命周期**，取值 early/growth/peak/mature
+      （「赛道热度处在周期哪一段」）
+
+    此前前端只有一个 `stageZh`，同时收录两套词汇。一张表接受两套取值，
+    等于把口径错配变成了**看不出来的**错配：传错词汇不会显示原文
+    （那样反倒能被发现），而是显示另一套口径下一个看着很合理的中文。
+    """
+
+    @staticmethod
+    def _deployment_stages() -> set[str]:
+        """采集器与种子数据实际写入 `projects.stage` 的字面量。"""
+        found: set[str] = set()
+        for path in sorted(COLLECTORS_DIR.glob("*.py")):
+            found |= set(re.findall(r'stage\s*=\s*"(\w+)"', path.read_text(encoding="utf-8")))
+            found |= set(re.findall(r'"stage":\s*"(\w+)"', path.read_text(encoding="utf-8")))
+        seed = (COLLECTORS_DIR.parent / "seed.py").read_text(encoding="utf-8")
+        found |= set(re.findall(r'"stage":\s*"(\w+)"', seed))
+        # defillama 的 _infer_stage 只返回这两个，用返回语句核对
+        defillama = (COLLECTORS_DIR / "defillama.py").read_text(encoding="utf-8")
+        infer = re.search(r"def _infer_stage\(.*?\n(?=\s{4}def )", defillama, re.S)
+        assert infer, "defillama.py 里找不到 _infer_stage —— 部署阶段的取值来源变了，请同步本测试。"
+        found |= set(re.findall(r'return "(\w+)"', infer.group(0)))
+        assert len(found) >= 3, f"没解析到部署阶段字面量（只拿到 {sorted(found)}），解析器已失效。"
+        return found
+
+    @staticmethod
+    def _lifecycle_stages() -> set[str]:
+        """`NarrativeResult.stage` 的 pattern 允许的取值。"""
+        from app.models import NarrativeResult
+
+        for meta in NarrativeResult.model_fields["stage"].metadata:
+            pattern = getattr(meta, "pattern", None)
+            if pattern:
+                values = set(re.findall(r"\w+", pattern.strip("^$()")))
+                assert values, f"解析 NarrativeResult.stage 的 pattern 失败：{pattern}"
+                return values
+        raise AssertionError("NarrativeResult.stage 没有 pattern 约束了 —— 真值来源变了，请同步本测试。")
+
+    @staticmethod
+    def _timings() -> set[str]:
+        """穷举 `stage_to_timing()` 的全部合法输入，得到 timing 的可达取值。
+
+        不读 pattern 而是真的调用函数：pattern 说的是「允许什么」，
+        这里要的是「实际会产出什么」。曾有一个 `growth` 中文名，
+        pattern 允许不了它、函数也永远不返回它 —— 是纯死条目。
+        """
+        from app.agents.narrative import stage_to_timing
+
+        reachable = {stage_to_timing(s) for s in TestStageVocabularies._lifecycle_stages()}
+        assert reachable, "stage_to_timing 没有产出任何取值，解析器已失效。"
+        return reachable
+
+    def test_stage_zh_covers_deployment_only(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "stageZh", FORMAT_LIB)
+        deployment = self._deployment_stages()
+        missing = deployment - labelled
+        assert not missing, f"stageZh 漏了这些部署阶段：{sorted(missing)}，界面会显示英文原文。"
+        intruders = labelled & (self._lifecycle_stages() - deployment)
+        assert not intruders, (
+            f"stageZh 收录了叙事生命周期的取值 {sorted(intruders)}。"
+            "两套词汇必须分开，否则口径传错时会显示一个看着合理的错答案。"
+        )
+
+    def test_lifecycle_stage_zh_covers_lifecycle_only(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "lifecycleStageZh", FORMAT_LIB)
+        lifecycle = self._lifecycle_stages()
+        missing = lifecycle - labelled
+        assert not missing, f"lifecycleStageZh 漏了这些生命周期取值：{sorted(missing)}。"
+        intruders = labelled & (self._deployment_stages() - lifecycle)
+        assert not intruders, f"lifecycleStageZh 收录了部署阶段的取值 {sorted(intruders)}。"
+
+    def test_timing_zh_has_no_unreachable_entry(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "timingZh", FORMAT_LIB)
+        reachable = self._timings()
+        missing = reachable - labelled
+        assert not missing, f"timingZh 漏了这些时机取值：{sorted(missing)}。"
+        dead = labelled - reachable
+        assert not dead, (
+            f"timingZh 里这些取值后端永远不会产出：{sorted(dead)}。死条目会让人以为系统还有额外的判断档位。"
+        )
+
+    def test_detail_page_does_not_cross_vocabularies(self) -> None:
+        """详情页叙事面板的「阶段」不得兜底到部署阶段。
+
+        兜底看起来贴心，实际是拿另一套口径的答案填这一格：
+        7 个没有叙事结果的项目会在生命周期这一格显示「主网」。
+        """
+        src = _read(FRONTEND / "app" / "project" / "[id]" / "page.tsx")
+        assert "lifecycleStageZh(String(narrative.stage ?? ''))" in src, (
+            "详情页叙事面板的「阶段」不再是「只读 narrative.stage、缺了显示 —」。"
+            "一旦兜底到 project.stage，就会用部署阶段冒充生命周期。"
+        )
+
+
 class TestParsersFailLoudly:
     """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
 
@@ -281,6 +461,13 @@ class TestParsersFailLoudly:
         assert len(TestNotificationTypes._backend_types()) >= 3
         assert len(_inline_map_keys(_read(FORMAT_LIB), "sourceZh", FORMAT_LIB)) >= 8
         assert len(TestSourceLabels._backend_sources()) >= 8
+        assert len(TestStageVocabularies._deployment_stages()) >= 3
+        assert len(TestStageVocabularies._lifecycle_stages()) == 4
+        assert len(TestStageVocabularies._timings()) == 3
+        panel = _read(WORKFLOW_PANEL)
+        assert len(_object_keys(panel, "STATE_ZH", WORKFLOW_PANEL)) >= 5
+        assert len(_option_ids(panel, "ELIGIBILITY_OPTS", WORKFLOW_PANEL)) >= 3
+        assert len(TestOpportunityWorkflowEnums._backend_workflow_states()) >= 5
 
     def test_missing_declarations_raise(self) -> None:
         with pytest.raises(AssertionError):
@@ -291,3 +478,12 @@ class TestParsersFailLoudly:
             _literal_union("type Other = 'a';", "Outcome", REVIEW_PAGE)
         with pytest.raises(AssertionError):
             _inline_map_keys("export function other() {\n}\n", "sourceZh", FORMAT_LIB)
+        with pytest.raises(AssertionError):
+            _option_ids("const OTHER = [];", "ELIGIBILITY_OPTS", WORKFLOW_PANEL)
+        with pytest.raises(AssertionError):
+            # 声明找得到但里面没有任何 id → 也必须炸，不能返回空集合
+            _option_ids(
+                "const ELIGIBILITY_OPTS: X[] = [\n  { label: '无 id' },\n];",
+                "ELIGIBILITY_OPTS",
+                WORKFLOW_PANEL,
+            )

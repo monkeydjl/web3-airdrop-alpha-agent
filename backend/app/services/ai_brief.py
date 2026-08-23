@@ -80,8 +80,19 @@ def build_rule_brief(project: dict[str, Any]) -> dict[str, Any]:
     n_stage = str(narrative.get("stage") or stage)
     team_score = _num(team.get("score", team.get("team_score")), 0.5)
     team_type = str(team.get("team_type") or "unknown")
+    # `risk_level` / `team_flags` / `farming_cost` 现在由模型的字段/computed_field
+    # 承载并落库。历史行（本次改动之前打的分）里没有这三个键，所以：
+    # - risk_level 缺失时按 team_score 现算，而不是显示空白
+    # - flags 兼容旧读法 `flags` 与真实键名 `team_flags`
     risk_level = str(team.get("risk_level") or "")
-    flags = team.get("flags") if isinstance(team.get("flags"), list) else []
+    if not risk_level and isinstance(team.get("team_score"), (int, float)):
+        from app.agents.team import score_to_risk_level
+
+        risk_level = score_to_risk_level(float(team["team_score"]))
+    raw_flags = team.get("team_flags")
+    if not isinstance(raw_flags, list):
+        raw_flags = team.get("flags")
+    flags = raw_flags if isinstance(raw_flags, list) else []
     sybil = str(risk.get("sybil_difficulty") or "medium")
     farming = str(risk.get("farming_cost") or "medium")
     token_risk = _num(risk.get("token_risk"), 0.5)

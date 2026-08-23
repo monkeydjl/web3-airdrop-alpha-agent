@@ -292,6 +292,21 @@ def get_project(
         team = _parse_json_field(project.get("team_json"))
         risk = _parse_json_field(project.get("risk_json"))
         tokenomics = _parse_json_field(project.get("tokenomics_json"))
+
+        # 历史行补 risk_level：本次改动之前打的分，team_json 里没有这个键
+        # （分档逻辑当时只打日志）。它由 team_score 唯一决定，而 team_score
+        # 是落库的，所以可以按同一个真值函数现算 —— 不是猜，是重放同一个映射。
+        #
+        # 注意 farming_cost **不做**同样的补算：它的输入是 has_points_program，
+        # 这个字段不在 projects 表里，无法忠实重放。历史行因此没有该键，
+        # 前端显示「—」。宁可显示「不知道」，也不端出一个看起来很像真值的猜测。
+        if isinstance(team, dict) and "risk_level" not in team:
+            team_score = team.get("team_score")
+            if isinstance(team_score, (int, float)):
+                from app.agents.team import score_to_risk_level
+
+                team = {**team, "risk_level": score_to_risk_level(float(team_score))}
+
         reason = _parse_json_field(project.get("reason"))
         if reason is not None and not isinstance(reason, list):
             reason = [str(reason)]
