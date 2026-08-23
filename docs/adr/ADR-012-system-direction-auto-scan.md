@@ -146,7 +146,7 @@ Web3 Airdrop Alpha Agent System 在 v1.x 阶段定位为"用户手动输入项�
   - [ADR-004](ADR-004-sqlite-to-postgres.md) — SQLite→PG（采集数据量增长可能提前触发迁移）
   - [ADR-005](ADR-005-apscheduler-inprocess.md) — APScheduler（采集调度器基于此扩展）
   - [ADR-007](ADR-007-multi-project-concurrency.md) — 多项目并发（批量分析沿用）
-- **影响文档**：ENGINEERING_ROADMAP.md §6.2、DATABASE_DDL.md、API_SPEC.md、SECURITY.md §10.2、CONVENTIONS.md §2、.env.example、OPERATIONS.md §5
+- **影响文档**：ENGINEERING_ROADMAP.md §6.2、DATABASE_DDL.md、API_SPEC.md、SECURITY.md §10.2、CONVENTIONS.md §2、.env.example、OPERATIONS.md §7（调度任务）
 
 ---
 

@@ -143,7 +143,8 @@ fetcher 结果进库前依次过：
 | 去重准确率（1 - 误合并 - 漏合并） | ≥95% | 每周 | 唯一性 |
 
 - 采集质量报告每月输出至 `evaluation/collection/YYYY-MM.md`
-- 不达标时按 `OPERATIONS.md §4.3.5` 处理
+  —— ⚠️ **该目录尚不存在，此项未实现**（见 `OPERATIONS.md §11`）
+- 不达标时按 `OPERATIONS.md §4.3`（采集源故障）处理
 
 ---
 

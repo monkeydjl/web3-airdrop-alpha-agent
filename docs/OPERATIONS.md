@@ -1,521 +1,879 @@
 # 运维 Runbook
 
-> 配套文档：ENGINEERING_ROADMAP.md §15、SECURITY.md §9、OBSERVABILITY.md §5。本文档是值班/运维人员的操作手册，覆盖日常运维、故障处理、部署发布、备份恢复�?>
-> 适用阶段：MVP 单机部署 �?V2 容器�?�?V3 多实例。每节标注适用阶段�?
----
-
-## 1. 角色与值班
-
-### 1.1 角色定义
-| 角色 | 职责 | 阶段 |
-| --- | --- | --- |
-| Primary on-call | 响应 critical 告警�?30min 介入 | V2+ |
-| Secondary on-call | Primary 未响�?15min 后升�?| V2+ |
-| Data steward | 处理 quarantine、词表维�?| V2+ |
-| Release manager | 发布窗口决策、回滚授�?| V2+ |
-
-### 1.2 值班轮换（V2+�?- 每周轮换，周一 00:00 UTC 交接
-- 值班期间保持即时通讯可达（Slack/电话�?- 值班前检查：告警通道是否通、`/health` 是否绿、最�?run 是否成功
-
-### 1.3 MVP 阶段
-- 无正式值班；作�?小团队自行响�?- 告警走邮件，工作时间处理
+> 配套文档：[OBSERVABILITY.md](OBSERVABILITY.md)（指标 / 日志 / 告警的真实清单）、
+> [SECURITY.md](SECURITY.md) §9（安全事件响应）、
+> [ENGINEERING_ROADMAP.md](ENGINEERING_ROADMAP.md) §15（部署与运维设计）。
+>
+> **本文档的写作规则**：只写**实测为真**的命令、路径、端口、指标名、接口名。
+> 设计意图与未来规划一律进 §11「未实现 / 已规划」，不混进操作步骤。
+>
+> 上一版本本文档有 404 处编码损坏，重写时发现它同时还在**内容上**说谎：
+> 19 个 Prometheus 指标名里 18 个不存在、4 个 API 路径不存在、
+> 2 个"已提供的巡检脚本"根本没有这个文件、端口和数据库文件名都是错的。
+> 具体清单见 §12「上一版本的失真记录」。
 
 ---
 
-## 2. 日常运维检查项
+## 1. 当前部署形态（决定后面所有命令怎么写）
 
-### 2.1 每日（自动化 + 人工抽查�?| 检查项 | 方式 | 期望 | 异常处理 |
-| --- | --- | --- | --- |
-| 每日 run 成功 | �?`airdrop_run_total{status="success"}` | 当日 �? �?| §4.1 |
-| 健康检�?| `curl /health` | `ok:true` | §4.7 |
-| 库内项目增长 | `airdrop_projects_in_db` | 每日 +20�?0 | §4.5 |
-| quarantine 积压 | `airdrop_quarantine_pending` | <50 | §4.6 |
-| LLM 成本（V2�?| `airdrop_llm_cost_usd_total` | < 日预�?| §4.4 |
-| 外部源熔�?| `airdrop_fetcher_circuit_open` | �?0 | §4.3 |
-| 数据完整�?| `airdrop_data_completeness_ratio` | P0=1.0 | §4.6 |
-| **采集调度器运�?*（v2.0�?| `airdrop_collection_total{status="success"}` | 当日每源 �? �?| §4.3 / §4.5 |
-| **采集成功�?*（v2.0�?| `airdrop_collection_success_ratio` | �?5% | §4.3 |
-| **发现项目�?*（v2.0�?| `raw_projects` 当日新增 | 20-50/�?| §4.5 |
-| **采集质量-误报�?*（v2.0�?| `evaluation/collection/` 周报 | <10% | §4.3.5 |
-| **采集质量-源覆盖率**（v2.0�?| `evaluation/collection/` 周报 | �?0% | §4.3.5 |
+系统有三种跑法，运维命令**完全不同**。先确认自己在哪一种。
+
+| 形态 | 怎么起 | 后端地址 | 数据库 | 当前状态 |
+|---|---|---|---|---|
+| **本地裸跑**（开发/单机） | `Start.bat` 或手动 uvicorn | `http://localhost:8002` | SQLite 文件 | ✅ 本机现在就是这个 |
+| **单容器 compose** | `docker compose up -d` | `http://localhost:8002` | SQLite（挂载 `./data`） | 配置存在，本机 Docker 未运行 |
+| **生产 compose** | `docker compose -f docker-compose.prod.yml up -d` | `http://localhost:18080`（经 nginx） | PostgreSQL 容器 `airdrop-db` | 配置存在，本机未跑起来 |
+
+### 1.1 端口（**实测**，容易记错）
+
+- 后端监听 **8002**，不是 8000。`backend/app/config.py` 默认 `port = 8002`，
+  `docker/Dockerfile` 是 `EXPOSE 8002` + `--port 8002`。
+- Next.js 前端 **3002**（`frontend-next/package.json` 的 `dev`/`start` 都写死 `--port 3002`）。
+- 生产 compose 的宿主机端口刻意避开常用端口：nginx `18080→80`、
+  前端 `13002→3002`、Grafana `13000→3000`、OTel exporter `18889→8889`。
+  后端在生产 compose 里**不映射宿主机端口**（只在 compose 网络内以 `airdrop-web:8002` 暴露）。
+
+> ⚠️ `scripts/deploy.sh` 与 `scripts/health-check.sh` 里写的是 **8000**，
+> 直接跑会健康检查超时。见 §12.4。
+
+### 1.2 数据库文件到底在哪（**实测，最容易踩的坑**）
+
+`DB_PATH` 是**相对路径就相对进程工作目录解析**的。本机 `.env` 里配的是
+容器内路径 `/app/data/app.db`，在 Windows 上这个"绝对路径"被解析成 `D:\app\data\app.db`
+—— 也就是说**线上真正在用的库不在仓库目录里**：
+
+```powershell
+# 实测：确认当前进程真正连的是哪个文件
+cd backend
+& ".\venv\Scripts\python.exe" -c "from app.db import get_connection; c=get_connection(); print([r[2] for r in c.execute('PRAGMA database_list')]); c.close()"
+# -> ['D:\\app\\data\\app.db']
+```
+
+仓库里的 `data/airdrop.db`（94 个项目）和 `backend/data/airdrop.db` 都是**过期副本**，
+真库 `D:\app\data\app.db` 有 288 个项目、9.3 MB、27 张表。
+
+**这直接让备份脚本备错文件** —— 见 §12.5，属于上线前必须处理的问题。
+
+---
+
+## 2. 日常检查项
+
+### 2.1 每日
+
+| 检查项 | 怎么查（实测可用） | 期望 |
+|---|---|---|
+| 服务活着 | `curl http://localhost:8002/health` | `{"ok":true,"status":"healthy","db":"ok"}` |
+| 版本对 | `curl http://localhost:8002/version` | `version` / `app_env` / `llm_enabled` |
+| 指标在吐 | `curl http://localhost:8002/metrics` | 有 `airdrop_` 开头的输出 |
+| 管道跑过 | `airdrop_pipeline_runs_total{status="success"}` | 当日 ≥ 1 |
+| 采集跑过 | `airdrop_collection_runs_total{source_id,status}` | 各启用源当日 ≥ 1 |
+| 熔断没开 | `airdrop_fetcher_circuit_breaker_state` | `0`（CLOSED） |
+| 库在长 | `airdrop_db_projects_total` / `airdrop_db_raw_projects_total` | 不长期持平 |
+| 隔离积压 | `GET /api/v1/quarantine` 的 `count` | 别持续上涨 |
+| 备份成功 | `backups/auto_backup.log` 最后一行 | `备份成功!` |
+
+**指标名以 [OBSERVABILITY.md](OBSERVABILITY.md) §3.2 的 33 项清单为唯一权威。**
+本文只引用其中确实存在的名字。
 
 ### 2.2 每周
-- 检查磁盘空间（SQLite + backups + cache 目录�?- 检�?logs 表增长，�?50MB 考虑清理（保�?90 天）
-- 审阅告警趋势（是否有反复触发的规则）
-- 词表审计：剔除无项目命中的死赛道词条
+
+- 看磁盘：`D:\app\data\app.db` 大小、`logs/backend.log` 大小、`backups/` 总量。
+- **看日志文件大小**——目前**没有任何日志轮转**（§12.6），只能人工看。
+- 翻一遍 `collection_logs` 里 `status='error'` 的记录，确认不是同一个源天天挂。
+- 看备份数量：`auto_backup.ps1` 保留 7 天，正常应有 6–7 个 zip。
 
 ### 2.3 每月
-- 依赖安全扫描 `pip-audit` 全量
-- 数据质量月报复盘（V2+�?- 密钥轮换检查（V2+，超 90 天未换提醒）
-- 备份恢复演练（�?.3�?
+
+- 依赖漏洞：`pip-audit`（CI 每次 PR 都跑，本地可复跑）。
+- 备份恢复演练（§6.3）——**目前从未演练过**。
+- 归档任务有没有真跑过：`GET /api/v1/archive/runs` 的 `summary.total_runs`
+  —— **实测当前为 0，即归档从上线到现在一次都没执行过**（§7.3）。
+
 ---
 
-## 3. 部署与发�?
-### 3.1 MVP 本地部署
-```bash
+## 3. 启动、停止、部署
+
+### 3.1 本地裸跑（当前形态）
+
+```powershell
+# 一键（会检查 Python、装依赖、建库、起前后端）
+.\Start.bat
+
+# 停
+.\Stop.bat
+```
+
+手动起后端：
+
+```powershell
 cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python run.py
-# 首次启动自动建库；导入种子数�?curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json' -d '{"source":"seed"}'
+& ".\venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8002
 ```
 
-### 3.2 Docker 部署
-```bash
-# 构建
-docker build -t airdrop-alpha:latest .
+> 本机系统 Python 是 3.14.6，**跑不了本项目**；必须用 `backend\venv` 里的 3.11.9。
+> 所有 Python 命令都要写成 `& ".\venv\Scripts\python.exe"`。
+> 另外先设 `$env:PYTHONUTF8="1"`，否则中文日志会乱码。
 
-# 单容�?docker run -d --name airdrop-alpha \
-  -p 8000:8000 \
-  -v $(pwd)/data:/app/backend/data \
-  -e PORT=8000 \
-  --restart unless-stopped \
-  airdrop-alpha:latest
+手动起前端：
 
-# �?compose 一�?docker compose up -d --build
+```powershell
+cd frontend-next
+npm run dev      # 开发，端口 3002
+npm run build; npm start   # 生产模式，端口 3002
 ```
 
-### 3.3 发布流程（V2+�?```
-1. PR 合并�?main（CI 全绿�?2. �?tag v*.*.*
-3. CI 自动构建镜像 �?ghcr.io/<org>/airdrop-alpha:<tag>
-4. Release manager 确认发布窗口
-5. 演示环境部署 + 冒烟（curl /health + POST /run?source=seed�?6. 冒烟通过 �?更新 latest tag �?生产部署
-7. 观察 30min（告�?+ 错误率）
+### 3.2 单容器 compose
+
+```powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs -f backend
+docker compose down
 ```
 
-### 3.4 回滚
-- **应用回滚**（优先）：重新部署上一版本镜像 `<tag-prev>`
-- **数据库回�?*（慎用）：仅�?schema 迁移破坏性时
-  ```bash
-  alembic downgrade -1
+要点（都在 `docker-compose.yml` 里可核对）：
+
+- 容器名 `airdrop-alpha-backend`，端口 `${API_PORT:-8002}:8002`。
+- **必须有 `.env`**：镜像里没有 `.env`（被 `.dockerignore` 排除），compose 用
+  `env_file: .env` 整体读入。历史上靠 `environment:` 白名单漏过 `API_KEY`、
+  `AUTH_TOKEN_SECRET`，容器直接 CrashLoop。
+- `APP_ENV` 默认 **production**，而生产自检要求 `API_KEY` 非空且 ≥32 字符，
+  否则**拒绝启动**。本地想跑就显式设 `APP_ENV=development`。
+- PostgreSQL 不默认启动，要加 profile：
+  `docker compose --profile postgres up -d` 且设 `DB_BACKEND=postgres`。
+- nginx 也在 profile 里：`docker compose --profile production up -d`。
+
+### 3.3 生产 compose
+
+```powershell
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
+```
+
+包含 11 个服务：`nginx` `frontend` `web` `db` `prometheus` `alertmanager`
+`grafana` `loki` `promtail` `otel-collector` `jaeger`。容器名前缀是
+`airdrop-`（`airdrop-web` / `airdrop-db` / `airdrop-nginx` …），
+**注意和单容器 compose 的 `airdrop-alpha-backend` 不是一套名字**，
+写运维脚本时别混。
+
+nginx 路由（`docker/nginx/nginx-http.conf`，实测的 location 列表）：
+
+| 路径 | 转发到 | 备注 |
+|---|---|---|
+| `/` | frontend | |
+| 静态资源正则 | frontend | js/css/图片/字体 |
+| `/api/` | backend | |
+| `/health` | backend `/health` | 限流 burst=5 |
+| `/metrics` | backend `/metrics` | 限流 burst=5，**无鉴权** |
+
+TLS 由上游反向代理终结，这里是 HTTP-only。
+
+### 3.4 部署脚本的可用性
+
+`scripts/deploy.sh` 和 `scripts/health-check.sh` 存在，但**都硬编码 8000 端口**，
+现状下会失败。修好之前请按 §3.1–3.3 手工执行。见 §12.4。
+
+### 3.5 回滚
+
+- **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
+- **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
+- **数据库回滚**：Alembic 迁移目前只有 **3 个版本**（`backend/alembic/versions/`）。
+  ```powershell
+  cd backend
+  & ".\venv\Scripts\python.exe" -m alembic downgrade -1
   ```
-- **配置回滚**：恢�?`.env` 上一版本，重启容�?- 回滚决策：P0/P1 事件 + Release manager 授权
+  破坏性迁移的回滚请先做备份（§6）。
 
-### 3.5 蓝绿/金丝雀（V3�?- V3 引入：新版本先发 10% 流量，观�?1h 无异常再全量
-- 数据库迁移仍需"先兼容双�?�?切读 �?删旧�?三步（ENGINEERING_ROADMAP.md §15.3�?
-### 3.6 Opportunity Shadow rollout
+### 3.6 Opportunity Shadow 灰度
 
-Opportunity v2.0 Shadow is a non-authoritative side evaluation. It does not replace the `score-v1.4` project score or label. Roll it out in this order:
+Shadow 是**非权威旁路评估**，不替换 `score` 与 `label`，assessment 只追加不改写。
 
-1. Start with `OPPORTUNITY_SHADOW_ENABLED=false` and `OPPORTUNITY_SHADOW_SAMPLE_RATE=0.0`.
-2. Verify `/health`, including `opportunity_model_version`, `opportunity_shadow_enabled`, and `opportunity_shadow_sample_rate`.
-3. After baseline health verification, set enabled to `true`, set the rate to `0.05`, and restart the service.
-4. Observe one normal scheduling window. Check the health fields; Shadow `eligible`, `sampled`, `attempted`, `saved`, `failed`, and `skipped` counters; assessment statuses and public labels; and duration.
-5. Increase the sample rate gradually after the signals remain normal. Project-ID buckets are deterministic, so higher thresholds select monotonic supersets: a project selected at a lower rate remains selected at a higher rate.
-6. Roll back by setting `OPPORTUNITY_SHADOW_ENABLED=false` and restarting. No schema rollback or legacy-score rollback is required because Shadow assessments are append-only and non-authoritative.
+1. 先 `OPPORTUNITY_SHADOW_ENABLED=false`、`OPPORTUNITY_SHADOW_SAMPLE_RATE=0.0`。
+2. 核对 `/health` 的 `opportunity_model_version`、`opportunity_shadow_enabled`、
+   `opportunity_shadow_sample_rate` 三个字段（**实测存在**）。
+3. 开 `true`、采样率设 `0.05`，重启。
+4. 观察一个完整调度窗口，看 Shadow 的 5 个指标：
+   `airdrop_opportunity_shadow_projects_total`、
+   `airdrop_opportunity_shadow_assessments_total`、
+   `airdrop_opportunity_shadow_duration_seconds`、
+   `airdrop_opportunity_shadow_enabled`、
+   `airdrop_opportunity_shadow_sample_rate`。
+5. 逐步提采样率。项目 ID 分桶是确定性的，所以高采样率是低采样率的**单调超集**——
+   低采样率被选中的项目在高采样率下仍然被选中。
+6. 回滚：设回 `false` 重启即可，**不需要 schema 回滚**。
 
-#### Sequential PostgreSQL verification
+### 3.7 PostgreSQL 验证（必须按顺序，不能并行）
 
-Run the following commands from `backend`. They share test database state and must run in this exact order; do not parallelize them:
-
-```powershell
-$env:DATABASE_URL='postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test'
-python scripts/verify_postgres.py
-python scripts/verify_opportunity_shadow.py
-python scripts/verify_init_db_concurrency.py --database-url 'postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test' --workers 4 --rounds 2
-python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
-```
-
-#### Opportunity outcome calibration
-
-Run the production calibration loader/report path with an explicit cutoff. The
-verifier is network-free and uses fixed synthetic rows; its fixture setup and
-cleanup are the only writes it performs. Production calibration reads are
-`SELECT`-only and never mutate assessments, interactions, project scores, or
-labels.
+这几个脚本共享测试库状态：
 
 ```powershell
 cd backend
-python scripts/calibrate_opportunity.py --as-of 2026-10-15T00:00:00Z --output-dir reports/opportunity-calibration
-python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
+$env:DATABASE_URL='postgresql://airdrop:<password>@127.0.0.1:5433/airdrop_test'
+& ".\venv\Scripts\python.exe" scripts\verify_postgres.py
+& ".\venv\Scripts\python.exe" scripts\verify_opportunity_shadow.py
+& ".\venv\Scripts\python.exe" scripts\verify_init_db_concurrency.py --database-url $env:DATABASE_URL --workers 4 --rounds 2
+& ".\venv\Scripts\python.exe" scripts\verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
 ```
 
-Gate meanings: `pass` means the report is eligible for review; `insufficient_data`
-means the minimum sample/project gates are not met; `data_quality_only` means
-quality reporting is available but no recommendation gate is asserted. The
-90-day window is nested inside the 180-day window, and maturity requires the
-full window between scoring and observed outcome. Duplicate assessment/cohort
-pairs, immature rows, outcomes after `as-of`, outcomes before assessment, and
-contradictory outcomes are excluded or flagged by the loader/report quality
-fields rather than silently promoted.
+> 密码从 `.env` / secret store 取，**不要写进文档或命令历史**。
 
-Use `project_equal` as the recommendation basis when projects have unequal
-numbers of wallet cohorts: it prevents one high-volume project from dominating
-the result. Keep `cohort_weighted` for operational volume context. Reports are
-aggregate-only: project, assessment, cohort, wallet, URLs, notes, and private
-reasons must not appear in JSON or Markdown output.
+### 3.8 Opportunity 结果校准
 
-Calibration is observational and has **no auto-apply** behavior. A passing gate
-does not change production weights, labels, or decisions. Manual adoption
-requires review and approval of a **new model/profile version**, followed by a
-separate expand-and-contract rollout and rollback plan; never edit an existing
-version in place.
----
+校准是**观察性**的，`no auto-apply`：门禁通过**不会**改动生产权重、标签或决策。
 
-## 4. 故障处理手册
-
-> 每个故障：症�?�?排查 �?止损 �?根因 �?恢复 �?事后�?
-### 4.1 每日 run 失败
-**症状**：`airdrop_run_total{status="error"}` 增加；告�?`pipeline 连续失败`
-**排查**�?1. `docker logs airdrop-alpha --since 30m | grep "run.error"`
-2. 确认失败 stage：collect / analyze / score / db.write
-3. �?`logs` �?`WHERE agent_name='orchestrator' ORDER BY timestamp DESC LIMIT 5`
-
-**止损**�?- �?collect 失败 �?�?`source=seed` 跑一次保证有输出
-- �?db.write 失败 �?�?§4.2
-
-**根因**：外部源全挂 / DB �?/ 配置错误 / 代码 bug
-**恢复**：修�?`curl -X POST /api/v1/run`
-**事后**：补测试用例 + ADR（若是设计缺陷）
-
-### 4.2 DB 写失�?/ `database is locked`
-**症状**：`airdrop_db_write_errors_total` 增加；SQLite `database is locked`
-**排查**�?1. 是否有多�?writer 进程？`lsof airdrop.db`
-2. 是否有长事务未提交？�?logs `db.query.duration` P95
-3. 磁盘是否满？`df -h`
-
-**止损**�?- 杀掉冲�?writer，单 writer 重启
-- 磁盘�?�?清理 `data/cache/` 与旧 backups
-
-**根因**：并发写 / 长事�?/ 磁盘�?/ V2 未切 PG
-**恢复**：重启服务；�?DB 损坏 �?从备份恢复（§6.2�?**升级**：频繁发�?�?加�?V2 PG 迁移
-
-### 4.3 采集故障（v2.0 扩充，ADR-012�?
-> 自动扫描模式下，外部 API 故障是核心运维场景。本节对�?`DATA_SOURCE_STRATEGY.md §采集故障降级矩阵` �?L1-L4 四级故障�?
-#### 4.3.1 L1：限流（API 接近或达到速率限制�?
-**症状**�?- `airdrop_collection_status{source=X,status="rate_limited"}` 持续 >10min
-- 日志出现 `429 Too Many Requests`
-- `airdrop_collection_api_calls{source=X}` 接近 `api_limit`
-
-**排查**�?1. �?`collection_logs WHERE source_id=X AND status='rate_limited' ORDER BY started_at DESC LIMIT 5`
-2. 确认是否多任务并发争抢配额：`airdrop_collection_running{source=X}` 是否 >1
-3. 确认令牌桶是否被耗尽：`airdrop_rate_limiter_tokens{source=X}`
-
-**止损**�?- 令牌桶自动排队等待（无需人工干预�?- 若持续限�?�?调低该源的采集频率（�?Twitter �?15min �?30min�?- 紧急情况：`POST /api/v1/collections/trigger/{source_id}` 手动触发一次，绕过 cron
-
-**根因**：采集频率过�?/ 令牌桶配置过�?/ 上游源临时收紧限�?**恢复**：令牌桶自动恢复；下一�?cron 自动重试
-**事后**：若频发 �?调高 `rate_limiter.capacity` 或降低采�?cron 频率
-
----
-
-#### 4.3.2 L2：故障（API 短时不可用）
-
-**症状**�?- `airdrop_collection_status{source=X,status="error"}` 持续 >5min
-- 日志出现 `5xx` 响应连续 �? 次或连接超时
-- `airdrop_fetcher_circuit_open{source=X} == 1`（熔断器打开�?
-**排查**�?1. `curl -I <source-endpoint>` 确认源是否在�?2. �?`airdrop_fetcher_errors_total{source=X,code}` 看错误码分布
-3. 是否 API key 失效？（401/403�?4. 是否网络分区？`ping <source-domain>`
-
-**止损**�?- 该源自动跳过本轮，下一�?cron 重试（指数退避）
-- 该源故障不影响其他源采集；已发现项目照常进入分析管道
-- 若是关键源（DefiLlama/GitHub）故�?�?监控发现项目数下降，但不中断服务
-
-**根因**：源宕机 / 网络分区 / API key 失效 / 代码 bug
-**恢复**：熔断窗口（60s）后自动半开探测；持续失败需人工介入
-**事后**：若频发 �?�?TTL / 加备用源 / 检�?key 轮换
-
----
-
-#### 4.3.3 L3：停服（API 长时不可用，>1 小时�?
-**症状**�?- L2 故障持续 >1 小时未恢�?- `airdrop_collection_success_ratio{source=X}` 7 日均�?<50%
-- 告警：`采集�?{source} 停服`
-
-**排查**�?1. 确认是否上游官方公告（如 Twitter API 政策变更、GitHub 大规模故障）
-2. 检�?API key 是否被吊销：手�?`curl -H "Authorization: Bearer $KEY" <endpoint>`
-3. 确认是否 IP 被封：从服务�?IP 测试 + 本地测试对比
-
-**止损**（按 `DATA_SOURCE_STRATEGY.md §采集故障降级矩阵`）：
-| 故障�?| 降级动作 |
-|---|---|
-| DefiLlama | 降级：仅�?CoinGecko + GitHub 发现 |
-| GitHub | 降级：仅�?DefiLlama TVL 评估活跃�?|
-| CoinGecko | 标记 `has_token=unknown`，放行进分析；告�?|
-| Twitter | 降级：仅保留其他源；告警 |
-| 链上（Etherscan�?| 降级：仅�?DefiLlama TVL 交叉验证 |
-| Alchemy webhook | 告警，人工介入；切换�?Etherscan 轮询 |
-| Galxe/Layer3 | 降级：无任务平台信号 |
-
-**全局降级规则**�?- �? 个核心源同时 L3 �?系统进入"降级采集模式"：仅保留 DefiLlama + GitHub，停止其他源；告�?- 所有采集源�?L3/L4 �?系统进入"维护模式"：停止采集调度器，仅响应手动输入与已有项目重跑；告警
-
-**根因**：上游长期故�?/ API 政策变更 / IP 封禁 / key 吊销
-**恢复**�?- 上游恢复后，对该源做一次全量回扫（`POST /api/v1/collections/trigger/{source_id}`�?- 数据补偿：检查故障期间是否有漏采项目，对比其他源的发现量
-**事后**：评估是否接入备用源；若政策变更 �?新增 ADR 评估替代方案
-
----
-
-#### 4.3.4 L4：付费超限（付费源额度耗尽�?
-**症状**�?- Twitter / 链上 付费源返�?`402 Payment Required` �?`429` + `quota_exceeded`
-- 月度配额监控：`airdrop_collection_api_calls{source=X}` 月累计接近购买额�?- 告警：`付费�?{source} 配额耗尽`
-
-**排查**�?1. �?`collection_logs WHERE source_id=X AND started_at >= '本月1�?` 统计月调用数
-2. 确认是否有异常高频调用（�?cron 配置错误导致每分钟触发）
-3. 确认额度是否被其他环境（dev/staging）消�?
-**止损**�?- **Twitter 配额耗尽**：`TWITTER_ENABLED=false` 重启，停�?Twitter 采集；仅保留其他�?- **链上配额耗尽**：切换至 Etherscan 免费额度�? calls/min�?- **临时提额**：联系上游加购配额（需审批�?
-**根因**：月度配额用�?/ 异常高频调用 / dev 环境误用生产 key
-**恢复**：下�?1 日自动恢复；或加购配额后重启
-**事后**�?- 评估是否调整采集频率以降低消�?- 检�?dev/staging 是否使用独立 key
-- 评估 `LLM_DISCOVERY_SCORE_THRESHOLD` 是否过低导致过多项目进入分析（间接增加链上调用）
-
----
-
-#### 4.3.5 采集质量退�?
-**症状**（对�?`DATA_SOURCE_STRATEGY.md §采集质量评估指标`）：
-- 误报�?>20%（IGNORE �?+ discovery_score 虚高项目占比�?- 漏报�?>25%（手动补充项目中应被自动发现但未发现的比例）
-- 源覆盖率 <20%（进入分析的项目中被 �? 个源命中的比例）
-- 采集稳定�?<90%（`collection_logs.status='success'` 占比�?
-**排查**�?1. �?`evaluation/collection/` 最近月�?2. 确认是否某源长期故障导致覆盖率下�?3. 确认 `discovery_score` 计算是否异常（某源信号强度权重过高）
-
-**止损**�?- 误报率高 �?调高 `DISCOVERY_SCORE_ANALYSIS_THRESHOLD`（如 0.3 �?0.4�?- 漏报率高 �?临时增加数据源或扩大关键词覆�?- 源覆盖率�?�?接入更多交叉验证�?
-**根因**：阈值过�?/ 源覆盖不�?/ 信号权重配置不当 / 源长期故�?**恢复**：调整阈值或配置后，下一轮采集自动应用新规则
-**事后**：更�?`DATA_SOURCE_STRATEGY.md §新项目识别规则` 的阈值表
-
-### 4.4 LLM 成本超预�?**症状**：`airdrop_llm_cost_usd_total > daily_budget_usd` 告警
-**排查**�?1. `airdrop_llm_calls_total` 是否异常增长
-2. 是否有人手动触发大量 `/run`�?3. 是否 prompt 变长（token 用量 `airdrop_llm_tokens_total` 增长）？
-
-**止损**�?- 自动停用已生效（超预算当日不再调 LLM�?- 手动 `export LLM_ENABLED=false` 重启，强制走规则引擎
-
-**根因**：预算过�?/ 调用量异�?/ prompt 失控
-**恢复**：调 `LLMConfig.daily_budget_usd` 或修 prompt
-**事后**：评估是否调采样率（ENGINEERING_ROADMAP.md §19.4�?
-### 4.5 库内项目不增�?**症状**：`airdrop_projects_in_db` 当日无增�?**排查**�?1. `airdrop_run_total` 是否有触发？�?�?分析调度器问�?2. 采集调度器是否运行？�?`airdrop_collection_total{status="success"}` 当日是否有计数（v2.0，ADR-012�?3. 有采集但 `airdrop_projects_inserted_total=0` �?   - Collector 拉空（外部源全挂，见 §4.3�?   - 全部 dedup 命中已有项目（正常，�?`updated_total`�?   - 全部�?quarantine（看 `quarantine_pending`�?   - `discovery_score < 0.3` 全部被过滤（�?`raw_projects WHERE discovery_score < 0.3`�?
-**止损**�?- 手动 `POST /run`（手动输入路径）保证有演示数�?- 若采集调度器�?�?`POST /api/v1/collections/trigger/{source_id}` 手动触发一次采�?
-**根因**：采集调度器�?/ 外部源全�?/ dedup_key 全命�?/ discovery_score 阈值过�?/ 校验过严
-**恢复**：按根因对应处理
-
-### 4.6 数据质量退�?**症状**：`airdrop_data_completeness_ratio{tier="P0"} < 1.0` �?P1 < 0.8
-**排查**�?1. 哪个字段完整性下降？`completeness_ratio{field=X}`
-2. 查该字段最近的 quarantine 记录
-3. 是否�?source 全挂导致字段空？
-
-**止损**：受影响项目�?ENGINEERING_ROADMAP.md §7.6 降级（自动），保证输出不�?**根因**：fetcher 解析�?/ 字段 schema 变更 / source 限流
-**恢复**：修 fetcher；quarantine 处理后回�?**事后**：补 schema 校验测试
-
-### 4.7 健康检查失�?**症状**：`/health` 返回�?200 或超�?**排查**�?1. 容器是否运行？`docker ps`
-2. 端口是否占用？`lsof -i:8000`
-3. DB 是否可连？`sqlite3 data/airdrop.db ".tables"`
-
-**止损**：`docker restart airdrop-alpha`
-**根因**：进程挂 / 端口冲突 / DB 损坏
-**恢复**：重启；DB 损坏从备份恢�?
-### 4.8 评分异常（用户报告）
-**症状**：用户反馈某项目评分明显不合�?**排查**�?1. `GET /project/{id}` 看四 agent 明细 + reason
-2. `SELECT * FROM logs WHERE project_id=? ORDER BY timestamp` �?agent 输入输出
-3. 判断是数据问�?/ 权重问题 / 规则 bug
-
-**止损**：必要时手动 `POST /re-score/{id}` 用最新数据重�?**根因**：数据脏 / 权重需校准 / 规则逻辑�?**恢复**：修�?re-score
-**事后**：补 golden 回归用例（ENGINEERING_ROADMAP.md §14.6�?
----
-
-## 5. 自动�?Runbook（Auto-Runbook�?
-> V2+ 引入自动化诊断与自愈脚本，减少人工介入�?
-### 5.1 自动诊断脚本
-
-```bash
-#!/bin/bash
-# scripts/diagnose.sh - 自动诊断常见问题
-
-echo "=== Airdrop Alpha 自动诊断 ==="
-
-# 1. 健康检�?echo "[1/5] 健康检�?.."
-HEALTH=$(curl -s http://localhost:8002/health)
-if echo "$HEALTH" | grep -q '"status":"healthy"'; then
-  echo "  �?服务健康"
-else
-  echo "  �?服务异常: $HEALTH"
-  echo "  �?建议: docker restart airdrop-alpha"
-fi
-
-# 2. 最�?run 状�?echo "[2/5] 最�?run 状�?.."
-RUNS=$(curl -s "http://localhost:8002/api/v1/audit?action=run&limit=5")
-echo "$RUNS" | grep -q '"status":"success"' && echo "  �?最�?run 成功" || echo "  �?最�?run 失败"
-
-# 3. 数据库连�?echo "[3/5] 数据库连�?.."
-DB_STATUS=$(curl -s http://localhost:8002/health | grep -o '"db":"[^"]*"')
-echo "  状�? $DB_STATUS"
-
-# 4. 外部源健�?echo "[4/5] 外部源健�?.."
-METRICS=$(curl -s http://localhost:8002/metrics)
-CIRCUIT_OPEN=$(echo "$METRICS" | grep "airdrop_fetcher_circuit_open" | grep -v "^#" | awk '{print $2}')
-if [ "$CIRCUIT_OPEN" = "0" ] || [ -z "$CIRCUIT_OPEN" ]; then
-  echo "  �?无熔�?
-else
-  echo "  �?存在熔断�? $CIRCUIT_OPEN"
-fi
-
-# 5. 磁盘空间
-echo "[5/5] 磁盘空间..."
-DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}')
-echo "  使用�? $DISK_USAGE"
-
-echo "=== 诊断完成 ==="
+```powershell
+cd backend
+& ".\venv\Scripts\python.exe" scripts\calibrate_opportunity.py --as-of 2026-10-15T00:00:00Z --output-dir reports\opportunity-calibration
+& ".\venv\Scripts\python.exe" scripts\verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
 ```
 
-### 5.2 自动自愈脚本
+门禁语义：`pass` = 报告可进入评审；`insufficient_data` = 未达最小样本/项目门槛；
+`data_quality_only` = 只有质量报告、不给推荐结论。
 
-```bash
-#!/bin/bash
-# scripts/heal.sh - 自动自愈常见问题
+生产校准读取是**只读**的，不会改 assessment、interaction、评分或标签。
+项目的 wallet cohort 数量不均时用 `project_equal` 作为推荐基准，
+避免单个高频项目主导结果；`cohort_weighted` 留作运营量级参考。
+报告只输出聚合值 —— 项目、assessment、cohort、钱包、URL、备注、私有理由都不得出现。
 
-echo "=== Airdrop Alpha 自动自愈 ==="
-
-# 1. 服务挂了 �?重启
-if ! curl -sf http://localhost:8002/health > /dev/null; then
-  echo "[自愈] 服务不可达，重启�?.."
-  docker restart airdrop-alpha
-  sleep 10
-fi
-
-# 2. DB �?�?杀掉冲突进�?if docker logs airdrop-alpha --since 5m 2>&1 | grep -q "database is locked"; then
-  echo "[自愈] 检测到 DB 锁，重启服务..."
-  docker restart airdrop-alpha
-fi
-
-# 3. 磁盘 >80% �?清理�?backups
-DISK_PCT=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-if [ "$DISK_PCT" -gt 80 ]; then
-  echo "[自愈] 磁盘使用�?${DISK_PCT}%，清�?7 天前 backups..."
-  find ./backups -name "*.db" -mtime +7 -delete
-  find ./backups -name "*.sql.gz" -mtime +7 -delete
-fi
-
-# 4. 连续 run 失败 �?�?seed 模式重跑
-RECENT_FAILURES=$(curl -s "http://localhost:8002/api/v1/audit?action=run&limit=3" | grep -c '"status":"error"')
-if [ "$RECENT_FAILURES" -ge 2 ]; then
-  echo "[自愈] 检测到连续失败，切 seed 模式重跑..."
-  curl -s -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json' -d '{"source":"seed"}'
-fi
-
-echo "=== 自愈完成 ==="
-```
-
-### 5.3 定时巡检 cron
-
-```bash
-# crontab -e（每小时执行一次）
-0 * * * * /app/scripts/diagnose.sh >> /var/log/airdrop/diagnose.log 2>&1
-*/30 * * * * /app/scripts/heal.sh >> /var/log/airdrop/heal.log 2>&1
-```
+采纳需要评审并**新建 model/profile 版本**，再走 expand-and-contract 发布与回滚计划，
+**绝不原地改已有版本**。
 
 ---
 
-## 5. 配置变更
+## 4. 故障处理
 
-### 5.1 变更流程
-1. �?`config.py` �?`.env.example`
-2. PR + 说明（为何改、影响什么）
-3. CI 测试通过
-4. 部署�?`/health` 确认 `config_version` 更新
-5. 观察相关指标 1h
+每条都是：症状 → 排查 → 止损 → 根因 → 恢复。
+**引用的指标名和接口路径都经过实测**。
 
-### 5.2 常见配置变更
-| 变更 | 影响 | 是否需 ADR |
-| --- | --- | --- |
-| 调权�?| 评分漂移 | 是（ENGINEERING_ROADMAP.md §7.9 灰度流程�?|
-| 调阈值（FARM/WATCH�?| label 分布变化 | �?|
-| �?TTL | 数据新鲜�?外部源负�?| �?|
-| �?LLM 预算 | 成本/质量权衡 | �?|
-| �?cron 时间 | run 触发�?| �?|
-| �?sector 词表 | 归一化结�?| 否，但需数据 review |
-| 新增数据�?| 完整性提�?| �?|
+### 4.1 每日分析管道失败
 
-### 5.3 热更新（V3 前瞻�?- MVP/V2：配置变更需重启容器
-- V3：权�?阈值支持热加载（admin API + 鉴权），但仍�?changelog
+**症状**：`airdrop_pipeline_runs_total{status="error"}` 增长；
+告警 `PipelineConsecutiveFailures` 或 `PipelineFailureRate` 触发。
+
+**排查**
+1. 日志按事件名过滤（不是按自由文本）：
+   `pipeline.completed` / `orchestrator.pipeline_start` / `api.run.failed`。
+   ```powershell
+   Select-String -Path logs\backend.log -Pattern '"event":"api.run.failed"' | Select-Object -Last 5
+   ```
+2. 看 `airdrop_pipeline_duration_seconds` 是不是卡在长尾桶（上界到 60s）。
+3. 查 `logs` 表（实测 196 行，有真实写入）：
+   ```sql
+   SELECT * FROM logs ORDER BY rowid DESC LIMIT 20;
+   ```
+
+**止损**：手动重跑一次 `POST /api/v1/run`（**需要管理员凭据**，见 §5.2）。
+
+**根因**：外部源全挂 / DB 写失败 / 配置错误 / 代码缺陷。
+
+**恢复**：修完再跑一次 `POST /api/v1/run`，确认 `airdrop_pipeline_runs_total{status="success"}` +1。
+
+### 4.2 SQLite `database is locked`
+
+**症状**：日志里出现 `database is locked`。
+
+**排查**
+1. 是不是有第二个 writer 在跑（另一个 uvicorn / 另一个脚本 / pytest）？
+2. 磁盘满没满。
+3. 有没有长事务。
+
+**止损**：只留一个 writer，重启服务。
+
+**恢复**：重启；库真损坏了走 §6.2。
+
+**升级**：频繁出现就该切 PostgreSQL（`DB_BACKEND=postgres` + `--profile postgres`）。
+
+### 4.3 采集源故障
+
+采集有 **10 个源**，全部已注册且 `config_ready=true`（实测 `GET /api/v1/collections/sources`）：
+`defillama` `github` `coingecko` `cryptorank` `rootdata`
+`twitter_kol` `twitter_keyword` `etherscan` `galxe` `layer3`。
+
+**症状**：`airdrop_collection_runs_total{source_id,status}` 的 error 计数增长；
+或 `airdrop_fetcher_circuit_breaker_state` 变成 `1`(HALF_OPEN) / `2`(OPEN)。
+
+> ⚠️ `airdrop_fetcher_circuit_breaker_state` **没有 `source_id` 标签**，
+> 它是全局一个值。想区分哪个源挂了要靠 `airdrop_collection_runs_total` 的
+> `source_id` 标签或 `collection_logs` 表。
+
+**排查**
+1. 查该源最近几次运行：
+   ```sql
+   SELECT source_id, status, started_at, finished_at, items_collected, error_message
+   FROM collection_logs WHERE source_id='X' ORDER BY started_at DESC LIMIT 5;
+   ```
+2. 熔断参数（实测配置）：连续 **5** 次失败打开，**60 秒**后半开探测。
+3. 限流是**令牌桶**（`backend/app/collectors/rate_limiter.py` 的 `TokenBucketRateLimiter`），
+   超限会**自动等待**，不报错、不需要人工干预。
+
+**止损**
+- 单源挂了**不影响其他源**，也不中断分析管道，只是发现量下降。
+- 手动补一次采集：`POST /api/v1/collections/{source_id}/trigger`
+  —— 注意路径是 `/{source_id}/trigger`，**不是** `/trigger/{source_id}`。
+- 关掉某个源：`PATCH /api/v1/collections/{source_id}`（运维开关落 `data_sources.enabled`，
+  调度器每次执行前会读它）。
+
+**恢复**：熔断窗口过后自动半开重试；下一个 cron 周期自动重跑。
+
+> ⚠️ `POST /api/v1/collections/{source_id}/trigger` 是**同步执行真实采集**的：
+> 一次调用会真的落 `raw_projects` / `project_signals` / `collection_logs`。
+> 排查时别拿它当"探活"用。
+
+### 4.4 LLM 相关
+
+**当前 LLM 是关闭的**（实测 `/version` 的 `llm_enabled=false`、
+`/api/v1/llm/status` 的 `enabled=false`），所以下面只在开启后适用。
+
+**症状**：`airdrop_llm_errors_total{model}` 上涨，告警 `HighLLMErrorRate`。
+
+**排查**：看 `airdrop_llm_requests_total{model}` 与 `airdrop_llm_duration_seconds`
+（桶上界到 30s）；日志事件前缀 `llm.`（共 8 个事件）。
+
+**止损**：`LLM_ENABLED=false` 重启，回落到**规则引擎**路径（离线可用、无外部依赖）。
+
+> ⚠️ **`LLM_DAILY_BUDGET_USD` 目前不会真的限制任何东西。**
+> 这个配置只被 `/api/v1/llm/status` 和 `/api/v1/settings/config` 读出来展示，
+> 代码里**没有任何地方按它拦截调用**，也没有指标统计 token 或成本。
+> 唯一真实生效的成本闸门是 `/api/v1/run` 的**请求频率限制**：
+> LLM 开启时每小时 **1** 次，关闭时放宽到每小时 **10** 次
+> （`backend/app/rate_limit.py` 的 `_expensive_limits`）。详见 §12.3。
+
+### 4.5 库内项目不增长
+
+**症状**：`airdrop_db_projects_total` 长期持平。
+
+**排查**（按这个顺序）
+1. 分析调度器有没有跑：`airdrop_pipeline_runs_total` 当日有没有计数。
+2. 采集调度器有没有跑：`airdrop_collection_runs_total` 当日有没有计数。
+3. 采集到了但没立项 → 看 `raw_projects`：
+   ```sql
+   -- 未处理的原始记录堆积（实测当前 509 条未处理 / 106 条已处理）
+   SELECT processed, COUNT(*) FROM raw_projects GROUP BY processed;
+   -- 被判为噪声隔离（实测当前 3 条）
+   SELECT COUNT(*) FROM raw_projects WHERE quarantined = 1;
+   -- 低于分析阈值被过滤
+   SELECT COUNT(*) FROM raw_projects WHERE discovery_score < 0.3;
+   ```
+   `DISCOVERY_SCORE_ANALYSIS_THRESHOLD` 实测为 **0.3**。
+4. 全是重复命中（`dedup_key` 撞了）也会表现为不增长，这属于正常。
+
+**止损**：`POST /api/v1/run` 手动跑一轮分析。
+
+**根因**：调度器停 / 外部源全挂 / 全部去重命中 / `discovery_score` 阈值偏高 / 噪声过滤过严。
+
+### 4.6 隔离（quarantine）积压
+
+**症状**：`GET /api/v1/quarantine` 的 `count` 持续上涨。
+
+**处理**：`GET /api/v1/quarantine` 看 `items`（含隔离原因），
+误判的用 `POST /api/v1/quarantine/release` 放行。
+两个接口都在 `ADMIN_ONLY_PREFIXES` 里，需要管理员凭据。
+
+### 4.7 健康检查失败
+
+**症状**：`/health` 非 200 或超时；告警 `BackendDown`。
+
+**排查**
+1. 进程/容器还在不在（`docker compose ps` 或看进程）。
+2. 端口有没有被占（**8002**）。
+3. DB 连不连得上——`/health` 的 `db` 字段会直接告诉你（实测取值 `"ok"`）。
+
+`/health` 的真实字段（实测 11 个，**注意它是平铺的，没有 `data` 包一层**）：
+`ok` `status` `version` `db` `db_backend` `auth_required` `feedback_enabled`
+`quarantined_raw` `opportunity_model_version` `opportunity_shadow_enabled`
+`opportunity_shadow_sample_rate`。
+
+> 除 `POST /api/v1/auth/anonymous` 外，`/api/v1/*` 都是 `{ok, data}` 信封；
+> 但 **`/health` 是平铺的**，`/version` 是信封。写监控脚本时别搞错。
+
+### 4.8 评分被质疑
+
+**排查**
+1. `GET /api/v1/projects/{project_id}` 看各 agent 明细与理由。
+2. 查 `logs` 表里该项目的 agent 事件（`agent.started` / `agent.completed`）。
+3. 判断是数据问题、权重问题，还是规则缺陷。
+
+**权重与阈值的权威位置**：8 项权重 Σ=1.0（启动断言，ADR-006）；
+标签阈值 `LABEL_THRESHOLDS` 在 `backend/app/agents/scorer.py`
+= `[(65,"FARM"),(50,"WATCH"),(0,"IGNORE")]`；当前 `weight_version = "v1.2"`。
+
+> **没有 `POST /api/v1/re-score/{project_id}` 这个接口**（实测 OpenAPI 里不存在）。
+> 唯一的重算入口是 `PATCH /api/v1/projects/{project_id}/funding?rescore=true`
+> ——改完资金字段顺带重算，以及重跑整条管道的 `POST /api/v1/run`。
+> 全量重算走脚本：`cd backend; & ".\venv\Scripts\python.exe" scripts\rescore_all.py`。
+
+**信号覆盖率的现实**（实测，解释为什么有些分数看着"猜的"）：
+`token_listed` 268 条、`tvl` 165 条、`github_activity` 30 条、`chain_activity` 仅 4 条。
+`execution` 维度（权重 13%）在多数项目上**缺少真实信号**；
+confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖不足。
 
 ---
 
-## 6. 备份与恢�?
-### 6.1 备份策略
-| 数据 | 频率 | 保留 | 方式 |
-| --- | --- | --- | --- |
-| SQLite（MVP�?| 每日 02:00 | 14 �?| `cp airdrop.db backups/airdrop-$(date +%F).db` |
-| PG（V2�?| 每日 02:00 + WAL | 30 �?| `pg_dump` + WAL 归档 |
-| 配置�?env�?| 变更�?| 永久 | git（除密钥�? secret store |
-| 代码 | 实时 | 永久 | git |
+## 5. 鉴权与访问控制（运维必须知道的边界）
 
-### 6.2 恢复流程（SQLite�?```bash
-# 1. 停服�?docker stop airdrop-alpha
-# 2. 备份当前损坏文件
-mv data/airdrop.db data/airdrop.db.broken
-# 3. 恢复
-cp backups/airdrop-2026-07-07.db data/airdrop.db
-# 4. 重启
-docker start airdrop-alpha
+### 5.1 三种身份
+
+| 身份 | 怎么拿 | 能做什么 |
+|---|---|---|
+| 无凭据 | — | 只能访问公开端点 |
+| 匿名 token | `POST /api/v1/auth/anonymous` | 读类接口 |
+| 管理员 | `X-API-Key: <API_KEY>` | 全部，含 `ADMIN_ONLY_PREFIXES` |
+
+### 5.2 管理员专属前缀（实测 `backend/app/auth.py` 的 `ADMIN_ONLY_PREFIXES`）
+
+下面这份清单由 §10.6 的门禁与代码逐项比对，**改代码不改这里会让 CI 变红**。
+注意它们是**前缀**，不都是真实路由（例如 `/api/v1/re-score` 就没有对应路由，
+见 §12.2）。
+
+<!-- admin-prefixes:begin -->
+- `/api/v1/run`
+- `/api/v1/re-score`
+- `/api/v1/quarantine`
+- `/api/v1/export`
+- `/api/v1/import`
+- `/api/v1/settings`
+- `/api/v1/archive`
+<!-- admin-prefixes:end -->
+
+匿名 token 打这些前缀下的路径拿 **403**。
+
+> ⚠️ 两个已知的口子，见 §12.7：
+> `/api/v1/collections/*`（含**真的会跑采集**的 trigger）**不在**这个清单里，
+> 匿名 token 实测返回 **200**；`/api/v1/projects/{project_id}/funding` 的 `PATCH`
+> （会改数据并触发重算）同样不在清单里。
+
+### 5.3 无鉴权就能访问的端点（实测）
+
+`/health`、`/version`、`/metrics`、`/docs`、`/redoc`、`/openapi.json`、
+`POST /api/v1/auth/anonymous`、`/api/v1/webhook/*`。
+
+`/metrics` 无鉴权是**刻意的**（Prometheus 抓取方便），靠网络边界保护；
+生产 compose 里后端不映射宿主端口，只有 compose 网络内和 nginx 能到。
+
+> ⚠️ `/docs` `/redoc` `/openapi.json` 在**任何环境都开着**
+> （`backend/app/main.py` 里是写死的 `docs_url="/docs"`，不看 `APP_ENV`）。
+> 生产环境等于把完整 API 结构公开。见 §12.8。
+
+---
+
+## 6. 备份与恢复
+
+### 6.1 现在真正在跑的备份
+
+`scripts/auto_backup.ps1`，每日 02:00 执行，实测**确实在产出**：
+
+```
+backups/auto/airdrop_auto_20260817_215745.zip   1920 KB
+backups/auto/airdrop_auto_20260818_020002.zip   2025 KB
+backups/auto/airdrop_auto_20260820_020002.zip   2572 KB
+backups/auto/airdrop_auto_20260821_020001.zip   2711 KB
+backups/auto/airdrop_auto_20260822_020001.zip   3073 KB
+backups/auto/airdrop_auto_20260823_020001.zip   3431 KB
+```
+
+保留 7 天，日志在 `backups/auto_backup.log`。
+
+**它备份的是 PostgreSQL 容器 `airdrop-db`（`pg_dump` custom + SQL 双格式）。**
+Docker / `airdrop-db` 不在的时候它直接退出码 1 跳过，日志里能看到：
+
+```
+[2026-08-19 02:00:02] 备份开始: airdrop_auto_20260819_020002
+[2026-08-19 02:00:02] 错误: airdrop-db 容器未运行，跳过备份
+```
+
+⚠️ 那次失败**留下了一个空目录** `backups/auto/airdrop_auto_20260819_020002/`
+到现在还在——脚本先 `New-Item` 建目录、之后才检查容器，失败路径不清理。
+不致命，但会让"备份目录里有 7 个条目"这种粗略判断产生误导。
+
+### 6.2 恢复（PostgreSQL）
+
+```powershell
+# 1. 解压
+Expand-Archive backups\auto\airdrop_auto_<ts>.zip -DestinationPath restore-tmp
+# 2. 停应用（别让它一边写一边恢复）
+docker compose -f docker-compose.prod.yml stop web
+# 3. 恢复（custom 格式，可选择性恢复）
+docker cp restore-tmp\<name>\airdrop_pg.dump airdrop-db:/tmp/r.dump
+docker exec airdrop-db pg_restore -U airdrop -d airdrop --clean --if-exists /tmp/r.dump
+# 4. 起应用
+docker compose -f docker-compose.prod.yml start web
 # 5. 验证
-curl /health
-curl -X POST /api/v1/run?source=seed
+curl http://localhost:18080/health
 ```
 
 ### 6.3 恢复演练
-- 每月一次：从备份恢复到测试环境，验证可启动 + 数据完整
-- 演练失败 �?备份策略需修正
 
-### 6.4 RPO/RTO
-| 阶段 | RPO | RTO |
-| --- | --- | --- |
-| MVP | 24h | 1h |
-| V2 | 1h（WAL�?| 30min |
-| V3 | 15min | 15min |
+**从未做过。** 上线前至少做一次：恢复到独立测试库，
+核对 `projects` / `raw_projects` / `project_signals` 行数与备份当天一致。
+不演练的备份等于没有备份。
+
+### 6.4 RPO / RTO（当前实际能力，不是目标值）
+
+| 项 | 现状 | 依据 |
+|---|---|---|
+| RPO | **24 小时** | 每日 02:00 一次全量，无 WAL 归档 |
+| RTO | 未测量 | 没做过恢复演练，无法给数字 |
 
 ---
 
-## 7. 监控面板使用
+## 7. 调度任务
 
-### 7.1 日常关注面板（OBSERVABILITY §6�?- 概览行：run 成功率、P95 耗时、库内项目数
-- LLM 行：成本曲线、剩余预�?- Fetcher 行：4 源成功率、熔断状�?
-### 7.2 告警确认
-- 收到告警 �?�?Alertmanager 确认收到
-- 处理�?�?标注 `silence` 避免重复通知
-- 解决�?�?关闭告警 + �?postmortem（P0/P1�?
-### 7.3 面板维护
-- 指标新增后同步加面板
-- 季度审计面板：清理无用图表、调整阈�?
+三个调度器都在 `backend/app/scheduler.py` 的统一调度器里注册，
+时区统一 **UTC**，`misfire_grace_time = 3600` 秒，`coalesce=True`，`max_instances=1`。
+
+### 7.1 采集任务（实测 cron）
+
+下表由 §10.6 的门禁逐条与 `settings` 实际值比对。
+
+<!-- collection-cron:begin -->
+| 源 | cron (UTC) |
+|---|---|
+| `defillama` | `0 8 * * *` |
+| `github` | `30 8 * * *` |
+| `coingecko` | `0 9 * * *` |
+| `cryptorank` | `15 9 * * *` |
+| `rootdata` | `45 9 * * *` |
+| `twitter_kol` | `0 * * * *` |
+| `twitter_keyword` | `*/15 * * * *` |
+| `etherscan` | `0 */6 * * *` |
+| `galxe` | `0 10 * * *` |
+| `layer3` | `30 10 * * *` |
+<!-- collection-cron:end -->
+
+注册条件是**两道闸**：`COLLECTION_SCHEDULER_ENABLED=true`（实测 `True`）
+且 collector 自身 `is_enabled()`。每次执行前还会再读一次
+`data_sources.enabled`（运维开关），关了就跳过并记 `unified_scheduler.skip_operator_disabled`。
+
+### 7.2 分析任务
+
+`SCHEDULER_ENABLED = True`，cron 表达式 `0 8 * * *`，
+单轮上限 `ANALYSIS_RUN_LIMIT = 100`。
+
+⚠️ `COLLECTION_AUTO_RUN_ENABLED = False`（实测）——
+**采集完不会自动接着跑分析**，两条链是解耦的，各按自己的 cron 走。
+
+### 7.3 归档任务
+
+`ARCHIVE_SCHEDULER_ENABLED = True`，cron 表达式 `0 3 * * *`。
+
+保留策略（实测 `GET /api/v1/archive/runs`）：
+
+| 策略 key | 表 | 保留天数 | 当前总量 | 待归档 |
+|---|---|---|---|---|
+| `raw_processed` | `raw_projects` | 30 | 106 | 0 |
+| `raw_unprocessed` | `raw_projects` | 90 | 509 | 0 |
+| `signals` | `project_signals` | 90 | 2261 | 0 |
+| `logs` | `collection_logs` | 90 | 20 | 0 |
+
+归档表保留期：`RAW_ARCHIVE_RETENTION_DAYS=180`、`SIGNALS_ARCHIVE_RETENTION_DAYS=365`。
+
+⚠️ **归档从未真正执行过**：`archive_runs` 表 0 行，
+`raw_projects_archive` / `project_signals_archive` 都是 0 行，`summary.total_runs = 0`。
+原因是本地数据最早只到 2026-08-09，还没有任何记录超过 30 天保留期，
+所以每次触发都"无事可做"。**这条路径在生产上等于未验证**，
+第一次真正命中保留期时才会第一次跑真实逻辑。
+
 ---
 
-## 8. 安全事件响应
+## 8. 监控栈
 
-> 详见 SECURITY.md §9。本节仅给值班视角的快速决策树�?
+### 8.1 告警规则（实测 7 条）
+
+`configs/observability/prometheus/alert_rules.yml`：
+`PipelineConsecutiveFailures`、`PipelineFailureRate`、`NoProjectsDiscovered`、
+`DBGaugeStale`、`HighLLMErrorRate`、`HighAPIErrorRate`、`BackendDown`。
+
+这 7 条引用的指标名**全部真实存在**（有测试钉住，见 §10）。
+
+### 8.2 代码侧的采集告警
+
+`backend/app/collectors/metrics.py` 的 `check_alerts()` 会写 `collection.alert` 日志事件，
+阈值（实测硬编码）：`success_rate < 0.95`、`avg_latency_ms > 30000`、
+`freshness_minutes > 120`、`coverage_rate < 0.5`、`duplicate_rate > 0.5`。
+
+其中 `coverage_rate` 用 `logger.info`，其余用 `logger.warning`
+—— 想按级别过滤告警时注意这个不一致。
+
+**这些阈值不走 Prometheus**，只进日志，没有告警通道。
+
+### 8.3 抓取配置
+
+`scrape_interval: 15s`，目标 `airdrop-web:8002`，`metrics_path: /metrics`。
+
+⚠️ `external_labels` 里 `environment: 'production'` 是**写死的**，
+拿这份配置起 staging 会把所有指标打上 production 标签。见 §12.9。
+
+### 8.4 Grafana
+
+`configs/observability/grafana/dashboards/airdrop-system-overview-v2.json`，
+Grafana v2 schema，10 个面板 / 12 条 `expr`，引用的指标名全部真实存在。
+
+### 8.5 日志采集
+
+promtail 采 `/var/log/app/*.log`（宿主 `./logs`）和 `/var/log/nginx/*.log`，
+job 名 `airdrop-alpha`，送 Loki。
+
+---
+
+## 9. 配置变更
+
+### 9.1 流程
+
+1. 改 `backend/app/config.py` 默认值 **和** `.env.example`（两个必须同步）。
+2. 开 PR，说明改了什么、影响什么。
+3. CI 全绿（5 个必需检查，见 §10.5）。
+4. 部署后核对 `GET /api/v1/settings/config`（管理员）确认新值生效。
+
+**所有配置只在启动时读取，改完必须重启。** 没有热加载。
+
+### 9.2 需要额外谨慎的项
+
+| 配置 | 影响 | 备注 |
+|---|---|---|
+| 8 项评分权重 | 评分漂移 | Σ 必须=1.0，否则启动断言失败（ADR-006） |
+| `LABEL_THRESHOLDS` | 标签分布突变 | 在代码里不在配置里 |
+| `LOG_LEVEL` | 日志量 | 非法值**回落 INFO**，绝不回落 DEBUG |
+| `DISCOVERY_SCORE_ANALYSIS_THRESHOLD` | 进入分析的项目量 | 当前 0.3 |
+| `SEED_FALLBACK_ENABLED` | 采集失败时是否用种子数据兜底 | **当前 `True`，生产建议关**（§11） |
+| `API_KEY` | 生产自检要求 ≥32 字符 | 不合格直接拒绝启动 |
+
+### 9.3 日志级别
+
+`LOG_LEVEL` 支持 `debug` `info` `warning` `error` `critical`，
+别名 `warn→warning`、`fatal→critical`，大小写不敏感。
+**非法值一律回落 `info`** —— 配错不能让输出变得更多。
+
+细节见 [OBSERVABILITY.md](OBSERVABILITY.md) §2.3。
+
+---
+
+## 10. 验证与质量门禁
+
+改任何东西之后，这些必须全绿才算完成。
+
+### 10.1 后端
+
+```powershell
+cd backend
+$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"
+& ".\venv\Scripts\python.exe" -m pytest tests -q --cov=app --cov-fail-under=80
+& ".\venv\Scripts\python.exe" -m ruff check app tests
+& ".\venv\Scripts\python.exe" -m ruff format --check app tests
+& ".\venv\Scripts\python.exe" -m mypy app --config-file pyproject.toml
 ```
-收到安全告警
-├── 密钥泄漏（P0�?�?  ├── 立即轮换该密�?�?  ├── 审计 logs 定位泄漏范围
-�?  └── 通知 Release manager + 开 incident
-├── DB 被篡改（P0�?�?  ├── 停服
-�?  ├── 从备份恢�?�?  └── 审计谁在何时改了什�?├── 服务不可用（P1�?�?  ├── §4 故障处理
-�?  └── 1h 未恢�?�?升级 P0
-└── 评分系统性错误（P1�?    ├── �?cron 调度（防继续产出错误评分�?    ├── 修后回滚或热�?    └── re-score 受影响项�?```
+
+> `mypy` 必须**在 `backend` 目录下**跑并用相对的 `pyproject.toml`；
+> 从仓库根跑 `--config-file ..\pyproject.toml` 会冒出几百个假错误。
+
+### 10.2 前端
+
+```powershell
+cd frontend-next
+node ./node_modules/typescript/bin/tsc --noEmit
+node ./node_modules/eslint/bin/eslint.js . --ext .ts,.tsx,.js,.jsx
+node test.mjs
+```
+
+### 10.3 文档门禁
+
+```powershell
+& ".\backend\venv\Scripts\python.exe" scripts\check_encoding.py
+& ".\backend\venv\Scripts\python.exe" scripts\check_terminology.py --all
+```
+
+### 10.4 CI 的警告策略比本地严
+
+CI 跑 pytest 时加了：
+
+```
+-W error::DeprecationWarning -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
+```
+
+**本地默认不加。** 后果是：一个泄漏的文件句柄本地只是警告、CI 直接失败，
+而且失败会被归到"恰好触发垃圾回收的那个无关测试"头上，极难排查
+（真发生过一次，见 `CHANGELOG.md`）。
+
+写涉及文件句柄 / socket / 子进程的测试时，本地就该照 CI 的参数跑一遍。
+
+### 10.5 分支保护
+
+`master` 要求 5 个检查通过（服务端读回确认）：
+`Full Backend Test Suite`、`Lint & Format Check`、`Type Check (mypy)`、
+`Frontend Lint & Build`、`Coverage Gate`。要求分支与 master 同步（`strict: true`）。
+
+### 10.6 本文档的双向门禁
+
+`backend/tests/test_operations_doc_parity.py` 会解析本文档并断言：
+
+- 正文里**被当成可用**的每个 `airdrop_` 指标名，都必须真实存在于 registry；
+- 正文里**被当成可用**的每个 `/api/v1` 路径，都必须真实存在于 OpenAPI；
+- 正文里**被当成可用**的每个 `scripts` 脚本，文件都必须真实存在；
+- 反方向：§12.1 / §12.2 的失真清单里那些东西，必须**确实都不存在**
+  （否则纠错清单自己就成了新的谎言）；
+- §7.1 cron 表逐条对齐 `settings` 实际值；§5.2 前缀清单逐项对齐
+  `ADMIN_ONLY_PREFIXES`；§8.1 告警名对齐 `alert_rules.yml`；
+  §8.2 阈值对齐 `check_alerts()`；标签阈值对齐 `scorer.py`。
+
+**「被当成可用」是逐行判定的**：一行里如果出现「不存在 / 没有 / ❌ / 从未」
+这类否定标记，那一行就被当成「文档在纠错」而豁免 —— 但只豁免那一行。
+不做整节或整文件豁免：否则只要某个名字被登进 §12 清单，正文任何地方
+把它当命令写出来都会被放过，而那正是这套门禁要防的事
+（这个漏洞在变异测试里被真实抓到过一次，见 `CHANGELOG.md`）。
+
+解析器自身也有自检测试：解析不到东西、或过滤条件写反导致几乎不检查时，
+都会**大声失败**，避免「解析器返回空 → 所有断言都通过」这种假绿。
 
 ---
 
-## 9. 容量管理
+## 11. 未实现 / 已规划（**别当成能用的功能**）
 
-### 9.1 容量指标（OBSERVABILITY §3.2�?- 磁盘：SQLite 文件大小、logs 表行数、cache 目录大小
-- 内存：容�?RSS（V2 �?cAdvisor�?- 并发：`airdrop_http_requests_total` rate
-
-### 9.2 扩容触发（对�?ENGINEERING_ROADMAP.md §23�?| 触发条件 | 动作 |
-| --- | --- |
-| SQLite > 1GB | �?PostgreSQL（ADR-004�?|
-| logs �?> 100MB | 清理 90 天前数据 |
-| 单次 run > 60s | 切后�?task（V2�? 加并发（V3�?|
-| 内存 > 80% | 加资�?/ 查内存泄�?|
-| 磁盘 > 80% | �?cache / 扩盘 |
-
-### 9.3 容量预估
-- 每月评估一次：当前增长趋势 vs 容量上限
-- 预计 3 个月内触�?�?提前扩容
+| 项 | 状态 |
+|---|---|
+| `scripts/diagnose.sh` 自动诊断 | ❌ 文件不存在（上一版文档整段贴了它的"源码"） |
+| `scripts/heal.sh` 自动自愈 | ❌ 文件不存在 |
+| 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
+| LLM 成本预算真实拦截 | ❌ 配置项存在但不生效（§12.3） |
+| LLM token / 成本指标 | ❌ 无任何指标统计 |
+| 日志轮转 | ❌ 完全没有（§12.6） |
+| 日志采样 | ❌ 未实现 |
+| `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
+| `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
+| OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
+| 归档任务真实执行 | ⚠️ 逻辑与调度都在，但**从未命中保留期**（§7.3） |
+| `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
+| 蓝绿 / 金丝雀发布 | ❌ 未实现 |
+| 值班轮换 / 紧急联系人 | ❌ 未设置（单人项目） |
+| 恢复演练 | ❌ 从未执行 |
+| `SEED_FALLBACK_ENABLED=false` 生产收紧 | ⚠️ 当前 `True`，待所有者决定 |
 
 ---
 
-## 10. 文档维护
+## 12. 上一版本的失真记录
 
-- �?runbook 每季�?review 一次，剔除过时流程
-- 每次重大故障后补充对应章节（"下次遇到直接照做"�?- 命令示例需在测试环境验证可�?
+留着这一节是因为：**这些错误能存活这么久，靠的是"这个文件已经登记为编码损坏，
+所以没人读它"**。登记豁免掩盖的不只是字节问题，还有内容问题。
+写下来，也让 §10.6 的门禁有反向断言的靶子。
+
+### 12.1 18 个不存在的指标名
+
+上一版本引用 19 个 `airdrop_*` 指标，**只有 1 个真实存在**（`airdrop_http_requests_total`）。
+以下 18 个在 registry 里查不到 —— §10.6 的门禁会反过来断言它们**确实都不存在**，
+免得这份清单自己变成新的谎言：
+
+<!-- ghost-metrics:begin -->
+- `airdrop_collection_api_calls`
+- `airdrop_collection_running`
+- `airdrop_collection_status`
+- `airdrop_collection_success_ratio`
+- `airdrop_collection_total`
+- `airdrop_data_completeness_ratio`
+- `airdrop_db_write_errors_total`
+- `airdrop_fetcher_circuit_open`
+- `airdrop_fetcher_errors_total`
+- `airdrop_llm_calls_total`
+- `airdrop_llm_cost_usd_total`
+- `airdrop_llm_tokens_total`
+- `airdrop_projects_in_db`
+- `airdrop_projects_inserted_total`
+- `airdrop_quarantine_pending`
+- `airdrop_rate_limiter_tokens`
+- `airdrop_run_total`
+- `airdrop_test`
+<!-- ghost-metrics:end -->
+
+**为什么这比写错更糟**：Prometheus 查一个不存在的指标**不报错，返回空结果**。
+于是仪表盘显示"一切平静"、告警规则永远不触发 —— 看起来系统很健康，
+其实是这条监控从来没生效过。幽灵指标名比错误的阈值危险得多。
+
+### 12.2 不存在的 API 路径与脚本
+
+§10.6 的门禁同样反向断言这些**确实不存在**。
+
+<!-- ghost-paths:begin -->
+| 上一版本写的 | 真相 |
+|---|---|
+| `GET /api/v1/audit` | 不存在（管理员打也是 404） |
+| `POST /api/v1/re-score/{project_id}` | **完全不存在这个接口**，见下 |
+| `POST /api/v1/collections/trigger/{source_id}` | 顺序颠倒，真实是 `/{source_id}/trigger` |
+| `scripts/diagnose.sh` | 文件不存在 |
+| `scripts/heal.sh` | 文件不存在 |
+<!-- ghost-paths:end -->
+
+另外上一版本写的 `GET /project/{id}` 也不存在，真实路径是
+`/api/v1/projects/{project_id}`（不带 `/api/v1` 前缀的路径不在门禁的解析范围内，
+所以只在这里说明）。
+
+`re-score` 这条最有意思：它**在 `ADMIN_ONLY_PREFIXES` 里**，
+所以匿名 token 打 `POST /api/v1/re-score/1` 拿到 **403** 而不是 404 ——
+鉴权中间件在路由匹配之前就拦下了。**403 让人确信这个接口存在**（"只是我权限不够"），
+比 404 更能把人骗住，文档里的错误也就一直没人发现。
+用管理员凭据打才会露出真相：404。
+
+### 12.3 "LLM 超预算自动停用"是假的
+
+上一版本 §4.4 写「自动停用已生效（超预算当日不再调 LLM）」。
+实测：`llm_daily_budget_usd` 只在两个只读接口里被回显，
+代码里**没有任何拦截逻辑**，也没有 token / 成本指标。
+真实存在的成本闸门只有 `/api/v1/run` 的频率限制（LLM 开 1 次/时，关 10 次/时）。
+
+一条写在 runbook 里、值班照着信的"自动保护"，实际不存在 —— 这比没写更危险。
+
+### 12.4 端口写错（8000 vs 8002）
+
+上一版本全篇用 8000，`scripts/deploy.sh` 和 `scripts/health-check.sh`
+也写 8000。真实端口 **8002**。
+照文档执行 `deploy.sh` 会在健康检查环节卡满 30 次重试后失败。
+脚本本身没改（改脚本要单独验证），本文 §3.4 已标注。
+
+### 12.5 备份可能备错库
+
+上一版本说库在 `data/airdrop.db`，恢复示例是 `sqlite3 data/airdrop.db`。
+实测运行时真正连的是 **`D:\app\data\app.db`**（288 项目 / 9.3 MB），
+而 `data/airdrop.db` 是 94 个项目的过期副本。
+
+`scripts/backup.sh` 的最后一级回退正是 `cp data/airdrop.db ...`
+—— 在容器都不在的情况下，它会**安静地备份那个过期副本并报告"备份完成"**。
+一个报成功却备错文件的备份，比明确失败的备份危险。
+
+（当前每日跑的 `auto_backup.ps1` 走的是 PostgreSQL 容器路径，
+不受这个问题影响；但 `backup.sh` 的 SQLite 回退分支是个雷。）
+
+### 12.6 完全没有日志轮转
+
+上一版本 §2.2 说「检查 logs 表增长，超 50MB 考虑清理」，
+但没提**文件**日志。实测 `logs/backend.log` 6 天长到 3.97 MB
+（2026-08-17 → 08-23），代码里没有 `RotatingFileHandler`，
+compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
+更没有 logrotate。按当前速率一年约 240 MB，且没有任何上限。
+
+### 12.7 两个鉴权口子
+
+`/api/v1/collections/*` 和 `PATCH /api/v1/projects/{project_id}/funding`
+都能改变系统状态（前者真的会跑采集并写三张表，后者改数据并触发重算），
+却都**不在** `ADMIN_ONLY_PREFIXES` 里 —— 实测匿名 token 返回 200。
+已在 `docs/API_SPEC.md` §2.1 记录，**尚未修改**（等所有者决定）。
+
+### 12.8 `/docs` 在生产也是开的
+
+`backend/app/main.py` 里 `docs_url` / `redoc_url` / `openapi_url` 是写死的，
+不看 `APP_ENV`。生产环境会把完整 API 结构（含全部管理员端点）公开。
+目前靠网络边界兜底，未修改。
+
+### 12.9 Prometheus 环境标签写死
+
+`configs/observability/prometheus/prometheus.yml` 的
+`external_labels.environment: 'production'` 是硬编码。
+拿同一份配置起 staging，指标会带上 production 标签，
+告警和仪表盘就分不清环境了。未修改。
+
+### 12.10 章节号重复
+
+上一版本有**两个 `## 5`**（「自动化 Runbook」和「配置变更」），
+导致后面所有「见 §5.x」的交叉引用都是二义的。
+重复编号会让交叉引用静默失效 —— 读者点过去看到的是另一节，
+而没有任何东西会报错。
+
 ---
 
-## 11. 紧急联系人（V2+ 填写�?
-| 角色 | 姓名 | 联系方式 | 时区 |
-| --- | --- | --- | --- |
-| Primary on-call | _待填_ | _待填_ | _待填_ |
-| Secondary on-call | _待填_ | _待填_ | _待填_ |
-| Release manager | _待填_ | _待填_ | _待填_ |
-| Data steward | _待填_ | _待填_ | _待填_ |
-| 安全负责�?| _待填_ | _待填_ | _待填_ |
+_本文档所有数字、路径、指标名、接口名均于 2026-08-23 实测取得；
+由 `backend/tests/test_operations_doc_parity.py` 双向门禁钉住。_

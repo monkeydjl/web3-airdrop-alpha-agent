@@ -390,7 +390,7 @@ flowchart TD
 
 3. **回滚数据库（如需）**
    - 仅当 schema 不兼容时。
-   - 使用最近备份恢复（`OPERATIONS.md §备份恢复`）。
+   - 使用最近备份恢复（`OPERATIONS.md §6.2`）。
    - 数据丢失需在 postmortem 中评估。
 
 4. **验证**
@@ -421,7 +421,7 @@ flowchart TD
 
 - **预防**：
   - 不兼容 DB 变更分两次发布（先加新字段 → 迁移数据 → 再删旧字段）。
-  - 发布前必须备份 DB（`OPERATIONS.md §备份`）。
+  - 发布前必须备份 DB（`OPERATIONS.md §6`）。
 
 ---
 

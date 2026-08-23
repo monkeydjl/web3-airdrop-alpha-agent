@@ -125,8 +125,18 @@ SKIP_DIRS = {
 # 根本不存在，15 个日志事件名一个都不存在。**登记豁免会掩盖内容问题** ——
 # 只要文件挂在这张清单上，就没人会去逐行读它。
 # 现已由 `backend/tests/test_observability_doc_parity.py` 双向钉住。
+# 2026-08-23（第二轮）：`docs/OPERATIONS.md` 的 404 处一型损坏已全部修完并
+# **移出登记**。同样是重写而非猜字 —— 每条命令、端口、路径、指标名、cron
+# 表达式都实测过一遍。
+#
+# 这一份的内容失真比 OBSERVABILITY.md 更严重：19 个指标名里 18 个不存在，
+# 4 个 API 路径不存在，2 个"已提供的巡检脚本"根本没有这个文件，端口全篇
+# 写错（8000 vs 真实 8002），数据库文件名也是错的。最危险的一条是
+# 「LLM 超预算自动停用已生效」—— 代码里根本没有这个拦截，值班照着信就完了。
+#
+# 又一次印证：**登记豁免掩盖的是内容问题，不只是字节问题。**
+# 现已由 `backend/tests/test_operations_doc_parity.py` 双向钉住。
 KNOWN_BROKEN = {
-    "docs/OPERATIONS.md",
     "docs/DATA_SOURCE_STRATEGY.md",
 }
 
