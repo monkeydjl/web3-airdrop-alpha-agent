@@ -301,21 +301,79 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
 
 ---
 
+## 七、三型编码损坏清零 + 采集源就绪状态的失真
+
+### 7.1 三型：2 处 emoji 变 U+FFFD，修法是「删掉」不是「补一个」
+
+`docs/SYSTEM_DIRECTION_CHANGE.md` 第 125、190 行两个小节标题的 emoji
+被吃成了 U+FFFD。git 历史里最早的提交 `a9f2c8b` 就已经是坏的 ——
+没有任何底本能证明原来是哪个 emoji。
+
+**决定：直接去掉 emoji**，标题变成 `## 成功指标（KPI）` /
+`## 实施路线图（v2.0）`。语义零损失。
+
+为什么不补一个「看起来差不多」的（📊 / 🗺️ 是能猜到的）：补上去以后，
+这份文档看起来就**从未损坏过**，下一个人再也分不清哪个标题的 emoji 是原作者
+选的、哪个是后来猜的。**一个看不出来的猜测，比一个看得出来的缺口更糟。**
+
+修完后豁免清单 `KNOWN_BROKEN_REPLACEMENT` 清空，新增
+`test_replacement_registry_is_empty` 正面钉住「必须保持为空」——
+跟二型清零那次一套设计。现在只剩 `DATA_SOURCE_STRATEGY.md`（一型 498 处）
+挂在豁免清单上，从 5 个文件降到 1 个。
+
+### 7.2 我自己误判了一次：终端乱码 ≠ 文件乱码
+
+上一轮记忆里写着「`rate_limit.py` / `prometheus.yml` / `docker-compose.prod.yml`
+有 GBK 型乱码，现有判据抓不到，可能需要第 4 个检测器」。
+
+**这条是错的。** 这一轮读字节实测：三个文件都是干净的 UTF-8，中文完全正确。
+乱的是 PowerShell 控制台的显示。
+
+**教训：判断编码损坏必须读字节，不能凭终端里看到的输出下结论。**
+顺手把设想的第四型（UTF-8 被当成 GBK / latin-1 读）也扫了一遍全仓
+502 个文本文件 —— **0 命中**。结论写进 `docs/ENCODING_REPAIR.md` §6，
+连这次误判本身也一起记进去了。
+
+### 7.3 「10 个采集源全部就绪」是假的，实测只有 5 个
+
+`OPERATIONS.md` §4.3 上一版写 10 个源「全部已注册且 `config_ready=true`」。
+实测 `GET /api/v1/collections/sources`：只有 5 个 true
+（`defillama` `coingecko` `github` `cryptorank` `etherscan`）；
+另外 5 个开关关着、Key 也没配。`data_sources` 表里同样只有那 5 个源有记录。
+
+**危害的形态**：未就绪的源在端点里照样列出来，只是 `config_ready=false`。
+排查「为什么没发现新项目」时不看这一列，就会去翻一个**从未运行过**的源的日志 ——
+翻不到任何错误，于是误判成"采集是好的、问题在分析侧"，方向整个跑偏。
+
+**门禁设计上的一个刻意选择**：比对的是**门控规则**（每个源的开关配置名 +
+是否需要 Key），**不是**本机当前的就绪值。就绪值取决于 `.env` ——
+把它钉进测试，这份文档在 CI 和任何别人的机器上都会必然变红，
+而那种红传达的是错误信息（"文档写错了"，其实是"这台机器没配 Key"）。
+本机实测快照仍写在文档里，但标了日期、不参与断言。
+
+顺带实测到两件事：两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`
+（没法只开一个）；代码默认值下只有 `defillama` / `coingecko` / `github`
+的开关是开的，其余 7 个默认关。
+
+变异测试：改错开关名、把「需要 Key」改成「不需要」、删掉一行源 —— 3/3 变红。
+
+---
+
 ## 验证结果（全部实跑）
 
 | 检查 | 结果 |
 |---|---|
-| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，覆盖率 **88.38%**，37m23s（本地已按 CI 的警告参数跑） |
-| `ruff format --check app tests` | 233 files already formatted |
+| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，88.38%；本轮（三型 + 采集源）：**2770 passed / 6 skipped**，覆盖率 **88.38%**，36m21s（三轮均按 CI 的 `-W error::` 参数跑） |
+| `ruff format --check app tests` | 234 files already formatted |
 | `ruff check app tests` | All checks passed |
 | `mypy app` | no issues in 117 source files |
-| `scripts/check_encoding.py` | exit 0（剩 3 个登记文件） |
+| `scripts/check_encoding.py` | exit 0（**剩 1 个登记文件**，从 5 降到 1） |
 | `scripts/check_terminology.py --all` | exit 0 |
 | 前端 `tsc --noEmit` | exit 0 |
 | 前端 `eslint` | exit 0 |
 | 前端 `node test.mjs` | 20 pass / 0 fail |
-| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **35 passed**（含 CI 警告参数） |
-| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10） | **20/20 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
+| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码套件 **26 passed** |
+| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3） | **23/23 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
 
 ---
 
@@ -336,14 +394,24 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
    只在文档里明确标注"这两个脚本现在跑不通"。改脚本要单独验证
    （本机没有可用的 bash + Docker 环境跑通它们），混进文档 PR 里等于
    交付一份没验证过的代码。
+8. **三型 emoji 直接删掉，不补猜的**（见 §7.1）——
+   看不出来的猜测比看得出来的缺口更糟。
+9. **采集源门禁比对「门控规则」而不是「本机就绪值」**（见 §7.3）——
+   钉住依赖 `.env` 的值会让文档在别人机器上必然变红，而那种红是假信号。
 
 ---
 
 ## 下一步
 
 1. 重写 `docs/DATA_SOURCE_STRATEGY.md`（498 处一型损坏，预计同样有内容失真）。
-2. `docs/SYSTEM_DIRECTION_CHANGE.md` 剩 2 处三型（emoji 变 U+FFFD），量小。
-3. 修 `scripts/deploy.sh` / `health-check.sh` 的 8000 端口 + 容器名 + DB 路径
+   已用 `errors="replace"` 生成过可读副本通读了一遍，确认失真点至少包括：
+   全篇的 collector 类名和文件名写成「计划实现位置」，但 10 个 collector
+   **早已全部实现**（`backend/app/collectors/` 下 18 个 `.py` 文件）；
+   §采集质量评估流程说每月输出报告到 `evaluation/collection/`，
+   实测该目录**不存在**（只有 `evaluation/llm/`）；
+   `POST /re-score/{id}` 又出现了一次（不存在的接口）；
+   `OPERATIONS.md §5 采集故障处理` 这个交叉引用已失效（现在是 §4.3）。
+2. 修 `scripts/deploy.sh` / `health-check.sh` 的 8000 端口 + 容器名 + DB 路径
    （需要能实跑验证的环境）。
 
 ## 遗留问题（需要所有者拍板的）

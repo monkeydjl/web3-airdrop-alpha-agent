@@ -66,6 +66,7 @@ ALERT_RULES = REPO_ROOT / "configs" / "observability" / "prometheus" / "alert_ru
 _BLOCKS = {
     "admin": ("<!-- admin-prefixes:begin -->", "<!-- admin-prefixes:end -->"),
     "cron": ("<!-- collection-cron:begin -->", "<!-- collection-cron:end -->"),
+    "ready": ("<!-- collection-ready:begin -->", "<!-- collection-ready:end -->"),
     "ghost_metrics": ("<!-- ghost-metrics:begin -->", "<!-- ghost-metrics:end -->"),
     "ghost_paths": ("<!-- ghost-paths:begin -->", "<!-- ghost-paths:end -->"),
 }
@@ -166,6 +167,31 @@ def _collection_cron_from_settings() -> dict[str, str]:
     return mapping
 
 
+def _collection_gating_from_code() -> dict[str, tuple[str, bool]]:
+    """每个采集源的门控真相：`(开关配置名, 是否需要 Key)`。
+
+    直接读 `is_enabled()` 的源码，而不是读它在**本机**的返回值 ——
+    返回值取决于本地 `.env` 有没有配 Key，CI 上必然不同。
+    要钉住的是「文档描述的门控规则」与「代码里的门控规则」一致，
+    这一条在任何环境下都应该成立。
+    """
+    import inspect
+
+    from app.collectors.factory import build_default_registry
+
+    gating: dict[str, tuple[str, bool]] = {}
+    for collector in build_default_registry().list_all():
+        source = inspect.getsource(type(collector).is_enabled)
+        # 两种写法都要认：`settings.galxe_enabled` 与
+        # `getattr(settings, "rootdata_enabled", False)`。
+        switch = re.search(r"settings(?:\.|,\s*\")(\w+_enabled)", source)
+        assert switch, f"{type(collector).__name__}.is_enabled() 里找不到 `*_enabled` 开关 —— 解析器已失效。"
+        needs_key = bool(re.search(r"api_key|bearer_token|github_token", source))
+        gating[collector.source_id] = (switch.group(1), needs_key)
+    assert len(gating) >= 10, f"只解析出 {len(gating)} 个采集源的门控，远少于预期（≥10）。"
+    return gating
+
+
 def _alert_names_from_rules() -> set[str]:
     assert ALERT_RULES.is_file(), f"找不到 {ALERT_RULES}"
     names = set(re.findall(r"^\s*-\s*alert:\s*(\S+)", ALERT_RULES.read_text(encoding="utf-8"), re.MULTILINE))
@@ -231,6 +257,21 @@ def _documented_cron(text: str) -> dict[str, str]:
     rows = dict(_CRON_ROW_RE.findall(_block(text, "cron")))
     assert len(rows) >= 10, f"§7.1 cron 表只解析出 {len(rows)} 行，远少于预期（≥10）。表格格式可能已变化。"
     return rows
+
+
+def _documented_readiness(text: str) -> dict[str, tuple[str, bool]]:
+    """§4.3 的门控表：`源 id → (开关配置名, 是否需要 Key)`。
+
+    表里的 ✅/❌ 描述的是「这个源要不要 Key」，**不是**「本机现在是否就绪」——
+    后者取决于 `.env`，写进被门禁比对的表格里会让这份文档在别人机器上必然过时。
+    """
+    rows = re.findall(
+        r"^\|\s*`([a-z0-9_]+)`\s*\|\s*`([A-Z0-9_]+)`\s*\|\s*(✅|❌)",
+        _block(text, "ready"),
+        re.MULTILINE,
+    )
+    assert len(rows) >= 10, f"§4.3 门控表只解析出 {len(rows)} 行，远少于预期（≥10）。表格格式可能已变化。"
+    return {sid: (switch.lower(), mark == "✅") for sid, switch, mark in rows}
 
 
 def _documented_admin_prefixes(text: str) -> set[str]:
@@ -436,16 +477,40 @@ class TestCollectionSourcesMatchScheduler:
         text = _doc_text()
         anchor = "### 4.3 采集源故障"
         assert anchor in text, f"{DOC.name} 里找不到 `{anchor}`"
-        section = text[text.index(anchor) : text.index(anchor) + 700]
-        # 源 id 含数字（layer3）。写成 `[a-z]+` 会静默漏掉一整个源 ——
-        # 而"漏掉"在这个断言里表现为"文档写全了却报错"，很容易被误当成文档问题。
-        documented = set(re.findall(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)?)`", section))
+        documented = _documented_readiness(text)
         actual = set(_collection_cron_from_settings())
-        assert len(documented & actual) >= 5, (
-            f"§4.3 只解析出 {len(documented & actual)} 个已知源名，解析器可能已失效（解析不到就等于断言空转）。"
-        )
-        missing = actual - documented
+        missing = actual - set(documented)
         assert not missing, f"§4.3 漏了 {len(missing)} 个采集源：{sorted(missing)}。漏写的源在故障时不会被想起来查。"
+        extra = set(documented) - actual
+        assert not extra, f"§4.3 多列了 {len(extra)} 个调度器里没有的源：{sorted(extra)}。"
+
+    def test_documented_config_ready_matches_endpoint(self):
+        """§4.3 的门控表必须与 `is_enabled()` 的实现一致。
+
+        上一版文档写「10 个源全部 `config_ready=true`」，实测只有 5 个 ——
+        另外 5 个开关关着、Key 也没配。这条错误会让「为什么没发现新项目」
+        的排查一头扎进一个从未运行过的源的日志里。
+
+        断言比对的是**门控规则**（开关名 + 要不要 Key），不是本机当前的
+        就绪值 —— 后者取决于 `.env`，钉住它会让这份文档在 CI 和别人机器上
+        必然失败，而那种失败传达的是错误的信息。
+        """
+        documented = _documented_readiness(_doc_text())
+        actual = _collection_gating_from_code()
+        assert set(documented) == set(actual), (
+            f"§4.3 的源清单与代码不一致。\n文档多出：{sorted(set(documented) - set(actual))}\n"
+            f"文档缺少：{sorted(set(actual) - set(documented))}"
+        )
+        mismatched = {k: (documented[k], actual[k]) for k in actual if documented[k] != actual[k]}
+        assert not mismatched, (
+            f"§4.3 有 {len(mismatched)} 个源的门控与代码不符（文档值, 实际值）：{mismatched}。\n"
+            "把「需要 Key」写成「不需要」，或写错开关名，都会让人以为源开着而其实从未运行。"
+        )
+        # 兜底：真实值里必须同时有需要 Key 和不需要 Key 的源，否则这条断言
+        # 退化成「全 True == 全 True」，文档照抄一个常量也能通过。
+        assert len({needs_key for _, needs_key in actual.values()}) == 2, (
+            "代码里所有采集源的 Key 需求都一样了 —— 此时本断言无法区分「文档正确」和「文档照抄常量」。"
+        )
 
 
 class TestCollectionAlertThresholds:
@@ -656,6 +721,22 @@ class TestParsersFailLoudly:
         """过滤条件写反（把绝大多数行都剔掉）时必须报错，而不是安静地几乎不检查。"""
         with pytest.raises(AssertionError, match="逐行过滤后只剩"):
             _lines_asserting_existence("`scripts/heal.sh` 不存在\n" * 300)
+
+    def test_readiness_parser_rejects_missing_block(self):
+        with pytest.raises(AssertionError, match="找不到标记"):
+            _documented_readiness("没有就绪表标记的文本")
+
+    def test_readiness_parser_reads_both_columns(self):
+        block_begin, block_end = _BLOCKS["ready"]
+        rows = "\n".join(f"| `src{i}` | `SRC{i}_ENABLED` | {'✅' if i % 2 else '❌'} 说明 |" for i in range(10))
+        parsed = _documented_readiness(f"{block_begin}\n{rows}\n{block_end}")
+        assert parsed["src1"] == ("src1_enabled", True)
+        assert parsed["src2"] == ("src2_enabled", False)
+
+    def test_collection_gating_parser_finds_all_sources(self):
+        gating = _collection_gating_from_code()
+        assert gating["defillama"] == ("defillama_enabled", False)
+        assert gating["github"] == ("github_enabled", True)
 
     def test_block_parser_rejects_missing_anchor(self):
         with pytest.raises(AssertionError, match="找不到标记"):

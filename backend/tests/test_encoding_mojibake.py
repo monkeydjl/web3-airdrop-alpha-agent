@@ -233,6 +233,12 @@ def test_repair_scripts_contain_no_literal_replacement_char(checker):
 
 
 def test_known_replacement_list_matches_reality(checker):
+    """已登记的三型损坏文件必须确实还损坏着。
+
+    2026-08-23 起该清单为**空集**（`SYSTEM_DIRECTION_CHANGE.md` 的 2 处已修完），
+    所以这个循环当前不执行任何断言 —— 空循环等于没有测试，因此另有
+    `test_replacement_registry_is_empty` 正面钉住「清单必须保持为空」。
+    """
     for rel in checker.KNOWN_BROKEN_REPLACEMENT:
         path = REPO_ROOT / rel
         if not path.exists():
@@ -240,6 +246,22 @@ def test_known_replacement_list_matches_reality(checker):
         text = path.read_text(encoding="utf-8")
         n = checker.count_replacement_chars(text)
         assert n > 0, f"{rel} 已无三型损坏，请从 KNOWN_BROKEN_REPLACEMENT 清单中删除"
+
+
+def test_replacement_registry_is_empty(checker):
+    """三型损坏已清零，豁免清单必须保持为空。
+
+    与二型同一个理由：**登记豁免会掩盖内容问题**，不只是字节问题。
+    三型的修法是把无法确定的装饰 emoji **直接去掉**，而不是猜一个补上 ——
+    补一个猜的 emoji 会让文档看起来从未损坏过，下一个人再也分不清
+    哪个标题是原作者写的、哪个是后来补的。
+
+    往这个清单里加文件是**倒退**，必须在这里显式讨论，而不是悄悄加一行。
+    """
+    assert not checker.KNOWN_BROKEN_REPLACEMENT, (
+        f"三型豁免清单应为空，却有 {sorted(checker.KNOWN_BROKEN_REPLACEMENT)}；"
+        "新增豁免等于让这些文件的内容错误一起免检。"
+    )
 
 
 def test_no_unregistered_replacement_char_in_repo(checker):

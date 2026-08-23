@@ -122,7 +122,7 @@
 
 ---
 
-## � 成功指标（KPI）
+## 成功指标（KPI）
 
 ### **核心 KPI（v2.0 验收标准）**
 
@@ -187,7 +187,7 @@ ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;
 
 ---
 
-## �️ 实施路线图（v2.0）
+## 实施路线图（v2.0）
 
 ### **Phase 1: 采集基础设施（W-Collect-1）**
 - [x] 采集表 schema 设计与迁移（`data_sources` / `raw_projects` / `project_signals` / `collection_logs`）
