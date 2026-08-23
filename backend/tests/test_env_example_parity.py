@@ -236,17 +236,32 @@ class TestExampleIsSelfConsistent:
         assert not loaded.is_production, "模板不该默认落到生产模式"
 
     def test_referenced_paths_exist(self, parsed):
-        """模板里指向仓库内文件/目录的路径必须真的存在。
+        """模板里指向**随仓库提交的文件**的路径必须真的存在。
 
-        此前 `SEED_DATA_PATH=data/seed_projects.json` 和
-        `FETCHER_CACHE_DIR=data/fetcher_cache` 两个路径都不存在。
+        此前 `SEED_DATA_PATH=data/seed_projects.json` 指向一个不存在的文件。
+
+        这条**只查随仓库提交的文件**，不查运行时目录。第一版把
+        `FETCHER_CACHE_DIR` 也放进来了，CI 立刻挂 —— `cache/` 是
+        `_FileCache.__init__` 里 `mkdir(parents=True, exist_ok=True)`
+        按需建出来的，本机因为跑过应用才有，全新 checkout 上并不存在。
+        **又是同一个错：一个只在"已经运行过的机器"上为真的断言不是断言。**
+        运行时目录改由下一条按"是否会被安全地自动创建"来验。
         """
-        missing = []
-        for key in ("SEED_DATA_PATH", "FETCHER_CACHE_DIR"):
-            rel = parsed[key][0]
-            if rel and not (REPO_ROOT / rel).exists():
-                missing.append(f"{key}={rel}")
-        assert not missing, f"模板指向的路径在仓库里不存在：{missing}"
+        rel = parsed["SEED_DATA_PATH"][0]
+        assert rel, "SEED_DATA_PATH 不该留空"
+        assert (REPO_ROOT / rel).exists(), f"SEED_DATA_PATH={rel} 在仓库里不存在（真实默认是 scripts/seed.py）"
+
+    def test_runtime_dirs_are_relative_and_inside_repo(self, parsed):
+        """运行时按需创建的目录必须是仓库内的相对路径。
+
+        不断言它存在（它由代码 `mkdir` 出来），但要挡住绝对路径 / `..` 逃逸 ——
+        那会让缓存写到仓库外，跟 `DB_PATH` 解析到 `D:\\app\\data` 是同一个坑。
+        """
+        rel = parsed["FETCHER_CACHE_DIR"][0]
+        assert rel, "FETCHER_CACHE_DIR 不该留空"
+        parts = Path(rel).parts
+        assert not Path(rel).is_absolute(), f"FETCHER_CACHE_DIR={rel} 不该是绝对路径"
+        assert ".." not in parts, f"FETCHER_CACHE_DIR={rel} 不该用 .. 逃出仓库"
 
 
 class TestParserSelfChecks:

@@ -402,13 +402,23 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
 每个键必须真的有人读（是 `Settings` 字段或标 `env-external` 说明谁读它）；
 每个值必须等于代码声明的默认值，或标 `env-differs` 写出理由。
 
-**踩到的坑**：第一版比对写成 `getattr(Settings(_env_file=None), name)`，
-在 pytest 里立刻挂了 —— `conftest.py` 设了 `APP_ENV=test` / `DB_PATH` / `HOST`，
-而环境变量优先级高于 dotenv。改成读 `Settings.model_fields[...].default`
-（声明默认值）。
+**踩到的坑（同一条原则，犯了两次）**：
 
-**教训：一个随环境改变结论的断言不是断言。** 那样它在 pytest 里、裸机上、
-CI 里判定各不相同 —— 跟这一轮 §7.3 采集源门禁「钉规则不钉本机读数」是同一条。
+第一次 —— 比对写成 `getattr(Settings(_env_file=None), name)`，在 pytest 里
+立刻挂了：`conftest.py` 设了 `APP_ENV=test` / `DB_PATH` / `HOST`，
+而环境变量优先级高于 dotenv。改成读 `Settings.model_fields[...].default`。
+
+第二次 —— 路径断言把 `FETCHER_CACHE_DIR=cache` 当成"仓库里必须存在的路径"，
+**本地全绿、CI 直接挂**：`cache/` 是 `_FileCache.__init__` 里
+`mkdir(parents=True, exist_ok=True)` 按需建出来的，本机因为跑过应用才有，
+全新 checkout 上并不存在。已拆成两条：`SEED_DATA_PATH` 查"随仓库提交的文件
+存在"，运行时目录改查"是相对路径、不用 `..` 逃出仓库"。
+
+**教训：一个随环境改变结论的断言不是断言。** 同一条原则我在这一轮里犯了两次，
+第二次还是靠 CI 才发现的 —— 说明「本地绿」根本不足以证明门禁写对了；
+凡是断言涉及"文件是否存在""某个值是多少"，都要先问一句
+**「在一台没跑过这个项目的新机器上，这条还成立吗？」**
+
 同理，"按模板加载"用的是 init kwargs 而不是 `_env_file=`，
 否则测的不是"照这份模板会得到什么"。
 
@@ -416,9 +426,10 @@ CI 里判定各不相同 —— 跟这一轮 §7.3 采集源门禁「钉规则�
 可审计全部例外；空行截断注释块，所以标记不会顺着整节蔓延。整文件豁免
 正是 `API_SPEC.md` / `OPERATIONS.md` 当初烂掉的机制。
 
-变异测试 **8/8 变红**（改错 cron、取消注释 `DATABASE_URL`、加无人读取的键、
-破坏权重和、改回不存在的 seed 路径、让标记过期、把 `env-external` 标在真字段上、
-把 `WEIGHT_VERSION` 换成模型代号），模板字节等同恢复。
+变异测试 **11/11 变红**（改错 cron、取消注释 `DATABASE_URL`、加无人读取的键、
+破坏权重和、让标记过期、把 `env-external` 标在真字段上、把 `WEIGHT_VERSION`
+换成模型代号、缓存目录改绝对路径、用 `..` 逃出仓库、seed 路径指向不存在的文件），
+模板字节等同恢复。
 
 ---
 
@@ -435,8 +446,8 @@ CI 里判定各不相同 —— 跟这一轮 §7.3 采集源门禁「钉规则�
 | 前端 `tsc --noEmit` | exit 0 |
 | 前端 `eslint` | exit 0 |
 | 前端 `node test.mjs` | 20 pass / 0 fail |
-| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 passed**；`.env.example` **13 passed** |
-| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 8） | **31/31 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
+| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 passed**；`.env.example` **14 passed** |
+| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11） | **34/34 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
 
 ---
 
