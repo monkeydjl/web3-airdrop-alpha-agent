@@ -7,8 +7,9 @@
 
 ### 一型：非法 UTF-8（3 字节字符丢了第 3 字节）
 
-`docs/OPERATIONS.md`、`docs/DATA_SOURCE_STRATEGY.md`，合计 902 处
-（`docs/OBSERVABILITY.md` 原有的 214 处已于 2026-08-23 修完并移出登记）。
+历史上共 3 份文档、合计 1116 处（`docs/OBSERVABILITY.md` 214 处、
+`docs/OPERATIONS.md` 404 处、`docs/DATA_SOURCE_STRATEGY.md` 498 处），
+**全部于 2026-08-23 修完，一型现在是零豁免门禁。**
 每个 3 字节中文字符的**第 3 字节被替换成 '?'**，前 2 字节完好。
 文件因此变成非法 UTF-8 —— 至少还能被机械检测出来。
 
@@ -136,9 +137,23 @@ SKIP_DIRS = {
 #
 # 又一次印证：**登记豁免掩盖的是内容问题，不只是字节问题。**
 # 现已由 `backend/tests/test_operations_doc_parity.py` 双向钉住。
-KNOWN_BROKEN = {
-    "docs/DATA_SOURCE_STRATEGY.md",
-}
+#
+# 2026-08-23（第三轮）：`docs/DATA_SOURCE_STRATEGY.md` 的 498 处一型损坏
+# 已全部修完并移出登记 —— **一型现在也是零豁免的硬门禁，三型损坏全部清零。**
+#
+# 这一份的失真形态和前两份不一样，也更隐蔽：它不是"写了错的现状"，
+# 而是**把已经做完的事持续标为「计划中」**。10 个采集器全都实现了，
+# 文档却逐个标着「（计划实现位置）」，且 10 个文件路径 10 个都不存在
+# （真实文件没有 `_collector` 后缀）。危害不是让人少做事，
+# 而是**让人重做一遍已经在跑的东西**；并且读者一旦发现清单不准，
+# 会连里面真正的待办一起不信。
+#
+# 另外它给了一条 `discovery_score` 的"统一公式"（0.4×tvl + 0.3×github +
+# 0.2×twitter + 0.1×chain），代码里没有任何地方实现它 —— 真实是 10 个
+# 采集器各算各的，权重和入参都不同，其中几个的上限还被刻意压在分析阈值
+# 0.3 以下（省 LLM 成本的设计）。照那条公式去调权重，会以为这些源坏了。
+# 现已由 `backend/tests/test_data_source_strategy_parity.py` 双向钉住。
+KNOWN_BROKEN: set[str] = set()
 
 # 二型（整字变 '?'，仍是合法 UTF-8）的已知损坏文件
 #

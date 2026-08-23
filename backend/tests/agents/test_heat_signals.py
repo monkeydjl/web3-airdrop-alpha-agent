@@ -69,13 +69,22 @@ class TestHeatSignalProvider:
         m2 = provider.get_multiplier("DeFi")
         assert m1 == m2
 
-    def test_cache_expiry(self):
-        """TTL 过期后重新计算。"""
+    def test_cache_expiry(self, monkeypatch):
+        """TTL 过期后重新计算。
+
+        用假时钟而不是 `time.sleep`：Windows 上 `time.monotonic()` 由
+        `GetTickCount64()` 实现、分辨率 15.625ms，`TTL=50ms` + `sleep(60ms)`
+        的写法实测约 12.5% 概率读到"只过了 46ms"，于是判定未过期。
+        **一个依赖时钟分辨率的断言不是断言。** 同 `test_cache.py::test_ttl_expiry`。
+        """
+        import app.agents.heat_signals as hs_module
+
+        clock = [5000.0]
+        monkeypatch.setattr(hs_module.time, "monotonic", lambda: clock[0])
+
         provider = HeatSignalProvider(ttl=0.05, lookback_hours=1)
         m1 = provider.get_multiplier("DeFi")
-        import time
-
-        time.sleep(0.06)
+        clock[0] += 0.051
         m2 = provider.get_multiplier("DeFi")
         # 两次结果应相同（无信号时都是 1.0）
         assert m1 == m2 == 1.0

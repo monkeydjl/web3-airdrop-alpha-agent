@@ -461,3 +461,48 @@ def test_known_broken_list_matches_reality(checker):
             continue
         n = checker.count_errors(path.read_bytes())
         assert n > 0, f"{rel} 已无损坏，请从 KNOWN_BROKEN 清单中删除"
+
+
+def test_type1_registry_is_empty(checker):
+    """一型豁免清单已清零，必须保持为空（与二型/三型同口径）。
+
+    2026-08-23：三份文档共 1116 处一型损坏全部修完
+    （OBSERVABILITY 214 + OPERATIONS 404 + DATA_SOURCE_STRATEGY 498）。
+
+    为什么要正面钉住「空」而不是只在清单非空时检查：**登记豁免掩盖的是
+    内容问题，不只是字节问题。** 三份文档在豁免期间攒下的谎言远多于乱码 ——
+    35 个不存在的指标、16 个幽灵端点、2 个虚构的巡检脚本、
+    一条根本不存在的"LLM 超预算自动停用"、10 个全错的采集器路径、
+    一条代码里不存在的 `discovery_score` 统一公式。它们能活下来只因为
+    「反正这文件已登记待修」，于是没人逐行读。
+
+    往这个清单里加文件是**倒退**，必须在这里显式讨论，而不是悄悄加一行。
+    """
+    assert not checker.KNOWN_BROKEN, (
+        f"一型豁免清单应为空，却有 {sorted(checker.KNOWN_BROKEN)}；新增豁免等于让这些文件的内容错误一起免检。"
+    )
+
+
+def test_no_unregistered_type1_corruption_in_repo(checker):
+    """全仓不得出现**任何**一型损坏（清单已空，所以这是硬门禁）。
+
+    这条把 pre-commit 钩子的效果固化成测试：新文档若被非 UTF-8 写回，这里会红。
+    """
+    offenders: list[tuple[str, int]] = []
+    scanned = 0
+    for path in checker.iter_repo_files():
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        scanned += 1
+        n = checker.count_errors(raw)
+        if not n:
+            continue
+        try:
+            rel = path.resolve().relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        offenders.append((rel, n))
+    assert scanned > 400, f"只扫到 {scanned} 个文件，远少于预期（>400）—— 扫描器失效会让这条断言空转。"
+    assert not offenders, f"发现一型编码损坏：{offenders}"

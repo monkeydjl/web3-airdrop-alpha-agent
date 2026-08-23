@@ -434,13 +434,18 @@ class PipelineState:
   - **P0 核心采集源**：DefiLlama（全量协议扫描，每日）/ GitHub（仓库活跃度，每日）/ CoinGecko（代币状态验证，每日）/ Twitter（VC/KOL + 关键词，每小时或实时流）。
   - **P1 增强源**：链上（新合约监控，webhook）/ Galxe/Layer3（任务平台扫描）/ CryptoRank（融资数据）。
   - **手动输入（补充）**：保留 `POST /api/v1/run` 手动输入路径作为补充，覆盖采集盲区。
-  - **双调度**：采集调度器（按源不同频率）+ 分析调度器（新项目入队即触发）。详见 `DATA_SOURCE_STRATEGY.md §双调度模型`。
+  - **双调度**：采集调度器（每源独立 cron）+ 分析调度器（**独立 cron，不由采集触发**）。
+    ⚠️ 「新项目入队即触发」**未实现**：`COLLECTION_AUTO_RUN_ENABLED` 默认 `false`，
+    两条链完全解耦。详见 `DATA_SOURCE_STRATEGY.md §6`。
 - **输出结构**（对齐设计文档 `proj`）：
 ```json
 { "id":"uuid", "name":"LayerX", "url":"...", "sector":"L2",
   "stage":"testnet", "raw_signals": { "has_points": true, "airdrop_hint": true, "sources": ["defillama", "github"] } }
 ```
-- **新项目识别**：硬规则过滤（未发币 + 活跃度达标），`discovery_score ≥ 0.3` 才进入分析管道。详见 `DATA_SOURCE_STRATEGY.md §新项目识别规则`。
+- **新项目识别**：硬规则过滤（未发币 + 活跃度达标），`discovery_score ≥ 0.3` 才进入分析管道。
+  ⚠️ **没有统一的 `discovery_score` 公式**，10 个采集器各算各的，且其中
+  `cryptorank` / `etherscan` / GitHub 关键词搜索的上限被刻意压在 0.28
+  （低于阈值，只贡献信号不触发分析）。逐源公式见 `DATA_SOURCE_STRATEGY.md §5.4`。
 - **LLM 分级使用**：仅 `discovery_score ≥ 0.7` 的高价值项目启用 LLM 增强（ADR-012），其余走规则引擎。
 
 #### 6.2.1 归一化与去重（关键）
