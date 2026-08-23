@@ -1157,3 +1157,87 @@ class TestAdversarialRound4Findings:
         assert mw._windows.check("ip", 1, 60.0, 100.0) is None
         # 此时 /run 的昂贵端点桶必须还是空的
         assert "ip:/api/v1/run" not in mw._windows._hits
+
+    def test_log_level_setting_actually_filters_structlog_output(self, tmp_path, monkeypatch):
+        """`LOG_LEVEL` 必须真的压掉低级别日志，而不是只影响 uvicorn。
+
+        此前 `settings.log_level` 只传给了 `uvicorn.run(log_level=...)`，
+        应用自身的 structlog 完全不看它 —— `LOG_LEVEL=WARNING` 下 12 处
+        `logger.debug` 照样全量输出。一个"设了但不生效"的开关比没有开关更糟：
+        运维以为噪音已经压掉了，实际磁盘和日志后端照旧被灌满。
+        """
+        import json
+
+        import structlog
+
+        from app.config import settings
+        from app.utils.redact import configure_logging
+
+        def emit(level_name: str) -> list[str]:
+            log_file = tmp_path / f"{level_name or 'empty'}.jsonl"
+            monkeypatch.setattr(settings, "log_level", level_name)
+            monkeypatch.setattr(settings, "log_file", str(log_file))
+            structlog.reset_defaults()
+            configure_logging()
+            log = structlog.get_logger("levelprobe")
+            log.debug("probe.debug")
+            log.info("probe.info")
+            log.warning("probe.warning")
+            log.error("probe.error")
+            for stream in structlog.get_config()["logger_factory"]._file._streams:
+                stream.flush()
+            if not log_file.exists():
+                return []
+            return [json.loads(line)["level"] for line in log_file.read_text(encoding="utf-8").splitlines() if line]
+
+        try:
+            assert emit("DEBUG") == ["debug", "info", "warning", "error"]
+            assert emit("WARNING") == ["warning", "error"], "LOG_LEVEL=WARNING 未压掉 debug/info"
+            assert emit("ERROR") == ["error"], "LOG_LEVEL=ERROR 未压掉 warning"
+            # `warn` 是 `warning` 的常见别名，不能被当成非法值
+            assert emit("warn") == ["warning", "error"]
+            # 非法值/留空必须退回 INFO，**不能**降级成 DEBUG ——
+            # "配置写错反而把全部 debug 日志放出来"是必须避免的方向。
+            assert emit("BOGUS") == ["info", "warning", "error"], "非法 LOG_LEVEL 未退回 INFO"
+            assert emit("") == ["info", "warning", "error"], "空 LOG_LEVEL 未退回 INFO"
+        finally:
+            # 先把 log_file 清空再重装：否则最后一次 configure_logging() 会重新
+            # 打开 tmp_path 下的文件，而 tmp_path 随即被清理，留下悬空句柄。
+            monkeypatch.setattr(settings, "log_file", "")
+            monkeypatch.setattr(settings, "log_level", "INFO")
+            structlog.reset_defaults()
+            configure_logging()
+
+    def test_reconfiguring_logging_does_not_leak_the_log_file_handle(self, tmp_path, monkeypatch):
+        """`configure_logging()` 号称幂等可重复调用，就不能每次都漏一个文件句柄。
+
+        原实现每次调用都 `open()` 一个新的日志文件，旧句柄既不关闭也不再被引用 ——
+        只能等 GC 回收，届时 CPython 抛 ResourceWarning。CI 把 ResourceWarning
+        当错误，于是这个泄漏会以"某个**无关**测试莫名失败"的形式暴露出来：
+        泄漏发生在 A，报错记在恰好触发 GC 的 B 身上。这类错位归因极难排查，
+        所以必须在源头钉住。
+        """
+        import gc
+        import warnings
+
+        import structlog
+
+        from app.config import settings
+        from app.utils.redact import configure_logging
+
+        log_file = tmp_path / "leak-probe.jsonl"
+        monkeypatch.setattr(settings, "log_file", str(log_file))
+        monkeypatch.setattr(settings, "log_level", "INFO")
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ResourceWarning)
+                for _ in range(5):
+                    structlog.reset_defaults()
+                    configure_logging()
+                    # 强制回收：若上一轮的句柄真被丢弃了，这里就会抛 ResourceWarning
+                    gc.collect()
+        finally:
+            monkeypatch.setattr(settings, "log_file", "")
+            structlog.reset_defaults()
+            configure_logging()

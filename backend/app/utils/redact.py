@@ -114,13 +114,67 @@ class _TeeWriter:
             stream.flush()
 
 
+# structlog 的 filtering bound logger 只认小写级别名；`warn` 是 `warning` 的别名。
+_LEVEL_ALIASES = {"warn": "warning", "fatal": "critical"}
+_VALID_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+# 上一次 configure_logging() 打开的日志文件句柄。
+#
+# 这个模块级引用不是"缓存优化"，是修一个真实的句柄泄漏：configure_logging()
+# 的文档说它幂等可重复调用，但每次调用都会 open() 一个新的日志文件，
+# 旧句柄既没关闭也没被引用 —— 只能等 GC 回收，届时 CPython 抛
+# ResourceWarning（CI 用 `-W error::ResourceWarning`，直接变成失败）。
+#
+# 生产里它只被调一次，所以影响有限；但测试与任何"改完配置重新装一次日志"
+# 的场景都会稳定泄漏。重新配置前显式关掉上一个，是唯一干净的做法。
+_open_log_file = None
+
+
+def _resolve_log_level() -> int:
+    """把 settings.log_level 解析成 structlog 的数值级别。
+
+    非法值（拼错、留空）**不静默降级成 DEBUG** —— 那会让生产环境突然开始打印
+    全部 debug 日志（含 fetcher 细节），是"配置写错反而放开了输出"的经典陷阱。
+    这里退回 INFO，与 `Settings.log_level` 的默认值一致。
+    """
+    import logging
+
+    raw = (getattr(settings, "log_level", "") or "").strip().lower()
+    name = _LEVEL_ALIASES.get(raw, raw)
+    if name not in _VALID_LEVELS:
+        name = "info"
+    return int(getattr(logging, name.upper()))
+
+
+def _close_previous_log_file() -> None:
+    """关闭上一次配置留下的日志文件句柄（若有）。
+
+    关闭失败不能让整个日志配置流程崩掉 —— 日志系统装不上比一个悬空句柄严重得多。
+    """
+    global _open_log_file
+    if _open_log_file is None:
+        return
+    try:
+        _open_log_file.close()
+    except OSError:
+        pass
+    finally:
+        _open_log_file = None
+
+
 def configure_logging() -> None:
-    """安装脱敏 processor。幂等，可重复调用。
+    """安装脱敏 processor 与级别过滤。幂等，可重复调用。
 
     当 settings.log_file 非空时追加文件输出（UTF-8 追加写，进程存活期间保持打开）：
     - 与 stdout 共用同一 processor 链，文件行同样经过脱敏，不会引入第二条渲染路径；
     - 落盘时强制 JSON 渲染——console 渲染带 ANSI 颜色与对齐补全，会污染文件行，
       且 JSON 行可直接被 Promtail/Loki 解析（按字段过滤）。
+
+    `wrapper_class` 必须显式传 filtering bound logger：`settings.log_level` 此前
+    **只传给了 uvicorn**（`main.py` 的 `uvicorn.run(log_level=...)`），
+    应用自身的 structlog 调用完全不看它 —— 于是 `LOG_LEVEL=WARNING` 下 12 处
+    `logger.debug`（fetcher 缓存命中、限流等待、rootdata 逐条失败）照样全量输出。
+    一个"设了但不生效"的级别开关比没有开关更糟：运维以为已经压掉了噪音。
     """
     import sys
     from pathlib import Path
@@ -128,6 +182,8 @@ def configure_logging() -> None:
     import structlog
 
     from app.config import settings
+
+    global _open_log_file
 
     log_file = (getattr(settings, "log_file", "") or "").strip()
 
@@ -138,11 +194,15 @@ def configure_logging() -> None:
         else structlog.dev.ConsoleRenderer()
     )
 
+    # 重新配置前先释放上一次的句柄，否则每次调用都泄漏一个打开的文件。
+    _close_previous_log_file()
+
     streams: list = [sys.stdout]
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        streams.append(path.open("a", encoding="utf-8"))
+        _open_log_file = path.open("a", encoding="utf-8")
+        streams.append(_open_log_file)
 
     structlog.configure(
         processors=[
@@ -162,5 +222,6 @@ def configure_logging() -> None:
         logger_factory=structlog.WriteLoggerFactory(
             file=_TeeWriter(*streams),  # type: ignore[arg-type]
         ),
+        wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
         cache_logger_on_first_use=True,
     )
