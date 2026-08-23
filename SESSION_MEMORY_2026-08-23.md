@@ -590,6 +590,54 @@ pattern 都是 `^(low|medium|high)$`。
 
 ---
 
+## 十二、`FARM/WATCH/IGNORE` 抄了 5 遍，最脆的一处 TS 管不住
+
+§9 遗留清单的第 4 项。标签真值是 `LABEL_THRESHOLDS`，前端抄了 **5 处**：
+
+| 位置 | 缺一项的后果 | 谁在管 |
+|---|---|---|
+| `lib/types.ts` `Label` 联合 | TS 直接报错 | **TS 管得住** |
+| `lib/format.ts` `LABEL_ZH` | 显示英文原文 | `Record<Label, string>` 管得住 |
+| `app/portfolio` `LABEL_COLOR` | 退回中性灰 | `Record<string, string>` **管不住** |
+| `app/collections` `LABEL_FILTERS` | 筛选项消失，项目等于不存在 | **管不住** |
+| `components/Charts.tsx` `keys: Label[]` 数组 | 环形图少一瓣 + 其余百分比全错 | **管不住** |
+
+### 最脆的是 `Charts.tsx` 里那个数组
+
+`LABEL_COLORS` 有 `Record<Label, string>` 兜着，漏项会报错。
+但**同一个文件里还硬写了一个 `const keys: Label[] = ['FARM','WATCH','IGNORE']`** ——
+数组少一项在类型上完全合法。环形图会少画一瓣，
+而占比分母是 `data.reduce(...)`，于是**剩下两瓣的百分比各自变大**。
+
+**错的不是「少显示一个」，是其余数字全错，而且看不出错。**
+这比显示英文原文危险得多：英文原文能被发现，一个变大了的百分比不能。
+
+实测 5 处目前都是齐的，问题在于**没有任何机制防止下次漏**。
+新增 `TestLabelVocabulary`（6 条）逐处比对，真值从 `LABEL_THRESHOLDS`
+解析而不是抄字面量。
+
+### 一个关于变异测试本身的坑（值得单独记）
+
+第一次跑 6 个变异，只有 3 个变红，另外 3 个显示「通过」——
+差点据此判定「这 3 处门禁没覆盖」，然后去改测试。
+
+**实际是变异脚本自己没生效。** 我按 CRLF 拼接要删除的行作为锚点，
+但本仓行尾不统一：`lib/format.ts` 是 CRLF，`Charts.tsx` /
+`collections/page.tsx` / `portfolio/page.tsx` 都是 LF。
+锚点匹配不上 → `str.replace` 静默返回原文 → 文件没被改 → 测试当然通过。
+
+**一个静默不生效的变异测试，比没有变异测试更危险**：
+它给出的是「门禁没覆盖」这个假结论，会引导人去改本来正确的门禁。
+修法有两条，都做了：① 按文件实际行尾拼接锚点；
+② 脚本里加 `if old not in txt: print("ANCHOR_MISSING")` ——
+**替换前先断言锚点存在**，让不生效变成显式失败而不是静默通过。
+
+这跟本轮 §8.3 / §9.4 / §10 是同一条：
+**一个不读被测对象、或读不到就静默给结论的检查，不是检查。**
+只不过这次踩在验证工具自己身上。
+
+---
+
 ## 验证结果（全部实跑）
 
 | 检查 | 结果 |
@@ -603,8 +651,8 @@ pattern 都是 `^(low|medium|high)$`。
 | 前端 `tsc --noEmit` | exit 0 |
 | 前端 `eslint` | exit 0 |
 | 前端 `node test.mjs` | 20 pass / 0 fail |
-| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 → 81 passed / 2 skipped**（含新增一型门禁）；`.env.example` **14 passed**；采集策略 **23 passed**；前端枚举 **21 → 25 passed**（含风险档位 4 条） |
-| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11 + 采集策略 12 + 风险档位 4） | **50/50 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
+| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 → 81 passed / 2 skipped**（含新增一型门禁）；`.env.example` **14 passed**；采集策略 **23 passed**；前端枚举 **21 → 31 passed**（含风险档位 4 条 + 标签 6 条） |
+| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11 + 采集策略 12 + 风险档位 4 + 标签 6） | **56/56 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
 
 ---
 
@@ -648,6 +696,9 @@ pattern 都是 `^(low|medium|high)$`。
 16. **`critical` 那条门禁不禁止渲染，只要求一致**（见 §11）——
     写死「前端不能渲染 risks」会挡住正常开发，而挡路的门禁迟早被绕过去。
     改成「要渲染就得先把词补齐」，把两件事绑在一起。
+17. **变异脚本必须在替换前断言锚点存在**（见 §12）——
+    静默不生效的变异会给出「门禁没覆盖」的假结论，
+    引导人去改本来正确的门禁。
 
 ---
 
@@ -657,8 +708,8 @@ pattern 都是 `^(low|medium|high)$`。
    （需要能实跑验证的环境；已在 `OPERATIONS.md §3.4` 标注为跑不通）。
 2. `auto_backup.ps1` 在"容器不存在"失败路径上会留下空目录，需要清理。
 3. `prometheus.yml` 的 `external_labels` 硬编码 `environment: production`。
-4. 前端还有几处标签常量没被测试钉住（`LABEL_FILTERS`、`LABEL_COLOR`、
-   `Charts.tsx` 里硬编码的 `['FARM','WATCH','IGNORE']`）。
+4. ~~前端标签常量没被测试钉住~~ → **已修**（见 §12，`LABEL_FILTERS` /
+   `LABEL_COLOR` / `LABEL_COLORS` / `keys` 数组 / `Label` 联合 5 处全钉住）。
 5. ~~`riskLevelZh` 与 `critical` 的口径~~ → **已修**（见 §11）。
 
 ## 遗留问题（需要所有者拍板的）
