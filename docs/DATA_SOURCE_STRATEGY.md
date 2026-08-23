@@ -1,667 +1,693 @@
-# Web3 Airdrop Alpha - 数据源策略（自动扫描视角�?
-**文档版本**: v2.0
+# Web3 Airdrop Alpha - 数据源策略（自动扫描视角）
+
+**文档版本**: v3.0
 **创建日期**: 2026-07-09
-**更新日期**: 2026-07-09
-**状�?*: 战略规划（自动扫描全网定位）
-**关联文档**: `SYSTEM_DIRECTION_CHANGE.md`、`ENGINEERING_ROADMAP.md §6.2`、`DATABASE_DDL.md`、`SECURITY.md §10`、`.env.example`
+**重写日期**: 2026-08-23
+**状态**: 已落地为实现（v2.0 起从规划转为现状记录）
+**关联文档**: `SYSTEM_DIRECTION_CHANGE.md`、`OPERATIONS.md §4`、`DATABASE_DDL.md §2.13–2.19`、`SECURITY.md §10`、`.env.example`
+**门禁**: `backend/tests/test_data_source_strategy_parity.py`
 
 ---
 
-## 📋 执行摘要
+## 0. 这次重写改了什么（读之前先看这段）
 
-本文档定�?Web3 Airdrop Alpha Agent System �?*数据源策略（v2.0 自动扫描方向�?*�?
-> **核心结论**：系统主动从多数据源**自动扫描全网**，持续发现未空投的早�?Web3 项目�?> 采集调度器独立运行，将候选项目写�?`raw_projects` 表，再由分析调度器触发多 Agent 评分�?
-外部数据源（DefiLlama / Twitter / GitHub / 链上等）�?*核心采集�?*（非"可选补�?）。手动输入（UI/CSV/API/seed）降级为**补充能力**，用于覆盖采集盲区�?
-本文档定义各数据源的接入方式、API 方案、数据结构、采集频率、速率限制、成本预估，以及采集管道、双调度模型、采集表 schema�?
----
+上一版（v2.0，2026-07-09）是**方向规划稿**：当时 10 个采集器一个都还没写，
+所以全文用「（计划实现位置）」标注每个类的落点，并列了一堆
+「需同步新增」的配置字段。
 
-## 🎯 数据源优先级矩阵
+**到 2026-08-23，这些东西大部分已经做完了**，于是那份文档从「规划」
+变成了「与现实不符的描述」。具体失真见 §12，最要紧的四条：
 
-| 数据�?| 优先�?| 接入方式 | 主要价�?| API 成本 | 实现难度 |
-|--------|--------|----------|----------|----------|----------|
-| **DefiLlama** | P0 | 自动采集（全量协议扫描） | 未发币状态、TVL、链、类�?| 免费 | �?|
-| **GitHub** | P0 | 自动采集（活跃度扫描�?| 技术活跃度、仓库信�?| 免费 | �?|
-| **CoinGecko** | P0 | 自动采集（代币状态验证） | 市值、代币状态、上所 | 免费/付费 | �?|
-| **Twitter/X** | P0 | 自动采集（VC/KOL + 关键词） | 早期信号、融资、测试网、积�?| $100/�?| �?|
-| **链上数据** | P1 | 自动采集（新合约监控 + 地址活跃度） | 真实活跃度、新部署 | 免费/付费 | �?|
-| **Galxe/Layer3** | P1 | 自动采集（任务平台扫描） | 任务活动信号（空投前奏） | 免费 | �?|
-| **CryptoRank** | P1 | 自动采集（项目聚合） | 融资、评�?| 免费/付费 | �?|
-| **Discord** | P2 | 自动采集（社区活跃度�?| 社区活跃�?| 免费 | �?|
-| **Medium/Mirror** | P2 | 自动采集（RSS�?| 路线图、公�?| 免费 | �?|
-| **Reddit** | P2 | 自动采集（讨论爬取） | 社区情绪 | 免费 | �?|
-| **手动录入** | P1 | UI 表单（补充） | 覆盖采集盲区 | 免费 | �?|
-| **CSV 导入** | P1 | 批量粘贴（补充） | 批量补充 | 免费 | �?|
-| **seed 策展** | P2 | `scripts/seed.py` | 演示/测试基线 | 免费 | �?|
+1. **10 个采集器全部已实现**，但文档仍逐个标着「（计划实现位置）」，
+   而且**文件名和类名全都不对**（例：文档说
+   `collectors/defillama_collector.py`，真实是 `collectors/defillama.py`）。
+   照文档去找代码，10 个路径 10 个都找不到。
+2. **`discovery_score` 的统一公式是假的**。文档给了一条
+   `0.4×tvl + 0.3×github + 0.2×twitter + 0.1×chain` 的全局公式 ——
+   代码里**没有任何地方实现它**。真实情况是每个采集器各算各的
+   （见 §5.4），权重和入参都不一样。
+3. **`POST /re-score/{id}` 这个接口不存在**（46 个真实路由里没有它）。
+4. **`evaluation/collection/` 目录不存在**，「每月输出采集质量报告」从未发生。
 
-> 优先级含义：**P0 = MVP/V1 必须接入的核心采集源**；P1 = V1+ 增强；P2 = V2 完善。手动输入为补充能力�?
----
+**本次重写的原则**：把「计划」改写成「现状 + 实测数字」，
+凡是还没做的明确标 ❌ 并说清"没有它会怎样"，
+不再让读者分不清哪句是已实现、哪句是构想。
 
-## 🔴 P0：核心采集源（MVP/V1 必须�?
-### **1. DefiLlama（自动采集，P0�?*
-
-**价�?*：权�?DeFi 数据，发�?�?TVL 但未发币"的早期项目（空投黄金信号）�?
-**采集策略**:
-- A. 全量协议扫描：每日拉�?`/protocols` 列表，识�?`has_token=false` 的协�?- B. TVL 阈值过滤：TVL > $1M 的未发币协议进入候选池
-- C. 趋势监控�? �?TVL 增长 > 20% 的协议标记为"热度上升"
-
-**技术实�?*:
-```python
-# backend/app/collectors/defillama_collector.py（计划实现位置）
-class DefiLlamaCollector:
-    """
-    使用 DefiLlama API (免费，无 Key)
-    - /protocols (所有协议列表，每日全量)
-    - /protocol/{name} (协议详情)
-    - /charts (TVL 历史)
-    """
-    async def fetch_all_protocols(self) -> list[dict]
-    async def filter_unfunded_protocols(self, protocols: list[dict]) -> list[dict]
-    async def get_protocol_detail(self, name: str) -> dict
-    async def get_tvl_trend(self, protocol: str) -> dict
-```
-
-**API 方案**: 完全免费，无 Key，高可用。速率限制：无硬性限制，建议 �?10 req/s�?
-**采集频率**: 每日 1 次全量扫描（cron `0 8 * * *`）�?
-**关键数据**:
-```json
-{
-  "protocol": "name",
-  "tvl": 0,
-  "chain": ["Ethereum", "Arbitrum"],
-  "category": "Lending",
-  "has_token": false,
-  "tvl_change_7d": 0.0,
-  "listed_at": "timestamp",
-  "github": "owner/repo"
-}
-```
+> 顺带说明这份文档为什么烂了这么久：它长期挂在**编码损坏登记表**上
+> （498 处中文字被截断成非法 UTF-8 字节），而"已登记为损坏"成了
+> 没人再读它的理由。**登记豁免掩盖的不只是字节问题，还有内容问题。**
+> 这一版同时修掉了字节和内容。
 
 ---
 
-### **2. GitHub（自动采集，P0�?*
+## 1. 执行摘要
 
-**价�?*：技术活跃度是项目质量的硬指标，识别"在积极开发但未发�?的项目�?
-**采集策略**:
-- A. �?DefiLlama 采集结果中提�?`github` 字段，拉取仓库活跃度
-- B. 关键词搜索：`airdrop testnet points` 等，发现新仓�?- C. 活跃度评分：commit 频率 + 贡献者数 + 最近更新时�?
-**技术实�?*:
-```python
-# backend/app/collectors/github_collector.py（计划实现位置）
-class GitHubCollector:
-    """
-    使用 GitHub REST API + GraphQL API
-    - Repo API (获取活跃度指�?
-    - Search API (按关键词发现新仓�?
-    """
-    async def get_repo_metrics(self, owner: str, repo: str) -> dict
-    async def search_web3_repos(self, query: str, sort: str = "updated") -> list[dict]
-    async def calculate_activity_score(self, repo_data: dict) -> float
-```
+系统主动从多数据源**自动扫描全网**，持续发现未空投的早期 Web3 项目。
+采集调度器独立运行，把候选项目写入 `raw_projects` 表，
+再由分析调度器触发多 Agent 评分。
 
-**API 方案**: 免费额度 5,000 请求/小时（认证）；GraphQL 批量查询 + 缓存�?
-**采集频率**: 每日 1 次（跟随 DefiLlama 扫描后触发）�?
-**关键指标**:
-```json
-{
-  "repo": "owner/name",
-  "stars": 0,
-  "forks": 0,
-  "commits_last_30d": 0,
-  "contributors": 0,
-  "last_commit": "timestamp",
-  "language": "Solidity",
-  "activity_score": 0.0
-}
-```
+外部数据源（DefiLlama / GitHub / CoinGecko / Twitter / 链上 / 任务平台等）
+是**核心采集源**，不是"可选补充"。手动输入（UI / CSV / API / seed）
+是**补充能力**，用于覆盖采集盲区。
+
+**实测现状（2026-08-23，本地库）**：
+
+| 事实 | 数字 |
+|---|---|
+| 已注册采集器 | **10 个** |
+| `.env` 开关 + Key 都就绪（`config_ready=true`） | **5 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan`） |
+| `data_sources` 表有记录的源 | **5 个**（就是上面那 5 个） |
+| `raw_projects` 累计 | **615 行**，dedup_key 全部互不重复 |
+| `project_signals` 累计 | **2261 行** |
+| `collection_logs` 累计 | **20 行** |
+| 由采集入库的 `projects` | 288 行中 `defillama` 165 / `seed` 99 / `github` 16 / `manual` 7 / `import` 1 |
+
+**别把「10 个已注册」读成「10 个在跑」**：一个源真正会跑需要同时满足
+三条（开关 ∧ Key ∧ `data_sources.enabled`），详见 §4.1。
 
 ---
 
-### **3. CoinGecko（自动采集，P0�?*
+## 2. 数据源优先级矩阵
 
-**价�?*：验证代币状态，排除已发币项目（避免对已流通代币做空投评分）�?
-**采集策略**:
-- A. �?DefiLlama 候选项目，查询 CoinGecko 验证是否已发�?- B. 已发币项目标记为 `has_token=true`，从候选池移除
-- C. 未发币项目保留，进入分析管道
+「已实现」= 代码里有对应 collector 类并注册进 registry。
 
-**技术实�?*:
-```python
-# backend/app/collectors/coingecko_collector.py（计划实现位置）
-class CoinGeckoCollector:
-    async def check_token_exists(self, project_name: str) -> bool
-    async def get_market_data(self, coin_id: str) -> dict
-```
+| 数据源 | 优先级 | 已实现 | 接入方式 | 主要价值 | API 成本 |
+|---|---|---|---|---|---|
+| **DefiLlama** | P0 | ✅ | 自动采集（全量协议扫描） | 未发币状态、TVL、链、类别 | 免费，无需 Key |
+| **GitHub** | P0 | ✅ | 自动采集（活跃度扫描 + 关键词搜索） | 技术活跃度、仓库信息 | 免费（需 Token 提额） |
+| **CoinGecko** | P0 | ✅ | 自动采集（代币状态验证） | 市值、代币状态、上所 | 免费（Key 仅提额） |
+| **Twitter/X** | P0 | ✅ ×2 | 自动采集（KOL 轮询 + 关键词搜索） | 早期信号、融资、测试网、积分 | $100/月起 |
+| **Etherscan（链上）** | P1 | ✅ | 自动采集（事件密度 + 独立地址） | 真实链上活跃度 | 免费额度 |
+| **Galxe** | P1 | ✅ | 自动采集（任务活动扫描） | 任务活动信号（空投前奏） | 需 Key |
+| **Layer3** | P1 | ✅ | 自动采集（任务活动扫描） | 同上 | 需 Key |
+| **CryptoRank** | P1 | ✅ | 自动采集（项目排名聚合） | 融资、排名 | 免费额度 / 付费 |
+| **RootData** | P1 | ✅ | 自动采集（关键词检索） | 项目库补充 | 需 Key |
+| **Alchemy Webhook** | P1 | ⚠️ 半 | 被动接收（`POST /api/v1/webhook/alchemy`） | 新合约事件 | 免费额度 |
+| **Discord** | P2 | ❌ | — | 社区活跃度 | — |
+| **Medium / Mirror** | P2 | ❌ | — | 路线图、公告 | — |
+| **Reddit** | P2 | ❌ | — | 社区情绪 | — |
+| **手动录入 / CSV 导入** | — | ✅ | `POST /api/v1/run`、`POST /api/v1/import/projects` | 覆盖采集盲区 | 免费 |
+| **seed 策展** | — | ✅ | `scripts/seed.py` | 演示 / 测试基线 | 免费 |
 
-**API 方案**: 免费 30 �?分钟；付�?$129/月（500 �?分钟）。初期免费足够�?
-**采集频率**: 每日 1 次（跟随 DefiLlama + GitHub 后触发）�?
----
-
-### **4. Twitter/X（自动采集，P0�?*
-
-**价�?*：VC 投资公告、测试网上线、积分计划等第一手信号，是发现早期项目的最快来源�?
-**采集策略**:
-- A. **VC 账号监听**：`@a16z, @paradigm, @VitalikButerin, @cz_binance, @BinanceLabs, @coinbase, @panteracapital, @dragonfly_xyz, @polychaincap, @1kxnetwork` 等融资信�?- B. **KOL 账号监听**：Web3 领域 top 100 KOL、空投猎人社�?KOL、赛道专�?- C. **关键词实时搜�?*：`#airdrop #testnet #points #mainnet "points program" "no token yet" "TGE soon"`
-- D. **Filtered Stream**（实时流）：监听关键词流，实时捕获新项目信号
-
-**技术实�?*:
-```python
-# backend/app/collectors/twitter_collector.py（计划实现位置）
-class TwitterCollector:
-    """
-    使用 Twitter API v2
-    - User Tweets API (查询特定账号历史)
-    - Search API (按关键词搜索)
-    - Filtered Stream (实时流监�?
-    """
-    async def search_recent(self, query: str, max_results: int = 100) -> list[dict]
-    async def get_account_tweets(self, account_id: str) -> list[dict]
-    async def start_filtered_stream(self, rules: list[str]) -> AsyncIterator[dict]
-    async def extract_project_signals(self, tweets: list[dict]) -> list[dict]
-```
-
-**API 方案**:
-- Basic Tier: $100/�?(10,000 tweets/月读�?
-- Pro Tier: $5,000/�?(1M tweets/月，Filtered Stream)
-- 速率限制: 智能过滤 + 优先级队�?
-**采集频率**:
-- VC/KOL 账号：每小时轮询 1 �?- 关键词搜索：�?15 分钟 1 �?- Filtered Stream：持续运行（需 Pro Tier�?
-**数据提取**:
-```json
-{
-  "project_name": "从推文提�?,
-  "twitter_handle": "@project",
-  "signal_type": "funding/testnet/points",
-  "raw_text": "原始推文",
-  "engagement": {"likes": 0, "retweets": 0},
-  "source_account": "@vc_account",
-  "captured_at": "timestamp"
-}
-```
+> **P2 三个源（Discord / Medium / Mirror / Reddit）没有任何代码**，
+> 不要在排查"社区信号缺失"时去找它们的日志。
+> **Alchemy Webhook 标「半」的含义**：接收端点、签名校验、状态查询都在
+> （`/api/v1/webhook/alchemy` + `/status`），但它是被动接收，
+> 不在 registry 里、不参与采集调度、`data_sources` 表里也没有它的记录。
 
 ---
 
-## 🟡 P1：增强采集源（V1+�?
-### **5. 链上数据（自动采集，P1�?*
+## 3. 10 个采集器的真实落点
 
-**价�?*：最真实的活跃度数据，发�?链上活跃但未发币"的项目�?
-**采集策略**:
-- A. **新合约部署监�?*：通过 Alchemy/Infura webhook 监听主流链的新合约部�?- B. **地址活跃度补�?*：对已知项目地址，拉取交互数、独立用户数
-- C. **TVL 验证**：链上锁仓量�?DefiLlama 数据交叉验证
+**上一版这张表的 10 个路径全是错的**（都写成
+`{source}_collector.py` 并标「计划实现位置」）。真实文件与类名：
 
-**支持�?*: Ethereum, Arbitrum, Optimism, Base, Polygon, zkSync, Scroll, Linea, Solana, Aptos, Sui
+<!-- collector-files:begin -->
 
-**技术实�?*:
-```python
-# backend/app/collectors/chain_collector.py（计划实现位置）
-class ChainCollector:
-    """
-    数据�? Etherscan 系列 / Alchemy / Infura / Dune / The Graph
-    """
-    async def monitor_new_contracts(self, chain: str) -> AsyncIterator[dict]
-    async def get_contract_activity(self, address: str) -> dict
-    async def track_unique_users(self, address: str) -> dict
-```
+| source_id | 文件 | 类 |
+|---|---|---|
+| `defillama` | `backend/app/collectors/defillama.py` | `DefiLlamaCollector` |
+| `github` | `backend/app/collectors/github.py` | `GitHubCollector` |
+| `coingecko` | `backend/app/collectors/coingecko.py` | `CoinGeckoCollector` |
+| `twitter_kol` | `backend/app/collectors/twitter.py` | `TwitterKolCollector` |
+| `twitter_keyword` | `backend/app/collectors/twitter.py` | `TwitterKeywordCollector` |
+| `etherscan` | `backend/app/collectors/etherscan.py` | `EtherscanCollector` |
+| `galxe` | `backend/app/collectors/galxe.py` | `GalxeCollector` |
+| `layer3` | `backend/app/collectors/layer3.py` | `Layer3Collector` |
+| `cryptorank` | `backend/app/collectors/cryptorank.py` | `CryptoRankCollector` |
+| `rootdata` | `backend/app/collectors/rootdata.py` | `RootDataCollector` |
 
-**API 方案**: Etherscan 免费 5 �?秒；Alchemy 免费 300M CU/�?+ webhook；Dune $399/月（可选）�?
-**采集频率**: webhook 实时（新合约）；地址活跃度每�?1 次�?
----
+<!-- collector-files:end -->
 
-### **6. Galxe / Layer3（自动采集，P1�?*
+配套模块（不是采集器，别当成源）：`base.py`（`DataCollector` 抽象基类 +
+`RawSignal` / `RawDiscovery` / `CollectorResult`）、`factory.py`
+（`build_default_registry` / `get_default_registry`）、`registry.py`、
+`scheduler.py`、`persistence.py`（`CollectionRepository`）、
+`rate_limiter.py`（`TokenBucketRateLimiter`）、`metrics.py`、`noise.py`。
 
-**价�?*：任务平台反映用户获取活动，是空投前奏强信号�?
-**采集策略**:
-- A. 扫描 Galxe/Layer3 新活动，识别"有任务但未发�?的项�?- B. 活动热度：参与人数、任务完成数
-
-**技术实�?*:
-```python
-# backend/app/collectors/quest_collector.py（计划实现位置）
-class QuestCollector:
-    """Galxe GraphQL API / Layer3 API"""
-    async def fetch_galxe_campaigns(self) -> list[dict]
-    async def fetch_layer3_quests(self) -> list[dict]
-```
-
-**采集频率**: 每日 1 次�?
----
-
-### **7. CryptoRank（自动采集，P1�?*
-
-**价�?*：项目聚合平台，融资、评级数据，补充 DefiLlama 未覆盖的项目�?
-**技术实�?*:
-```python
-# backend/app/collectors/cryptorank_collector.py（计划实现位置）
-class CryptoRankCollector:
-    async def fetch_funding_rounds(self) -> list[dict]
-    async def get_project_rating(self, project: str) -> dict
-```
-
-**API 方案**: 免费 100 �?小时；付�?$99/月。已�?`.env.example` 配置 `CRYPTORANK_API_KEY`�?
----
-
-### **8. 手动输入（补充能力，P1�?*
-
-> 手动输入�?v1.x 的主路径降级�?v2.0 �?*补充能力**，用于覆盖采集盲区�?
-**适用场景**:
-- 采集源未覆盖的新项目（用户手动发现）
-- 内部测试与演�?- API 用户直接调用
-
-**输入方式**:
-1. **手动录入（UI�?*：用户在 Dashboard 表单填写项目字段
-2. **CSV/Excel 导入**：批量粘贴已筛选的项目清单
-3. **单次 API 调用**：`POST /api/v1/run`（详�?`API_SPEC.md §4`�?4. **seed 策展数据**：`scripts/seed.py` 内置演示项目（已存在�?
-**请求结构**（对�?`API_SPEC.md §4`，扁�?ProjectInput�?
-```bash
-curl -X POST http://localhost:8002/api/v1/run \
-  -H 'Content-Type: application/json' \
-  -d '{"projects":[{"name":"LayerX","url":"https://layerx.xyz","sector":"L2","stage":"testnet","has_testnet":true,"has_points_program":true,"no_token_yet":true,"recent_funding":true}],"enable_llm":false}'
-```
-
-> 注：`projects` 内为扁平 `ProjectInput` 字段（`has_testnet`/`has_points_program`/`no_token_yet`/`recent_funding`），非嵌�?`raw_signals`。`raw_signals` �?Collector 内部转换后的产物�?
----
-
-## 🔄 采集管道（自动发现，v2.0 核心�?
-```
-┌─────────────────────────────────────────────────────────�?�? 采集调度器（独立 cron，按源不同频率运行）                �?�? DefiLlama 每日 · Twitter 每小�?实时�?· 链上 webhook   �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 1. 拉取 (Fetch)                                         �?�? �?Collector 从数据源拉取原始数据                        �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 2. 归一�?(Normalize)                                   �?�? name_key/sector_key 标准化（ROADMAP §6.2.1�?           �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 3. 去重 (Deduplication)                                 �?�? �?dedup_key 合并多源命中（ROADMAP §6.2.1�?            �?�? 来源优先级：seed > defillama > cryptorank > twitter     �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 4. 新项目识�?(Discovery Filter)                        �?�? 硬规则过滤（详见下方"新项目识别规�?�?                  �?�? 写入 raw_projects 表（processed=false�?                �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 5. 信号聚合 (Signal Aggregation)                        �?�? 多源信号写入 project_signals �?                        �?�? 增强 raw_signals 字段                                   �?└──────────────────────────┬──────────────────────────────�?                           �?新项目入�?                           �?┌─────────────────────────────────────────────────────────�?�? 6. 分析管道 (Analysis Pipeline，既�?                   �?�? Collector �?Narrative �?Team �?Risk �?Tokenomics        �?�? �?Scorer �?Orchestrator                                 �?└──────────────────────────┬──────────────────────────────�?                           �?┌─────────────────────────────────────────────────────────�?�? 7. 结果展示 (Presentation)                              �?�? 评分结果 + 可解释理�?�?Dashboard                       �?└─────────────────────────────────────────────────────────�?```
-
-### **新项目识别规则（Discovery Filter�?*
-
-采集管道�?4 步的硬规则过滤具体定义如下：
-
-#### **必备条件（必须全部满足）**
-
-| 条件 | 阈�?| 数据来源 | 说明 |
-|------|------|----------|------|
-| 未发�?| `has_token=false` | CoinGecko 验证 | 排除已流通代币项�?|
-| 有活跃度 | 任一以下活跃度指标达�?| 见下�?| 排除僵尸项目 |
-
-#### **活跃度指标（任一达标即可�?*
-
-| 指标 | 阈�?| 数据来源 | 权重 |
-|------|------|----------|------|
-| TVL | > $1M | DefiLlama | 高（DeFi 项目�?|
-| GitHub 活跃�?| commits_last_30d �?10 �?contributors �?3 | GitHub | 高（技术项目） |
-| Twitter 提及�?| 7 日内�?VC/KOL 提及 �?1 �?| Twitter | 中（早期信号�?|
-| 链上交互�?| 30 日内独立地址 �?100 | 链上 | 中（应用层） |
-| 任务平台活动 | Galxe/Layer3 有进行中活动 | 任务平台 | 中（空投前奏�?|
-
-#### **排除规则（命中即排除�?*
-
-| 排除条件 | 理由 |
-|----------|------|
-| 已发币且流通市�?> $1M | 已过空投窗口 |
-| TVL 持续 30 �?< $100K | 僵尸项目 |
-| GitHub 90 天无 commit | 停止开�?|
-| 标记�?scam/rug pull | 安全风险（来自社区标记） |
-
-#### **discovery_score 计算**
-
-```
-discovery_score = 0.4 × tvl_score + 0.3 × github_score + 0.2 × twitter_score + 0.1 × chain_score
-
-其中�?  tvl_score    = min(tvl / 10M, 1.0)        # TVL $10M 满分
-  github_score = min(commits_30d / 50, 1.0)  # 50 commits 满分
-  twitter_score = min(mentions_7d / 10, 1.0) # 10 次提及满�?  chain_score   = min(unique_users_30d / 1000, 1.0)  # 1000 用户满分
-```
-
-- `discovery_score �?0.3` �?进入分析管道（写 `raw_projects`，`processed=false`�?- `discovery_score < 0.3` �?仅存信号，不触发分析（节�?LLM 成本�?
----
-
-## �?双调度模�?
-### **采集调度器（新增�?*
-
-| 数据�?| 频率 | 触发方式 | 写入目标 |
-|--------|------|----------|----------|
-| DefiLlama | 每日 08:00 UTC | cron | `raw_projects` |
-| GitHub | 每日（跟�?DefiLlama�?| 事件触发 | `project_signals` |
-| CoinGecko | 每日（跟�?DefiLlama�?| 事件触发 | `project_signals` |
-| Twitter VC/KOL | 每小�?| cron | `project_signals` |
-| Twitter 关键�?| �?15 分钟 | cron | `project_signals` |
-| Twitter 实时�?| 持续 | webhook/stream | `project_signals` |
-| 链上 | 实时 | webhook | `project_signals` |
-| Galxe/Layer3 | 每日 | cron | `project_signals` |
-
-### **分析调度器（既有，增强）**
-
-| 触发方式 | 说明 |
-|----------|------|
-| 新项目入�?| `raw_projects` 新增 `processed=false` 记录 �?立即触发分析 |
-| 定时批量 | 每小�?cron 批量处理积压项目 |
-| 手动重跑 | `POST /re-score/{id}` |
-
-> �?v1.x 差异：v1.x 调度仅驱动分析，数据来自用户。v2.0 采集调度器持续发现新项目，分析调度器自动消费�?
----
-
-## 🗄�?采集�?Schema（v2.0 新增，需同步 DATABASE_DDL.md�?
-> ⚠️ 以下表为 v2.0 新增，当�?`DATABASE_DDL.md` **不含**这些表。需后续同步更新 `DATABASE_DDL.md`�?
-### **data_sources（数据源注册表）**
-
-```sql
-CREATE TABLE data_sources (
-    source_id TEXT PRIMARY KEY,          -- �?"defillama", "twitter", "github"
-    source_type TEXT NOT NULL,            -- "api" / "stream" / "webhook" / "manual"
-    source_name TEXT NOT NULL,
-    enabled BOOLEAN DEFAULT TRUE,
-    last_sync TIMESTAMP,
-    sync_status TEXT,                     -- "idle" / "running" / "error" / "rate_limited"
-    api_calls_today INTEGER DEFAULT 0,
-    api_limit INTEGER,                    -- 每日限额
-    config JSON,                          -- 源特定配�?    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### **raw_projects（采集原始项目池�?*
-
-```sql
-CREATE TABLE raw_projects (
-    raw_id TEXT PRIMARY KEY,              -- 采集记录 id（非项目 id�?    source_id TEXT REFERENCES data_sources(source_id),
-    dedup_key TEXT NOT NULL,              -- 归一化去重键（ROADMAP §6.2.1�?    raw_data JSON NOT NULL,               -- 原始采集数据
-    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    processed BOOLEAN DEFAULT FALSE,      -- 是否已进入分析管�?    processed_at TIMESTAMP,
-    project_id TEXT,                      -- 关联 projects �?id（处理后回填�?    discovery_score REAL DEFAULT 0.0      -- 发现质量分（初筛用）
-);
-
-CREATE INDEX idx_raw_projects_dedup ON raw_projects(dedup_key);
-CREATE INDEX idx_raw_projects_unprocessed ON raw_projects(processed) WHERE processed = FALSE;
-```
-
-### **project_signals（项目信号聚合）**
-
-```sql
-CREATE TABLE project_signals (
-    signal_id TEXT PRIMARY KEY,
-    project_id TEXT,                      -- 关联 projects 表（可为空，未建立关联时�?    dedup_key TEXT,                       -- 关联 raw_projects
-    signal_type TEXT NOT NULL,            -- "tvl" / "github_activity" / "twitter_mention" / "chain_activity" / "quest"
-    signal_source TEXT NOT NULL,          -- "defillama" / "github" / "twitter" / "chain" / "galxe"
-    signal_data JSON NOT NULL,            -- 信号具体数据
-    signal_strength REAL DEFAULT 0.0,     -- 信号强度�?-1�?    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_signals_project ON project_signals(project_id);
-CREATE INDEX idx_signals_type ON project_signals(signal_type, signal_source);
-```
-
-### **collection_logs（采集日志）**
-
-```sql
-CREATE TABLE collection_logs (
-    log_id TEXT PRIMARY KEY,
-    source_id TEXT REFERENCES data_sources(source_id),
-    started_at TIMESTAMP NOT NULL,
-    finished_at TIMESTAMP,
-    items_collected INTEGER DEFAULT 0,
-    items_new INTEGER DEFAULT 0,          -- 去重后的新项目数
-    items_duplicate INTEGER DEFAULT 0,
-    status TEXT,                          -- "success" / "error" / "partial" / "rate_limited"
-    error_message TEXT
-);
-```
-
-### **projects 表扩展字�?*
-
-```sql
-ALTER TABLE projects ADD COLUMN discovery_source TEXT;      -- 首次发现的来�?ALTER TABLE projects ADD COLUMN discovered_at TIMESTAMP;    -- 首次发现时间
-ALTER TABLE projects ADD COLUMN auto_discovered BOOLEAN DEFAULT TRUE;  -- 是否自动发现（vs 手动�?ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;        -- 关联信号�?```
+> 上一版还说速率限制器在 `backend/app/utils/rate_limiter.py` ——
+> **那个路径不存在**，真实位置是 `backend/app/collectors/rate_limiter.py`。
 
 ---
 
-## 🔑 API Key 管理
+## 4. 一个源要真的跑起来，需要三个条件同时成立
 
-### **当前已配置的字段（见 `.env.example`�?*
+### 4.1 三条件
 
-```bash
-# 已在 .env.example �?DEFILLAMA_BASE_URL=https://api.llama.fi
-CRYPTORANK_API_KEY=
-TWITTER_BEARER_TOKEN=
-TWITTER_API_KEY=
-TWITTER_API_SECRET=
-DUNE_API_KEY=
-```
+| 条件 | 在哪里 | 不满足时的表现 |
+|---|---|---|
+| ① `*_ENABLED=true` | `.env` / `app/config.py` | `is_enabled()` 返回 False，调度跳过 |
+| ② 该源需要的 Key 已配 | `.env` | 同上（`is_enabled()` 同时检查 Key） |
+| ③ `data_sources.enabled = 1` | 数据库（可在 `/ops` 页切） | 调度器读到 0 就跳过本轮 |
 
-### **v2.0 需新增的字段（需同步 `.env.example`�?*
+**危害形态**：三者缺一都不跑，但该源在
+`GET /api/v1/collections/sources` 里**依然会被列出**，只是
+`config_ready=false`。排查「为什么没发现新项目」时不看这一列，
+就会去翻一个**从未运行过**的源的日志 —— 翻不到任何错误，
+于是误判成"采集是好的，问题在分析侧"，方向整个跑偏。
 
-```bash
-# GitHub（计划新增）
-GITHUB_TOKEN=
+完整的门控规则表（开关名 + 是否需要 Key + 具体 env 变量名）
+见 `OPERATIONS.md §4.3`，那张表由门禁与 `is_enabled()` 源码逐项比对。
 
-# 链上数据（计划新增）
-ETHERSCAN_API_KEY=
-ALCHEMY_API_KEY=
-ALCHEMY_WEBHOOK_URL=
+### 4.2 Twitter 的特殊之处
 
-# CoinGecko（计划新增，可选付费）
-COINGECKO_API_KEY=
+**两个采集器共用一个开关和一个 Token**：`TWITTER_ENABLED` +
+`TWITTER_BEARER_TOKEN` 同时控制 `twitter_kol` 和 `twitter_keyword`，
+没法只开一个。
 
-# Galxe/Layer3（计划新增）
-GALXE_API_KEY=
-LAYER3_API_KEY=
-```
+`.env.example` 里还有 `TWITTER_API_KEY` / `TWITTER_API_SECRET` 两个键 ——
+**采集器根本不读它们**，填了 twitter 依然不会跑。
 
-> 注：当前 `backend/app/config.py` �?`.env.example` 均无上述字段，需后续同步添加�?
-### **安全实践**
-- �?所�?Key 存于 `.env`（不提交 git�?- �?提供 `.env.example` 模板
-- �?Key 使用量监控告警（采集场景用量高，需密切监控�?- �?Prompt Injection 防御（`SECURITY.md §10.1`，外部数据进�?LLM 分析前需隔离�?
-### **速率限制管理**
+### 4.3 本机实测就绪状态（2026-08-23）
 
-```python
-# backend/app/utils/rate_limiter.py（计划实现位置）
-class RateLimiter:
-    """令牌桶：每个数据源独立限流，超限自动降级/排队"""
-    async def acquire(self, source: str) -> bool
-    async def wait_for_slot(self, source: str)
-    async def get_usage(self, source: str) -> dict
-```
+已配 Key：`GITHUB_TOKEN`、`CRYPTORANK_API_KEY`、`ETHERSCAN_API_KEY`、
+`COINGECKO_API_KEY`。
+未配：`TWITTER_BEARER_TOKEN`、`GALXE_API_KEY`、`LAYER3_API_KEY`、
+`ROOTDATA_API_KEY`。
 
-| 数据�?| 速率限制 | 超限处理 |
-|--------|----------|----------|
-| DefiLlama | 10 req/s（自限） | 排队等待 |
-| GitHub | 5,000 req/h | 排队等待 + 缓存 |
-| CoinGecko | 30 req/min（免费） | 降级，跳过代币验�?|
-| Twitter | �?Tier | 优先级队列，丢弃低价值查�?|
-| Etherscan | 5 req/s | 排队等待 |
+于是 `config_ready=true` 的是 5 个：
+`defillama` `github` `coingecko` `cryptorank` `etherscan`。
+
+**代码默认值（完全不给 `.env`）下只有 3 个为 true**：
+`defillama` `github` `coingecko` —— 因为只有这三个的 `*_ENABLED`
+默认是 `true`，其余 7 个默认 `false`。
 
 ---
 
-## 📊 预期成果
+## 5. 采集管道
 
-### **数据量预估（自动采集�?*
-
-```
-DefiLlama:    ~3,000 协议/日（全量），过滤�?~100-300 候�?�?GitHub:       ~500-1,000 仓库/日（按关键词�?Twitter:      ~1,000-5,000 推文/日（VC/KOL + 关键词）
-链上:         ~100-500 新合�?日（主流链）
-Galxe/Layer3: ~50-200 活动/�?─────────────────────────────────────
-去重后新项目: ~50-200/�?进入分析管道: ~20-50/日（初筛后）
-```
-
-### **成本预估**
+### 5.1 六个阶段
 
 ```
-Twitter API Basic:       $100/月（必需�?CoinGecko (可选付�?:    $0-129/�?Dune (可�?:             $0-399/�?Alchemy (链上):          $0（免费额度足�?MVP�?服务�?                  $50-100/�?─────────────────────────────────
-自动采集模式成本:        $150-700/�?```
+采集调度器（APScheduler，每源独立 cron，UTC）
+        │
+        ▼
+1. 拉取 (Fetch)        各 collector 的 collect() → CollectorResult
+        │
+        ▼
+2. 归一化 (Normalize)  name_key / sector_key 标准化
+        │
+        ▼
+3. 去重 (Deduplication) 按 dedup_key 合并多源命中，来源优先级仲裁
+        │
+        ▼
+4. 新项目识别          噪音过滤 + discovery_score 初筛
+        │              写入 raw_projects（processed=0）
+        ▼
+5. 信号聚合            多源信号写入 project_signals
+        │
+        ▼
+6. 分析管道（独立 cron，不由采集触发）
+                       Collector → Narrative → Team → Risk → Tokenomics
+                       → Scorer → Orchestrator
+```
 
-### **性能目标**
+> **第 5 步到第 6 步之间没有自动衔接。** `COLLECTION_AUTO_RUN_ENABLED`
+> 默认 `false`，两条链各按自己的 cron 走。上一版文档写的
+> 「`raw_projects` 新增 `processed=false` 记录 → 立即触发分析」**不成立**。
+
+### 5.2 去重来源优先级（实测自 `app/utils/normalize.py` `SOURCE_PRIORITY`）
+
+数字越小优先级越高，冲突时保留优先级高的那条记录的字段：
+
+<!-- source-priority:begin -->
+
+| 优先级 | 来源 |
+|---|---|
+| 0 | `manual` |
+| 1 | `api` |
+| 2 | `seed` |
+| 3 | `defillama` |
+| 4 | `coingecko` |
+| 5 | `github`、`rootdata` |
+| 6 | `cryptorank`、`galxe`、`layer3`、`etherscan` |
+| 7 | `twitter_kol` |
+| 8 | `twitter_keyword` |
+| 9 | `twitter` |
+| 99 | `unknown`（以及任何未登记的来源名） |
+
+<!-- source-priority:end -->
+
+> 上一版写的优先级链是 `seed > defillama > cryptorank > twitter` ——
+> 方向对，但**漏掉了 `manual` 和 `api` 这两个最高优先级**，
+> 也没写未知来源落 99。手动录入压过一切，这一点很重要：
+> 你在 UI 里改的字段不会被下一轮采集覆盖掉。
+
+### 5.3 噪音过滤（`app/collectors/noise.py`）
+
+在写入 `raw_projects` 之前先过一遍硬规则，导出的判据是：
+`CATEGORY_DENY`、`NAME_DENY_SUBSTRINGS`、`PARENT_DENY_SUBSTRINGS`、
+`SLUG_DENY_PREFIXES`，以及
+`is_listed_token_no_airdrop_signals` / `is_noise_project` /
+`is_noise_protocol` / `is_noise_raw_project`。
+
+其中 `is_listed_token_no_airdrop_signals` 只对
+`coingecko` / `cryptorank` / `etherscan` / `alchemy_webhook` 生效 ——
+这四个源会带回大量已上所代币，而已上所且没有任何空投信号的项目
+对本系统没有价值。
+
+### 5.4 `discovery_score`：**没有统一公式**（上一版最大的失真）
+
+上一版给了一条全局公式：
 
 ```
-采集延迟:      单源全量扫描 < 5 分钟
-发现 �?分析:   新项目入队后 < 1 小时内完成评�?分析速度:      �?10 项目/分钟（批量并行）
-去重准确�?    �?95%
-系统可用�?    �?99%
+discovery_score = 0.4 × tvl_score + 0.3 × github_score
+                + 0.2 × twitter_score + 0.1 × chain_score
 ```
+
+**代码里没有任何地方实现它。** 全仓搜不到 `twitter_score` 与
+`chain_score`（`chain_score` 只在 DefiLlama 内部作为"链数量分"存在，
+含义完全不同），也没有任何跨源汇总步骤。
+
+真实情况：**每个采集器各算各的**，权重、入参、上限都不一样。
+
+<!-- discovery-formula:begin -->
+
+| source_id | 计算方式（实测自代码） | 上限 |
+|---|---|---|
+| `defillama` | TVL 40% + 7 日趋势 20% + 链数量 15% + 元数据完整度 15% + 社交 10% | 1.0 |
+| `github` | stars 35% + forks 15% + 近期活跃 30% + 语言匹配 10% + 仓库成熟度 10%，再乘相关度 | `MAX_DISCOVERY_SCORE = 0.85`（关键词搜索命中压到 0.28） |
+| `coingecko` | **固定 0.1**（只做代币状态验证，不参与发现排序） | 0.1 |
+| `cryptorank` | 排名基准 + 排名加成 + 7 日动量（≤0.08）+ 成交量档（≤0.04） | `MAX_DISCOVERY_SCORE = 0.28` |
+| `rootdata` | 0.35 + 融资质量 × 0.45 + 加成项，再夹到 [0.2, 0.85] | 0.85 |
+| `etherscan` | `0.08 + (0.6×事件密度 + 0.4×独立地址) × 0.2` | `MAX_DISCOVERY_SCORE = 0.28` |
+| `galxe` | 0.3 起，按奖励类型 / 状态累加 | 1.0 |
+| `layer3` | 0.3 起，按奖励 / 链信息累加 | 1.0 |
+| `twitter_kol` | 来源权重 0.3 + 信号类型权重 + 互动量 × 0.25 | 1.0 |
+| `twitter_keyword` | 来源权重 0.1 + 信号类型权重 + 互动量 × 0.25 | 1.0 |
+
+<!-- discovery-formula:end -->
+
+**为什么几个源的上限被刻意压在 0.28**：分析阈值
+`DISCOVERY_SCORE_ANALYSIS_THRESHOLD = 0.3`。上限低于阈值就意味着
+**这个源单独永远不足以触发 LLM 分析**，只能贡献信号 ——
+`cryptorank` / `etherscan` / GitHub 关键词搜索都属于这一档。
+这是省 LLM 成本的设计，不是 bug。
+
+**阈值行为**：
+
+- `discovery_score ≥ 0.3` → 进入分析管道（写 `raw_projects`，`processed=0`）
+- `discovery_score < 0.3` → 仅存信号，不触发分析
+
+实测（615 行 `raw_projects`）：≥0.3 的 **106 行**，<0.3 的 **509 行**，
+即 **83% 的采集记录只贡献信号、从不触发分析**。
+这也是 `UNPROCESSED_RAW_RETENTION_DAYS=90` 这一档保留策略存在的原因 ——
+它们永远不会被标记 `processed=1`，没有这一档就会无限累积。
+
+### 5.5 各源实测产出（2026-08-23）
+
+<!-- measured-yield:begin -->
+
+| source_id | `raw_projects` 行数 | discovery_score 均值 | 区间 | 已 processed |
+|---|---|---|---|---|
+| `coingecko` | 268 | 0.1 | 0.1–0.1 | 0 |
+| `cryptorank` | 226 | 0.2084 | 0.2–0.28 | 0 |
+| `defillama` | 87 | 0.796 | 0.7295–0.92 | 87 |
+| `github` | 30 | 0.3523 | 0.1342–0.744 | 19 |
+| `etherscan` | 4 | 0.1135 | 0.094–0.16 | 4 未处理 |
+
+<!-- measured-yield:end -->
+
+读法：**`defillama` 是唯一稳定越过分析阈值的源**（均值 0.796，87/87 全部
+进了分析），`github` 部分越线（19/30），
+`coingecko` / `cryptorank` / `etherscan` 因为上限设计低于 0.3，
+一条都没进分析 —— 它们的价值在 `project_signals` 里。
+
+`project_signals` 分布：`coingecko/token_listed` 500、
+`cryptorank/market_momentum` 400、`cryptorank/token_listed` 400、
+`defillama` 的 `airdrop_hint`/`chain_activity`/`tvl` 各 300、
+`github/github_activity` 51、`etherscan` 的 `chain_activity`/`gas_usage` 各 5。
 
 ---
 
-## 🛡�?采集故障降级矩阵
+## 6. 双调度模型
 
-自动扫描依赖外部 API，必须定义故障降级策略。按故障等级分为 4 级：
+### 6.1 采集调度器：真实 cron（全部 UTC）
 
-### **故障等级定义**
+实测自 `settings`。`OPERATIONS.md §7.1` 有同一张表，由门禁逐条比对。
 
-| 等级 | 定义 | 触发条件 | 影响范围 |
-|------|------|----------|----------|
-| **L1：限�?* | API 接近或达到速率限制 | 429 响应或令牌桶 < 10% | 单源采集中断 |
-| **L2：故�?* | API 短时不可�?| 5xx 响应连续 �?3 次或超时 | 单源采集停止 |
-| **L3：停�?* | API 长时不可�?| 故障持续 > 1 小时 | 单源采集停摆，影响发现覆�?|
-| **L4：付费超�?* | 付费源额度耗尽 | 月度配额用尽 | 付费源停止（Twitter/链上�?|
+<!-- collection-cron:begin -->
 
-### **降级矩阵（按数据�?× 故障等级�?*
+| source_id | cron | 频率 |
+|---|---|---|
+| `defillama` | `0 8 * * *` | 每日 08:00 |
+| `github` | `30 8 * * *` | 每日 08:30 |
+| `coingecko` | `0 9 * * *` | 每日 09:00 |
+| `cryptorank` | `15 9 * * *` | 每日 09:15 |
+| `rootdata` | `45 9 * * *` | 每日 09:45 |
+| `galxe` | `0 10 * * *` | 每日 10:00 |
+| `layer3` | `30 10 * * *` | 每日 10:30 |
+| `etherscan` | `0 */6 * * *` | 每 6 小时 |
+| `twitter_kol` | `0 * * * *` | 每小时 |
+| `twitter_keyword` | `*/15 * * * *` | 每 15 分钟 |
 
-| 数据�?| L1 限流 | L2 故障 | L3 停服 | L4 付费超限 |
-|--------|---------|---------|---------|-------------|
-| **DefiLlama** | 排队等待 | 跳过本轮，下轮重�?| 降级：仅�?CoinGecko+GitHub 发现 | 不适用（免费） |
-| **GitHub** | 排队+缓存 | 跳过活跃度补�?| 降级：仅�?DefiLlama TVL 评估 | 不适用（免费额度足够） |
-| **CoinGecko** | 降级：跳过代币验�?| 标记 `has_token=unknown`，放行进分析 | 同左 + 告警 | 切换�?Demo API�?0/min�?|
-| **Twitter** | 优先级队�?| 跳过本轮关键词搜�?| 降级：仅保留 VC/KOL 轮询 | **停止 Twitter 采集**，仅保留其他�?|
-| **链上（Etherscan�?* | 排队等待 | 跳过地址活跃度补�?| 降级：仅�?DefiLlama TVL 交叉验证 | 不适用（免费额度足够） |
-| **链上（Alchemy webhook�?* | 不适用 | 重连 webhook | 告警，人工介�?| 切换�?Etherscan 轮询 |
-| **Galxe/Layer3** | 跳过本轮 | 跳过本轮 | 降级：无任务平台信号 | 不适用（免费） |
+<!-- collection-cron:end -->
 
-### **全局降级规则**
+调度器参数：`misfire_grace_time=3600`、`coalesce=True`、`max_instances=1`，
+时区 UTC。
 
-| 触发条件 | 全局降级动作 |
-|----------|-------------|
-| �?3 个核心源（DefiLlama/GitHub/CoinGecko/Twitter）同�?L3 | 系统进入"降级采集模式"：仅保留 DefiLlama + GitHub，停止其他源；告�?|
-| 所有采集源�?L3/L4 | 系统进入"维护模式"：停止采集调度器，仅响应手动输入与已有项目重跑；告警 |
-| 单日发现项目�?< 5（远低于 KPI 20/日） | 触发采集健康检查，告警人工介入 |
-| LLM 付费超限（`LLM_DAILY_BUDGET_USD` 耗尽�?| 自动降级为规则引擎（ADR-001 降级策略），LLM 采集继续 |
+> 上一版这张表里 GitHub / CoinGecko 写的是「事件触发（跟随 DefiLlama）」——
+> **不是**，它们各有独立 cron。另外上一版列的
+> 「Twitter 实时流 webhook/stream」和「链上 webhook 实时」两行：
+> Filtered Stream **从未实现**；链上 webhook 有接收端点，
+> 但不在采集调度里（见 §2 的 Alchemy 说明）。
 
-### **故障恢复**
+### 6.2 分析调度器
 
-- **自动恢复**：L1/L2 故障，下一�?cron 自动重试（指数退避）
-- **人工介入**：L3/L4 故障，告�?+ 运维 runbook（`OPERATIONS.md §5` 采集故障处理�?- **数据补偿**：故障恢复后，对故障期间漏采的源做一次全量回�?
----
+| 触发方式 | 真实情况 |
+|---|---|
+| 定时批量 | ✅ `CRON_EXPRESSION=0 8 * * *`（每日 08:00 UTC），一次最多 `ANALYSIS_RUN_LIMIT=100` 个项目 |
+| 手动整批 | ✅ `POST /api/v1/run` |
+| 采集完成后自动触发 | ❌ `COLLECTION_AUTO_RUN_ENABLED=false`，两条链解耦 |
+| 单项目重跑 | ❌ **`POST /re-score/{id}` 这个接口不存在** |
 
-## 📦 数据保留策略
+> **`POST /re-score/{id}` 是幽灵接口。** 46 个真实路由里没有它。
+> 鉴权表 `ADMIN_ONLY_PREFIXES` 里有 `/api/v1/re-score` 这个前缀，但它下面没有任何路由 ——
+> 于是调用它会命中鉴权中间件先返回 403，而不是 404。**403 比 404 更能骗人**：
+> 你会以为"接口在，只是我没权限"，然后去查 token，
+> 而真相是这个接口根本不存在。
 
-`raw_projects` / `project_signals` / `collection_logs` 数据量大，需明确保留与清理规则：
+### 6.3 归档调度器
 
-### **保留策略矩阵**
+`ARCHIVE_CRON=0 3 * * *`（每日 03:00 UTC，在采集窗口 08:00–10:30 之前跑完，
+避免和写入争锁）。
 
-| �?| 热数据（在线查询�?| 温数据（归档�?| 冷数据（删除�?| 清理频率 |
-|----|-------------------|---------------|---------------|----------|
-| `raw_projects` | 30 �?| 30-180 天（迁移至归档表 `raw_projects_archive`�?| > 180 �?| 每日 cron |
-| `project_signals` | 90 �?| 90-365 天（归档�?| > 365 �?| 每周 cron |
-| `collection_logs` | 90 �?| 不归�?| > 90 天直接删�?| 每周 cron |
-| `projects`（已分析�?| 永久 | 不适用 | 不适用 | 不清�?|
-| `scores`/`logs`（评分记录） | 永久 | 不适用 | 不适用 | 不清�?|
-
-### **归档机制**
-
-```sql
--- 每日 cron 执行（凌晨低峰期�?
--- 1. raw_projects 归档�?0 天前未处理的采集记录
-INSERT INTO raw_projects_archive SELECT * FROM raw_projects
-WHERE discovered_at < datetime('now', '-30 days');
-DELETE FROM raw_projects WHERE discovered_at < datetime('now', '-30 days');
-
--- 2. project_signals 归档�?0 天前信号
-INSERT INTO project_signals_archive SELECT * FROM project_signals
-WHERE captured_at < datetime('now', '-90 days');
-DELETE FROM project_signals WHERE captured_at < datetime('now', '-90 days');
-
--- 3. collection_logs 清理�?0 天前日志直接删除
-DELETE FROM collection_logs WHERE started_at < datetime('now', '-90 days');
-```
-
-### **存储预估**
-
-| �?| 日增�?| 月增�?| 年增量（含归档） |
-|----|--------|--------|------------------|
-| `raw_projects` | ~200 行（50 项目 × 4 源） | ~6,000 �?| ~72,000 行（�?18K + 归档 54K�?|
-| `project_signals` | ~1,000 �?| ~30,000 �?| ~360,000 行（�?90K + 归档 270K�?|
-| `collection_logs` | ~30 行（每日每源 1 条） | ~900 �?| ~11,000 行（仅热，不归档�?|
-
-> 单行平均 1KB，年增量�?450MB，SQLite 可承受。PostgreSQL 切换后无压力�?
----
-
-## 📏 采集质量评估指标
-
-�?去重准确�?外，采集场景需独立的采集质量指标体系：
-
-### **采集质量 6 维度**
-
-| 指标 | 定义 | 目标�?| 度量方式 | 告警阈�?|
-|------|------|--------|----------|----------|
-| **误报�?* | 不该进分析却进了的项目占�?| < 10% | 分析�?IGNORE �?+ discovery_score 虚高 | > 20% 触发规则调优 |
-| **漏报�?* | 该发现却没发现的项目占比 | < 15% | 事后手动补充的项目中，采集源应覆盖但未覆盖的比例 | > 25% 触发源覆盖检�?|
-| **信号新鲜�?* | 信号从产生到入库的延迟中位数 | < 1 小时 | `captured_at - 原始事件时间` | > 4 小时告警 |
-| **源覆盖率** | 进入分析的项目中�?�?2 个源命中的比�?| �?30% | 多源命中项目�?/ 总分析项目数 | < 20% 告警源单一 |
-| **采集稳定�?* | 采集成功�?| �?95% | `collection_logs.status='success'` 占比 | < 90% 告警 |
-| **去重准确�?* | 1 - 误合并率 - 漏合并率 | �?95% | 人工抽检 + 多源 dedup_key 一致性校�?| < 90% 告警 |
-
-### **质量评估流程**
-
-1. **每日**：采集稳定性、信号新鲜度、源覆盖率自动统计（写入 `collection_logs` 聚合�?2. **每周**：误报率（通过 IGNORE 档反推）、去重准确率（人工抽检 50 个项目）
-3. **每月**：漏报率（统计手动补充项目中应被自动发现的比例）
-4. **每月**：输出采集质量报告至 `evaluation/collection/`（与 LLM 评估并列�?
-### **质量不达标处�?*
-
-- 误报率高 �?调高 `discovery_score` 阈值或收紧排除规则
-- 漏报率高 �?增加数据源或扩大关键词覆�?- 信号新鲜度差 �?提高采集频率或切换实时流
-- 源覆盖率�?�?接入更多交叉验证�?
----
-
-## ⚠️ 风险与应�?
-| 风险 | 影响 | 应对措施 |
-|------|------|----------|
-| 采集噪音（低质量项目�?| 浪费分析资源 | 硬规则初筛（TVL/活跃度阈值）+ Agent 深度分析 |
-| API 限流 | 采集中断 | 速率限制�?+ 降级策略 + 重试机制 |
-| API 成本超支 | 预算压力 | 成本监控告警 + 分级接入（免费源优先�?|
-| 多源数据冲突 | 评分不一�?| 去重归一�?+ 来源优先级仲�?|
-| 存储增长 | 数据库膨胀 | 数据保留策略（见上方"数据保留策略"章节�? 定期归档 |
-| Prompt Injection | LLM 被劫�?| `SECURITY.md §10.1` 输入隔离 + 输出约束 |
-| 虚假项目（采集误判） | 误报增多 | 多源交叉验证 + 技术指标硬过滤 |
-| 单点源故�?| 发现覆盖下降 | 采集故障降级矩阵（见上方章节�? 多源冗余 |
+⚠️ **至今没有观测到一次真实执行**：`archive_runs` 表 0 行，
+两张归档表也都是 0 行 —— 本地数据还没有记录超过保留期，
+每次触发都"无事可做"。生产上这是一条**未验证路径**。
 
 ---
 
-## 🛣�?实施优先�?
-### **MVP/V1 阶段（核心采集能力）**
+## 7. 采集表 Schema
 
-```
-1. 采集基础设施：采集表 + 采集调度�?+ 速率限制�?2. DefiLlama Collector（免费、高价值，首选）
-3. GitHub Collector（活跃度，免费）
-4. CoinGecko Collector（代币验证，免费�?5. 新项目识别规则（未发�?+ 活跃度过滤）
-6. 采集 �?分析自动衔接
-```
+上一版说「以下表为 v2.0 新增，当前 `DATABASE_DDL.md` **不含**这些表，
+需后续同步」。**这件事已经做完了**：`DATABASE_DDL.md` §2.13–2.19
+有全部 4 张采集表 + 2 张归档表 + `projects` 扩展字段的完整 DDL。
+**以 `DATABASE_DDL.md` 为准，本节只列结构要点，不再重复 DDL。**
 
-验证：系统每日自动发�?20-50 个候选项目并产出评分
+<!-- collection-tables:begin -->
 
-### **V1+ 阶段（实时信号增强）**
+| 表 | 实测行数 | 用途 | DDL 位置 |
+|---|---|---|---|
+| `data_sources` | 5 | 数据源注册表（运维开关 `enabled` 在这里） | `DATABASE_DDL.md §2.13` |
+| `raw_projects` | 615 | 采集原始项目池 | `DATABASE_DDL.md §2.14` |
+| `project_signals` | 2261 | 项目信号聚合 | `DATABASE_DDL.md §2.15` |
+| `collection_logs` | 20 | 采集运行日志 | `DATABASE_DDL.md §2.16` |
+| `raw_projects_archive` | 0 | `raw_projects` 归档 | `DATABASE_DDL.md §2.18` |
+| `project_signals_archive` | 0 | `project_signals` 归档 | `DATABASE_DDL.md §2.19` |
 
-```
-7. Twitter Collector（VC/KOL 监听，付费）
-8. 链上 Collector（新合约监控，webhook�?9. Galxe/Layer3 Collector（任务信号）
-10. CryptoRank Collector（融资数据）
-```
+<!-- collection-tables:end -->
 
-提升：实时早期信�?+ 链上活跃度验�?
-### **V2 阶段（完善与社区信号�?*
+比上一版的设计多出来的真实字段（上一版没有）：
 
-```
-11. Twitter Filtered Stream（实时流，需 Pro Tier�?12. Discord/Medium/Reddit Collector（社区信号）
-13. 采集质量优化（信号权�?+ 去噪模型�?```
-
-完善：全维度信号覆盖 + 实时�?
----
-
-## 🔗 关联文档影响清单（需同步对齐�?
-| 文档 | 影响�?| 对齐动作 |
-|------|--------|----------|
-| `ENGINEERING_ROADMAP.md §6.2` | 数据源以手动输入为主 | 重写为自动采集为�?|
-| `DATABASE_DDL.md` | 当前无采集表 | 新增 4 张采集表 + projects 扩展字段 |
-| `SECURITY.md §10.2` | Collector 禁止外部 HTTP | 调整为允许采集源白名�?HTTP |
-| `.env.example` | 缺采集源配置 | 补充 GitHub/链上/CoinGecko/Galxe �?key |
-| `backend/app/config.py` | 缺采集源配置字段 | 同步新增配置字段 |
-| `API_SPEC.md` | �?`/run` 手动输入 | 补充 `/discoveries` 查询自动发现项目 |
-| `docs/adr/` | 无方向反�?ADR | 新增 ADR-012 |
+- `raw_projects` 多了 `quarantined` / `quarantine_reason` ——
+  隔离机制（`/api/v1/quarantine`）落地后加的。
+- `projects` 的 4 个扩展字段都已存在：
+  `discovery_source`、`discovered_at`、`auto_discovered`、`signal_count`。
 
 ---
 
-## �?下一步行�?
-1. **新增 ADR-012**：记录方向反转决策（手动 �?自动扫描�?2. **同步 DATABASE_DDL.md**：新增采集表 schema
-3. **同步 .env.example + config.py**：新增采集源配置字段
-4. **同步 ENGINEERING_ROADMAP.md §6.2**：数据源章节重写
-5. **实现采集基础设施**：采集调度器 + 速率限制�?+ 采集表迁�?6. **接入 DefiLlama Collector**：首个核心采集源
+## 8. API Key 管理
+
+### 8.1 上一版的「需新增字段」清单已全部落地
+
+上一版把 `GITHUB_TOKEN` / `ETHERSCAN_API_KEY` / `ALCHEMY_API_KEY` /
+`ALCHEMY_WEBHOOK_URL` / `COINGECKO_API_KEY` / `GALXE_API_KEY` /
+`LAYER3_API_KEY` 列为「计划新增」，并说
+「当前 `config.py` 与 `.env.example` 均无上述字段」。
+
+**这些字段现在全部存在**，`config.py` 和 `.env.example` 都有。
+配置模板的权威说明见 `.env.example` 本身与 `OPERATIONS.md §9.4`
+（那一节记录了模板此前 47 处与代码不符的失真，以及现在钉住它的门禁）。
+
+### 8.2 配了也不生效的键（别浪费时间）
+
+| 键 | 真实情况 |
+|---|---|
+| `DUNE_API_KEY` | 配置字段存在，但**没有任何 collector 读它**。要接 Dune 得先写 collector。 |
+| `TWITTER_API_KEY` / `TWITTER_API_SECRET` | 采集器不读，只认 `TWITTER_BEARER_TOKEN`。 |
+| `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | 三个键**无任何代码读取**，HTTP 层限流未实现（见 `OPERATIONS.md §11`）。注意这跟 §8.4 的**采集器**限流是两回事。 |
+
+### 8.3 安全实践
+
+- ✅ 所有 Key 存于 `.env`（不提交 git），模板为 `.env.example`
+- ✅ 日志与接口输出经 `app/utils/redact.py` 脱敏
+- ✅ Prompt Injection 防御（`SECURITY.md §10.1`）：外部数据进 LLM 前隔离
+- ❌ **Key 使用量监控告警未实现**：`data_sources.api_calls_today` 字段在，
+  但实测 5 个源全是 0，没有告警规则消费它
+
+### 8.4 采集器速率限制（**已实现**，位置和上一版说的不一样）
+
+真实位置 `backend/app/collectors/rate_limiter.py`
+（上一版写的 `app/utils/rate_limiter.py` 不存在），
+实现是令牌桶 `TokenBucketRateLimiter`，超限抛 `RateLimitExceededError`。
+
+实测默认配置（`requests_per_second` / `burst` / `daily_limit`）：
+
+<!-- rate-limits:begin -->
+
+| source_id | req/s | burst | 日限额 |
+|---|---|---|---|
+| `defillama` | 2.0 | 5 | 无 |
+| `github` | 1.0 | 3 | 无 |
+| `cryptorank` | 1.0 | 3 | 无 |
+| `rootdata` | 0.8 | 2 | 无 |
+| `coingecko` | 0.5 | 2 | **10000** |
+| `galxe` | 0.5 | 2 | 无 |
+| `layer3` | 0.5 | 2 | 无 |
+| `etherscan` | 0.2 | 2 | 无 |
+| `twitter` | 0.2 | 1 | 无 |
+| `twitter_kol` | 0.2 | 1 | 无 |
+| `twitter_keyword` | 0.2 | 1 | 无 |
+
+<!-- rate-limits:end -->
+
+未列出的源回落到基准配置 `1.0 req/s` / `burst 5` / 无日限额。
+`coingecko` 是唯一设了日限额的源（免费档额度最紧）。
 
 ---
 
-*更新�?2026-07-09 · v2.0 由方向反转为自动扫描全网定位，保留手动输入作为补充能�?
+## 9. 采集质量与故障降级
+
+### 9.1 真实存在的告警阈值
+
+上一版列了一套 6 维度「采集质量指标」（误报率 / 漏报率 / 信号新鲜度 /
+源覆盖率 / 采集稳定性 / 去重准确率），并说每日/每周/每月分别统计。
+**实际实现的只有 5 个阈值**，在
+`app/collectors/metrics.py` 的 `CollectionMetrics.check_alerts()` 里，
+逐源检查、命中就写一条 `collection.alert` 警告日志：
+
+<!-- alert-thresholds:begin -->
+
+| 指标 | 阈值 | 方向 |
+|---|---|---|
+| `success_rate` | 0.95 | 低于告警（且要求 `total_runs > 0`） |
+| `avg_latency_ms` | 30000.0 | 高于告警 |
+| `freshness_minutes` | 120.0 | 高于告警 |
+| `coverage_rate` | 0.5 | 低于告警 |
+| `duplicate_rate` | 0.5 | 高于告警 |
+
+<!-- alert-thresholds:end -->
+
+**上一版承诺但不存在的部分**：
+
+| 上一版说的 | 真实情况 |
+|---|---|
+| 误报率 / 漏报率 / 去重准确率统计 | ❌ 无任何实现 |
+| 「每月输出采集质量报告至 `evaluation/collection/`」 | ❌ **该目录不存在**（只有 `evaluation/llm/`），从未产出过报告 |
+| 「人工抽检 50 个项目」流程 | ❌ 从未执行 |
+
+`OPERATIONS.md §8.2` 有同一张阈值表，由门禁与
+`check_alerts()` 源码比对。
+
+### 9.2 故障降级：设计与实现的差距
+
+上一版给了一张 4 级（L1 限流 / L2 故障 / L3 停服 / L4 付费超限）
+× 7 个源的降级矩阵，还有 4 条全局降级规则。**这是设计意图，不是实现。**
+
+真实实现的降级只有三层，且都是"局部跳过"而不是"全局切换模式"：
+
+| 真实机制 | 在哪里 |
+|---|---|
+| 单源令牌桶限流，超限抛 `RateLimitExceededError` | `collectors/rate_limiter.py` |
+| 单源采集失败记 `collection_logs.status`（`error` / `partial`），不影响其他源 | `collectors/persistence.py` |
+| HTTP 层熔断（连续 5 次失败断开 60 秒）+ 缓存 | `utils/fetcher.py`（`FETCHER_CIRCUIT_BREAKER_*`） |
+
+**不存在的**：「降级采集模式」、「维护模式」、
+「单日发现 < 5 触发健康检查」这三条全局规则没有任何代码；
+`collection_logs.status` 里确实有 `partial` 这个值（实测 `etherscan` 有 3 条），
+但它只是单次运行的结果标记，不会触发任何模式切换。
+
+**实测各源运行结果**（`collection_logs` 20 行）：
+
+| source_id | success | partial | error |
+|---|---|---|---|
+| `defillama` | 3 | 0 | 1 |
+| `coingecko` | 2 | 0 | 1 |
+| `cryptorank` | 2 | 0 | 1 |
+| `github` | 2 | 0 | 1 |
+| `etherscan` | 3 | 3 | 1 |
+
+> 每个源都恰好有 1 条 `error`：那是首次接入时的配置调试，不是持续故障。
+
+### 9.3 LLM 成本降级：**这条是假的**
+
+上一版说「LLM 付费超限（`LLM_DAILY_BUDGET_USD` 耗尽）→ 自动降级为规则引擎」。
+
+**`LLM_DAILY_BUDGET_USD` 不拦截任何调用**，也没有任何 token / 成本指标
+在统计用量。真实存在的成本闸门只有两个：
+
+1. `/api/v1/run` 的频率限制（LLM 开启时 1 次/小时，关闭时 10 次/小时）
+2. `LLM_DISCOVERY_SCORE_THRESHOLD=0.7`：只有 `discovery_score ≥ 0.7`
+   的项目才启用 LLM（ADR-012 分级）
+
+见 `OPERATIONS.md §12.3`。
+
+---
+
+## 10. 数据保留策略
+
+以 `DATABASE_DDL.md §6` 与 `.env.example` 为准，这里列实测生效值：
+
+<!-- retention:begin -->
+
+| 表 | 热数据 | 归档 | 归档表保留 | 配置项 |
+|---|---|---|---|---|
+| `raw_projects`（已立项 `processed=1`） | 30 天 | → `raw_projects_archive` | 180 天后删 | `RAW_PROJECTS_RETENTION_DAYS=30` |
+| `raw_projects`（未过阈值 `processed=0`） | 90 天 | → `raw_projects_archive` | 180 天后删 | `UNPROCESSED_RAW_RETENTION_DAYS=90` |
+| `project_signals` | 90 天 | → `project_signals_archive` | 365 天后删 | `PROJECT_SIGNALS_RETENTION_DAYS=90` |
+| `collection_logs` | 90 天 | 不归档 | — | `COLLECTION_LOGS_RETENTION_DAYS=90` |
+| `data_sources` | 永久（配置表） | — | — | — |
+| `projects` | 永久 | — | — | — |
+
+<!-- retention:end -->
+
+归档表保留期：`RAW_ARCHIVE_RETENTION_DAYS=180`、
+`SIGNALS_ARCHIVE_RETENTION_DAYS=365`（超期直接删除，无下一级归档）。
+
+> **`processed=0` 单独一档的原因**（上一版没有这一档）：
+> 未过分析阈值的记录永远不会被标记 `processed=1`，所以不满足
+> 「已立项 30 天」那个条件。实测它们占 `raw_projects` 的 **83%**，
+> 没有这一档就会无限累积（按当前速率 1 年约 16.8 万行 / 76 MB）。
+
+⚠️ **归档从未真实执行过**（见 §6.3）：两张归档表和 `archive_runs` 全是 0 行。
+
+---
+
+## 11. 还没做的（**别当成能用的功能**）
+
+| 项 | 状态 |
+|---|---|
+| Discord / Medium / Mirror / Reddit collector | ❌ 无任何代码 |
+| Twitter Filtered Stream（实时流） | ❌ 未实现（需 Pro Tier） |
+| 采集完成自动触发分析 | ❌ `COLLECTION_AUTO_RUN_ENABLED=false` |
+| `POST /re-score/{id}` 单项目重跑 | ❌ **接口不存在**（前缀在鉴权表里，会先返回 403 —— 见 §6.2） |
+| 误报率 / 漏报率 / 去重准确率统计 | ❌ 无实现 |
+| `evaluation/collection/` 采集质量周报 | ❌ 目录不存在 |
+| 4 级 × 7 源全局降级矩阵 | ❌ 仅有单源跳过 + HTTP 熔断（§9.2） |
+| `LLM_DAILY_BUDGET_USD` 成本拦截 | ❌ 配置项存在但不生效（§9.3） |
+| Key 用量监控告警 | ❌ `api_calls_today` 字段在但恒为 0，无告警消费 |
+| 归档任务真实执行 | ⚠️ 逻辑与调度都在，但从未命中保留期 |
+| Alchemy Webhook 纳入采集调度 | ⚠️ 端点在，但不在 registry / 不参与调度 |
+| `DUNE_API_KEY` 对应的 collector | ❌ Key 字段在，collector 不存在 |
+
+---
+
+## 12. 上一版本（v2.0）的失真记录
+
+留着这一节是因为：**这些错误能存活这么久，靠的是"这个文件已经登记为
+编码损坏，所以没人读它"**。登记豁免掩盖的不只是字节问题，还有内容问题。
+写下来，也让门禁有反向断言的靶子。
+
+### 12.1 10 个采集器路径全错，且全部标着「计划实现位置」
+
+上一版对每个采集器写
+`# backend/app/collectors/{source}_collector.py（计划实现位置）`。
+真实文件**没有 `_collector` 后缀**，而且类名也不一样
+（上一版的 `ChainCollector` / `QuestCollector` / `TwitterCollector`
+对应的真实类是 `EtherscanCollector` / `GalxeCollector` + `Layer3Collector` /
+`TwitterKolCollector` + `TwitterKeywordCollector`）。
+
+**危害形态**：照文档去找代码，10 个路径 10 个都不存在 ——
+读者会以为"采集器还没写"，于是重复实现一遍已经在跑的东西。
+正确落点见 §3。
+
+### 12.2 `discovery_score` 的统一公式不存在
+
+上一版给了
+`0.4×tvl + 0.3×github + 0.2×twitter + 0.1×chain`。
+全仓搜不到 `twitter_score` / `chain_score` 这样的跨源汇总，
+每个采集器各算各的（§5.4）。
+
+**危害形态**：这条公式看起来足够具体，会让人以为可以靠调这 4 个权重
+统一控制发现质量。真要调，得逐个改 10 个采集器里 10 套不同的算法 ——
+而且几个源的上限被刻意压在 0.3 以下（成本设计），
+不知道这件事就会误判成"这些源坏了"。
+
+### 12.3 `POST /re-score/{id}` 是幽灵接口
+
+46 个真实路由里没有它。而 `/api/v1/re-score` 前缀在
+`ADMIN_ONLY_PREFIXES` 里，所以调用会先撞鉴权中间件返回 **403 而不是 404**。
+**403 比 404 更能骗人**：你会以为接口在、只是权限不对，然后去查 token。
+
+### 12.4 「事件触发」的调度关系是假的
+
+上一版说 GitHub / CoinGecko「跟随 DefiLlama 事件触发」，
+并说 `raw_projects` 新增记录会「立即触发分析」。
+真实情况：每个源独立 cron（§6.1），采集与分析两条链**完全解耦**
+（`COLLECTION_AUTO_RUN_ENABLED=false`）。
+
+**危害形态**：以为"采集完就会自动分析"，于是采集跑完不见新评分时
+去查分析 Agent 的 bug，而真相是分析调度器要等到自己的 cron 才跑。
+
+### 12.5 速率限制器路径错
+
+上一版写 `backend/app/utils/rate_limiter.py` —— 不存在。
+真实位置 `backend/app/collectors/rate_limiter.py`（§8.4）。
+
+### 12.6 「需同步新增」的清单其实早已完成
+
+上一版有大量「（计划新增）」「需后续同步」的字段与表：
+7 个 API Key 字段、4 张采集表、`projects` 4 个扩展字段、ADR-012。
+**全部已完成**（ADR-012 就是 `docs/adr/ADR-012-system-direction-auto-scan.md`）。
+
+**危害形态**：一份把已完成的事持续标为「待办」的文档，
+会让人把时间花在重做上，也会让真正的待办（§11 那张表）失去可信度 ——
+读者发现清单不准之后，会连准的部分一起不信。
+
+### 12.7 6 维度采集质量体系与 4 级降级矩阵是设计稿
+
+上一版把它们写得像现状（含具体告警阈值和"每月人工抽检 50 个项目"）。
+真实实现见 §9.1 / §9.2：只有 5 个阈值 + 单源跳过 + HTTP 熔断。
+
+### 12.8 保留策略缺了最重要的一档
+
+上一版的保留矩阵只按"表"分档，没有区分
+`processed=1` 与 `processed=0`。而实测 **83% 的采集记录永远不会
+被标记 `processed=1`** —— 按上一版的规则它们不满足任何归档条件，
+会无限累积。真实实现补了 `UNPROCESSED_RAW_RETENTION_DAYS=90` 这一档（§10）。
+
+### 12.9 P2 源被写成「自动采集」
+
+Discord / Medium / Mirror / Reddit 在优先级矩阵里都填了
+「自动采集（RSS）」「自动采集（讨论爬取）」这样的接入方式，
+读起来像已接入。**四个源都没有任何代码。**
+
+---
+
+## 13. 关联文档
+
+| 文档 | 关系 |
+|---|---|
+| `docs/adr/ADR-012-system-direction-auto-scan.md` | 方向反转决策（手动 → 自动扫描） |
+| `docs/DATABASE_DDL.md` §2.13–2.19、§6 | 4 张采集表 + 2 张归档表的权威 DDL 与保留策略 |
+| `docs/OPERATIONS.md` §4 | 采集运维：源门控规则表（§4.3）、cron（§7.1）、告警阈值（§8.2） |
+| `docs/OPERATIONS.md` §9.4 | `.env.example` 的失真记录与门禁 |
+| `docs/API_SPEC.md` | 采集相关接口：`/collections/sources`、`/collections/{id}/trigger`、`/discoveries` |
+| `docs/SECURITY.md` §10 | 外部数据进 LLM 前的隔离要求 |
+| `.env.example` | 全部采集配置的权威模板 |
+
+---
+
+_本文档所有数字、路径、类名、公式、cron、阈值均于 2026-08-23 实测取得；
+由 `backend/tests/test_data_source_strategy_parity.py` 双向门禁钉住。_

@@ -200,22 +200,27 @@ Trivy                     pass    3s
   dependabot PR #3 已关闭（nanoid 修复已 cherry-pick 进 #4）。
   **master 实测三个 workflow（`CI` / `Security Scan` / `Docs Link Check`）
   全部 success —— 2026-08-09 以来第一次全绿。**
-- **文档编码损坏三型，现只剩一型的 498 处**（2026-08-23 更新）：
-  - 一型（非法 UTF-8）原 1116 处：`OPERATIONS.md`（404）与 `OBSERVABILITY.md`（214）
-    已通过**语义重写 + 双向门禁**修完 —— 不是逐字节恢复，而是对着运行中的代码
-    重写一遍，再用 pytest 钉住文档与代码一致。**剩 `DATA_SOURCE_STRATEGY.md`
-    的 498 处**，无干净历史底本，将按同一套办法处理。
+- **文档编码损坏三型全部清零**（2026-08-23 更新）：
+  - 一型（非法 UTF-8）1116 处：`OPERATIONS.md`（404）、`OBSERVABILITY.md`（214）、
+    `DATA_SOURCE_STRATEGY.md`（498）**全部通过语义重写 + 双向门禁修完** ——
+    不是逐字节恢复，而是对着运行中的代码重写一遍，
+    再用 pytest 钉住文档与代码一致（17 + 39 + 23 条断言）。
   - 二型（整字变 `?`）`docs/API_SPEC.md` 70 处 → **2026-08-22 已修完，豁免清零**。
     修的过程中顺带查出 13 条根本不存在的端点和若干虚构字段。
   - 三型（字面 U+FFFD）`docs/SYSTEM_DIRECTION_CHANGE.md` 2 处 →
     **2026-08-23 已修完，豁免清零**。处理方式是把无法确定的装饰 emoji
     **直接删掉**，而不是猜一个补上 —— 补一个会让文档看起来从未损坏过，
     下一个人分不清哪个 emoji 是原作者选的。
-  - 二型与三型的豁免清单现在都由测试**正面钉住必须为空**
-    （`test_mojibake_registry_is_empty` / `test_replacement_registry_is_empty`）。
+  - **三份豁免清单现在都由测试正面钉住必须为空**
+    （`test_type1_registry_is_empty` / `test_mojibake_registry_is_empty` /
+    `test_replacement_registry_is_empty`），另有三条全仓扫描
+    （实测 500 个文本文件，0 处损坏）。
     往清单里加文件是倒退，会当场变红 —— 因为豁免掩盖的不只是字节问题，
-    更是内容问题（API_SPEC.md 那 13 条幽灵端点就是这么藏住的）。
-  - 已挂 pre-commit 钩子防复发，三型都拦。详见 `docs/ENCODING_REPAIR.md`。
+    更是内容问题（API_SPEC.md 那 13 条幽灵端点、DATA_SOURCE_STRATEGY.md 那
+    10 个全错的采集器路径，都是这么藏住的）。
+  - **那套自动修复工具最终一处也没用于交付**：它最多能定 56.4%，
+    价值在于量出「自动修复不可行」这个结论。详见 `docs/ENCODING_REPAIR.md`。
+  - 已挂 pre-commit 钩子防复发，三型都拦。
 - **箭头推断规则已按实测收紧**（原 92.34% → 留一法 100%）。
   原规则"前缀 e286 一律填 `→`"在 140 个文档上平均每 13 处写错 1 个字。
   改成"要有本文档证据（含 git 底本）+ 独行箭头弃权"后达到 582/582。

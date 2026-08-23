@@ -7,10 +7,9 @@ Reference:
 - backend/app/cache.py
 """
 
-import time
-
 import pytest
 
+import app.cache as cache_module
 from app.cache import (
     SectorCountCache,
     get_sector_count_cache,
@@ -38,12 +37,35 @@ class TestSectorCountCache:
         cache.put("DeFi", 42)
         assert cache.get("DeFi") == 42
 
-    def test_ttl_expiry(self):
-        """TTL 过期后返回 None。"""
-        cache = SectorCountCache(ttl=0.05, max_size=10)  # 50ms TTL
+    def test_ttl_expiry(self, monkeypatch):
+        """TTL 过期后返回 None。
+
+        **不用 `time.sleep` 等真实时间**，改为注入假时钟。
+
+        原来的写法是 `TTL=50ms` + `sleep(60ms)`，在本机全量套件里实测约
+        **12.5% 的概率变红**（4000 次采样里 499 次 sleep 后 monotonic 只走了
+        不到 50ms，最差只走 46ms）。根因不在缓存代码，而在 Windows 上
+        `time.monotonic()` 由 `GetTickCount64()` 实现、**分辨率是 15.625ms**：
+        墙钟确实睡够了 60ms，但缓存读到的 monotonic 差值可能只有 46ms，
+        于是判定「还没过期」。
+
+        **一个依赖时钟分辨率的断言不是断言** —— 它在不同操作系统、
+        不同负载下结论不同。加大 sleep 只是把翻红概率压小，
+        并没有消除随机性，而且让套件变慢。注入假时钟才是确定性的做法：
+        既测到了真正要测的逻辑（过期判定），又完全不受时钟精度影响。
+        """
+        clock = [1000.0]
+        monkeypatch.setattr(cache_module.time, "monotonic", lambda: clock[0])
+
+        cache = SectorCountCache(ttl=0.05, max_size=10)
         cache.put("DeFi", 5)
-        time.sleep(0.06)
-        assert cache.get("DeFi") is None
+        assert cache.get("DeFi") == 5, "同一时刻读取应命中"
+
+        clock[0] += 0.049
+        assert cache.get("DeFi") == 5, "TTL 未到就失效说明过期判定过于激进"
+
+        clock[0] += 0.002  # 累计 0.051 > TTL 0.05
+        assert cache.get("DeFi") is None, "超过 TTL 后必须失效"
 
     def test_invalidate(self):
         """写时失效：invalidate 后缓存项消失。"""

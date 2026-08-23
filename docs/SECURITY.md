@@ -268,7 +268,11 @@
 - 工具以显式白名单注入 Agent 实例（构造函数参数），不通过全局 registry 自由取用。
 - `backend/app/agents/base.py`（计划实现位置）定义 `allowed_tools: list[str]`，基类在调用前校验工具名 ∈ 白名单，否则抛 `PermissionError`。
 - 外部 HTTP 调用统一经 `backend/app/http_client.py`（计划实现位置）出口，校验域名 ∈ 白名单，便于审计与限流（§10.3）。
-- 采集场景的速率限制由 `backend/app/utils/rate_limiter.py`（计划实现位置）令牌桶控制，超限自动降级（见 `DATA_SOURCE_STRATEGY.md §采集故障降级矩阵`）。
+- 采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的令牌桶
+  （`TokenBucketRateLimiter`）控制，**已实现**，逐源默认值见
+  `DATA_SOURCE_STRATEGY.md §8.4`。超限抛 `RateLimitExceededError`。
+  ⚠️ 注意「超限自动降级」只有**单源跳过 + HTTP 熔断**两层，
+  没有全局降级矩阵 —— 详见 `DATA_SOURCE_STRATEGY.md §9.2`。
 
 ### 10.3 Sandbox 隔离
 
