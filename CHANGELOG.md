@@ -8,6 +8,35 @@
 
 ## [Unreleased]
 
+### Fixed — `FARM/WATCH/IGNORE` 在前端抄了 5 遍，其中一处漏项会让图表百分比全错（2026-08-23，实测）
+
+标签真值是 `app/agents/scorer.py::LABEL_THRESHOLDS`。前端把它抄了 **5 处**，
+彼此之间没有任何同步机制：
+
+| 位置 | 缺一项的后果 |
+|---|---|
+| `lib/types.ts` `Label` 联合 | TS 会挡住，**这一处是安全的** |
+| `lib/format.ts` `LABEL_ZH` | 显示英文原文 |
+| `app/portfolio` `LABEL_COLOR` | 退回中性灰 |
+| `app/collections` `LABEL_FILTERS` | **那个标签的项目筛不出来，页面上等于不存在** |
+| `components/Charts.tsx` `LABEL_COLORS` + `keys` 数组 | 环形图少一瓣，**其余百分比全错** |
+
+`Charts.tsx` 那处最脆：`LABEL_COLORS` 有 `Record<Label, string>` 兜着，
+但同一个文件里还硬写了 `const keys: Label[] = ['FARM','WATCH','IGNORE']` ——
+**数组漏一项 TS 完全不报错**。环形图会安静地少画一瓣，而占比分母是
+`data.reduce(...)`，于是**剩下两瓣的百分比还会各自变大**。
+结果不是"少显示一个"，而是**其余数字全错，且看不出错**。
+
+目前 5 处都是齐的（实测比对通过），但没有任何机制防止下次改动漏掉一处。
+新增 `TestLabelVocabulary`（6 条）逐处比对，真值从
+`LABEL_THRESHOLDS` 解析而不是抄字面量。6 个变异全部按预期变红
+（每处各删一个标签 + 单独动 `keys` 数组）。
+
+顺带记一条方法上的坑：写变异脚本时按 CRLF 拼接删除锚点，
+结果 3 个 LF 文件的替换**静默不生效**、跑出来是"通过" ——
+差点把没生效的变异当成"门禁没覆盖"。改成按文件实际行尾拼接后全部变红。
+**一个静默不生效的变异测试，比没有变异测试更危险**：它会让人误判门禁强度。
+
 ### Fixed — 风险档位有两套取值范围，前端那张中文表同时多一项又少一项（2026-08-23，实测穷举）
 
 系统里有**两套**风险档位，取值范围不同：

@@ -36,6 +36,9 @@ NOTIFICATIONS_ROUTER = REPO_ROOT / "backend" / "app" / "routers" / "v1" / "notif
 FORMAT_LIB = FRONTEND / "lib" / "format.ts"
 DISCOVERIES_PAGE = FRONTEND / "app" / "discoveries" / "page.tsx"
 WORKFLOW_PANEL = FRONTEND / "components" / "OpportunityWorkflowPanel.tsx"
+COLLECTIONS_PAGE = FRONTEND / "app" / "collections" / "page.tsx"
+CHARTS = FRONTEND / "components" / "Charts.tsx"
+TYPES_LIB = FRONTEND / "lib" / "types.ts"
 COLLECTORS_DIR = REPO_ROOT / "backend" / "app" / "collectors"
 
 
@@ -98,6 +101,19 @@ def _option_ids(src: str, decl: str, where: Path) -> set[str]:
     ids = set(re.findall(r"id:\s*'([^']*)'", match.group(1)))
     assert ids, f"{where.name} 的 {decl} 里没解析到任何 `id: '...'`，解析器已失效。"
     return ids - {""}
+
+
+def _option_keys(src: str, decl: str, where: Path) -> set[str]:
+    """取 `const <decl>: {...}[] = [{ key: 'a', label: '..' }, ...]` 的全部 key。
+
+    与 `_option_ids` 同形，只是字段名叫 `key`。`'all'` 是「不筛选」占位，
+    不属于任何枚举，剔掉。
+    """
+    match = re.search(rf"const\s+{re.escape(decl)}\s*:[^=]*=\s*\[(.*?)\n\];", src, re.S)
+    assert match, f"在 {where.name} 里找不到 `const {decl}: ...[] = [...]`。这张表若被改名或改写，请同步更新本测试。"
+    keys = set(re.findall(r"key:\s*'([^']*)'", match.group(1)))
+    assert keys, f"{where.name} 的 {decl} 里没解析到任何 `key: '...'`，解析器已失效。"
+    return keys - {"all", ""}
 
 
 def _backend_literal_args(name: str) -> set[str]:
@@ -446,6 +462,98 @@ class TestStageVocabularies:
         )
 
 
+class TestLabelVocabulary:
+    """`FARM/WATCH/IGNORE` 这套标签在前端有 **5 处**各自独立的硬编码。
+
+    真值是 `app/agents/scorer.py::LABEL_THRESHOLDS`（`(65,FARM) (50,WATCH) (0,IGNORE)`）。
+    前端把它抄了 5 遍，彼此之间没有任何机制保证同步：
+
+    | 位置 | 形态 | 缺一项的后果 |
+    |---|---|---|
+    | `lib/types.ts` `Label` | 字面量联合 | TS 会挡住，**这一处是安全的** |
+    | `lib/format.ts` `LABEL_ZH` | 中文名 | 显示英文原文 |
+    | `app/portfolio` `LABEL_COLOR` | 颜色 | 退回 `--alpha-300` 中性灰 |
+    | `app/collections` `LABEL_FILTERS` | 筛选项 | **那个标签的项目筛不出来，页面上等于不存在** |
+    | `components/Charts.tsx` `LABEL_COLORS` + `keys` 数组 | 图表 | 环形图少一瓣，**总数对不上** |
+
+    `Charts.tsx` 那处最脆：`LABEL_COLORS` 有 TS 的 `Record<Label, string>` 兜着，
+    但**同一个文件里还硬写了一个 `const keys: Label[] = ['FARM','WATCH','IGNORE']`**，
+    数组漏一项 TS 完全不会报错 —— 环形图会安静地少画一瓣，
+    而占比分母是 `data.reduce(...)`，于是**剩下两瓣的百分比还会各自变大**。
+    结果不是"少显示一个"，是**其余数字全错**，且看不出错。
+
+    筛选项那处的后果同样是静默的：`LABEL_FILTERS` 少一项，
+    用户点不到那个筛选，会以为系统里没有这类项目。
+
+    所以这里逐处比对，且真值**从后端源码解析**而不是抄字面量。
+    """
+
+    @staticmethod
+    def _backend_labels() -> set[str]:
+        """`LABEL_THRESHOLDS` 里的标签全集。"""
+        from app.agents.scorer import LABEL_THRESHOLDS
+
+        labels = {label for _threshold, label in LABEL_THRESHOLDS}
+        assert len(labels) == 3, (
+            f"后端标签不再是 3 个，而是 {sorted(labels)} —— 前端 5 处硬编码都要同步，请同步本测试。"
+        )
+        return labels
+
+    def test_ts_union_matches_backend(self) -> None:
+        union = _literal_union(_read(TYPES_LIB), "Label", TYPES_LIB)
+        assert union == self._backend_labels(), (
+            f"`lib/types.ts` 的 Label 联合与后端不一致：前端 {sorted(union)}，后端 {sorted(self._backend_labels())}。"
+        )
+
+    def test_chinese_names_cover_backend(self) -> None:
+        labelled = _object_keys(_read(FORMAT_LIB), "LABEL_ZH", FORMAT_LIB)
+        missing = self._backend_labels() - labelled
+        assert not missing, f"LABEL_ZH 漏了这些标签：{sorted(missing)}，界面会显示英文原文。"
+
+    def test_portfolio_colors_cover_backend(self) -> None:
+        coloured = _object_keys(_read(PORTFOLIO_PAGE), "LABEL_COLOR", PORTFOLIO_PAGE)
+        missing = self._backend_labels() - coloured
+        assert not missing, (
+            f"portfolio 页 LABEL_COLOR 漏了这些标签：{sorted(missing)}，会退回中性灰，看不出是重点还是忽略。"
+        )
+
+    def test_collections_filters_cover_backend(self) -> None:
+        """筛选项少一项 = 那个标签的项目在页面上等于不存在。"""
+        keys = _option_keys(_read(COLLECTIONS_PAGE), "LABEL_FILTERS", COLLECTIONS_PAGE)
+        missing = self._backend_labels() - keys
+        assert not missing, (
+            f"collections 页 LABEL_FILTERS 漏了这些标签：{sorted(missing)}。"
+            "用户点不到那个筛选，会以为系统里没有这类项目。"
+        )
+
+    def test_chart_colors_cover_backend(self) -> None:
+        coloured = _object_keys(_read(CHARTS), "LABEL_COLORS", CHARTS)
+        missing = self._backend_labels() - coloured
+        assert not missing, f"Charts.tsx 的 LABEL_COLORS 漏了这些标签：{sorted(missing)}。"
+
+    def test_chart_keys_array_covers_backend(self) -> None:
+        """这条是本组里最要紧的一条 —— 数组漏项 TS 不会报错。
+
+        `LABEL_COLORS` 有 `Record<Label, string>` 兜着，但同一个文件里的
+        `const keys: Label[] = [...]` 少一项完全合法。环形图会少画一瓣，
+        而占比分母是这个数组的和，于是**剩下两瓣的百分比各自变大** ——
+        错的不是"少一个"，是其余数字全错，且看不出错。
+        """
+        src = _read(CHARTS)
+        match = re.search(r"const\s+keys:\s*Label\[\]\s*=\s*\[([^\]]*)\]", src)
+        assert match, (
+            "Charts.tsx 里找不到 `const keys: Label[] = [...]`。"
+            "这个数组若被改写（比如改成从 LABEL_ZH 取键），请同步更新本测试 —— "
+            "别让它静默地什么都不检查。"
+        )
+        keys = set(re.findall(r"'([^']+)'", match.group(1)))
+        assert keys, "Charts.tsx 的 keys 数组里没解析到任何字面量，解析器已失效。"
+        assert keys == self._backend_labels(), (
+            f"Charts.tsx 的 keys 数组与后端标签不一致：前端 {sorted(keys)}，后端 {sorted(self._backend_labels())}。"
+            "环形图会少画一瓣，且剩下几瓣的百分比会各自变大 —— 数字全错但看不出来。"
+        )
+
+
 class TestRiskLevelVocabulary:
     """`riskLevelZh` 必须覆盖它真实收到的取值，且不含不可达的死条目。
 
@@ -560,6 +668,10 @@ class TestParsersFailLoudly:
         assert len(TestStageVocabularies._timings()) == 3
         assert len(_inline_map_keys(_read(FORMAT_LIB), "riskLevelZh", FORMAT_LIB)) == 3
         assert TestRiskLevelVocabulary._pipeline_risk_values() == {"low", "medium", "high"}
+        assert TestLabelVocabulary._backend_labels() == {"FARM", "WATCH", "IGNORE"}
+        assert len(_option_keys(_read(COLLECTIONS_PAGE), "LABEL_FILTERS", COLLECTIONS_PAGE)) == 3
+        assert len(_object_keys(_read(CHARTS), "LABEL_COLORS", CHARTS)) == 3
+        assert len(_literal_union(_read(TYPES_LIB), "Label", TYPES_LIB)) == 3
         panel = _read(WORKFLOW_PANEL)
         assert len(_object_keys(panel, "STATE_ZH", WORKFLOW_PANEL)) >= 5
         assert len(_option_ids(panel, "ELIGIBILITY_OPTS", WORKFLOW_PANEL)) >= 3
@@ -582,4 +694,13 @@ class TestParsersFailLoudly:
                 "const ELIGIBILITY_OPTS: X[] = [\n  { label: '无 id' },\n];",
                 "ELIGIBILITY_OPTS",
                 WORKFLOW_PANEL,
+            )
+        with pytest.raises(AssertionError):
+            _option_keys("const OTHER = [];", "LABEL_FILTERS", COLLECTIONS_PAGE)
+        with pytest.raises(AssertionError):
+            # 同上：声明在但没有任何 key → 必须炸
+            _option_keys(
+                "const LABEL_FILTERS: X[] = [\n  { label: '无 key' },\n];",
+                "LABEL_FILTERS",
+                COLLECTIONS_PAGE,
             )
