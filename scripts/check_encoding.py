@@ -153,9 +153,16 @@ KNOWN_BROKEN = {
 KNOWN_BROKEN_MOJIBAKE: set[str] = set()
 
 # 三型（字面 U+FFFD 替换符）的已知损坏文件
-KNOWN_BROKEN_REPLACEMENT = {
-    "docs/SYSTEM_DIRECTION_CHANGE.md",
-}
+#
+# 2026-08-23：`docs/SYSTEM_DIRECTION_CHANGE.md` 的 2 处已修完并**移出登记**，
+# 这一型现在也是零豁免的硬门禁（与二型同口径）。
+#
+# 修法与另两型不同：三型丢的是小节标题里的装饰 emoji（`## 📊 成功指标（KPI）`
+# 之类），语义零损失。既然原 emoji 无法从任何来源确定，就**直接去掉 emoji**，
+# 而不是随便补一个看起来差不多的 —— 补一个猜的 emoji 会让这份文档看起来
+# 从未损坏过，下一个人无法分辨哪个标题是原作者选的、哪个是补的。
+# 去掉之后标题依然完整可读，且与"猜字比乱码更坏"这条原则一致。
+KNOWN_BROKEN_REPLACEMENT: set[str] = set()
 
 # 中日韩汉字 + CJK 标点 + 全角字符
 _CJK = r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]"

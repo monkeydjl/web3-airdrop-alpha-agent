@@ -285,9 +285,45 @@ cd backend
 
 ### 4.3 采集源故障
 
-采集有 **10 个源**，全部已注册且 `config_ready=true`（实测 `GET /api/v1/collections/sources`）：
-`defillama` `github` `coingecko` `cryptorank` `rootdata`
-`twitter_kol` `twitter_keyword` `etherscan` `galxe` `layer3`。
+采集共注册 **10 个源**。**「注册了」不等于「在采」** —— 每个源要真正执行，
+必须三个条件同时成立：
+
+1. `XXX_ENABLED` 开关为真；
+2. 需要 Key 的源，Key 已配置；
+3. `data_sources.enabled` 为真（运维开关，见 §7.1）。
+
+前两条合起来就是端点 `GET /api/v1/collections/sources` 返回的 `config_ready`。
+
+<!-- collection-ready:begin -->
+| 源 | 开关 | 需要 Key |
+|---|---|---|
+| `defillama` | `DEFILLAMA_ENABLED` | ❌ 免费无 Key |
+| `coingecko` | `COINGECKO_ENABLED` | ❌ 免费额度够用 |
+| `github` | `GITHUB_ENABLED` | ✅ `GITHUB_TOKEN` |
+| `cryptorank` | `CRYPTORANK_ENABLED` | ✅ `CRYPTORANK_API_KEY` |
+| `etherscan` | `ETHERSCAN_ENABLED` | ✅ `ETHERSCAN_API_KEY` |
+| `rootdata` | `ROOTDATA_ENABLED` | ✅ `ROOTDATA_API_KEY` |
+| `twitter_kol` | `TWITTER_ENABLED` | ✅ `TWITTER_BEARER_TOKEN` |
+| `twitter_keyword` | `TWITTER_ENABLED` | ✅ `TWITTER_BEARER_TOKEN` |
+| `galxe` | `GALXE_ENABLED` | ✅ `GALXE_API_KEY` |
+| `layer3` | `LAYER3_ENABLED` | ✅ `LAYER3_API_KEY` |
+<!-- collection-ready:end -->
+
+> 注意两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`：关掉它会同时停掉
+> KOL 轮询和关键词搜索，没法只留一个。
+
+**代码默认值**（不含任何 `.env`）：只有 `defillama` / `coingecko` / `github`
+的开关默认开，其余 7 个默认关。所以一台没配 `.env` 的机器上，实际能跑的源
+比这张表短得多。
+
+**本机当前实测**（2026-08-23，`GET /api/v1/collections/sources`）：
+`config_ready=true` 的有 5 个 —— `defillama` `coingecko` `github`
+`cryptorank` `etherscan`；另外 5 个都是 false（开关关且无 Key）。
+`data_sources` 表里也只有这 5 个源有记录。
+
+> ⚠️ 排查「为什么没发现新项目」时**先看这个端点的 `config_ready`**。
+> 不看的话会去翻一个从未运行过的源的日志，找不到任何错误，
+> 然后误判成"采集是好的、是分析出了问题"。
 
 **症状**：`airdrop_collection_runs_total{source_id,status}` 的 error 计数增长；
 或 `airdrop_fetcher_circuit_breaker_state` 变成 `1`(HALF_OPEN) / `2`(OPEN)。
@@ -872,6 +908,21 @@ compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
 导致后面所有「见 §5.x」的交叉引用都是二义的。
 重复编号会让交叉引用静默失效 —— 读者点过去看到的是另一节，
 而没有任何东西会报错。
+
+### 12.11 「10 个采集源全部就绪」是假的
+
+上一版本说 10 个源「全部已注册且 `config_ready=true`」。
+实测本机只有 **5 个** 为 true（`defillama` `coingecko` `github`
+`cryptorank` `etherscan`），另外 5 个开关关着、Key 也没配；
+`data_sources` 表里也只有这 5 个源有记录。
+
+**危害形态**：那 5 个未就绪的源在 `GET /api/v1/collections/sources`
+里照样列出来。排查「为什么没发现新项目」时，如果不看 `config_ready`，
+就会去翻一个**从未运行过**的源的日志 —— 翻不到任何错误，
+于是误判成"采集是好的，问题在分析侧"，方向整个跑偏。
+
+§4.3 现在把门控规则（开关名 + 是否需要 Key）做成了机器可读的表，
+由门禁与 `is_enabled()` 的实现逐项比对。
 
 ---
 

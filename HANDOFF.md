@@ -203,16 +203,24 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
 （10065 → 26694 字符），不能整体回滚，只能逐段对照。
 登记在 `check_encoding.py` 的 `KNOWN_BROKEN_MOJIBAKE` 里。
 
-### 三型：2 处，手工补个 emoji 就行
+### 三型：2 处 —— **2026-08-23 已修完**
 
 `docs/SYSTEM_DIRECTION_CHANGE.md` 第 125 行 `## <FFFD> 成功指标（KPI）`、
 第 190 行 `## <FFFD>️ 实施路线图（v2.0）`。该文档其余小节标题都带 emoji
 （📋 🔄 🎯 🏗️ 📊 ⚠️ 🔗 ✅），所以这两处原本也是 emoji。
 
-**没有底本**（最早版本就已损坏），选哪个图标是猜的 —— 但因为它纯装饰，
-猜错也没有信息损失。所以这属于**内容编辑**，随手补即可，
-不要写进修复脚本（脚本的原则是"只填能证明的"）。
-补完从 `KNOWN_BROKEN_REPLACEMENT` 里删掉条目。
+**没有底本**（最早的提交 `a9f2c8b` 就已损坏），选哪个图标只能靠猜。
+
+**最终决定：直接删掉 emoji，不补猜的。** 标题现在是
+`## 成功指标（KPI）` / `## 实施路线图（v2.0）`。
+
+原本这里写的是「随手补一个即可」，改掉了 —— 补一个「看起来差不多」的 emoji
+会让这份文档看起来**从未损坏过**，下一个人再也分不清哪个标题的 emoji 是
+原作者选的、哪个是后来猜的。一个看不出来的猜测比一个看得出来的缺口更糟，
+这跟修复脚本"只填能证明的"是同一条原则。
+
+`KNOWN_BROKEN_REPLACEMENT` 已清空，并由
+`test_replacement_registry_is_empty` 正面钉住必须保持为空。
 
 ### 箭头规则已收紧（本轮做的，附一条方法论）
 
@@ -256,7 +264,9 @@ python scripts/verify_utf8_repair.py docs/OPERATIONS.md docs/OPERATIONS.md.parti
       **本地测过的解释器和镜像里跑的不是同一个。** 统一到 3.12 需要重建本地
       venv 并重跑全套（约 36 分钟），或把镜像降到 3.11。我没擅自改。
       注：CI 的 `Full Backend Test Suite` 是在 3.12 上跑绿的，所以两边都能过测试
-- [ ] **继续编码修复**（见上）：一型 487 处 + 二型 70 处 + 三型 2 处
+- [ ] **继续编码修复**（见上）：**只剩一型的 `DATA_SOURCE_STRATEGY.md` 498 处**。
+      二型（`API_SPEC.md` 70 处，08-22）与三型（2 处，08-23）已修完，
+      两张豁免清单都已清空并由测试正面钉住必须为空。
 - [ ] **上线前人工设定**：`.env` 里 `APP_ENV=production`、`API_KEY`（≥32）、
       `AUTH_TOKEN_SECRET`（≥48）、`CORS_ORIGINS`（**真实域名，含 localhost 会
       拒绝启动**）、`SEED_FALLBACK_ENABLED=false`
@@ -387,9 +397,9 @@ npm run typecheck && npm run lint && npm run build
 ## 已知问题 / 风险
 
 1. **30 个 commit 未推远程**，推送方式待确认
-2. **编码损坏三批待处理**（见上）：一型 487 处待判定
-   （`DATA_SOURCE_STRATEGY.md` 无底本可依）、二型 70 处只能人工重写、
-   三型 2 处手工补 emoji 即可
+2. **编码损坏只剩一批**（见上）：一型 `DATA_SOURCE_STRATEGY.md` 498 处，
+   无干净底本可依，将按 `OPERATIONS.md` / `OBSERVABILITY.md` 那套
+   「语义重写 + 双向门禁」处理。二型与三型均已修完、豁免清零。
 3. **括号与句号两条推断规则仍不是 100%**（99.57% / 99.37%）；
    箭头那条本轮已换判据收紧到留一法 100%
 4. **Python 版本口径不一致**（3.12 镜像/CI/mypy vs 3.11.9 本地 venv），
@@ -496,6 +506,12 @@ CHANGELOG、`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里都保留了
    并把 `--all` 结果固化成测试（此前只有 pre-commit 守，`--no-verify` 就绕过）。
 2. **编码检查有盲区**：写完二型检测后追问"还有没有别的形态"，
    换判据扫出**三型**（字面 U+FFFD，2 处）。
+   2026-08-23 又追问了一次「有没有 GBK 误解码型」，全仓 502 个文本文件
+   **0 命中** —— 这次是空的，但过程本身仍是对的。
+   附一条自己的误判：当时先凭 PowerShell 控制台里看到的乱码，
+   断定 `rate_limit.py` / `prometheus.yml` / `docker-compose.prod.yml`
+   三个文件有 GBK 乱码；读字节实测三个都是干净 UTF-8。
+   **终端显示不是文件内容** —— 判断编码损坏必须读字节。
 
 **共同教训**：检查工具的盲区，就是问题的藏身处。而"我已经查完了"这个判断，
 本身需要有依据 —— 换判据重扫、让工具检查自己、把结论固化成测试。
