@@ -8,6 +8,32 @@
 
 ## [Unreleased]
 
+### Fixed — 风险档位有两套取值范围，前端那张中文表同时多一项又少一项（2026-08-23，实测穷举）
+
+系统里有**两套**风险档位，取值范围不同：
+
+- 评分管道侧（三档）：`team.risk_level`（穷举 `score_to_risk_level()` 全部
+  0.00–1.00 输入，输出只有 `high/medium/low`）、
+  `risk.sybil_difficulty` / `farming_cost` / `unlock_pressure`
+  （`RiskResult` 三个字段的 pattern 都是 `^(low|medium|high)$`）
+- Opportunity 侧（**四档**）：`opportunity.models.RiskLevel` 多一个 `critical`
+
+前端 `riskLevelZh` 的 4 个调用点全部来自第一套，但那张表里**多写了一个
+`unknown: '未知'`** —— 不可达的死条目：缺值走的是函数开头的
+`if (!level) return '—'`，永远到不了这张表。跟之前 `timingZh` 里那个
+`growth` 是同一类问题：**死条目会让人以为系统还有额外的判断档位。**
+
+反方向的风险是 `critical`：真值存在，只是前端目前一处都没渲染
+`OpportunityAssessment.risks` 的 5 个维度（实测 253 条评估记录里
+5 个维度全是 `null`，后端也还没在填）。一旦有人开始展示它，
+`critical` 会**直接渲染成英文原文**。
+
+删掉死条目，并新增 `TestRiskLevelVocabulary`（4 条）同时钉两头：
+多的不许有、少的要有人管 —— 最后那条不写死"前端不能渲染 risks"
+（那会挡住正常开发），而是把两件事绑在一起：**要渲染就得先把词补齐**。
+4 个变异全部按预期变红（重新引入死条目 / 删掉 `medium` /
+无渲染方就加 `critical` / 开始渲染 `risks` 但没补词）。
+
 ### Fixed — 两个测试有 12.5% 概率随机变红，根因是 Windows 时钟只有 15.6ms 精度（2026-08-23，实测复现）
 
 跑完整套件时 `test_cache.py::test_ttl_expiry` 挂了一次，单独重跑却通过。

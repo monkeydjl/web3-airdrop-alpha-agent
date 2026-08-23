@@ -545,11 +545,56 @@ P2 源无 collector、`evaluation/collection/`、统一公式、
 
 ---
 
+## 十一、风险档位：同一个概念在系统里有两套取值范围
+
+清 §9 遗留清单时查的最后一项。前端 `riskLevelZh` 那张中文表
+**同时多一项、又少一项**，而两个方向的危害完全不同。
+
+### 多的那项：`unknown` 是不可达死条目
+
+`riskLevelZh` 的 4 个调用点全部来自评分管道侧，实测都被约束在三档：
+`score_to_risk_level()` 穷举 0.00–1.00 全部输入只产出 `high/medium/low`；
+`RiskResult` 的 `sybil_difficulty` / `farming_cost` / `unlock_pressure`
+pattern 都是 `^(low|medium|high)$`。
+
+而缺值走的是函数开头 `if (!level) return '—'` —— **永远到不了那张表**。
+跟之前 `timingZh` 里那个 `growth` 一模一样：
+**死条目会让人以为系统还有额外的判断档位。**
+
+### 少的那项：`critical` 是真值，只是还没人渲染
+
+`opportunity.models.RiskLevel` 有第四档 `critical`，用于
+`OpportunityAssessment.risks` 的 5 个维度。实测：前端**一处都没渲染**这 5 个
+维度（`OpportunityWorkflowPanel.tsx` 里出现的 `risks:` 全是 fixture 对象
+字面量，不进 `riskLevelZh`），而库里 253 条评估记录的 5 个维度**全是
+`null`** —— 后端也还没开始填。
+
+所以现在不会出错，但**一旦有人开始展示 `risks`，`critical` 会直接渲染成
+英文原文**。
+
+### 门禁怎么写的（这条设计值得记）
+
+新增 `TestRiskLevelVocabulary`（4 条）同时钉两头。关键是最后一条：
+**没有写死"前端不能渲染 risks"** —— 那会挡住正常开发，而且一个挡路的门禁
+迟早会被绕过去。改成把两件事绑在一起：
+
+- 前端没读 `risks.x` → `riskLevelZh` **不许**有 `critical`（否则是死条目）
+- 前端读了 `risks.x` → `riskLevelZh` **必须**有 `critical`（否则渲染英文）
+
+也就是说：**要渲染就得先把词补齐**，门禁不判断该不该渲染，只判断一致性。
+判据刻意只认 `risks.x` / `risks?.x` 这种"读出来用"的形态，
+不认 fixture 里的 `risks: { ... }` 对象字面量 —— 造测试数据不该触发门禁。
+
+4 个变异全部按预期变红：重新引入 `unknown` / 删掉 `medium` /
+无渲染方却加 `critical` / 开始读 `risks.capital_security` 但没补词。
+
+---
+
 ## 验证结果（全部实跑）
 
 | 检查 | 结果 |
 |---|---|
-| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，88.38%；三型 + 采集源轮：**2770 passed / 6 skipped**，88.38%，36m21s；`.env.example` 轮：**2783 passed / 6 skipped**，88.38%，36m34s；采集策略轮：**2808 passed / 6 skipped / 1 failed**，88.36%，36m05s —— 那 1 个 failed 就是 §10 的时钟随机失败，已修（五轮均按 CI 的 `-W error::` 参数跑） |
+| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，88.38%；三型 + 采集源轮：**2770 passed / 6 skipped**，88.38%，36m21s；`.env.example` 轮：**2783 passed / 6 skipped**，88.38%，36m34s；采集策略轮：**2808 passed / 6 skipped / 1 failed**，88.36%，36m05s —— 那 1 个 failed 就是 §10 的时钟随机失败；去随机化后重跑：**2809 passed / 6 skipped / 0 failed**，88.38%，35m00s（六轮均按 CI 的 `-W error::` 参数跑） |
 | `ruff format --check app tests` | 236 files already formatted |
 | `ruff check app tests` | All checks passed |
 | `mypy app` | no issues in 117 source files |
@@ -558,8 +603,8 @@ P2 源无 collector、`evaluation/collection/`、统一公式、
 | 前端 `tsc --noEmit` | exit 0 |
 | 前端 `eslint` | exit 0 |
 | 前端 `node test.mjs` | 20 pass / 0 fail |
-| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 → 81 passed / 2 skipped**（含新增一型门禁）；`.env.example` **14 passed**；采集策略 **23 passed** |
-| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11 + 采集策略 12） | **46/46 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
+| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 → 81 passed / 2 skipped**（含新增一型门禁）；`.env.example` **14 passed**；采集策略 **23 passed**；前端枚举 **21 → 25 passed**（含风险档位 4 条） |
+| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11 + 采集策略 12 + 风险档位 4） | **50/50 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
 
 ---
 
@@ -600,6 +645,9 @@ P2 源无 collector、`evaluation/collection/`、统一公式、
 15. **随机失败的测试改用假时钟，而不是加大 sleep**（见 §10）——
     加大 sleep 只是把翻红概率压小、并让套件更慢，随机性还在。
     也没有加 `flaky` 重试标记：重试会把这个 12.5% 永久藏起来。
+16. **`critical` 那条门禁不禁止渲染，只要求一致**（见 §11）——
+    写死「前端不能渲染 risks」会挡住正常开发，而挡路的门禁迟早被绕过去。
+    改成「要渲染就得先把词补齐」，把两件事绑在一起。
 
 ---
 
@@ -611,8 +659,7 @@ P2 源无 collector、`evaluation/collection/`、统一公式、
 3. `prometheus.yml` 的 `external_labels` 硬编码 `environment: production`。
 4. 前端还有几处标签常量没被测试钉住（`LABEL_FILTERS`、`LABEL_COLOR`、
    `Charts.tsx` 里硬编码的 `['FARM','WATCH','IGNORE']`）。
-5. `riskLevelZh` 覆盖 `high/medium/low/unknown`，但后端有 `CRITICAL`，
-   TS 联合类型也含 `'critical'` —— 真出现时会渲染成英文原文。
+5. ~~`riskLevelZh` 与 `critical` 的口径~~ → **已修**（见 §11）。
 
 ## 遗留问题（需要所有者拍板的）
 
