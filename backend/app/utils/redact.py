@@ -118,6 +118,17 @@ class _TeeWriter:
 _LEVEL_ALIASES = {"warn": "warning", "fatal": "critical"}
 _VALID_LEVELS = ("debug", "info", "warning", "error", "critical")
 
+# 上一次 configure_logging() 打开的日志文件句柄。
+#
+# 这个模块级引用不是"缓存优化"，是修一个真实的句柄泄漏：configure_logging()
+# 的文档说它幂等可重复调用，但每次调用都会 open() 一个新的日志文件，
+# 旧句柄既没关闭也没被引用 —— 只能等 GC 回收，届时 CPython 抛
+# ResourceWarning（CI 用 `-W error::ResourceWarning`，直接变成失败）。
+#
+# 生产里它只被调一次，所以影响有限；但测试与任何"改完配置重新装一次日志"
+# 的场景都会稳定泄漏。重新配置前显式关掉上一个，是唯一干净的做法。
+_open_log_file = None
+
 
 def _resolve_log_level() -> int:
     """把 settings.log_level 解析成 structlog 的数值级别。
@@ -133,6 +144,22 @@ def _resolve_log_level() -> int:
     if name not in _VALID_LEVELS:
         name = "info"
     return int(getattr(logging, name.upper()))
+
+
+def _close_previous_log_file() -> None:
+    """关闭上一次配置留下的日志文件句柄（若有）。
+
+    关闭失败不能让整个日志配置流程崩掉 —— 日志系统装不上比一个悬空句柄严重得多。
+    """
+    global _open_log_file
+    if _open_log_file is None:
+        return
+    try:
+        _open_log_file.close()
+    except OSError:
+        pass
+    finally:
+        _open_log_file = None
 
 
 def configure_logging() -> None:
@@ -156,6 +183,8 @@ def configure_logging() -> None:
 
     from app.config import settings
 
+    global _open_log_file
+
     log_file = (getattr(settings, "log_file", "") or "").strip()
 
     # 落盘时强制 JSON；否则跟随 settings.log_format（json/console）
@@ -165,11 +194,15 @@ def configure_logging() -> None:
         else structlog.dev.ConsoleRenderer()
     )
 
+    # 重新配置前先释放上一次的句柄，否则每次调用都泄漏一个打开的文件。
+    _close_previous_log_file()
+
     streams: list = [sys.stdout]
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        streams.append(path.open("a", encoding="utf-8"))
+        _open_log_file = path.open("a", encoding="utf-8")
+        streams.append(_open_log_file)
 
     structlog.configure(
         processors=[

@@ -1201,5 +1201,43 @@ class TestAdversarialRound4Findings:
             assert emit("BOGUS") == ["info", "warning", "error"], "非法 LOG_LEVEL 未退回 INFO"
             assert emit("") == ["info", "warning", "error"], "空 LOG_LEVEL 未退回 INFO"
         finally:
+            # 先把 log_file 清空再重装：否则最后一次 configure_logging() 会重新
+            # 打开 tmp_path 下的文件，而 tmp_path 随即被清理，留下悬空句柄。
+            monkeypatch.setattr(settings, "log_file", "")
+            monkeypatch.setattr(settings, "log_level", "INFO")
+            structlog.reset_defaults()
+            configure_logging()
+
+    def test_reconfiguring_logging_does_not_leak_the_log_file_handle(self, tmp_path, monkeypatch):
+        """`configure_logging()` 号称幂等可重复调用，就不能每次都漏一个文件句柄。
+
+        原实现每次调用都 `open()` 一个新的日志文件，旧句柄既不关闭也不再被引用 ——
+        只能等 GC 回收，届时 CPython 抛 ResourceWarning。CI 把 ResourceWarning
+        当错误，于是这个泄漏会以"某个**无关**测试莫名失败"的形式暴露出来：
+        泄漏发生在 A，报错记在恰好触发 GC 的 B 身上。这类错位归因极难排查，
+        所以必须在源头钉住。
+        """
+        import gc
+        import warnings
+
+        import structlog
+
+        from app.config import settings
+        from app.utils.redact import configure_logging
+
+        log_file = tmp_path / "leak-probe.jsonl"
+        monkeypatch.setattr(settings, "log_file", str(log_file))
+        monkeypatch.setattr(settings, "log_level", "INFO")
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ResourceWarning)
+                for _ in range(5):
+                    structlog.reset_defaults()
+                    configure_logging()
+                    # 强制回收：若上一轮的句柄真被丢弃了，这里就会抛 ResourceWarning
+                    gc.collect()
+        finally:
+            monkeypatch.setattr(settings, "log_file", "")
             structlog.reset_defaults()
             configure_logging()
