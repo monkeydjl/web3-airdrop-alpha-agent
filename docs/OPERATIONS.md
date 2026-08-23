@@ -662,6 +662,11 @@ job 名 `airdrop-alpha`，送 Loki。
 
 **所有配置只在启动时读取，改完必须重启。** 没有热加载。
 
+第 1 步的「必须同步」现在**由门禁强制**，不再靠人记得：
+`backend/tests/test_env_example_parity.py` 逐键比对 `.env.example`
+与 `Settings` 的声明默认值，改了代码没改模板会当场变红。
+细节见 §9.4。
+
 ### 9.2 需要额外谨慎的项
 
 | 配置 | 影响 | 备注 |
@@ -672,6 +677,8 @@ job 名 `airdrop-alpha`，送 Loki。
 | `DISCOVERY_SCORE_ANALYSIS_THRESHOLD` | 进入分析的项目量 | 当前 0.3 |
 | `SEED_FALLBACK_ENABLED` | 采集失败时是否用种子数据兜底 | **当前 `True`，生产建议关**（§11） |
 | `API_KEY` | 生产自检要求 ≥32 字符 | 不合格直接拒绝启动 |
+| `DATABASE_URL` | **会反向改写 `DB_BACKEND`** | 设了 PG 连接串就一定走 PG，哪怕 `DB_BACKEND=sqlite` |
+| 6 个 `OPPORTUNITY_ECONOMIC_*` | 启动直接报错 | 级联要求：`evidence_emit`⇒`snapshot`，`resolver`⇒`evidence_emit` |
 
 ### 9.3 日志级别
 
@@ -680,6 +687,62 @@ job 名 `airdrop-alpha`，送 Loki。
 **非法值一律回落 `info`** —— 配错不能让输出变得更多。
 
 细节见 [OBSERVABILITY.md](OBSERVABILITY.md) §2.3。
+
+### 9.4 `.env.example` 的门禁（以及它此前错在哪）
+
+`.env.example` 是新人和部署脚本唯一的配置起点，但**它不被任何代码读取** ——
+所以写错不会报错，只会静默误导人。实测（2026-08-23）它此前有：
+
+- **47 个键的值与代码默认值不一致**（cron 时间、重试次数、超时、
+  权重版本号、并发数、缓存 TTL…）。照它填出来的 `.env` 行为和代码默认值不同，
+  而两边都"看起来对"。
+- **一处自相矛盾**：文件写着 `DB_BACKEND=sqlite`，同时把
+  `DATABASE_URL=postgresql://…` 打开了。而 `_resolve_db_backend()` 会
+  **反向**把 `db_backend` 改成 `postgres` —— 照模板复制出来的 `.env`
+  实际连的是 Postgres，跟它自己声明的那行完全相反。这类错误最难发现：
+  两行单独看都合理，只有读过 validator 才知道后者压过前者。
+- **2 个键全仓无人读取**：`LLM_API_KEYS` / `LLM_BASE_URLS`。
+  多接口故障转移真正读的是**编号变量**（`LLM_BASEURL_1` / `LLM_API_KEY_1`
+  / `LLM_MODELS_1_1`），走 `os.environ` 不经 Settings。
+  照着填那两个逗号分隔变量，LLM 一个接口都不会注册。
+- **2 个路径不存在**：`SEED_DATA_PATH=data/seed_projects.json`、
+  `FETCHER_CACHE_DIR=data/fetcher_cache`。
+- **`WEIGHT_VERSION=score-v1.4` 混淆了两个版本轴**：`score-v1.4` 是评分
+  **模型代号**（前端展示、Opportunity 的 `LEGACY_MODEL_VERSION`），
+  而这个键是**权重版本**（代码默认 `v1.2`，随每条评分写入
+  `projects.weight_version`）。照模板填会把模型名写进权重列。
+
+门禁 `backend/tests/test_env_example_parity.py`（13 个测试）现在钉住：
+
+| 断言 | 抓什么 |
+|---|---|
+| 每个键是 `Settings` 字段或标了 `env-external` | 没人读的假配置 |
+| `env-external` 不能标在真的 `Settings` 字段上 | 防这个标记变成绕过值比对的后门 |
+| `Settings` 字段在模板里的覆盖率 > 75% | 模板整片跟不上代码 |
+| 未标记的值必须等于代码声明默认值 | 值漂移（数值按数值比，`0.10` 等于 `0.1`） |
+| 标了 `env-differs` 的值必须**真的**不同 | 过期标记留成永久后门 |
+| 8 个权重之和 = 1.0 | 照模板填会启动即崩 |
+| 按模板加载后 `db_backend` 必须等于模板声明值 | 上面那处自相矛盾 |
+| 模板能被 `Settings` 成功加载且不落生产模式 | 级联校验顺序写错 |
+| `SEED_DATA_PATH` 必须是仓库里已存在的文件 | 指向不存在的文件 |
+| `FETCHER_CACHE_DIR` 必须是相对路径且不含 `..` | 缓存写到仓库外 |
+| 4 条 parser self-check | 解析器读不到东西却依然全绿 |
+
+> **注意运行时目录不能断言"存在"**：`cache/` 由 `_FileCache.__init__` 的
+> `mkdir(parents=True, exist_ok=True)` 按需创建，跑过应用的机器上才有。
+> 第一版把它当成"必须存在"，本地全绿而 CI 直接挂。
+> 凡是断言涉及"文件是否存在"，先问 **「在一台没跑过这个项目的新机器上，
+> 这条还成立吗？」** —— 一个随环境改变结论的断言不是断言。
+
+**豁免是逐键显式的**：标记写在键的上一行注释里，`grep -n env-differs .env.example`
+就能审计全部例外。空行会截断注释块，所以一个标记不会顺着整节蔓延 ——
+**刻意不做整文件豁免**，那正是 `API_SPEC.md` / `OPERATIONS.md` 烂掉的机制。
+
+当前的合法例外（各自写了理由）：`LOG_FORMAT`（代码默认 json 便于采集，
+模板给 console 便于本地看）、4 个 `POSTGRES_*`（代码默认值是 CI 的测试实例
+`127.0.0.1:5433/airdrop_test`，模板不该把人指向测试库）、
+3 个 `OTEL_*` 与 2 个 `TELEGRAM_*`（分别由 OTel SDK 和 docker compose 直接读，
+不经 Settings）。
 
 ---
 
@@ -777,6 +840,10 @@ CI 跑 pytest 时加了：
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ⚠️ 逻辑与调度都在，但**从未命中保留期**（§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
+| `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
+| `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
+| `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
+| `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | ❌ 三个配置项无任何代码读取，限流未实现 |
 | 蓝绿 / 金丝雀发布 | ❌ 未实现 |
 | 值班轮换 / 紧急联系人 | ❌ 未设置（单人项目） |
 | 恢复演练 | ❌ 从未执行 |
@@ -923,6 +990,17 @@ compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
 
 §4.3 现在把门控规则（开关名 + 是否需要 Key）做成了机器可读的表，
 由门禁与 `is_enabled()` 的实现逐项比对。
+
+### 12.12 `.env.example` 曾有 47 个键的值与代码不符，还自相矛盾
+
+配置模板不被任何代码读取，所以写错**不会报错，只会静默误导人**。
+实测发现 47 个键的值与 `app/config.py` 的默认值不一致、2 个键全仓无人读取、
+2 个路径不存在、`WEIGHT_VERSION` 混淆了模型代号与权重版本，
+还有一处最难发现的自相矛盾：文件写着 `DB_BACKEND=sqlite`，
+同时把 `DATABASE_URL=postgresql://…` 打开了，而后者会**反向改写**
+`db_backend` —— 照模板复制出来的 `.env` 实际连的是 Postgres。
+
+完整清单与新增门禁见 §9.4。
 
 ---
 

@@ -359,12 +359,86 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
 
 ---
 
+## 八、`.env.example` 有 47 个键跟代码不符，还自相矛盾
+
+配置模板是新人和部署脚本唯一的起点，但**它不被任何代码读取** ——
+写错不会报任何错，只会静默误导人。逐键跟 `app/config.py` 比对后发现：
+
+### 8.1 最危险的一处：模板自己说 SQLite，实际连 Postgres
+
+文件写着 `DB_BACKEND=sqlite`，同时把
+`DATABASE_URL=postgresql://airdrop:airdrop@localhost:5432/airdrop` 打开了。
+而 `_resolve_db_backend()` 会**反向**把 `db_backend` 改成 `postgres`。
+
+**照这份模板复制出来的 `.env`，实际连的是 Postgres，跟它自己声明的那行完全相反。**
+
+这类错误最难发现：两行单独看都合理，只有读过那个 validator 的人才知道
+后者压过前者。改法是把 `DATABASE_URL` 注释掉，并在注释里写清两条 PG 激活路径
+和"它会反向改写 DB_BACKEND"这件事。
+
+### 8.2 其余失真
+
+- **47 个键的值不一致**：6 个 cron、9 个源的重试次数（2 vs 3）、
+  misfire grace（300 vs 3600）、`SQLITE_BUSY_TIMEOUT_SECONDS`（模板还把
+  单位写成毫秒，实际是秒）、JWT 有效期（24 vs 72）、6 个
+  `OPPORTUNITY_ECONOMIC_*`（模板全 true，代码全 false）等。
+  照模板填出来的系统行为和代码默认值不同，**而两边都"看起来对"**。
+- **2 个键全仓无人读取**：`LLM_API_KEYS` / `LLM_BASE_URLS`。多接口故障转移
+  真正读的是编号变量（`LLM_BASEURL_1` / `LLM_API_KEY_1` / `LLM_MODELS_1_1`），
+  走 `os.environ` 不经 Settings。照那两个填，**一个 LLM 接口都不会注册**。已删。
+- **`WEIGHT_VERSION=score-v1.4` 混了两个版本轴**：`score-v1.4` 是评分
+  **模型代号**，这个键是**权重版本**（代码默认 `v1.2`）。照模板填会把模型名
+  写进 `projects.weight_version` 列。
+- **2 个路径不存在**：`SEED_DATA_PATH=data/seed_projects.json`（真实是
+  `scripts/seed.py`）、`FETCHER_CACHE_DIR=data/fetcher_cache`（真实是 `cache/`）。
+- 顺带标注了 5 组「填了也不生效」的键：3 个 `RATE_LIMIT_*`（限流至今未实现）、
+  `DUNE_API_KEY`、`TWITTER_API_KEY` / `TWITTER_API_SECRET`（采集器只认
+  `TWITTER_BEARER_TOKEN`）、`LLM_DAILY_BUDGET_USD`。保留但写明不生效 ——
+  **一个填了以为生效的开关比一个缺失的开关更坏。**
+
+### 8.3 新门禁，以及一个自己踩到的设计坑
+
+`backend/tests/test_env_example_parity.py`（13 个测试）两条主断言：
+每个键必须真的有人读（是 `Settings` 字段或标 `env-external` 说明谁读它）；
+每个值必须等于代码声明的默认值，或标 `env-differs` 写出理由。
+
+**踩到的坑（同一条原则，犯了两次）**：
+
+第一次 —— 比对写成 `getattr(Settings(_env_file=None), name)`，在 pytest 里
+立刻挂了：`conftest.py` 设了 `APP_ENV=test` / `DB_PATH` / `HOST`，
+而环境变量优先级高于 dotenv。改成读 `Settings.model_fields[...].default`。
+
+第二次 —— 路径断言把 `FETCHER_CACHE_DIR=cache` 当成"仓库里必须存在的路径"，
+**本地全绿、CI 直接挂**：`cache/` 是 `_FileCache.__init__` 里
+`mkdir(parents=True, exist_ok=True)` 按需建出来的，本机因为跑过应用才有，
+全新 checkout 上并不存在。已拆成两条：`SEED_DATA_PATH` 查"随仓库提交的文件
+存在"，运行时目录改查"是相对路径、不用 `..` 逃出仓库"。
+
+**教训：一个随环境改变结论的断言不是断言。** 同一条原则我在这一轮里犯了两次，
+第二次还是靠 CI 才发现的 —— 说明「本地绿」根本不足以证明门禁写对了；
+凡是断言涉及"文件是否存在""某个值是多少"，都要先问一句
+**「在一台没跑过这个项目的新机器上，这条还成立吗？」**
+
+同理，"按模板加载"用的是 init kwargs 而不是 `_env_file=`，
+否则测的不是"照这份模板会得到什么"。
+
+豁免**逐键显式**：标记写在键的上一行注释里，`grep -n env-differs .env.example`
+可审计全部例外；空行截断注释块，所以标记不会顺着整节蔓延。整文件豁免
+正是 `API_SPEC.md` / `OPERATIONS.md` 当初烂掉的机制。
+
+变异测试 **11/11 变红**（改错 cron、取消注释 `DATABASE_URL`、加无人读取的键、
+破坏权重和、让标记过期、把 `env-external` 标在真字段上、把 `WEIGHT_VERSION`
+换成模型代号、缓存目录改绝对路径、用 `..` 逃出仓库、seed 路径指向不存在的文件），
+模板字节等同恢复。
+
+---
+
 ## 验证结果（全部实跑）
 
 | 检查 | 结果 |
 |---|---|
-| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，88.38%；本轮（三型 + 采集源）：**2770 passed / 6 skipped**，覆盖率 **88.38%**，36m21s（三轮均按 CI 的 `-W error::` 参数跑） |
-| `ruff format --check app tests` | 234 files already formatted |
+| `pytest`（含覆盖率门禁 ≥80%） | 日志轮：**2730 passed / 5 skipped**，88.39%；运维文档轮：**2765 passed / 6 skipped**，88.38%；三型 + 采集源轮：**2770 passed / 6 skipped**，88.38%，36m21s；`.env.example` 轮：**2783 passed / 6 skipped**，88.38%，36m34s（四轮均按 CI 的 `-W error::` 参数跑） |
+| `ruff format --check app tests` | 235 files already formatted |
 | `ruff check app tests` | All checks passed |
 | `mypy app` | no issues in 117 source files |
 | `scripts/check_encoding.py` | exit 0（**剩 1 个登记文件**，从 5 降到 1） |
@@ -372,8 +446,8 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
 | 前端 `tsc --noEmit` | exit 0 |
 | 前端 `eslint` | exit 0 |
 | 前端 `node test.mjs` | 20 pass / 0 fail |
-| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码套件 **26 passed** |
-| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3） | **23/23 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
+| 新增 parity 套件单跑 | OBSERVABILITY 17 passed；OPERATIONS **39 passed**；编码 **26 passed**；`.env.example` **14 passed** |
+| 变异测试（文档 6 + 日志级别 3 + 句柄泄漏 1 + 运维文档 10 + 采集源 3 + env 模板 11） | **34/34 按预期变红**，被改文件均字节等同恢复（SHA 核对） |
 
 ---
 
@@ -398,6 +472,11 @@ socket、子进程的测试，本地就该主动加 `-W error::ResourceWarning` 
    看不出来的猜测比看得出来的缺口更糟。
 9. **采集源门禁比对「门控规则」而不是「本机就绪值」**（见 §7.3）——
    钉住依赖 `.env` 的值会让文档在别人机器上必然变红，而那种红是假信号。
+10. **`.env.example` 门禁读「声明默认值」而不是实例属性**（见 §8.3）——
+    同一条原则：断言不能随环境改变结论。
+11. **「填了不生效」的键保留但写明不生效，不删掉**（`RATE_LIMIT_*`、
+    `DUNE_API_KEY`、`TWITTER_API_KEY` 等）—— 删掉会让人以为这个能力不存在，
+    留着不说明则更坏。写明「配了没用、以及为什么」是唯一诚实的选项。
 
 ---
 

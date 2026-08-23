@@ -8,6 +8,86 @@
 
 ## [Unreleased]
 
+### Fixed — `.env.example` 有 47 个键的值和代码不符，还自相矛盾地把 SQLite 悄悄换成了 Postgres（2026-08-23，逐键实测）
+
+配置模板是新人和部署脚本唯一的起点，但**它不被任何代码读取** ——
+所以它写错不会报任何错，只会静默误导人。逐键跟 `app/config.py` 比对后发现：
+
+- **一处自相矛盾，也是最危险的一处**：文件写着 `DB_BACKEND=sqlite`，
+  同时把 `DATABASE_URL=postgresql://airdrop:airdrop@localhost:5432/airdrop`
+  打开了。而 `_resolve_db_backend()` 会**反向**把 `db_backend` 改成 `postgres`。
+  照这份模板复制出来的 `.env`，**实际连的是 Postgres，跟它自己声明的那行完全相反**。
+  这类错误最难发现：两行单独看都合理，只有读过那个 validator 的人才知道
+  后者压过前者。已改成把 `DATABASE_URL` 注释掉，并在注释里写清两条激活路径
+  和"它会反向改写 DB_BACKEND"这件事。
+- **47 个键的值与代码默认值不一致**：6 个 cron 时间（`cryptorank` `rootdata`
+  `twitter_kol` `etherscan` `galxe` `layer3`）、9 个源的重试次数（2 vs 3）、
+  `SCHEDULER_MISFIRE_GRACE_SECONDS`（300 vs 3600）、
+  `SQLITE_BUSY_TIMEOUT_SECONDS`（模板还把单位写成了毫秒，实际是秒）、
+  `AUTH_TOKEN_TTL_HOURS`（24 vs 72）、`MAX_CONCURRENT_PROJECTS`、
+  `LLM_SEMAPHORE_SIZE`、4 个 `HEAT_SIGNAL_*`、6 个
+  `OPPORTUNITY_ECONOMIC_*`（模板全 true，代码全 false）、`APP_NAME`、
+  `SEED_ON_STARTUP` 等。**照模板填出来的系统行为和代码默认值不同，而两边都"看起来对"。**
+- **2 个键全仓没有任何代码读取**：`LLM_API_KEYS` / `LLM_BASE_URLS`。
+  多接口故障转移真正读的是**编号变量**（`LLM_BASEURL_1` / `LLM_API_KEY_1` /
+  `LLM_MODELS_1_1`），且走 `os.environ` 不经 Settings。照那两个逗号分隔变量填，
+  **一个 LLM 接口都不会注册**。已删除，并把真正生效的编号变量写法写进注释。
+- **`WEIGHT_VERSION=score-v1.4` 混淆了两个版本轴**：`score-v1.4` 是评分
+  **模型代号**（前端展示、Opportunity 的 `LEGACY_MODEL_VERSION`），
+  而这个键是**权重版本**（代码默认 `v1.2`，随每条评分写入
+  `projects.weight_version`）。照模板填会把模型名写进权重列。
+- **2 个路径不存在**：`SEED_DATA_PATH=data/seed_projects.json`（真实默认是
+  `scripts/seed.py`）、`FETCHER_CACHE_DIR=data/fetcher_cache`（真实是 `cache/`）。
+- 另外**顺带标注了 5 组"填了也不生效"的键**：3 个 `RATE_LIMIT_*`（限流至今未实现）、
+  `DUNE_API_KEY`（无 collector 读它）、`TWITTER_API_KEY` / `TWITTER_API_SECRET`
+  （采集器只认 `TWITTER_BEARER_TOKEN`）、`LLM_DAILY_BUDGET_USD`（不拦截任何调用）。
+  这些保留但明确写出"不生效"，因为**一个填了以为生效的开关比一个缺失的开关更坏**。
+
+**新增门禁 `backend/tests/test_env_example_parity.py`（13 个测试）**，
+两条主断言：每个键必须真的有人读（是 `Settings` 字段，或标 `env-external`
+说明谁读它）；每个值必须等于代码声明的默认值，或标 `env-differs` 写出理由。
+另有 4 条 parser self-check，防"解析器读不到东西却一路全绿"。
+
+设计上刻意做对的两件事：
+
+1. **豁免逐键显式，绝不整文件豁免。** 标记写在键的上一行注释里，
+   `grep -n env-differs .env.example` 就能审计全部例外；空行会截断注释块，
+   所以一个标记不会顺着整节蔓延。整文件豁免正是 `API_SPEC.md` /
+   `OPERATIONS.md` 当初烂掉的机制，不能在防它的机制里重犯。
+2. **读 `Settings.model_fields[...].default`（声明默认值），不读实例属性。**
+   第一版写成 `getattr(Settings(_env_file=None), name)`，在 pytest 里立刻挂了 ——
+   `conftest.py` 设了 `APP_ENV=test` / `DB_PATH` / `HOST`，而环境变量优先级
+   高于 dotenv。**一个随环境改变结论的断言不是断言**：那样它在 pytest 里、
+   裸机上、CI 里判定各不相同。同理，"按模板加载"用的是 init kwargs
+   而不是 `_env_file=`，否则测的不是"照这份模板会得到什么"。
+
+数值按数值比（`0.10` 等于 `0.1`），避免为格式差异制造假红。
+
+**自我纠正（CI 抓到的）**：第一版路径断言把 `FETCHER_CACHE_DIR=cache`
+也当成"仓库里必须存在的路径"，本地全绿、**CI 直接挂**——
+`cache/` 是 `_FileCache.__init__` 里 `mkdir(parents=True, exist_ok=True)`
+按需建出来的，本机因为跑过应用才有，全新 checkout 上并不存在。
+**这跟上面第 2 条是同一个错的第二次犯：一个只在"已经运行过的机器"上为真的
+断言不是断言。** 已拆成两条：`SEED_DATA_PATH` 查"随仓库提交的文件存在"，
+运行时目录改查"是相对路径、不用 `..` 逃出仓库"（挡的是缓存写到仓库外，
+跟 `DB_PATH` 解析到 `D:\app\data` 同一个坑）。
+
+当前 9 个合法例外各自写了理由：`LOG_FORMAT`（代码默认 json 便于采集，
+模板给 console 便于本地看）、4 个 `POSTGRES_*`（代码默认值是 CI 测试实例
+`127.0.0.1:5433/airdrop_test`，模板不该把人指向测试库）、
+3 个 `OTEL_*` + 2 个 `TELEGRAM_*`（分别由 OTel SDK 和 docker compose 直接读）。
+
+`docs/OPERATIONS.md` 新增 §9.4 记录这份清单与门禁，§9.2 加了
+`DATABASE_URL` 反向改写和 6 个 `OPPORTUNITY_ECONOMIC_*` 级联校验两条警示，
+§11 补了 5 组"不生效的配置"，§12.12 记下这条失真。
+
+**11 个变异全部按预期变红**：改错 cron、取消注释 `DATABASE_URL`、
+加一个无人读取的键、破坏权重和、改回不存在的 seed 路径、
+让 `env-differs` 标记过期、把 `env-external` 标在真字段上、
+把 `WEIGHT_VERSION` 换成模型代号、把缓存目录改成绝对路径、
+用 `..` 逃出仓库、seed 路径指向不存在的文件。
+模板字节等同恢复（SHA 核对）。
+
 ### Fixed — 三型编码损坏清零：删掉猜不出来的 emoji，而不是补一个（2026-08-23）
 
 `docs/SYSTEM_DIRECTION_CHANGE.md` 有 2 个小节标题的 emoji 被吃成了
