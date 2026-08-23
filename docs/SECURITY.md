@@ -68,7 +68,28 @@
 - Bearer Token：`Authorization: Bearer <API_KEY>`。
 - `API_KEY` 来自 env，长度 ≥ 32 字符，随机生成。
 - 中间件校验：缺失/错误 → `401`；`/health`、`/metrics`、`/docs` 白名单免鉴权。
-- 速率限制：每 IP 60 req/min（超限 `429`，`Retry-After` 头）；Dashboard 轮询与 cron 内部调用走白名单不受限。
+- ✅ **速率限制已实现**（`backend/app/rate_limit.py`，`main.py:288` 装载）。
+  实测行为：
+  - 进程内滑动窗口按客户端标识计数；超限返回 `429` +
+    `Retry-After`（向上取整的秒数）。
+  - **默认是 `RATE_LIMIT_REQUESTS=100` / `RATE_LIMIT_WINDOW=60`，
+    即 100 req/min，不是本文早先写的 60。** 以配置项为准。
+  - `/health`、`/metrics` 豁免（探针与 Prometheus 会高频拉取，
+    限流会造成误判）；`OPTIONS` 预检不计入配额。
+  - `/api/v1/run` 另有昂贵端点配额：**LLM 开启时每小时 1 次、关闭时 10 次**。
+    这里没有照 §10.4 的字面值一刀切 —— 照字面实现会把「手动触发一次分析」
+    也锁死一小时，而 LLM 关闭时那条限制并不针对任何真实风险。
+  - 先判全局配额、再判昂贵端点配额。顺序是有意的：反过来的话，
+    一个已被全局配额拒绝的 `/run` 请求会先扣掉「每小时 1 次」的令牌 ——
+    管线一次都没跑，配额却没了。
+  - **默认不采信 `X-Forwarded-For`**。本仓 nginx 用
+    `proxy_add_x_forwarded_for`，它把客户端自带的头**前置**再追加真实 IP；
+    若取 `split(",")[0]`，攻击者每次换一个伪造值就能无限刷配额，
+    限流的首要目的（挡 API key 爆破）当场失效。
+    只有显式设 `TRUSTED_PROXY_COUNT=N` 时才从右往左数第 N 个值 ——
+    那是链上唯一不可伪造的位置。
+- ⚠️ 已知近似：滑动窗口在**进程内**。单实例部署（Dockerfile 默认单 worker
+  uvicorn）下准确；多实例时每个实例各自计数。跨实例精确限流需要 Redis。
 
 ### 4.3 V3（前瞻）
 - 多用户：OAuth2/JWT；用户隔离 feedback/events 数据。
@@ -188,7 +209,7 @@
 - [ ] 注入：SQL/命令注入尝试均被参数化挡住
 - [ ] XSS：feedback `note` 渲染时转义（前端）
 - [ ] CSRF：状态变更端点要求 `Content-Type: application/json`（防表单 CSRF）
-- [ ] 速率限制：超 60 req/min → 429
+- [ ] 速率限制：超配额 → 429 — ✅ 机制已实现（`app/rate_limit.py`），但默认是 **100 req/min** 不是 60
 - [ ] 密钥泄漏：grep 日志/镜像/响应无明文 key
 
 ---
@@ -249,40 +270,72 @@
 
 **Collector 采集源 HTTP 白名单（v2.0，ADR-012）**:
 
-| 域名 | 用途 | 阶段 |
-| --- | --- | --- |
-| `api.llama.fi` | DefiLlama 协议数据 | MVP/V1 |
-| `api.github.com` | GitHub 仓库活跃度 | MVP/V1 |
-| `api.coingecko.com` | CoinGecko 代币验证 | MVP/V1 |
-| `api.cryptorank.io` | CryptoRank 融资数据 | V1+ |
-| `api.twitter.com` | Twitter/X 信号采集 | V1+（付费） |
-| `api.etherscan.io` | Etherscan 链上数据 | V1+ |
-| `dashboard.alchemy.com` | Alchemy webhook | V1+ |
-| `api.galxe.com` | Galxe 任务平台 | V1+ |
-| `api.layer3.xyz` | Layer3 任务平台 | V1+ |
-| `api.dune.com` | Dune Analytics | V2（可选） |
+<!-- domain-whitelist:begin -->
+下表「实测出口」列是 2026-08-23 逐条搜 `backend/app` 里真实的 `https://` 字面量
+得出的，不是照抄设计文档：
 
-> 任何不在白名单的域名，Collector 调用将被 `http_client.py` 拒绝并记 `PermissionError`。新增数据源需先更新本表 + ADR 评审。
+| 域名 | 用途 | 阶段 | 实测出口 |
+| --- | --- | --- | --- |
+| `api.llama.fi` | DefiLlama 协议数据 | MVP/V1 | ✅ `config.py:191` |
+| `api.github.com` | GitHub 仓库活跃度 | MVP/V1 | ✅ `config.py:197` |
+| `api.coingecko.com` | CoinGecko 代币验证 | MVP/V1 | ✅ `config.py:203` |
+| `api.cryptorank.io` | CryptoRank 融资数据 | V1+ | ✅ `config.py:209` |
+| `api.rootdata.com` | RootData 融资数据 | V1+ | ✅ `config.py:215` —— **上一版漏登记** |
+| `api.twitter.com` | Twitter/X 信号采集 | V1+（付费） | ✅ `collectors/twitter.py:80` |
+| `api.etherscan.io` | Etherscan 链上数据 | V1+ | ✅ `collectors/etherscan.py:70` |
+| `api.layer3.xyz` | Layer3 任务平台 | V1+ | ✅ `collectors/layer3.py:36` |
+| `graphigo.prd.galaxy.eco` | Galxe 任务平台（GraphQL） | V1+ | ✅ `collectors/galxe.py:27` —— **上一版把它写成了 `api.galxe.com`** |
+| `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
+| `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
+| ~~`dashboard.alchemy.com`~~ | Alchemy webhook | — | ❌ **代码里 0 处**，无此集成 |
+| ~~`api.galxe.com`~~ | （错的主机名） | — | ❌ **不存在**，见上面 `graphigo.prd.galaxy.eco` |
+| `api.dune.com` | Dune Analytics | V2（可选） | ❌ 未接入（`DUNE_API_KEY` 是装饰性配置项） |
+<!-- domain-whitelist:end -->
+
+> ⚠️ **这张表是设计意图，不是当前的运行时约束。** 实测（2026-08-23）：
+> `backend/app` 全域（117 个 `.py`，递归）搜不到 `ALLOWED_DOMAINS` /
+> `allowed_domains` / `PermissionError` 任何一个 ——
+> **域名白名单从未实现，没有任何代码在拒绝表外域名**。
+> 当前的实际约束只有「代码里写了哪个 base_url」：改一行 URL 就能访问任意域名，
+> 不会被拦、也不会记日志。新增数据源仍应更新本表 + 走 ADR 评审，
+> 但要清楚这是**流程约束**（人来把关），不是**技术约束**（代码来把关）。
+
+> 🔎 **一个没实现的白名单，它的清单本身也从没被现实检验过。**
+> 上表实测出三处错：Galxe 的主机名写错了（真实是
+> `graphigo.prd.galaxy.eco`，不是 `api.galxe.com`）、RootData 整条漏登记、
+> Alchemy 那条对应的集成根本不存在。
+> **假如当初真按这张表实现了白名单，Galxe 与 RootData 两个采集器会直接被自己的
+> 白名单拦死** —— 而且报错会指向"域名不被允许"，让人以为是配置问题。
+> 这是「登记表与被登记对象从未对账」的典型后果：
+> 清单静静地错着，直到有人依赖它才爆。
 
 **实现**：
 - 工具以显式白名单注入 Agent 实例（构造函数参数），不通过全局 registry 自由取用。
-- `backend/app/agents/base.py`（计划实现位置）定义 `allowed_tools: list[str]`，基类在调用前校验工具名 ∈ 白名单，否则抛 `PermissionError`。
-- 外部 HTTP 调用统一经 `backend/app/http_client.py`（计划实现位置）出口，校验域名 ∈ 白名单，便于审计与限流（§10.3）。
-- 采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的令牌桶
-  （`TokenBucketRateLimiter`）控制，**已实现**，逐源默认值见
+- ❌ **未实现**：`backend/app/agents/base.py` 文件确实存在，但里面**没有
+  `allowed_tools` 字段、也没有任何 `PermissionError`**（实测全仓 0 处）。
+  基类目前不校验工具名。
+- ❌ **未实现**：统一的 HTTP 出口不存在。
+  真实出口是 `backend/app/utils/fetcher.py`（带信号量、熔断、文件缓存），
+  采集器另有各自的 `_http_client()` 上下文管理器
+  （如 `collectors/twitter.py:107`）复用连接 —— **两者都不校验域名**。
+  （上一版这里指向一个 `app/` 下的 `http_client` 模块，**那个文件不存在**
+  —— 完整记录见 §11。）
+- ✅ **已实现**：采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的
+  令牌桶（`TokenBucketRateLimiter`）控制，逐源默认值见
   `DATA_SOURCE_STRATEGY.md §8.4`。超限抛 `RateLimitExceededError`。
   ⚠️ 注意「超限自动降级」只有**单源跳过 + HTTP 熔断**两层，
   没有全局降级矩阵 —— 详见 `DATA_SOURCE_STRATEGY.md §9.2`。
+  另注意这是限制「我们打外部 API」，与 §4.2 的「别人打我们」是两回事。
 
 ### 10.3 Sandbox 隔离
 
-| 隔离层 | 措施 | 阶段 |
-| --- | --- | --- |
-| **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） |
-| **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP |
-| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表）：`api.llama.fi`、`api.github.com`、`api.coingecko.com`、`api.cryptorank.io`、`api.twitter.com`、`api.etherscan.io`、`dashboard.alchemy.com`、`api.galxe.com`、`api.layer3.xyz`、`api.dune.com`、`api.openai.com` | MVP（v2.0，ADR-012） |
-| **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP |
-| **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 |
+| 隔离层 | 措施 | 阶段 | 实测状态 |
+| --- | --- | --- | --- |
+| **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） | ✅ asyncio task |
+| **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP | ⚠️ 只有并发限制（`agents/base.py:161`）；**预算限制只展示不拦截**，见 §10.4 |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ❌ **未实现**，见 §10.2 的实测说明 |
+| **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP | ⚠️ 是**约定**不是强制：没有 `PermissionError` 校验，靠 code review 与 `AGENTS.md` 把关 |
+| **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 | ✅ 见 `docker/Dockerfile` |
 
 **禁止**：
 - Agent 执行 `subprocess`、`os.system`、`eval`、`exec`（ruff `S` 规则已强制）。
@@ -290,42 +343,135 @@
 
 ### 10.4 Model Safety
 
-| 风险 | 缓解 |
-| --- | --- |
-| **输出越界** | `output_schema` 限定数值范围与枚举集；越界值截断 + 记 warn |
-| **幻觉** | 所有 LLM 输出需附 `evidence` 字段（≥1 条），无证据输出降级为规则引擎结果 |
-| **成本失控** | `LLM_DAILY_BUDGET_USD` 每日预算，超限自动关闭 LLM 增强并告警（`flag=llm_budget_exhausted`） |
-| **模型漂移** | 每周 `evaluation/llm/template_validation.py` 跑评估，结构遵从率 < 95% 触发告警 |
-| **模型滥用** | 单 IP 60 req/min 限流（§4.2）；`/run` 端点额外限制每小时 1 次（防 LLM 配额耗尽攻击） |
-| **版本锁定** | `LLM_MODEL` 固定为 `gpt-4o-mini`，切换需 ADR + 评估通过后生效 |
+> ⚠️ 本表混着「已实现」与「设计意图」，2026-08-23 逐条实测后补上状态列。
+> `LLM_DAILY_BUDGET_USD` 那条尤其要注意：**配置项存在（`config.py:90`，
+> 默认 1.0），也确实被代码读了 —— 但只读来在接口里展示
+> （`routers/v1/llm.py:65`、`settings.py:233/258`），没有任何拦截**。
+> 全仓 0 处 `daily_spend`、0 处 `budget_exceeded`、0 处 `llm_budget_exhausted`：
+> **没有人在累计花费，因此也无从超限**。
+> 这比"配置项完全没被读"更容易骗过检查 —— 搜一下发现"有 3 处引用"，
+> 看着像实现了。
+
+| 风险 | 缓解 | 实测状态 |
+| --- | --- | --- |
+| **输出越界** | pydantic 模型限定数值范围与枚举集；越界值触发校验错误并降级 | ⚠️ 有 pydantic 校验，但**没有叫 `output_schema` 的东西**（全仓 0 处） |
+| **幻觉** | 所有 LLM 输出需附 `evidence` 字段（≥1 条），无证据输出降级为规则引擎结果 | ✅ 已实现 |
+| **成本失控** | `LLM_DAILY_BUDGET_USD` 每日预算，超限自动关闭 LLM 增强并告警 | ❌ **只展示不拦截**：被读 3 处、全是回显；无累计、无熔断、无 `llm_budget_exhausted` flag |
+| **模型漂移** | 每周 `evaluation/llm/template_validation.py` 跑评估，结构遵从率 < 95% 触发告警 | ⚠️ 脚本存在，但**没有定时任务在跑它**（`scheduler.py` 里无此任务） |
+| **模型滥用** | 单 IP 限流（§4.2）；`/run` 端点额外限制 | ✅ **已实现**（`app/rate_limit.py`）。⚠️ 数字与本文早先写的不同：全局默认 **100 req/min**（不是 60）；`/run` 是 **LLM 开启时每小时 1 次、关闭时 10 次**（不是一律 1 次）—— 见 §4.2 的理由 |
+| **版本锁定** | `LLM_MODEL` 默认 `gpt-4o-mini`，切换需 ADR + 评估通过后生效 | ⚠️ 默认值确实是 `gpt-4o-mini`（`config.py:87`），但**本地 `.env` 已改成别的模型**——「固定」是流程约定，不是代码强制 |
 
 ### 10.5 LLM Data Leakage 防护
 
 **威胁**：LLM 可能在输出中泄露 system prompt 内容、其他项目数据、内部配置。
 
-| 防护 | 实现 |
-| --- | --- |
-| **system prompt 不入 user 消息** | OpenAI API 的 `system` role 独立传递，不拼入 `user` content |
-| **跨项目隔离** | 每次 LLM 调用仅传入单个项目的相关字段，禁止 batch 多项目数据进同一 prompt |
-| **输出过滤** | LLM 输出后扫描是否包含 `OPENAI_API_KEY`、`API_KEY`、`system_prompt`、`<your instructions>` 等关键词，命中则记 `AgentError(kind="output_leakage_suspected")` 并丢弃 |
-| **日志脱敏** | `logs` 表中 LLM input/output 字段经 structlog redact processor 处理（§3.3） |
-| **不回传 system prompt** | API 端点（`/projects/{id}/debug`）禁止返回 `system_prompt` 字段，仅返回 `prompt_version` |
+| 防护 | 实现 | 实测状态 |
+| --- | --- | --- |
+| **system prompt 不入 user 消息** | OpenAI API 的 `system` role 独立传递，不拼入 `user` content | ✅ 已实现 |
+| **跨项目隔离** | 每次 LLM 调用仅传入单个项目的相关字段，禁止 batch 多项目数据进同一 prompt | ✅ 已实现 |
+| **输出过滤** | LLM 输出后扫描是否包含密钥关键词，命中则记 `AgentError` 并丢弃 | ❌ **未实现**：全仓没有 `output_leakage_suspected`，输出侧无扫描 |
+| **日志脱敏** | `app/utils/redact.py::redact_processor` 装进 structlog processor 链（`configure_logging()`，`main.py:34` 调用） | ✅ **已实现且是全量**：按字段名脱敏 + 对所有字符串值替换已知密钥；控制台与文件共用同一条链，文件行同样脱敏。另有 `redact()` 单独用在采集器错误信息上 |
+| **不回传 system prompt** | API 端点禁止返回 `system_prompt` 字段 | ⚠️ 事实成立但原因不同：全仓没有 `system_prompt` 这个字段名，也**没有 `/projects/{id}/debug` 这个端点**（实测 46 条 OpenAPI 路径里 0 条含 `debug`） |
 
 ### 10.6 Agent 间信任边界
 
 - Agent 间不直接共享内存状态，仅通过 `db.read/write` 与结构化交接 JSON（`agents/README.md` §交接格式）通信。
 - 交接 JSON 必须经 Pydantic 模型校验，禁止 Agent A 直接消费 Agent B 的原始 LLM 输出。
-- Orchestrator 对子 Agent 输出有最终裁决权：若子 Agent 输出经 `output_schema` 校验失败，Orchestrator 降级使用规则引擎结果并记 `AgentError`。
+- Orchestrator 对子 Agent 输出有最终裁决权：校验失败时降级使用规则引擎结果并记 `AgentError`。
+  ⚠️ 校验靠的是 pydantic 模型，**不存在名为 `output_schema` 的东西**（全仓 0 处）。
 
 ### 10.7 AI 安全测试清单
 
+> ⚠️ 这 6 条**全部还没写**（2026-08-23 实测：`backend/tests` 里没有对应测试）。
+> 其中 3 条现在写了必挂，因为被测的机制本身不存在 —— 已在条目上标出。
+> 保留清单是为了记住要做什么，但**不能读成"已覆盖"**。
+
 - [ ] Prompt Injection 测试：构造含 `ignore previous instructions` 的项目描述，断言 LLM 输出仍符合 schema
-- [ ] Tool Permission 测试：断言 Collector Agent 调用 `llm.complete` 时抛 `PermissionError`
+- [ ] ~~Tool Permission 测试~~ — ❌ **机制不存在**：全仓没有 `allowed_tools` / `PermissionError`（见 §10.2）
 - [ ] 输出越界测试：mock LLM 返回 `heat_score_adjustment=0.5`（超上限 0.3），断言被截断为 0.3
-- [ ] 预算耗尽测试：模拟 `daily_spend > LLM_DAILY_BUDGET_USD`，断言 LLM 增强被禁用且告警触发
-- [ ] Data Leakage 测试：mock LLM 输出含 `OPENAI_API_KEY=sk-...`，断言被过滤且记 `AgentError`
+- [ ] ~~预算耗尽测试~~ — ❌ **机制不存在**：`LLM_DAILY_BUDGET_USD` 0 处读取（见 §10.4）
+- [ ] ~~Data Leakage 测试~~ — ❌ **机制不存在**：输出侧无密钥扫描（见 §10.5）
 - [ ] 降级链路测试：LLM 超时/异常时，断言规则引擎结果正确填充
 
 ---
 
-_文档版本：v1.1 · 2026-07-08 · 新增 §10 AI 特有安全_
+## 11. 本文档的失真记录（2026-08-23 实测修正）
+
+<!-- security-ghosts:begin -->
+上一版把**设计意图写成了已实现**，其中几条正好是安全控制 ——
+读者会以为有一层保护，而它不存在。逐条列出实测为**不存在**的东西
+（`backend/tests/test_security_doc_parity.py` 反向断言它们确实都不存在，
+否则这份纠错清单本身就成了新的谎言）：
+
+| 上一版声称 | 实测 |
+| --- | --- |
+| `backend/app/http_client.py` 是统一 HTTP 出口，校验域名白名单 | **文件不存在**；真实出口是 `backend/app/utils/fetcher.py`，不校验域名 |
+| 表外域名被拒绝并记 `PermissionError` | 全仓 **0 处** `PermissionError`；也没有 `ALLOWED_DOMAINS` / `allowed_domains` |
+| `agents/base.py` 定义 `allowed_tools` 并校验工具名 | 文件存在，但**没有 `allowed_tools`**，不校验 |
+| `LLM_DAILY_BUDGET_USD` 超限自动停用 LLM 并告警 | 配置项存在（默认 1.0），但**只被读来做展示**（`routers/v1/llm.py:65`、`settings.py:233/258`），**没有任何拦截逻辑**：全仓 0 处 `daily_spend`、0 处 `budget_exceeded`、0 处 `llm_budget_exhausted` |
+| LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 全仓 **0 处**，输出侧无扫描 |
+| `output_schema` 限定数值范围与枚举集 | **没有叫这个名字的东西**；实际靠 pydantic 模型 |
+| `/projects/{id}/debug` 端点禁止返回 `system_prompt` | **端点不存在**（46 条 OpenAPI 路径里 0 条含 `debug`），`system_prompt` 字段名也不存在 |
+| 每周跑 `evaluation/llm/template_validation.py` 检测模型漂移 | 脚本存在，但**没有任何定时任务在跑它** |
+<!-- security-ghosts:end -->
+
+### 11.1 数字对不上（机制在、参数与文档不一致）
+
+这些不是"不存在"，而是**文档写的数字与代码不符**，同样会误导：
+
+| 文档写 | 代码实际 |
+| --- | --- |
+| 全局限流 60 req/min | **100 req/min**（`RATE_LIMIT_REQUESTS=100` / `RATE_LIMIT_WINDOW=60`） |
+| `/run` 每小时 1 次 | **LLM 开启时 1 次、关闭时 10 次**（`rate_limit.py:41`，理由见 §4.2） |
+| `LLM_MODEL` 固定 `gpt-4o-mini` | 默认值是，但本地 `.env` 已改；「固定」是流程约定不是代码强制 |
+
+### 11.2 我在核对这份文档时自己犯的错（必须记下来）
+
+第一轮核对时，我把**限流中间件和全量日志脱敏也判成了"未实现"**，
+并照此改了 §4.2、§10.4、§10.5 —— **三处都是错的**。
+
+根因：我用的搜索模式是 `backend/app/**/*.py`，
+在这个 shell 里 `**` 只匹配**恰好一层子目录**，于是
+`backend/app/*.py`（顶层 22 个文件）**整个没被搜到** ——
+而 `rate_limit.py`、`main.py`、`auth.py`、`config.py`、`db.py` 全在那一层。
+实测：递归能扫到 117 个文件，那个模式只扫到 66 个，**漏了 51 个**。
+
+于是我得到"`RATE_LIMIT_*` 0 处读取"这个结论，
+而真相是 `app/rate_limit.py` 有一个 155 行、写得相当细的中间件
+（含 `X-Forwarded-For` 伪造防护、昂贵端点分档、清理顺序的取舍注释），
+`main.py:288` 也确实装载了它。
+
+**教训比错误本身重要**：
+1. **「搜不到」不等于「不存在」，除中间还差一步：先证明搜索本身是有效的。**
+   修法是给这份 parity 测试加了一条自检 ——
+   `assert _grep_app("RateLimitExceededError")`，
+   用一个**已知存在**的符号验证搜索器工作正常，
+   再去相信它给出的"0 处"结论。这跟本轮反复出现的
+   「解析器必须大声失败」是同一条，只不过对象是搜索工具自己。
+2. **一份文档说"未实现"和说"已实现"，错的代价不对称。**
+   把已实现写成未实现 → 有人去重复实现一遍（本轮 §9 那份文档的老毛病）；
+   把未实现写成已实现 → 有人把不存在的保护算进风险评估。
+   两个方向都得实测，**不能因为"往严的方向写更安全"就少查一遍**。
+3. 这也解释了为什么 §11 的反向断言必须进 CI：
+   我这种错**人工复读发现不了**（我复读了，没发现），
+   只有让断言去读真实对象才会暴露。
+
+### 11.3 为什么单独记这一整节
+
+这些不是笔误，而是**一种系统性的写法** ——
+把 ADR 里的设计决定直接抄成"实现"段落。对普通文档来说这只是过时；
+对安全文档来说，它让人在评估风险时把不存在的控制算进去。
+
+**上线前必须先定的三条**（都需要所有者拍板，不是技术难题）：
+1. **LLM 日预算**：`LLM_DAILY_BUDGET_USD` 现在纯装饰（能填、能在接口里查到、
+   不拦任何请求）。要么实现累计与熔断，要么删掉它并从文档里去掉这层保护。
+2. **域名白名单**：§10.2 那张表要么落成代码校验，要么明确降级为"评审清单"。
+3. **Agent 工具权限**：`allowed_tools` / `PermissionError` 整套不存在，
+   §10.7 里那条 Tool Permission 测试现在写了必挂。
+
+**一个能填、填了不生效的配置项，比没有这个配置项更危险** ——
+它让人以为已经设了上限。
+
+---
+
+_文档版本：v1.2 · 2026-08-23 · §4.2/§10.2–10.7 逐条实测校正，新增 §11 失真记录_
