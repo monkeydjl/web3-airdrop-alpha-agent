@@ -68,13 +68,34 @@ export function timingZh(timing?: string | null): string {
   return map[timing.toLowerCase()] || timing;
 }
 
+/**
+ * 风险档位中文名。
+ *
+ * 覆盖范围**只有 low / medium / high** —— 实测四个调用点传进来的值都被后端
+ * 约束在这三档：
+ * - `team.risk_level`：`score_to_risk_level()` 穷举 0.00–1.00 全部取值，
+ *   输出只有 high / medium / low
+ * - `risk.sybil_difficulty` / `risk.farming_cost` / `risk.unlock_pressure`：
+ *   `RiskResult` 三个字段的 pattern 都是 `^(low|medium|high)$`
+ *
+ * 曾经多一个 `unknown: '未知'` 条目 —— **不可达的死条目**，
+ * 跟此前 `timingZh` 里那个 `growth` 是同一类问题：
+ * 它让人以为系统还有第四种风险档位，而缺值走的是上面 `if (!level)` 那一支
+ * 直接显示「—」，永远到不了这张表。
+ *
+ * ⚠️ 后端 `opportunity.models.RiskLevel` 还有第四档 `critical`，
+ * 但它只出现在 `OpportunityAssessment.risks` 的 5 个维度里，
+ * 而那 5 个维度**目前前端一处都没渲染**（实测 253 条评估记录里
+ * 5 个维度全是 `null`，后端也还没在填）。真要展示 `risks` 时，
+ * 必须先给 `critical` 补中文名和配色，否则会渲染成英文原文。
+ * 这条由 `test_frontend_enum_parity.py::TestRiskLevelVocabulary` 钉住。
+ */
 export function riskLevelZh(level?: string | null): string {
   if (!level) return '—';
   const map: Record<string, string> = {
     high: '高',
     medium: '中',
     low: '低',
-    unknown: '未知',
   };
   return map[level.toLowerCase()] || level;
 }

@@ -446,6 +446,100 @@ class TestStageVocabularies:
         )
 
 
+class TestRiskLevelVocabulary:
+    """`riskLevelZh` 必须覆盖它真实收到的取值，且不含不可达的死条目。
+
+    系统里有**两套风险档位**，取值范围不同，这是最容易出错的地方：
+
+    - 评分管道侧（三档）：`team.risk_level` 由 `score_to_risk_level()` 产出，
+      `risk.sybil_difficulty` / `farming_cost` / `unlock_pressure` 由
+      `RiskResult` 的 pattern 约束 —— 全都只有 `low/medium/high`
+    - Opportunity 侧（**四档**）：`opportunity.models.RiskLevel` 多一个
+      `critical`，用于 `OpportunityAssessment.risks` 的 5 个维度
+
+    `riskLevelZh` 的 4 个调用点全部来自第一套。此前它多写了一个
+    `unknown: '未知'` —— **不可达的死条目**：缺值走的是函数开头
+    `if (!level) return '—'`，永远到不了那张表。这跟 `timingZh` 里那个
+    `growth` 是同一类问题：**死条目会让人以为系统还有额外的判断档位。**
+
+    而 `critical` 是反方向的风险：真值存在、只是前端还没渲染。
+    一旦有人开始展示 `risks`，`critical` 会**直接渲染成英文原文**。
+    所以这里同时钉两头：多的要没有，少的要有人管。
+    """
+
+    @staticmethod
+    def _pipeline_risk_values() -> set[str]:
+        """评分管道侧真实可达的取值（穷举 + 读 pattern，不抄字面量）。"""
+        from app.agents.team import score_to_risk_level
+        from app.models import RiskResult
+
+        reachable = {score_to_risk_level(i / 100) for i in range(101)}
+        assert reachable, "score_to_risk_level 没产出任何取值，解析器已失效。"
+        for field in ("unlock_pressure", "sybil_difficulty", "farming_cost"):
+            pattern = next(
+                (p for p in (getattr(m, "pattern", None) for m in RiskResult.model_fields[field].metadata) if p),
+                None,
+            )
+            assert pattern, f"RiskResult.{field} 没有 pattern 约束了 —— 真值来源变了，请同步本测试。"
+            values = set(re.findall(r"\w+", pattern.strip("^$()")))
+            assert values, f"解析 RiskResult.{field} 的 pattern 失败：{pattern}"
+            reachable |= values
+        assert len(reachable) == 3, f"评分管道侧的风险档位不再是 3 档，而是 {sorted(reachable)} —— 请同步前端与本测试。"
+        return reachable
+
+    def test_covers_every_reachable_pipeline_value(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "riskLevelZh", FORMAT_LIB)
+        missing = self._pipeline_risk_values() - labelled
+        assert not missing, f"riskLevelZh 漏了这些风险档位：{sorted(missing)}，界面会直接显示英文原文。"
+
+    def test_has_no_unreachable_entry(self) -> None:
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "riskLevelZh", FORMAT_LIB)
+        dead = labelled - self._pipeline_risk_values()
+        assert not dead, (
+            f"riskLevelZh 里这些取值它的 4 个调用点永远不会收到：{sorted(dead)}。"
+            "缺值走的是 `if (!level) return '—'`，到不了这张表；死条目会让人以为系统还有额外档位。"
+        )
+
+    def test_critical_is_not_silently_renderable(self) -> None:
+        """`critical` 只属于 Opportunity 侧，前端一旦开始渲染 `risks` 就必须先补它。
+
+        判据是「前端有没有读 `risks` 的 5 个维度」：
+        - 没读 → `critical` 到不了 `riskLevelZh`，当前状态是安全的
+        - 读了 → `riskLevelZh` 必须已经有 `critical` 条目，否则渲染英文原文
+
+        这条不写死"前端不能渲染 risks"（那会挡住正常开发），
+        而是把两件事绑在一起：**要渲染就得先把词补齐。**
+        """
+        from app.opportunity.models import RiskLevel
+
+        opp_values = {e.value for e in RiskLevel}
+        assert "critical" in opp_values, "Opportunity 侧不再有 critical 档 —— 这条测试的前提变了，请同步。"
+
+        dimensions = ("capital_security", "eligibility", "project_failure", "reward_dilution", "liquidity")
+        renderers: list[str] = []
+        for path in sorted(FRONTEND.rglob("*.tsx")) + sorted(FRONTEND.rglob("*.ts")):
+            if "node_modules" in path.parts or ".next" in path.parts:
+                continue
+            src = path.read_text(encoding="utf-8")
+            # 只认「读出来渲染」的形态（`risks.x` / `risks?.x`），
+            # 不认 fixture 里的对象字面量（`risks: { capital_security: ... }`）——
+            # 那是造测试数据，不会进 riskLevelZh。
+            if any(re.search(rf"risks\??\.{d}\b", src) for d in dimensions):
+                renderers.append(path.name)
+
+        labelled = _inline_map_keys(_read(FORMAT_LIB), "riskLevelZh", FORMAT_LIB)
+        if renderers:
+            assert "critical" in labelled, (
+                f"{renderers} 开始渲染 opportunity 的 risks 维度了，但 riskLevelZh 没有 `critical` 条目 —— "
+                "后端 RiskLevel 有四档，会直接显示英文 `critical`。请补中文名（并检查配色是否也要补）。"
+            )
+        else:
+            assert "critical" not in labelled, (
+                "riskLevelZh 里有 `critical`，但前端没有任何地方渲染 opportunity 的 risks 维度 —— "
+                "这会变成一个不可达的死条目。真要渲染时再补。"
+            )
+
+
 class TestParsersFailLoudly:
     """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
 
@@ -464,6 +558,8 @@ class TestParsersFailLoudly:
         assert len(TestStageVocabularies._deployment_stages()) >= 3
         assert len(TestStageVocabularies._lifecycle_stages()) == 4
         assert len(TestStageVocabularies._timings()) == 3
+        assert len(_inline_map_keys(_read(FORMAT_LIB), "riskLevelZh", FORMAT_LIB)) == 3
+        assert TestRiskLevelVocabulary._pipeline_risk_values() == {"low", "medium", "high"}
         panel = _read(WORKFLOW_PANEL)
         assert len(_object_keys(panel, "STATE_ZH", WORKFLOW_PANEL)) >= 5
         assert len(_option_ids(panel, "ELIGIBILITY_OPTS", WORKFLOW_PANEL)) >= 3
