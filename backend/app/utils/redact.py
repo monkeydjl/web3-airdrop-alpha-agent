@@ -114,13 +114,40 @@ class _TeeWriter:
             stream.flush()
 
 
+# structlog 的 filtering bound logger 只认小写级别名；`warn` 是 `warning` 的别名。
+_LEVEL_ALIASES = {"warn": "warning", "fatal": "critical"}
+_VALID_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+
+def _resolve_log_level() -> int:
+    """把 settings.log_level 解析成 structlog 的数值级别。
+
+    非法值（拼错、留空）**不静默降级成 DEBUG** —— 那会让生产环境突然开始打印
+    全部 debug 日志（含 fetcher 细节），是"配置写错反而放开了输出"的经典陷阱。
+    这里退回 INFO，与 `Settings.log_level` 的默认值一致。
+    """
+    import logging
+
+    raw = (getattr(settings, "log_level", "") or "").strip().lower()
+    name = _LEVEL_ALIASES.get(raw, raw)
+    if name not in _VALID_LEVELS:
+        name = "info"
+    return int(getattr(logging, name.upper()))
+
+
 def configure_logging() -> None:
-    """安装脱敏 processor。幂等，可重复调用。
+    """安装脱敏 processor 与级别过滤。幂等，可重复调用。
 
     当 settings.log_file 非空时追加文件输出（UTF-8 追加写，进程存活期间保持打开）：
     - 与 stdout 共用同一 processor 链，文件行同样经过脱敏，不会引入第二条渲染路径；
     - 落盘时强制 JSON 渲染——console 渲染带 ANSI 颜色与对齐补全，会污染文件行，
       且 JSON 行可直接被 Promtail/Loki 解析（按字段过滤）。
+
+    `wrapper_class` 必须显式传 filtering bound logger：`settings.log_level` 此前
+    **只传给了 uvicorn**（`main.py` 的 `uvicorn.run(log_level=...)`），
+    应用自身的 structlog 调用完全不看它 —— 于是 `LOG_LEVEL=WARNING` 下 12 处
+    `logger.debug`（fetcher 缓存命中、限流等待、rootdata 逐条失败）照样全量输出。
+    一个"设了但不生效"的级别开关比没有开关更糟：运维以为已经压掉了噪音。
     """
     import sys
     from pathlib import Path
@@ -162,5 +189,6 @@ def configure_logging() -> None:
         logger_factory=structlog.WriteLoggerFactory(
             file=_TeeWriter(*streams),  # type: ignore[arg-type]
         ),
+        wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
         cache_logger_on_first_use=True,
     )

@@ -1157,3 +1157,49 @@ class TestAdversarialRound4Findings:
         assert mw._windows.check("ip", 1, 60.0, 100.0) is None
         # 此时 /run 的昂贵端点桶必须还是空的
         assert "ip:/api/v1/run" not in mw._windows._hits
+
+    def test_log_level_setting_actually_filters_structlog_output(self, tmp_path, monkeypatch):
+        """`LOG_LEVEL` 必须真的压掉低级别日志，而不是只影响 uvicorn。
+
+        此前 `settings.log_level` 只传给了 `uvicorn.run(log_level=...)`，
+        应用自身的 structlog 完全不看它 —— `LOG_LEVEL=WARNING` 下 12 处
+        `logger.debug` 照样全量输出。一个"设了但不生效"的开关比没有开关更糟：
+        运维以为噪音已经压掉了，实际磁盘和日志后端照旧被灌满。
+        """
+        import json
+
+        import structlog
+
+        from app.config import settings
+        from app.utils.redact import configure_logging
+
+        def emit(level_name: str) -> list[str]:
+            log_file = tmp_path / f"{level_name or 'empty'}.jsonl"
+            monkeypatch.setattr(settings, "log_level", level_name)
+            monkeypatch.setattr(settings, "log_file", str(log_file))
+            structlog.reset_defaults()
+            configure_logging()
+            log = structlog.get_logger("levelprobe")
+            log.debug("probe.debug")
+            log.info("probe.info")
+            log.warning("probe.warning")
+            log.error("probe.error")
+            for stream in structlog.get_config()["logger_factory"]._file._streams:
+                stream.flush()
+            if not log_file.exists():
+                return []
+            return [json.loads(line)["level"] for line in log_file.read_text(encoding="utf-8").splitlines() if line]
+
+        try:
+            assert emit("DEBUG") == ["debug", "info", "warning", "error"]
+            assert emit("WARNING") == ["warning", "error"], "LOG_LEVEL=WARNING 未压掉 debug/info"
+            assert emit("ERROR") == ["error"], "LOG_LEVEL=ERROR 未压掉 warning"
+            # `warn` 是 `warning` 的常见别名，不能被当成非法值
+            assert emit("warn") == ["warning", "error"]
+            # 非法值/留空必须退回 INFO，**不能**降级成 DEBUG ——
+            # "配置写错反而把全部 debug 日志放出来"是必须避免的方向。
+            assert emit("BOGUS") == ["info", "warning", "error"], "非法 LOG_LEVEL 未退回 INFO"
+            assert emit("") == ["info", "warning", "error"], "空 LOG_LEVEL 未退回 INFO"
+        finally:
+            structlog.reset_defaults()
+            configure_logging()
