@@ -48,6 +48,61 @@
 连代码块都不用排除。它同样是合法 UTF-8，前两型的检查都看不见它。
 损失也最小（2 处 emoji，不影响任何语义），修复成本几乎为零。
 
+### 四型：含中文的 PowerShell / 批处理脚本没有 UTF-8 BOM
+
+前三型是"文件内容已经坏了"。四型不一样：**文件内容完全正确、合法 UTF-8、
+一个坏字节都没有 —— 但 Windows PowerShell 5.1 读它的时候会把它读坏。**
+
+2026-08-24 实测撞上一次，代价很大：改完 `scripts/auto_backup.ps1` 之后
+跑验证，脚本**跳过了前 150 行直接执行末尾**，返回 exit 0 说"备份成功"，
+而实际上 Docker 根本连不上、什么都没备份。
+
+成因（逐字节验证过）：Windows PowerShell 5.1 在**没有 BOM** 时按系统
+ANSI 代码页（简体中文机器上是 GBK/936）解码脚本，不是 UTF-8。
+GBK 是双字节编码，规则是：**任何 >= 0x80 的字节都无条件吃掉紧随其后的
+一个字节**，不管那个字节是什么 —— 包括 ASCII 引号。
+
+而一个 UTF-8 中文字符是 **3 字节**（奇数），GBK 按 2 字节一组啃，
+于是"引号会不会被吃掉"取决于**它前面有多少字节的中文**：
+
+    "中"     E4 B8 AD 22           → 引号被吃（3 字节，奇）
+    "中文"   E4 B8 AD E6 96 87 22  → 引号保留（6 字节，偶）
+    "中文字" … E5 AD 97 22         → 引号被吃（9 字节，奇）
+
+一旦结束引号被吃掉，字符串就不闭合，继续往下吞，
+把后面几十行代码全吃进一个字符串字面量里 ——
+而且**语法完全合法**（`PSParser::Tokenize` 报 0 个错误），
+所以既不报错、也不警告，只是静静地不执行那几十行。
+
+**这条奇偶性是四型最恶劣的地方**：它意味着同一个文件今天没事、
+明天在某行加一个字就炸，而炸法是静默跳过代码。
+所以判据不可能是"检查有没有某种危险组合"，只能是"必须有 BOM"。
+
+判据：`.ps1` / `.psm1` / `.bat` / `.cmd` 只要含任何非 ASCII 字节，
+就**必须**有 UTF-8 BOM（`EF BB BF`）。BOM 让 PowerShell 5.1 与 7.x
+都走 UTF-8，问题彻底消失。
+
+为什么不改成"脚本里不许写中文"：那是把成本转嫁给可读性，
+而且挡不住 —— 下一个人照样会写。BOM 是 3 个字节的事，一次解决。
+
+⚠️ **不要用 Python 的 `bytes.decode("gbk")` 去验证 PowerShell 的行为。**
+这是核对四型时踩的第二个坑，比第一个隐蔽：
+
+    同一串字节 EF BC 89 22（'）' + '"'）
+      .NET cp936（PowerShell 实际用的）→ 引号**被吃掉**
+      Python gbk codec + errors="replace" → 引号**保留**
+
+原因是前导字节后跟非法尾字节时两者策略不同：.NET 宽容，无条件消费 2 字节；
+Python 严格，抛 `UnicodeDecodeError`，`replace` 只消费那 1 个前导字节，
+于是引号被单独解码出来活了下来。
+拿 Python 去"验证" .NET 会得到相反结论 ——
+**验证用的解码器必须和被验证的解码器是同一个**，
+否则验证的是另一件事。因此 `gbk_eaten_byte_offsets()` 直接实现 .NET 的
+DBCS 规则，回归测试用的是实测记录下来的真值表，不是任何 codec。
+
+⚠️ 一型/二型/三型都会**跳过**这一型的检查（文件已经是坏的，
+先修内容再谈 BOM），避免同一个文件报两遍不同性质的问题。
+
 ## 这类损坏为什么危险
 
 **静默**：文件照样能打开、git 照常提交，只是内容里多了一堆 `?`。
@@ -57,6 +112,8 @@
 
 **教训**：每次以为"查完了"，换个判据又能查出一种。三型是在写完二型检测后
 主动追问"还有没有别的形态"才发现的 —— 检测判据的盲区就是损坏的藏身处。
+四型是被咬出来的，而且咬得最狠：它证明了**"文件内容合法"和"文件被正确读取"
+是两件不同的事**，前三型只查了前者。
 
 ## 用法
 
@@ -192,6 +249,15 @@ _INLINE_CODE = re.compile(r"`[^`\n]*`")
 # "用 errors='replace' 解码后又写回文件"。因此零误报风险。
 REPLACEMENT_CHAR = "\ufffd"
 
+# 四型：含非 ASCII 的 Windows 脚本必须带 UTF-8 BOM。
+# 没有 BOM 时 PowerShell 5.1 按 ANSI 代码页（简中机器 = GBK）解码。
+# GBK 中任何 >= 0x80 的字节都会无条件吃掉下一个字节 —— 而 UTF-8 中文字符
+# 是 3 字节（奇数），于是引号会不会被吃掉取决于前面中文的字节奇偶性。
+# 引号被吃 → 字符串不闭合 → 后续代码被静默吞进字面量，语法仍合法。
+# 详见模块 docstring。
+BOM_REQUIRED_SUFFIXES = {".ps1", ".psm1", ".bat", ".cmd"}
+UTF8_BOM = b"\xef\xbb\xbf"
+
 
 def blank_code_blocks(text: str) -> str:
     """把围栏代码块与行内代码替换成等长空白（保持下标不变）。
@@ -273,6 +339,82 @@ def count_errors(data: bytes) -> int:
     return n
 
 
+def needs_utf8_bom(path: Path, data: bytes) -> bool:
+    """这个文件是否属于"含非 ASCII 的 Windows 脚本"（四型的适用范围）。"""
+    if path.suffix.lower() not in BOM_REQUIRED_SUFFIXES:
+        return False
+    return any(b > 0x7F for b in data)
+
+
+def gbk_eaten_byte_offsets(data: bytes) -> set[int]:
+    """按 .NET cp936（DBCS）规则，算出哪些字节会被当作"尾字节"吞掉。
+
+    规则很简单，实测与 `[System.Text.Encoding]::GetEncoding(936)` 完全一致：
+    **任何 >= 0x80 的字节都无条件吃掉紧随其后的一个字节**，不管那个字节是什么。
+    ASCII 字节（< 0x80）单独成字符。
+
+    ⚠️ 这里刻意**不调用任何 codec**。Python 的 `gbk` codec 在遇到非法尾字节时
+    只消费 1 个字节（严格），而 .NET 消费 2 个（宽容）—— 结论正好相反。
+    PowerShell 用的是 .NET，所以模型必须照 .NET 写，
+    回归测试也用实测真值表而不是 Python codec 来校验。
+
+    危险不在"中文标点后面跟引号"，而在**字节奇偶性**：
+    一个 UTF-8 中文字符是 3 字节，GBK 按 2 字节一组吞，
+    于是 1 个中文字后面的引号会被吃掉、2 个不会、3 个会、4 个不会……
+    实测（.NET 936）：
+
+        "中"   E4 B8 AD 22  → 引号被吃
+        "中文" E4 B8 AD E6 96 87 22 → 引号保留
+        "中文字" …E5 AD 97 22 → 引号被吃
+
+    这条也解释了为什么问题会**随机出现**：同一行改一个字、
+    加一个全角括号，奇偶性就翻转。所以判据不能是"看有没有某种组合"，
+    只能是"这个文件必须有 BOM"。
+    """
+    eaten: set[int] = set()
+    i = 0
+    n = len(data)
+    while i < n:
+        if data[i] < 0x80:
+            i += 1
+        else:
+            if i + 1 < n:
+                eaten.add(i + 1)
+            i += 2
+    return eaten
+
+
+def describe_bom_hazard(data: bytes) -> str:
+    """指出第一行**引号真的会被吃掉**的位置，按字节实算而不是靠猜模式。
+
+    只报"有中文"没用 —— 读的人不知道为什么危险，会当成洁癖要求。
+    按 GBK 规则实算出被吞的引号位置，"这里会静默吞掉后面的代码"
+    就变成一个可验证的事实。
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:  # pragma: no cover - 一型已先行拦截
+        return "文件不是合法 UTF-8，先修一型损坏"
+
+    eaten = gbk_eaten_byte_offsets(data)
+    offset = 0
+    for lineno, line in enumerate(text.splitlines(keepends=True), 1):
+        raw = line.encode("utf-8")
+        for k, byte in enumerate(raw):
+            if byte in (0x22, 0x27) and (offset + k) in eaten:
+                quote = chr(byte)
+                return (
+                    f"第 {lineno} 行的 {quote} 会被 GBK 吞掉（字节偏移 {offset + k}）——"
+                    f"字符串不闭合，后续代码被静默吞进字面量：{line.strip()[:70]}"
+                )
+        offset += len(raw)
+
+    return (
+        "含非 ASCII 字符，当前恰好没有引号落在 GBK 尾字节位置上 —— "
+        "但这只是字节奇偶性的巧合，改动任意一个中文字就会翻转，仍必须加 BOM"
+    )
+
+
 def iter_repo_files() -> list[Path]:
     out: list[Path] = []
     stack = [REPO_ROOT]
@@ -305,6 +447,7 @@ def main() -> int:
     moji_known: list[tuple[str, int]] = []
     repl_failures: list[tuple[str, int, str]] = []
     repl_known: list[tuple[str, int]] = []
+    bom_failures: list[tuple[str, str]] = []
 
     for path in files:
         if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
@@ -346,6 +489,12 @@ def main() -> int:
             else:
                 repl_failures.append((rel, n_repl, describe_first_replacement(text)))
 
+        # 四型：含非 ASCII 的 Windows 脚本缺 UTF-8 BOM。
+        # 零豁免、零登记 —— 这一型的修法是加 3 个字节，没有"不可逆丢失"的情况，
+        # 因此没有理由给任何文件开豁免。
+        if needs_utf8_bom(path, data) and not data.startswith(UTF8_BOM):
+            bom_failures.append((rel, describe_bom_hazard(data)))
+
     for rel, n in known_hits:
         print(f"[known] {rel}：{n} 处非法 UTF-8（一型：丢第 3 字节，已登记待修复）")
     for rel, n in moji_known:
@@ -371,6 +520,26 @@ def main() -> int:
         print("用了非 UTF-8 编码（或用 errors='replace' 解码后写回），原字符已不可逆丢失 ——")
         print("参见 scripts/repair_utf8_docs.py 与 scripts/verify_utf8_repair.py，")
         print("以及 docs/ENCODING_REPAIR.md。")
+        return 1
+
+    if bom_failures:
+        print()
+        print(f"[FAIL] {len(bom_failures)} 个 Windows 脚本含中文但缺 UTF-8 BOM（四型）：")
+        for rel, detail in bom_failures:
+            print(f"  {rel}")
+            print(f"    {detail}")
+        print()
+        print("为什么这是硬错误：Windows PowerShell 5.1 在没有 BOM 时按系统 ANSI 代码页")
+        print("（简中机器 = GBK）解码脚本。GBK 中任何 >= 0x80 的字节都会无条件吃掉下一个")
+        print("字节，而 UTF-8 中文字符是 3 字节（奇数）—— 于是结束引号会不会被吃掉，")
+        print("取决于它前面有多少字节的中文。引号一旦被吃，字符串不闭合，后面几十行代码")
+        print("被静默吞进字面量：语法仍然合法，不报错也不警告，脚本只是跳过那几十行然后 exit 0。")
+        print()
+        print("注意这条奇偶性意味着「今天没事」不等于安全 —— 改一个字就会翻转。")
+        print()
+        print("修法（3 个字节，一次解决）：")
+        print("  $t = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8)")
+        print("  [System.IO.File]::WriteAllText($f, $t, (New-Object System.Text.UTF8Encoding $true))")
         return 1
 
     pending = len(known_hits) + len(moji_known) + len(repl_known)

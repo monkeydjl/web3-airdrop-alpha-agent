@@ -384,6 +384,151 @@ class TestRateLimitIsReal:
         assert "Retry-After" in code, "429 不带 `Retry-After` 头 —— 调用方无从知道等多久，与 §4.2 不符。"
 
 
+class TestRateLimitDocstringMatchesItsOwnCode:
+    """`rate_limit.py` 的模块 docstring 不能否认它自己在做的事。
+
+    这一组针对的是一个具体事故：那段 docstring 曾经写着
+    「这三个配置项没有任何代码读取、限流从未实现」，
+    而**紧接其下的 100 多行就是在读它们**。
+
+    为什么值得单独立一组门禁：一个文件的注释否认自己的实现，
+    是最难被发现的一类错 —— 读代码的人先读注释，读完就不往下看了。
+    它也是本轮那次误判的起点（外部文档的四处"❌ 未实现"都源自这里）。
+    所以钉的不是措辞，而是**「注释与它所在的文件」这条最短的一致性**。
+    """
+
+    #: 只要这些说法出现在 docstring 里，就与本文件的实现直接矛盾。
+    #:
+    #: 分两类，都是变异测试逐个补出来的：
+    #: - **过去式否认**：说这些配置项没人读、限流没实现（当年那句原话）。
+    #: - **未来式否认**：说限流"计划/待/尚未"实现 —— 危害完全一样。
+    #:   变异 `d11` 把「这个文件就是限流的实现本体」换成「本文件计划实现限流」，
+    #:   一条测试都没红。也就是说只防了"说没做"，没防"说还没做"。
+    #:   而后者更容易被写出来：改代码时顺手把注释写成路线图口吻。
+    _DENIALS = (
+        "从未实现",
+        "没有任何代码读取",
+        "全仓库没有任何代码",
+        "未实现限流",
+        "计划实现",
+        "尚未实现",
+        "待实现",
+        "还没有实现",
+    )
+
+    #: 行级豁免标记。docstring 里需要**引用**当年那句错话来说明事故，
+    #: 引用和主张是两回事 —— 但豁免必须逐行显式，可 grep 审计，
+    #: 与本仓 `terminology-ok` 同一套做法。整段/整文件豁免一律不给：
+    #: **豁免的粒度就是漏洞的大小。**
+    _EXEMPT_MARKER = "denial-quote-ok"
+
+    def test_docstring_does_not_deny_the_implementation(self) -> None:
+        doc = inspect.getdoc(rate_limit_module) or ""
+        assert doc.strip(), "`rate_limit.py` 没有模块 docstring —— 这条门禁在空转，请先补 docstring。"
+
+        # 先证明这个文件确实在读那三个配置项（否则"矛盾"无从成立）
+        src = (APP_DIR / "rate_limit.py").read_text(encoding="utf-8")
+        body = src.replace(doc, "", 1)
+        for key in ("rate_limit_enabled", "rate_limit_requests", "rate_limit_window"):
+            assert key in body, (
+                f"`rate_limit.py` 的可执行代码里读不到 `{key}` —— "
+                "如果限流真的被移除了，请把 docstring、SECURITY.md §4.2 与本组测试一起改掉。"
+            )
+
+        offenders: list[tuple[int, str]] = []
+        exempted = 0
+        for lineno, line in enumerate(doc.splitlines(), 1):
+            hits = [phrase for phrase in self._DENIALS if phrase in line]
+            if not hits:
+                continue
+            if self._EXEMPT_MARKER in line:
+                exempted += 1
+                continue
+            offenders.extend((lineno, phrase) for phrase in hits)
+
+        assert not offenders, (
+            f"`rate_limit.py` 的 docstring 里有否认自己实现的说法 {offenders}，"
+            "但同一个文件下面就在读这些配置项。"
+            "一个否认自己实现的注释比没有注释更坏：读代码的人先读注释，读完就不往下看了。"
+            f"（若确实是在引用当年那句错话，请在该行行尾加 `{self._EXEMPT_MARKER}` 标记。）"
+        )
+        assert exempted >= 1, (
+            "docstring 里一处豁免标记都没有 —— 说明那段「当年写错了什么」的引用被删掉了。"
+            "只留下正确结论、不留下错误原文，下一个人无法判断自己是不是又搜错了。"
+        )
+
+    def test_docstring_states_it_is_wired(self) -> None:
+        """docstring 必须正面声明"这个文件就是实现本体、已装载"。
+
+        只禁止否认句是不够的 —— 变异测试证明了：把那句正面声明改成
+        「本文件计划实现限流」之后，全部测试仍然绿（当时否认词表里
+        没有"计划实现"）。补词表能挡住已知说法，但挡不住下一种措辞。
+
+        所以这里从两侧钉：**既要求没有否认句，也要求有肯定句。**
+        肯定句同时被 `test_middleware_is_wired_into_app` 用真实对象验证过，
+        因此它不是一句自说自话的口号，而是一个有代码背书的断言。
+        """
+        doc = inspect.getdoc(rate_limit_module) or ""
+        assert "实现本体" in doc, (
+            "docstring 没正面写出「这个文件就是限流的实现本体」。"
+            "只靠禁止否认句挡不住下一种措辞 —— 必须有一句肯定的声明作为对照。"
+        )
+        assert "add_middleware" in doc, (
+            "docstring 没说清它是怎么生效的（由 `main.py` 通过 `add_middleware` 装上）。"
+            "一个不说明自己如何被装载的中间件，下一个人无法判断它到底在不在链上。"
+        )
+
+    def test_docstring_records_the_misjudgement(self) -> None:
+        """docstring 必须留下那次误判的成因，而不是悄悄改对。
+
+        悄悄改对的代价：下一个人（或下一个我）会用同一个一层 glob
+        得出同一个错结论，再改错一遍文档。
+        写下"搜索器本身可能是坏的"这条，比写对当前结论更有价值。
+
+        ⚠️ 断言粒度也是变异测试逼细的，而且**被同一个坑咬了两次**：
+        第一版只要求 `"glob" in doc`，而"不用 shell glob"那句里也有 glob；
+        改成要求 `"0 命中"` 之后仍然存活，因为下面那条教训里也写着"0 命中"。
+        两次都是**同一个词在 docstring 里出现两处**，
+        于是断言只证明了其中一处存在，把成因整句删掉照样绿。
+
+        结论：钉"某个词出现过"永远不够，要钉**只可能出自那一句的内容** ——
+        这里是那个具体命令（`Select-String`）、它的真实行为（只匹配一层）、
+        以及实测数字（117 / 66）。
+        """
+        doc = inspect.getdoc(rate_limit_module) or ""
+        assert "Select-String" in doc, (
+            "docstring 没写出当年那条具体命令 —— 只说「搜索方式不对」，下一个人认不出自己正在用同一条命令。"
+        )
+        assert "只匹配一层" in doc, (
+            "docstring 没写清那个 glob 的真实行为（只匹配一层目录）—— 成因丢了，下一个人会用同一个 glob 重犯。"
+        )
+        assert "117" in doc and "66" in doc, (
+            "docstring 没留下实测数字（递归 117 个 .py vs 那个 glob 只看到 66 个）。"
+            "没有数字的教训会被当成模糊的告诫，下次照样会信一个 0 命中的结果。"
+        )
+        assert "rglob" in doc, "docstring 没给出替代做法（`pathlib.rglob`），只说别犯错等于没说。"
+        assert doc.count("0 命中") >= 2, (
+            "「0 命中」在 docstring 里应当出现两次：一次是事故叙述（当时搜到 0 条），"
+            "一次是由此得出的教训（不要信任任何 0 命中结论）。"
+            "只剩一处说明其中一半被删了 —— 而这一半正是这段记录的要点："
+            "**一个 0 命中的结果，可能是搜索器坏了而不是代码没有。**"
+        )
+
+    def test_docstring_distinguishes_inbound_from_outbound(self) -> None:
+        """必须写清这是**入站**限流，与 `collectors/rate_limiter.py` 的出站限流无关。
+
+        两个文件名几乎一样、都叫 rate limit，方向完全相反。
+        实测出站那个的配额是 `defillama 2.0/5`、`etherscan 0.2/2` 之类，
+        与入站的 100 req/min 毫无关系 —— 改错一个会以为改了另一个。
+        """
+        doc = inspect.getdoc(rate_limit_module) or ""
+        assert "入站" in doc and "出站" in doc, (
+            "docstring 没区分入站/出站限流。仓里有两套同名机制方向相反，不写清会有人改错文件。"
+        )
+        outbound = APP_DIR / "collectors" / "rate_limiter.py"
+        assert outbound.is_file(), f"`{outbound}` 不存在 —— docstring 提到的出站限流已消失，请同步 docstring。"
+
+
 class TestReferencedPathsExist:
     """正文引用的 `backend/...` 文件必须真实存在。"""
 

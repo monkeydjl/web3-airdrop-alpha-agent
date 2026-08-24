@@ -63,19 +63,30 @@ repos:
         files: \.(md|py|html|js|ts|tsx|json|yaml|yml|txt)$
         pass_filenames: true
 
-      # 拦截编码损坏。仓库里已发现三种，成因同源（写回文件时没用 UTF-8，
-      # 或用 errors='replace' 解码后又写回）：
+      # 拦截编码损坏。仓库里已发现四种：
       #   一型：3 字节中文字符丢第 3 字节 → 文件变成非法 UTF-8（3 个文档 1116 处）
       #   二型：整个中文字符变成半角 '?' → 文件**仍是合法 UTF-8**（API_SPEC.md 70 处）
       #   三型：字面 U+FFFD 替换符 → 同样合法（SYSTEM_DIRECTION_CHANGE.md 2 处）
+      #   四型：含中文的 Windows 脚本缺 UTF-8 BOM（auto_backup.ps1，2026-08-24）
+      # 前三型成因同源（写回文件时没用 UTF-8，或用 errors='replace' 解码后写回），
       # 后两型更隐蔽：一型的检查完全看不见它们，二型在 git 历史里潜伏了 6 个提交。
       # 三型是写完二型检测后主动追问"还有没有别的形态"才发现的 ——
       # 检测判据的盲区就是损坏的藏身处。
-      # 三型都是静默的 —— 文件照样能提交，只是中文变成 '?'。这道检查不让它再发生。
+      #
+      # 四型和前三型性质不同，值得单独说：**文件内容完全正确，是读它的人读坏的。**
+      # PowerShell 5.1 在无 BOM 时按 ANSI 代码页（简中 = GBK）解码，
+      # GBK 中任何 >= 0x80 的字节都会吃掉下一个字节 —— UTF-8 中文是 3 字节（奇数），
+      # 于是结束引号会不会被吃掉取决于前面中文的字节奇偶性。引号被吃 → 字符串不闭合
+      # → 后面几十行代码被静默吞进字面量，**语法仍然合法**，脚本跳过那几十行还 exit 0。
+      # 实测代价：改完备份脚本跑验证，日志说"备份成功"，实际一个文件都没生成。
+      #
+      # 四型是**零豁免**的（修法是加 3 个字节，不存在不可逆丢失），
+      # 而且 `.ps1`/`.bat` 已在下面的 files 正则里，所以这道钩子自动覆盖。
+      # 四种损坏都是静默的 —— 文件照样能提交。这道检查不让它再发生。
       - id: check-encoding
-        name: 编码损坏检查（防止中文丢字）
+        name: 编码损坏检查（防中文丢字 + Windows 脚本缺 BOM）
         entry: python scripts/check_encoding.py
         language: system
         types: [file]
-        files: \.(md|py|ts|tsx|js|jsx|json|yml|yaml|txt|ps1|bat|css|sql|toml|cfg|ini)$
+        files: \.(md|py|ts|tsx|js|jsx|json|yml|yaml|txt|ps1|psm1|bat|cmd|css|sql|toml|cfg|ini)$
         pass_filenames: true
