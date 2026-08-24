@@ -262,6 +262,76 @@ class TestAuthMiddleware:
         )
         assert r.status_code == 403
 
+    # ── 按方法锁：同一路径读开放、写受限（2026-08-24 关掉的两个口子）──
+    #
+    # 这两处此前实测**匿名 token 返回 200**，而且不是"能看"而是"能做"：
+    #   - trigger 真的会跑一次采集，写三张表、消耗第三方 API 配额
+    #   - PATCH funding 改数据并触发重算
+    # 但它们的 GET 是普通只读信息（采集源就绪状态 / 融资明细），首页在用，
+    # 所以不能整前缀锁 —— 用 `ADMIN_ONLY_METHOD_RULES` 按方法分开。
+
+    def test_anon_token_blocked_from_collection_trigger(self, auth_client):
+        """匿名不能触发采集 —— 这是**会真的花钱**的操作。"""
+        token = _get_anon_token(auth_client)
+        r = auth_client.post(
+            "/api/v1/collections/defillama/trigger",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403, (
+            f"匿名 token 触发采集拿到 {r.status_code} —— 这个端点会真的跑一次采集并消耗第三方配额。"
+        )
+        assert r.json()["error"]["code"] == "FORBIDDEN"
+
+    def test_anon_token_blocked_from_collection_patch(self, auth_client):
+        """匿名不能改采集源配置（开关、cron）。"""
+        token = _get_anon_token(auth_client)
+        r = auth_client.patch(
+            "/api/v1/collections/defillama",
+            json={"enabled": False},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403, f"匿名 token 改采集源配置拿到 {r.status_code} —— 应当 403。"
+
+    def test_anon_token_blocked_from_funding_patch(self, auth_client):
+        """匿名不能改融资数据（会触发重算）。"""
+        token = _get_anon_token(auth_client)
+        r = auth_client.patch(
+            "/api/v1/projects/some-project/funding",
+            json={"total_funding_usd": 1},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403, f"匿名 token 改融资数据拿到 {r.status_code} —— 应当 403。"
+
+    def test_anon_token_still_reads_collection_sources(self, auth_client):
+        """反向断言：只读的采集源列表**必须**保持对匿名开放。
+
+        这条和上面三条一样重要。只写"该锁的锁上了"是半个断言 ——
+        把整个 `/api/v1/collections` 前缀塞进 `ADMIN_ONLY_PREFIXES` 也能让
+        上面三条全绿，代价是首页和 /discoveries 页对匿名角色直接空掉。
+        **一个只验证"锁住了"的测试，无法区分"锁对了"和"锁多了"。**
+        """
+        token = _get_anon_token(auth_client)
+        r = auth_client.get(
+            "/api/v1/collections/sources",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200, f"匿名读采集源列表拿到 {r.status_code} —— 这是只读的就绪状态，首页在用，不该锁。"
+
+    def test_anon_token_still_reads_funding(self, auth_client):
+        """反向断言：`GET .../funding` 必须保持对匿名开放。
+
+        404（项目不存在）是可以的，401/403 说明被鉴权挡住了 —— 那才是回归。
+        """
+        token = _get_anon_token(auth_client)
+        r = auth_client.get(
+            "/api/v1/projects/some-project/funding",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code not in (401, 403), (
+            f"匿名读融资明细被鉴权挡住了（{r.status_code}）—— 只有 PATCH 该锁，GET 不该。"
+        )
+
     # ── Admin API key → 200 on all endpoints ──────
 
     def test_admin_key_via_x_api_key(self, auth_client):

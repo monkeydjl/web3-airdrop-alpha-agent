@@ -67,26 +67,68 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，上生产前需复核）
+### 2.1 写操作的鉴权分布（实测，2026-08-24 已收紧）
 
-全仓共 **21 个**写端点（POST/PUT/PATCH/DELETE），其中**只有 4 个**要求管理员：
-`/run`、`/import/projects`、`/quarantine`、`/quarantine/release`。
+全仓共 **21 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
-剩下 17 个**匿名 token 就能调**。其中三个值得在上线前重新评估，
-因为它们的副作用超出"记录用户自己的行为"这个范畴：
+<!-- write-auth-split:begin -->
+| 归属 | 数量 |
+| --- | --- |
+| 管理员专用 | 7 |
+| 无鉴权（公开） | 2 |
+| 匿名 token 可调 | 12 |
+<!-- write-auth-split:end -->
+
+管理员专用的 7 个：`/run`、`/import/projects`、`/quarantine`、
+`/quarantine/release`，加上 2026-08-24 新收紧的三个 ——
+`POST /collections/{source_id}/trigger`、`PATCH /collections/{source_id}`、
+`PATCH /projects/{project_id}/funding`。
+
+公开的 2 个：`POST /auth/anonymous`（匿名入口本身）、
+`POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）。
+
+#### 收紧的是哪三个，为什么
+
+这三个此前**匿名 token 实测返回 200**，而且不是"能看"而是"能做"：
 
 | 端点 | 匿名可调的后果 |
 | --- | --- |
-| `POST /collections/{source_id}/trigger` | **真的去打外部 API 并写库**（同步执行完整采集） |
-| `PATCH /collections/{source_id}` | 开关采集源 —— 属于运维动作 |
+| `POST /collections/{source_id}/trigger` | **真的去打外部 API 并写库**（同步跑完整采集，消耗第三方配额） |
+| `PATCH /collections/{source_id}` | 开关采集源、改 cron —— 属于运维动作 |
 | `PATCH /projects/{project_id}/funding` | 直接改项目融资数据，会影响评分输入 |
 
-其余（`feedback` / `events` / `interactions` / `watchlist` / `notifications/read`
-/ `ai-brief` / `opportunity/*`）对匿名开放是符合设计意图的：它们记录的是
-使用者自己的行为与偏好。
+它们不是被谁故意放开的，而是 `ADMIN_ONLY_PREFIXES` 只支持**整前缀**匹配，
+这三个都表达不了：
 
-> 这是**现状记录，不是推荐配置**。本文档的职责是把真实鉴权边界写清楚，
-> 让所有者能据此判断要不要收紧；把它写成"都要管理员"反而会掩盖问题。
+- `/collections/sources` 是只读的采集源就绪状态，首页和 `/discoveries` 页在用，
+  整前缀锁会让匿名角色的页面直接空掉；
+- `funding` 的通配段在路径**中间**（`/projects/{id}/funding`），前缀匹配写不出来，
+  而且同一路径的 `GET` 应当保持开放。
+
+因此新增了一层**按方法**的规则（`backend/app/auth.py` 的
+`ADMIN_ONLY_METHOD_RULES`）：这两处的 `GET`/`HEAD` 照旧开放，
+`POST`/`PATCH`/`PUT`/`DELETE` 一律要管理员。
+`/collections/` 用的是**方法白名单取反**而不是逐条列出 trigger 和 PATCH ——
+新加一个写端点时默认就是受保护的。
+**一个需要人记得来登记的白名单，迟早会漏一条。**
+
+#### 剩下 12 个匿名可写，为什么可以
+
+`feedback` / `feedback/batch` / `events` / `interactions`（含 PATCH/DELETE）/
+`watchlist`（含 DELETE）/ `notifications/read` 记录的是**使用者自己**的行为与偏好，
+按 `user_id` 隔离，对匿名开放符合设计意图 —— 反馈闭环本来就要匿名可用。
+
+`opportunity/evidence` 只追加证据条目，不花钱、不改评分事实。
+
+`ai-brief` 和 `opportunity/evaluate` 会走 LLM（**有额度成本**），
+但刻意没有按角色锁：成本改由 `LLM_DAILY_BUDGET_USD` 的预算门统一拦截。
+理由是锁角色挡不住真实风险 —— 管理员自己刷同样会花钱。
+
+> 这 12 条**逐条登记**在 `backend/tests/test_admin_only_rules.py` 的
+> `ANON_WRITABLE` 里，每条都必须写一句为什么，且门禁**双向**核对：
+> 登记条目必须在 OpenAPI 里真实存在（防陈旧条目），
+> OpenAPI 里每个写操作必须有归属（防新增漏网）。
+> **只查一个方向永远发现不了缺行。**
 
 ---
 

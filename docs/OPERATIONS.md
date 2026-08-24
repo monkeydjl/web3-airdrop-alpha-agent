@@ -473,10 +473,23 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 
 匿名 token 打这些前缀下的路径拿 **403**。
 
-> ⚠️ 两个已知的口子，见 §12.7：
-> `/api/v1/collections/*`（含**真的会跑采集**的 trigger）**不在**这个清单里，
-> 匿名 token 实测返回 **200**；`/api/v1/projects/{project_id}/funding` 的 `PATCH`
-> （会改数据并触发重算）同样不在清单里。
+另有一层**按方法**的规则（`ADMIN_ONLY_METHOD_RULES`），用于"同一路径读开放、
+写受限"的两处 —— 前缀匹配表达不了它们：
+
+<!-- admin-method-rules:begin -->
+| 路径 | 受限方法 | 开放方法 | 为什么 |
+| --- | --- | --- | --- |
+| `/api/v1/collections/*` | POST / PATCH / PUT / DELETE | GET / HEAD | trigger 会**真的跑采集**并消耗第三方 API 配额；PATCH 能改采集源开关与 cron。但 `/collections/sources` 是只读就绪状态，首页和 `/discoveries` 页在用，整前缀锁会让匿名角色页面直接空掉。 |
+| `/api/v1/projects/{project_id}/funding` | POST / PATCH / PUT / DELETE | GET / HEAD | PATCH 改融资数据并触发重算。通配段在路径**中间**，前缀匹配写不出来；同一路径的 GET 是普通只读明细。 |
+<!-- admin-method-rules:end -->
+
+`/collections/` 用的是**方法白名单取反**（GET/HEAD 之外全锁），
+而不是逐条列出 trigger 和 PATCH —— 新加一个写端点时默认就是受保护的。
+**一个需要人记得来登记的白名单，迟早会漏一条**（§12.7 记的就是这么漏的）。
+
+排障提示：这两处拿到 **403** 时先看用的是哪种凭据 —— 是 `X-API-Key`
+（管理员）还是匿名 `Bearer`。前端页面走 `proxy.ts` 由服务端注入管理员 key，
+所以页面上能点的操作不受影响；直接用 curl 带匿名 token 会 403，那是预期行为。
 
 ### 5.3 无鉴权就能访问的端点（实测）
 
@@ -949,12 +962,26 @@ CI 跑 pytest 时加了：
 compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
 更没有 logrotate。按当前速率一年约 240 MB，且没有任何上限。
 
-### 12.7 两个鉴权口子
+### 12.7 两个鉴权口子（2026-08-24 已修）
 
-`/api/v1/collections/*` 和 `PATCH /api/v1/projects/{project_id}/funding`
-都能改变系统状态（前者真的会跑采集并写三张表，后者改数据并触发重算），
-却都**不在** `ADMIN_ONLY_PREFIXES` 里 —— 实测匿名 token 返回 200。
-已在 `docs/API_SPEC.md` §2.1 记录，**尚未修改**（等所有者决定）。
+`POST /api/v1/collections/{id}/trigger`、`PATCH /api/v1/collections/{id}` 和
+`PATCH /api/v1/projects/{project_id}/funding` 都能改变系统状态
+（前两个真的会跑采集/改采集配置，后者改数据并触发重算），
+而此前都**不在** `ADMIN_ONLY_PREFIXES` 里 —— 实测匿名 token 返回 **200**。
+
+**已收紧**（见 §5.2 的按方法规则表）：这三个现在都要管理员，
+它们的 `GET` 保持开放。
+
+值得记住的是**它们为什么会漏**：`ADMIN_ONLY_PREFIXES` 是一张
+"记得来登记才会生效"的白名单，而这类白名单的失效方式是沉默的 ——
+漏一条，没有任何东西会变红。
+
+所以修的时候没有只补两行，而是把判据反过来：
+`backend/tests/test_admin_only_rules.py` 把 OpenAPI 里**所有 21 个写操作**
+枚举出来，每一条都必须有归属 —— 要么受管理员保护，要么在 `ANON_WRITABLE`
+里带一句为什么。新增写端点时忘记登记会直接让 CI 变红。
+
+登记只允许**逐条 (方法, 路径)**，不允许按前缀或按文件豁免。
 
 ### 12.8 `/docs` 在生产也是开的
 
