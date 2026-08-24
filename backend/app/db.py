@@ -541,6 +541,34 @@ def _sqlite_ddl() -> str:
                 timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- LLM 日花费账本（迁移 0004）。
+            -- LLM_DAILY_BUDGET_USD 此前是装饰性配置：能填、能查、不拦截，
+            -- 因为全仓没有任何地方在累计花费 —— 没有累计就无从超限。
+            --
+            -- 为什么必须落库而不是内存计数：内存计数在进程重启时归零，而
+            -- "花超了"恰好是最可能伴随重启的场景；多 worker / 滚动更新时
+            -- 每个进程各记一份，每份都没超，合起来是 N 倍预算。
+            -- **按进程计的预算不是预算。**
+            --
+            -- 为什么金额列是 INTEGER 而不是 REAL：累加在 SQL 里做，REAL 累加
+            -- 会漂（实测 0.1+0.2 存回来是 0.30000000000000004）。在 Python 侧
+            -- 用 Decimal 只能保证"读出来是 Decimal"，管不住 SQL 里的加法。
+            -- 所以金额以 **纳美元（1e-9 USD）整数**存储，SQL 加法完全精确；
+            -- 单位选纳而不是微，是为了让一次很便宜的调用（约 1.5e-5 USD）
+            -- 也不会被舍入成 0 —— 舍成 0 就回到了"成本静默变成零"。
+            -- int64 上限对应 9.2e9 美元，不存在溢出问题。
+            --
+            -- spend_date 是 PRIMARY KEY（UTC 日期字符串）：累加走 UPSERT
+            -- 单语句完成，先 SELECT 再 UPDATE 在并发下会丢记账。
+            CREATE TABLE IF NOT EXISTS llm_spend_daily (
+                spend_date        TEXT PRIMARY KEY,
+                cost_nano_usd     INTEGER NOT NULL DEFAULT 0,
+                calls             INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS narratives (
                 sector      TEXT PRIMARY KEY,
                 aliases     TEXT,
@@ -959,6 +987,17 @@ def _postgres_ddl() -> str:
                 metric_value REAL NOT NULL,
                 detail      TEXT,
                 timestamp   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- LLM 日花费账本（迁移 0004）。说明见 SQLite 分支的同名表注释。
+            -- cost_nano_usd 用 BIGINT：纳美元整数，int64 上限约 9.2e9 美元。
+            CREATE TABLE IF NOT EXISTS llm_spend_daily (
+                spend_date        TEXT PRIMARY KEY,
+                cost_nano_usd     BIGINT NOT NULL DEFAULT 0,
+                calls             INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                updated_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS narratives (

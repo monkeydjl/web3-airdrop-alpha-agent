@@ -48,6 +48,14 @@ async def project_ai_brief(
             "project_name": project.get("name"),
             "mode": brief.get("mode"),
             "llm_available": settings.is_llm_enabled,
+            # 回退到规则引擎的原因。`llm_disabled`（没配密钥）/
+            # `budget_exceeded`（日预算用完）/ `ledger_unavailable`（账本故障）/
+            # `llm_error`（接口挂了）。`mode == "llm"` 时为 null。
+            #
+            # 只有 mode 而没有原因时，前端只能对所有降级说同一句话 ——
+            # 而"没配密钥"和"预算用完了"的处置动作完全不同，
+            # 说错会把人引向错误的排查方向。
+            "degraded_reason": brief.get("degraded_reason"),
             "headline": brief.get("headline"),
             "summary": brief.get("summary"),
             "bullets": brief.get("bullets") or [],

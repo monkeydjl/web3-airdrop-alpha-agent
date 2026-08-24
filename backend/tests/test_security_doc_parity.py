@@ -112,10 +112,14 @@ _GHOST_SYMBOLS = (
     "system_prompt",
 )
 
-# LLM 日预算是"能填、能查、不拦"的装饰性配置。
-# 判据不是"没人读它"（有 3 处读来回显），而是"没人在累计花费" ——
-# 没有累计就无从超限。这三个符号出现任何一个都说明有人开始真的实现了。
-_BUDGET_ENFORCEMENT_SYMBOLS = ("daily_spend", "budget_exceeded", "llm_budget_exhausted")
+# LLM 日预算在 2026-08-24 之前是"能填、能查、不拦"的装饰性配置。
+# 现在真的会拦（app/llm/budget.py），所以判据整体转向：
+# 从"这三个符号必须不存在"改成"累计与拦截必须存在"。
+# 见 TestLLMBudgetIsReallyEnforced。
+#
+# 注意 `llm_budget_exhausted` 仍留在 _GHOST_SYMBOLS 里：实现用的原因常量是
+# `budget_exceeded`，那个更早的幻影名字确实仍不存在，§11 那一行没错。
+_BUDGET_ENFORCEMENT_SYMBOLS = ("daily_spend", "budget_exceeded")
 
 
 def _doc_text() -> str:
@@ -588,12 +592,18 @@ class TestGhostListIsHonest:
         real = APP_DIR / "utils" / "fetcher.py"
         assert real.is_file(), "`backend/app/utils/fetcher.py` 不见了 —— 文档指向的真实 HTTP 出口变了，请同步。"
 
-    def test_llm_budget_is_declared_but_never_enforced(self) -> None:
-        """`LLM_DAILY_BUDGET_USD` 能填、能查、不拦。
+    def test_llm_budget_is_really_enforced_now(self) -> None:
+        """`LLM_DAILY_BUDGET_USD` 从"能填、能查、不拦"变成了真的会拦。
 
-        判据不是"没人读它"（实测有 3 处读来回显，搜一下像是实现了），
-        而是"**没人在累计花费**" —— 没有累计就无从超限。
-        这比"配置项完全没被读"更容易骗过检查，所以判据必须落在累计上。
+        这条门禁在 2026-08-24 之前是**反方向**的：它断言
+        `daily_spend` / `budget_exceeded` / `llm_budget_exhausted` 在
+        `backend/app` 里一处都不存在，用来保护 §10.4「只展示不拦截」的真实性。
+
+        实现补上后门禁必须一起转向。一个断言"这个安全控制必须仍然缺失"的测试，
+        在控制实现后就成了反向的假绿 —— 它会让 CI 拒绝真正的加固。
+
+        判据仍然落在**累计**上而不是"有人读了这个配置"：
+        实测曾有 3 处读它来回显，搜一下像是实现了。没有累计就无从超限。
         """
         fields = type(settings).model_fields
         assert "llm_daily_budget_usd" in fields, (
@@ -601,10 +611,36 @@ class TestGhostListIsHonest:
         )
         for symbol in _BUDGET_ENFORCEMENT_SYMBOLS:
             hits = _grep_app(symbol)
-            assert not hits, (
-                f"`{symbol}` 出现在代码里了：{hits[:5]} —— 看起来预算熔断开始被实现了。"
-                "SECURITY.md §10.3/§10.4/§11 还标着「只展示不拦截」，请更新文档。"
+            assert hits, (
+                f"`{symbol}` 在 backend/app 里一处都没有 —— 预算拦截被移除了？\n"
+                "SECURITY.md §10.3/§10.4/§11 现在写的是「已实现真实拦截」，两边必须一致。"
             )
+
+        ledger = APP_DIR / "llm" / "budget.py"
+        assert ledger.is_file(), "app/llm/budget.py 不见了 —— 日花费账本是预算拦截的全部依据。"
+        ledger_src = ledger.read_text(encoding="utf-8")
+        assert "llm_spend_daily" in ledger_src, (
+            "账本不再读写 llm_spend_daily 表 —— 如果改成了内存计数，"
+            "那么按进程计的预算不是预算（重启归零、多 worker 各记一份）。"
+        )
+
+    def test_security_doc_no_longer_calls_the_budget_decorative(self) -> None:
+        """§10.3 / §10.4 不能再写「只展示不拦截」。
+
+        把已实现的控制写成未实现，会让人在风险评估里少数一个可用的控制，
+        或者去重做一遍。两个方向的文档错误代价不对称，但都真实。
+
+        禁的是**这条控制的否认句**，不是"装饰性配置"这个词本身 ——
+        第一版禁了整个词，结果误伤了 `DUNE_API_KEY` 那一行（它**确实**还是
+        装饰性配置，那句话没错）。一个过宽的禁词会把正确的句子也判成错的，
+        然后逼人去改一句本来对的话。
+        """
+        text = _doc_text()
+        budget_lines = [line for line in text.splitlines() if "LLM_DAILY_BUDGET_USD" in line]
+        assert len(budget_lines) >= 3, f"只找到 {len(budget_lines)} 行提到日预算 —— 解析器或文档结构已变，先修解析器。"
+        for line in budget_lines:
+            for stale in ("只展示不拦截", "没有任何拦截", "纯装饰"):
+                assert stale not in line, f"这一行仍否认日预算拦截：{line.strip()[:120]}"
 
     def test_debug_endpoint_absent(self) -> None:
         paths = _openapi_paths()

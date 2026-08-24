@@ -32,6 +32,11 @@ interface LLMStatus {
   temperature: number;
   max_tokens: number;
   daily_budget_usd: number;
+  /** 当日（UTC）累计估算花费。账本读不出来时为 null，不是 0 */
+  spend_today_usd?: number | null;
+  calls_today?: number | null;
+  /** 账本读取失败原因。非空表示预算按 fail-closed 拒绝调用 */
+  ledger_error?: string | null;
   discovery_score_threshold: number;
 }
 
@@ -345,6 +350,16 @@ export default function InsightsPage() {
             <div className="ins-llm-stat">
               <span className="ins-llm-stat-val">${llmStatus.daily_budget_usd}</span>
               <span className="ins-llm-stat-label">日预算</span>
+            </div>
+            {/* 只显示上限看不出余量。今日已用与上限并排，超预算时一眼可见。
+                账本读不出来时显示 —— 而不是 0：坏掉的账本不该看起来像"还没花钱"。 */}
+            <div className="ins-llm-stat">
+              <span className="ins-llm-stat-val">
+                {llmStatus.ledger_error || llmStatus.spend_today_usd == null
+                  ? '—'
+                  : `$${llmStatus.spend_today_usd.toFixed(4)}`}
+              </span>
+              <span className="ins-llm-stat-label">今日已用</span>
             </div>
           </div>
           <div className="ins-llm-providers">

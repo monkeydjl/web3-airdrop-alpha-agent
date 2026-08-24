@@ -124,6 +124,15 @@
 但刻意没有按角色锁：成本改由 `LLM_DAILY_BUDGET_USD` 的预算门统一拦截。
 理由是锁角色挡不住真实风险 —— 管理员自己刷同样会花钱。
 
+> ⚠️ 这句话在写下来的时候（PR #19）**还是设计意图** —— 当时预算只被读出来展示，
+> 不拦任何调用，所以这两条路径实际上没有任何成本上限，只有 `/api/v1/run` 的
+> 频率限制。预算门已于 **2026-08-24 补齐实现**（`app/llm/budget.py`），
+> 这句话现在才是真的。
+>
+> 记下来是因为这类句子最危险：它把一个鉴权决策的理由建立在另一个尚未实现的
+> 控制上。读者看到"由预算门统一拦截"会认为成本已被管住，
+> 而当时两道闸门里只有一道存在。
+
 > 这 12 条**逐条登记**在 `backend/tests/test_admin_only_rules.py` 的
 > `ANON_WRITABLE` 里，每条都必须写一句为什么，且门禁**双向**核对：
 > 登记条目必须在 OpenAPI 里真实存在（防陈旧条目），
@@ -169,7 +178,7 @@
 | GET | `/api/v1/projects/{project_id}/interactions` | v1 | V2（已实现） | 某项目的参与记录 |
 | GET | `/api/v1/projects/{project_id}/participation-tasks` | v1 | V2（已实现） | 参与任务清单（**挂在项目下**，无顶层端点） |
 | GET / PATCH | `/api/v1/projects/{project_id}/funding` | v1 | V2（已实现） | 融资信息 / 人工修正 |
-| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | 读取 / 生成 AI 简报（POST 即重新生成，无 `/regenerate`） |
+| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | 生成 AI 简报（**GET 也是重新生成，不是读缓存**；POST 同义，无 `/regenerate`） |
 | GET | `/api/v1/projects/{project_id}/opportunity` | v1 | V2（已实现） | 旁路机会引擎最新快照 |
 | POST | `/api/v1/projects/{project_id}/opportunity/evaluate` | v1 | V2（已实现） | 显式执行机会评估 |
 | GET / POST | `/api/v1/projects/{project_id}/opportunity/evidence` | v1 | V2（已实现） | 证据历史 / 追加证据 |
@@ -1434,25 +1443,67 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 
 获取项目的 AI 简报（规则生成 / 可选 LLM 增强）。
 
+> ⚠️ **本节此前记录的响应体是虚构的**（2026-08-24 按实测更正）。
+> 原文写的是 `{"brief": "...", "llm_available": false, "generated_at": "..."}`
+> —— 真实响应里**没有 `brief` 也没有 `generated_at`** 这两个字段，
+> 正文在 `display_text`，而且**根本没有生成时间字段**。
+>
+> 照原文写前端会拿到 `undefined`，然后大概率被渲染成空白而不是报错 ——
+> **一个字段名写错的文档，产生的是空白页面，不是错误信息。**
+
 **响应 200**:
 ```json
 {
   "ok": true,
   "data": {
-    "brief": "Nova Protocol 是一个 L2 扩容方案...",
+    "project_id": "proj-001",
+    "project_name": "Nova Protocol",
+    "mode": "rule",
     "llm_available": false,
-    "generated_at": "2026-07-26T08:00:00Z"
+    "degraded_reason": "llm_disabled",
+    "headline": "Nova Protocol 是一个 L2 扩容方案...",
+    "summary": "...",
+    "bullets": ["..."],
+    "paragraphs": ["...", "..."],
+    "display_text": "...",
+    "label": "WATCH",
+    "label_zh": "持续观察",
+    "score": 55,
+    "confidence": 0.5
   }
 }
 ```
+
+**`mode` 与 `degraded_reason`**：`mode` 只有 `llm` / `rule` 两个值，
+而回退到 `rule` 有四种原因，必须靠 `degraded_reason` 区分：
+
+| `degraded_reason` | 含义 | 该怎么办 |
+| --- | --- | --- |
+| `null` | 没有降级（`mode` 为 `llm`） | — |
+| `llm_disabled` | 没配 `OPENAI_API_KEY` 或开关关着 | 配密钥 |
+| `budget_exceeded` | **当日 LLM 预算已用完** | UTC 零点自动恢复；要立即恢复就调大 `LLM_DAILY_BUDGET_USD` 并重启 |
+| `ledger_unavailable` | 预算账本读不出来，按 fail-closed 停用 LLM | 查数据库可写性，**不是**预算配置问题 |
+| `llm_error` | 所有接口都失败了 | 查 `llm.failed` 日志 / 接口可用性 |
+
+> 这个字段是 2026-08-24 新增的。此前响应里只有 `mode`，
+> 四种原因**完全无法区分**，前端只能对所有 `rule` 说同一句
+> 「当前未配置大模型密钥」—— 在密钥已配好、只是预算耗尽时那句话是错的，
+> 而且会把人引向完全错误的排查方向。
+> **降级本身不是问题，把降级原因说错才是问题。**
 
 ### 32b. POST /api/v1/projects/{project_id}/ai-brief
 
 > **路径已按实测更正（2026-08-22）**。原文写的是
 > `POST /projects/{id}/ai-brief/regenerate` —— 实测 404。
-> 真实做法是对**同一个路径**发 POST：`GET` 读缓存，`POST` 即重新生成。
+> 真实做法是对**同一个路径**发 POST。
 
-重新生成 AI 简报。
+重新生成 AI 简报。响应体与 32a 完全相同。
+
+> 补一条实测事实：**`GET` 并不是"读缓存"** —— 它在代码里就是
+> `return await project_ai_brief(project_id)`，即 POST 的别名，
+> 每次都重新生成。所以 `GET` 也会花 LLM 额度。
+> 这一点值得写清楚，因为「GET 是安全的、不产生副作用」是个很强的默认预期，
+> 而这里它不成立。
 
 ---
 
@@ -1484,10 +1535,33 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
     "temperature": 0.3,
     "max_tokens": 512,
     "daily_budget_usd": 1.0,
+    "budget_enforced": true,
+    "spend_today_usd": 0.0342,
+    "calls_today": 7,
+    "ledger_error": null,
     "discovery_score_threshold": 0.7
   }
 }
 ```
+
+**预算字段（2026-08-24 新增）**：
+
+| 字段 | 含义 |
+| --- | --- |
+| `daily_budget_usd` | 配置的日预算上限（`LLM_DAILY_BUDGET_USD`） |
+| `budget_enforced` | 预算是否真的会拦。`false` = 配成了 0 或负数 = 不限额 |
+| `spend_today_usd` | 当日（UTC）累计估算花费。**账本读不出来时是 `null`，不是 `0`** |
+| `calls_today` | 当日成功调用次数 |
+| `ledger_error` | 账本读取失败原因，正常为 `null` |
+
+`spend_today_usd` 用 `null` 而不是 `0` 表示"读不出来"是刻意的：
+两者都返回 0 的话，**一个坏掉的账本看起来就像一个还没花钱的账本**。
+`ledger_error` 非空时，LLM 调用会按 fail-closed 被拒绝（降级回规则引擎），
+这是排查方向的关键线索 —— 先查 DB 可写性，不要先怀疑预算配置。
+
+> 此前这个接口只回显 `daily_budget_usd`，也就是"配置里写了多少"，
+> 看不到"已经花了多少"。而在 2026-08-24 之前预算根本没在累计 ——
+> **只有上限没有用量，连"预算没生效"这件事都看不出来。**
 
 ---
 

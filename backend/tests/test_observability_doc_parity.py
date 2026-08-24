@@ -229,7 +229,6 @@ class TestDocumentedEventsExist:
             "fetcher.fetch.error",
             "fetcher.circuit.open",
             "db.write.error",
-            "llm.budget.exceeded",
             "projects.fetched_at",
         }
         wrongly_real = sorted(known_fictional & real)

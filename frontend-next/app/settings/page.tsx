@@ -36,6 +36,13 @@ interface LLMStatus {
   temperature: number;
   max_tokens: number;
   daily_budget_usd: number;
+  /** 预算是否真的会拦（0 或负数 = 不限额） */
+  budget_enforced?: boolean;
+  /** 当日（UTC）累计估算花费。账本读不出来时为 null，不是 0 */
+  spend_today_usd?: number | null;
+  calls_today?: number | null;
+  /** 账本读取失败原因。非空表示预算按 fail-closed 拒绝调用 */
+  ledger_error?: string | null;
   discovery_score_threshold: number;
 }
 
@@ -600,9 +607,32 @@ export default function SettingsPage() {
                 <SettingRow label="Max Tokens" env="LLM_MAX_TOKENS" desc="单次调用上限">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens} />
                 </SettingRow>
-                <SettingRow label="每日预算" env="LLM_DAILY_BUDGET_USD" desc="超出后自动降级回规则引擎">
+                <SettingRow
+                  label="每日预算"
+                  env="LLM_DAILY_BUDGET_USD"
+                  desc={
+                    llmStatus?.budget_enforced === false
+                      ? '设为 0 = 不限额（当前不拦截）'
+                      : '按 UTC 日累计，超出后拒绝调用并降级回规则引擎'
+                  }
+                >
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_DAILY_BUDGET_USD ?? llmStatus?.daily_budget_usd} />
                   <span className="set-unit">USD / 天</span>
+                </SettingRow>
+                {/* 只有上限没有用量，看不出还剩多少余量，也看不出预算是否真的在累计。
+                    ledger_error 单独显示：读不出账本和「今天确实还没花钱」都会是 0，
+                    两者必须区分得开。 */}
+                <SettingRow label="今日已用" env="—" desc="当日（UTC）累计估算花费，来自 llm_spend_daily 表">
+                  {llmStatus?.ledger_error ? (
+                    <span className="set-unit">账本读取失败（预算按 fail-closed 拒绝调用）</span>
+                  ) : (
+                    <>
+                      <ReadonlyValue value={llmStatus?.spend_today_usd ?? '—'} />
+                      <span className="set-unit">
+                        USD{typeof llmStatus?.calls_today === 'number' ? ` · ${llmStatus.calls_today} 次调用` : ''}
+                      </span>
+                    </>
+                  )}
                 </SettingRow>
                 <SettingRow label="LLM 启用阈值" env="LLM_DISCOVERY_SCORE_THRESHOLD" desc="仅 discovery_score ≥ 此值的项目走 LLM">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_DISCOVERY_SCORE_THRESHOLD ?? llmStatus?.discovery_score_threshold} />

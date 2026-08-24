@@ -628,22 +628,62 @@ class TestClaimsOfAbsenceAreStillTrue:
             "evaluation/collection/ 现在存在了 —— §11 已过期，请同步文档。"
         )
 
-    def test_llm_budget_still_has_no_enforcement(self):
-        """§4.4 与 §12.3 的核心论点：预算配置只被读出来展示，不拦截任何调用。"""
-        app_dir = REPO_ROOT / "backend" / "app"
-        readers = {
-            path.relative_to(app_dir).as_posix()
-            for path in app_dir.rglob("*.py")
-            if "llm_daily_budget_usd" in path.read_text(encoding="utf-8")
-        }
-        # 允许：定义处（config.py）+ 两个只读回显端点。任何其它文件引用它，
-        # 都意味着可能已经加了真实拦截 —— 那时文档就该改。
-        allowed = {"config.py", "routers/v1/llm.py", "routers/v1/settings.py"}
-        unexpected = readers - allowed
-        assert not unexpected, (
-            f"llm_daily_budget_usd 出现在新的文件里：{sorted(unexpected)}。\n"
-            "如果这是真实的预算拦截，请更新 §4.4 与 §12.3 —— 文档目前明确写着它不生效。"
+    def test_llm_budget_enforcement_is_wired_into_the_call_path(self):
+        """反过来钉：预算现在**真的会拦**，§4.4 / §11 / §12.3 已同步改口。
+
+        这条门禁在 2026-08-24 之前是相反的方向 —— 它断言
+        `llm_daily_budget_usd` 只出现在 config.py 与两个只读端点里，
+        用来保护"文档说它不生效"这句话的真实性。
+
+        现在实现补上了，门禁必须一起转向，否则它会**阻止正确的实现**：
+        一个断言"这个功能必须仍然不存在"的测试，在功能实现后就成了
+        反向的假绿 —— 它会让 CI 拒绝真正的修复。
+
+        转向后钉的是三件缺一不可的事（少任何一件，预算都不会真的拦）：
+        1. `budget.check_budget()` 存在且被 `llm/client.py` 调用；
+        2. 调用点在**发请求之前**（否则是事后记账，不是拦截）；
+        3. 成功调用会 `record_spend()`（不记账 = 累计永远是 0 = 永不超限）。
+        """
+        client_src = (REPO_ROOT / "backend" / "app" / "llm" / "client.py").read_text(encoding="utf-8")
+        assert len(client_src) > 3000, f"client.py 只有 {len(client_src)} 字符，疑似读错文件 —— 解析器失效。"
+
+        assert "check_budget" in client_src, (
+            "app/llm/client.py 没有调用 check_budget —— 预算又变回装饰性配置了。\n"
+            "文档 §4.4 / §12.3 现在写的是「真实拦截」，两边必须一致。"
         )
+        assert "record_spend" in client_src, (
+            "app/llm/client.py 没有调用 record_spend —— 花费不入账，日累计永远是 0，预算永不触发。"
+        )
+
+        # 拦截必须在发请求之前：比较两者在**llm_chat 函数体内**的先后位置。
+        #
+        # 必须先切出函数体再比较。第一版直接在整个文件里 index() 两个锚点，
+        # 结果 `await _try_single(` 命中的是 `_RawCompletion` docstring 里
+        # 举例用的那一行（第 169 行），位置远在真正的调用点之前，
+        # 于是断言失败并报告"预算检查在调用之后" —— 一个**完全错误的诊断**。
+        # 这跟本轮反复出现的那条是同一个：解析器出错时的表现是"断言失败"，
+        # 和"被测对象真的有问题"长得一模一样。
+        body_start = client_src.index("async def llm_chat(")
+        body = client_src[body_start : client_src.index("async def llm_chat_simple(", body_start)]
+        assert len(body) > 1500, f"llm_chat 函数体只切出 {len(body)} 字符 —— 切片锚点已失效，先修解析器。"
+
+        check_at = body.index("check_budget(budget_usd=")
+        dispatch_at = body.index("await _try_single(")
+        assert check_at < dispatch_at, (
+            "预算检查出现在 _try_single 调用之后 —— 那是事后记账，不是拦截。\n"
+            f"（函数体内偏移：check_budget {check_at}，_try_single {dispatch_at}）"
+        )
+
+    def test_the_budget_doc_rows_no_longer_say_it_is_fake(self):
+        """§11 未实现清单里不能再留着预算与成本指标这两条。
+
+        它们在 2026-08-24 已实现。把已实现的控制留在「未实现」清单里，
+        会让人重做一遍，或者放弃一个可用的控制 —— 清单的可信度是有限资源，
+        一条假行会让读者怀疑其余每一行。
+        """
+        text = _doc_text()
+        for stale in ("LLM 成本预算真实拦截 | ❌", "LLM token / 成本指标 | ❌"):
+            assert stale not in text, f"OPERATIONS.md §11 仍写着「{stale}」，但它已经实现了。"
 
     def test_metrics_table_still_has_no_production_writer(self):
         """§11 说 `metrics` 表 0 个生产写入方。写入方只应出现在 repository 定义里。"""

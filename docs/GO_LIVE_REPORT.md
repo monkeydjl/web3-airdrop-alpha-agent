@@ -166,7 +166,7 @@ AUTH_TOKEN_SECRET=<生成的值>
 | # | 检查项 | 结果 | 详情 |
 |---|--------|------|------|
 | 10.1 | `OPENAI_API_KEY` 已设置 | PASS | |
-| 10.2 | `LLM_DAILY_BUDGET_USD` 合理 | PASS | $1.0 |
+| 10.2 | `LLM_DAILY_BUDGET_USD` 合理 | PASS | $1.0。⚠️ **这条检查当时是错的**：它只核对了数值是否合理，而当时这个配置**不拦截任何调用**（被读 3 处、全是回显）。「值合理」不等于「值有用」。预算已于 2026-08-24 实现真实拦截，本行现在才名副其实 —— 重跑此报告时应改为核对 `GET /api/v1/llm/status` 的 `spend_today_usd` 是否随调用增长 |
 | 10.3 | `LLM_DISCOVERY_SCORE_THRESHOLD` 合理 | PASS | 0.7 |
 | 10.4 | LLM 多接口故障转移 | INFO | 未配置（单接口模式，可后续扩展） |
 
