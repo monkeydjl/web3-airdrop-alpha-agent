@@ -1,0 +1,549 @@
+"""`docs/SECURITY.md` 与代码实际安全面的一致性回归。
+
+## 为什么需要这个测试
+
+`SECURITY.md` 的错误方式和之前几份文档都不同，而且更危险。
+
+前几份是"写错了现状"（幽灵指标、错的文件路径），或"把做完的标成计划中"。
+这一份是**系统性地把 ADR 里的设计决定抄成"实现"段落** —— 于是文档描述了
+一整套并不存在的安全控制：域名白名单、工具权限校验、LLM 日预算熔断、
+输出侧密钥扫描。
+
+**对普通文档来说这只是过时；对安全文档来说，它让人在评估风险时
+把不存在的控制算进去。** 上线前看这份文档做风险评估的人会得出
+"LLM 成本有日上限、采集器打不到白名单外的域名"这两个结论 —— 两个都错。
+
+而且方向是双向的：同一份文档里既有"说了有其实没有"（预算熔断），
+也有"其实有但没说清"（限流中间件写得相当细，文档却只留了一句设计意图）。
+**两个方向的错代价不对称但都真实**：
+把未实现写成已实现 → 有人把不存在的保护算进风险评估；
+把已实现写成未实现 → 有人去重复实现一遍。
+
+## 测什么
+
+正向（文档说存在的，必须真存在）：
+1. §10.2 域名表标 ✅ 的行，对应主机名必须真的出现在 `backend/app` 里；
+   标 ❌ 的行必须**确实不出现** —— 否则这张表又开始骗人。
+2. 文档正文引用的 `backend/...` 路径必须真实存在。
+3. 文档正文引用的 `/api/v1` 路径必须命中 OpenAPI。
+4. §4.2 描述的限流机制必须真的装着：中间件类存在、`main.py` 装载、
+   豁免前缀一致、昂贵端点配额与代码一致、默认值与文档写的数字一致。
+
+反向（§11 点名不存在的，必须确实不存在）：
+5. `PermissionError` / `allowed_tools` / `ALLOWED_DOMAINS` / `allowed_domains` /
+   `output_schema` / `output_leakage_suspected` / `llm_budget_exhausted` /
+   `system_prompt` 这 8 个符号在 `backend/app` 里必须**一处都没有**。
+6. `backend/app/http_client.py` 必须**不存在**（真实出口是 `utils/fetcher.py`）。
+7. `LLM_DAILY_BUDGET_USD` 必须**仍然只被读来展示、不被用来拦截**：
+   判据是全仓没有 `daily_spend` / `budget_exceeded` / `llm_budget_exhausted`。
+8. `/projects/{id}/debug` 端点必须**不在** OpenAPI 里。
+
+反向断言这么写是有意的：**这些是"待实现"清单，不是"永远不许实现"清单。**
+真去实现预算熔断时，对应的反向断言会变红 —— 那正是提醒去更新
+§10 与 §11 的时机。测试挂在这里的意思是"文档还说它不存在，请同步"，
+而不是"不准做"。
+
+## 搜索器本身必须先被证明有效
+
+写这份测试时踩了一个大坑，值得写在文件头：
+我最初用 `backend/app/**/*.py` 搜"限流有没有实现"，在那个 shell 里
+`**` 只匹配**恰好一层子目录**，于是 `backend/app/*.py`（顶层 22 个文件）
+整个没被搜到 —— 而 `rate_limit.py` / `main.py` / `config.py` 全在那一层。
+实测：递归 117 个文件，那个模式只有 66 个，**漏 51 个**。
+
+结论是"`RATE_LIMIT_*` 0 处读取、限流未实现"，而真相是有一个 155 行、
+写得相当细的中间件，`main.py:288` 也确实装载了。**我照这个错结论改了三处文档。**
+
+所以：**「搜不到」不等于「不存在」，中间差一步 —— 先证明搜索本身有效。**
+`TestParsersFailLoudly` 里有一条 `_grep_app("RateLimitExceededError")`：
+用一个**已知存在**的符号验证搜索器工作正常，再去相信它给出的"0 处"。
+这跟本仓反复出现的「解析器必须大声失败」是同一条，只不过对象是搜索工具自己。
+
+## 解析器必须大声失败
+
+每个解析函数在什么都没找到时**显式断言失败**，绝不返回空集合。
+一个静默返回空集合的解析器会让所有断言意外通过 ——
+一个永远为真的测试比没有测试更有害。
+"""
+
+from __future__ import annotations
+
+import inspect
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+import app.rate_limit as rate_limit_module
+from app.config import settings
+from app.main import create_app
+from app.rate_limit import EXEMPT_PREFIXES, RateLimitMiddleware, _expensive_limits
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DOC = REPO_ROOT / "docs" / "SECURITY.md"
+APP_DIR = REPO_ROOT / "backend" / "app"
+
+# §11 整节是「失真记录」：里面刻意写着不存在的符号名、路径名、文件名。
+# 正向断言必须整节排除，否则会把这些反例当成正例来查。
+_DISTORTION_ANCHOR = "## 11. 本文档的失真记录"
+
+_GHOSTS_BLOCK = ("<!-- security-ghosts:begin -->", "<!-- security-ghosts:end -->")
+_DOMAINS_BLOCK = ("<!-- domain-whitelist:begin -->", "<!-- domain-whitelist:end -->")
+
+_BACKEND_PATH_RE = re.compile(r"`(backend/[A-Za-z0-9_/.\-]+\.(?:py|yml|yaml))`")
+_API_PATH_RE = re.compile(r"`(?:GET|POST|PATCH|PUT|DELETE)?\s*(/api/v1[A-Za-z0-9_/{}.\-]*)`")
+# 域名表行：第一列是 `主机名`（可能被 ~~删除线~~ 包着），最后一列带 ✅/⚠️/❌ 判定
+_DOMAIN_ROW_RE = re.compile(r"^\|\s*~{0,2}`([a-z0-9.\-]+\.[a-z]{2,})`~{0,2}\s*\|(.+)\|\s*$", re.M)
+# 正文里出现的所有「N req/min」。必须全部等于真值 —— 见
+# test_documented_global_default_matches_settings 里记的"至少一处写对"陷阱。
+_RPM_RE = re.compile(r"(\d+)\s*req/min")
+
+# 这 8 个符号是 §11 点名"不存在"的。任何一个真的出现在 backend/app 里，
+# 意味着有人实现了它，而 §10/§11 还在说它不存在 —— 文档必须同步。
+_GHOST_SYMBOLS = (
+    "PermissionError",
+    "allowed_tools",
+    "ALLOWED_DOMAINS",
+    "allowed_domains",
+    "output_schema",
+    "output_leakage_suspected",
+    "llm_budget_exhausted",
+    "system_prompt",
+)
+
+# LLM 日预算是"能填、能查、不拦"的装饰性配置。
+# 判据不是"没人读它"（有 3 处读来回显），而是"没人在累计花费" ——
+# 没有累计就无从超限。这三个符号出现任何一个都说明有人开始真的实现了。
+_BUDGET_ENFORCEMENT_SYMBOLS = ("daily_spend", "budget_exceeded", "llm_budget_exhausted")
+
+
+def _doc_text() -> str:
+    assert DOC.is_file(), f"{DOC} 不存在 —— 这份测试的被测对象没了，请同步。"
+    text = DOC.read_text(encoding="utf-8")
+    # 文档被截断/清空时，下面所有"文档说 X 存在"的断言会因为集合为空而假通过。
+    assert len(text) > 8000, f"{DOC.name} 只有 {len(text)} 字符，疑似被截断 —— 解析器已失效。"
+    return text
+
+
+def _body_without_distortion_section(text: str) -> str:
+    """正文（不含 §11 失真记录）。"""
+    idx = text.find(_DISTORTION_ANCHOR)
+    assert idx > 0, f"找不到失真记录锚点 `{_DISTORTION_ANCHOR}` —— 章节若改名，请同步本测试。"
+    body = text[:idx]
+    assert len(body) > 6000, "排除失真记录后正文过短，解析器已失效。"
+    return body
+
+
+def _block(text: str, anchors: tuple[str, str]) -> str:
+    begin, end = anchors
+    i, j = text.find(begin), text.find(end)
+    assert i > 0, f"找不到 `{begin}`"
+    assert j > i, f"找不到 `{end}`（或顺序颠倒）"
+    body = text[i + len(begin) : j].strip()
+    assert body, f"`{begin}` 标记块是空的 —— 里面必须有内容。"
+    return body
+
+
+def _app_py_files() -> list[Path]:
+    """`backend/app` 下**递归**全部 .py。
+
+    必须递归。用只匹配一层子目录的模式会漏掉 `app/*.py` 顶层 22 个文件
+    （含 `rate_limit.py` / `main.py` / `config.py`）—— 见模块 docstring 里
+    记的那次误判。
+    """
+    files = sorted(APP_DIR.rglob("*.py"))
+    assert len(files) > 100, (
+        f"`backend/app` 递归只扫到 {len(files)} 个 .py（预期 >100）。"
+        "要么路径变了，要么用了非递归的匹配 —— 后者会让下面所有「0 处」结论全假。"
+    )
+    top = list(APP_DIR.glob("*.py"))
+    assert len(top) > 15, f"`backend/app` 顶层只有 {len(top)} 个 .py，疑似没扫到顶层 —— 解析器已失效。"
+    return files
+
+
+def _grep_app(symbol: str, *, skip: tuple[str, ...] = ()) -> list[str]:
+    """在 `backend/app` 里递归找一个符号，返回 `相对路径:行号` 列表。"""
+    hits: list[str] = []
+    for path in _app_py_files():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if any(rel.endswith(s) for s in skip):
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if symbol in line:
+                hits.append(f"{rel}:{lineno}")
+    return hits
+
+
+def _app_source_blob() -> str:
+    """`backend/app` 全部源码拼成一坨，用于查主机名字面量。"""
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in _app_py_files())
+    assert len(blob) > 200_000, f"app 源码合计只有 {len(blob)} 字符，解析器已失效。"
+    return blob
+
+
+def _openapi_paths() -> set[str]:
+    with TestClient(create_app()) as client:
+        spec = client.get("/openapi.json").json()
+    paths = set(spec.get("paths", {}))
+    assert len(paths) >= 40, f"OpenAPI 只有 {len(paths)} 条路径，疑似应用未装载完整。"
+    return paths
+
+
+def _executable_source(module, func_name: str) -> str:
+    """某个函数的源码，**剥掉 docstring**。
+
+    为什么需要这个：`_client_ip` 的 docstring 里引用了
+    `split(",")[0]` 来解释"为什么不能这么写"。直接 `inspect.getsource`
+    去断言"代码里没有这个写法"，就会把**解释禁止的文字**当成那个写法本身。
+
+    这是「断言要对着代码，不是对着描述代码的文字」的一个具体形态：
+    注释和 docstring 属于"描述代码的文字"，不是被测对象。
+    """
+    func = getattr(module, func_name, None)
+    assert func is not None, f"`{module.__name__}` 里没有 `{func_name}` —— 被测对象改名了，请同步。"
+    src = inspect.getsource(func)
+    doc = inspect.getdoc(func)
+    if doc:
+        # 逐行剔除 docstring 正文：比正则匹配三引号块更稳（避免嵌套引号问题）
+        doc_lines = {line.strip() for line in doc.splitlines() if line.strip()}
+        kept = []
+        for line in src.splitlines():
+            stripped = line.strip().strip('"').strip("'").strip()
+            if stripped and stripped in doc_lines:
+                continue
+            if stripped in ('"""', "'''"):
+                continue
+            kept.append(line)
+        src = "\n".join(kept)
+    assert src.strip(), f"剥掉 docstring 后 `{func_name}` 没有可执行代码了 —— 解析器已失效。"
+    return src
+
+
+class TestDomainWhitelistTable:
+    """§10.2 域名表的 ✅/❌ 判定必须与代码一致。
+
+    这张表最值得钉住：**一个没实现的白名单，它的清单本身也从没被现实检验过。**
+    实测发现上一版有三处错 —— Galxe 主机名写错（真实是
+    `graphigo.prd.galaxy.eco`）、RootData 漏登记、Alchemy 那条集成不存在。
+    假如当初真按那张表实现了白名单，Galxe 与 RootData 会被自己的白名单拦死。
+    """
+
+    @staticmethod
+    def _rows() -> list[tuple[str, str]]:
+        """返回 (主机名, 行尾判定文本)。"""
+        block = _block(_doc_text(), _DOMAINS_BLOCK)
+        rows = _DOMAIN_ROW_RE.findall(block)
+        assert len(rows) >= 10, f"域名表只解析到 {len(rows)} 行（预期 ≥10），解析器已失效。"
+        return [(host, rest) for host, rest in rows]
+
+    def test_present_domains_really_in_code(self) -> None:
+        """标 ✅ 的主机名必须真的出现在 `backend/app` 里。"""
+        blob = _app_source_blob()
+        missing = [host for host, rest in self._rows() if "✅" in rest and host not in blob]
+        assert not missing, (
+            f"域名表标 ✅ 但代码里找不到的主机名：{missing}。"
+            "标 ✅ 的意思是「这是真实出口」—— 找不到就说明表又开始骗人了。"
+        )
+
+    def test_absent_domains_really_absent(self) -> None:
+        """标 ❌ 的主机名必须确实不出现。
+
+        真接入了某个源却还标 ❌，这张表就又变回一份不能信的清单。
+        """
+        blob = _app_source_blob()
+        present = [host for host, rest in self._rows() if "❌" in rest and host in blob]
+        assert not present, (
+            f"域名表标 ❌（未接入）但代码里真出现了的主机名：{present}。如果确实新接入了这个源，请更新 §10.2 表格。"
+        )
+
+    def test_every_real_collector_host_is_registered(self) -> None:
+        """反过来查：采集器里真实的 API 主机名必须都在表里登记。
+
+        这条才是 RootData 漏登记那类问题的检出手段 ——
+        只检查"表里的域名存在"永远发现不了"代码里的域名没进表"。
+        """
+        documented = {host for host, _ in self._rows()}
+        pat = re.compile(r"https://([a-z0-9.\-]+\.[a-z]{2,})")
+        # 只看采集器与 LLM 客户端：seed / 测试夹具里的示例域名不是真实出口
+        real: set[str] = set()
+        for sub in ("collectors", "llm"):
+            for path in sorted((APP_DIR / sub).rglob("*.py")):
+                for host in pat.findall(path.read_text(encoding="utf-8")):
+                    real.add(host)
+        assert real, "采集器里一个 https 主机名都没抓到 —— 解析器已失效。"
+        # 采集器里也有指向项目官网的展示链接（galxe.com/xxx、twitter.com/xxx 等），
+        # 那些不是 API 出口。只要求 `api.*` 与已登记的非常规出口被覆盖。
+        api_hosts = {h for h in real if h.startswith("api.")}
+        assert api_hosts, "抓不到任何 `api.*` 主机名 —— 解析器已失效。"
+        unregistered = sorted(api_hosts - documented)
+        assert not unregistered, (
+            f"这些 API 主机名出现在采集器代码里，但 §10.2 表里没有：{unregistered}。"
+            "一个漏登记的出口意味着白名单真实现时会把它拦死。"
+        )
+
+
+class TestRateLimitIsReal:
+    """§4.2 描述的限流必须真的装着，且数字与文档一致。
+
+    这一组存在的理由是我自己犯过的错：搜索模式漏了 `app/*.py` 顶层，
+    于是把这套已实现的机制判成"未实现"并照此改了文档。
+    断言直接读中间件对象和 `main.py` 源码，不读任何描述它的文字。
+    """
+
+    def test_middleware_is_wired_into_app(self) -> None:
+        main_src = (APP_DIR / "main.py").read_text(encoding="utf-8")
+        assert "RateLimitMiddleware" in main_src, (
+            "`main.py` 里找不到 `RateLimitMiddleware` —— 限流中间件没装载，SECURITY.md §4.2 却说已实现，请同步。"
+        )
+        assert "add_middleware(RateLimitMiddleware)" in main_src, "中间件被 import 了但没 `add_middleware`，等于没装。"
+        assert hasattr(RateLimitMiddleware, "dispatch"), "`RateLimitMiddleware` 没有 dispatch —— 不是一个可用的中间件。"
+
+    def test_exempt_prefixes_match_doc(self) -> None:
+        doc = _body_without_distortion_section(_doc_text())
+        for prefix in EXEMPT_PREFIXES:
+            assert f"`{prefix}`" in doc, (
+                f"代码豁免了 `{prefix}` 但 SECURITY.md 没提。一个没写进文档的豁免路径，就是一个没人知道的限流缺口。"
+            )
+        assert "/health" in EXEMPT_PREFIXES, "`/health` 应当豁免（探针高频拉取）。"
+        assert "/metrics" in EXEMPT_PREFIXES, "`/metrics` 应当豁免（Prometheus 高频拉取）。"
+
+    def test_documented_global_default_matches_settings(self) -> None:
+        """文档写的默认值必须是 `Settings` 的**声明默认**，不是本机 `.env` 的值。
+
+        读实例属性会把本地 `.env` 当成"默认"，那是在给本机配置背书。
+
+        ⚠️ 断言方式也踩过坑：第一版只写 `assert "100 req/min" in doc`。
+        文档里有 4 处写着这个数字，把其中一处改成 60 之后测试照样通过 ——
+        **"至少有一处写对了"不等于"没有一处写错"**。
+        正确做法是把正文里所有 `N req/min` 全抓出来，要求它们**全部**等于真值。
+        """
+        fields = type(settings).model_fields
+        requests_default = fields["rate_limit_requests"].default
+        window_default = fields["rate_limit_window"].default
+        assert requests_default == 100, f"`rate_limit_requests` 声明默认变成 {requests_default} 了，请同步 §4.2。"
+        assert window_default == 60, f"`rate_limit_window` 声明默认变成 {window_default} 了，请同步 §4.2。"
+
+        body = _body_without_distortion_section(_doc_text())
+        quoted = _RPM_RE.findall(body)
+        assert quoted, "正文里一处 `N req/min` 都没写 —— 读者无从知道配额是多少。"
+        wrong = sorted({n for n in quoted if int(n) != requests_default})
+        assert not wrong, (
+            f"正文里这些 req/min 数字与真实默认 {requests_default} 不符：{wrong}。"
+            "一个错的限流数字会让人以为配额比实际紧或松。"
+            "（§11.1 那张「文档写 vs 代码实际」对照表在失真记录里，已排除。）"
+        )
+
+    def test_expensive_endpoint_quota_matches_doc(self) -> None:
+        """`/run` 的分档配额必须与文档一致（1 次 / 10 次，按 LLM 开关）。"""
+        src = inspect.getsource(_expensive_limits)
+        assert "/api/v1/run" in src, "昂贵端点配额里没有 `/api/v1/run` —— §10.4 却说它有额外限制。"
+        assert "is_llm_enabled" in src, "配额没按 LLM 开关分档，但 §4.2 写的是分档。"
+        limits = _expensive_limits()
+        assert limits, "`_expensive_limits()` 返回空 —— 昂贵端点配额等于没有。"
+        prefixes = {prefix for prefix, _, _ in limits}
+        assert "/api/v1/run" in prefixes, f"昂贵端点前缀是 {sorted(prefixes)}，没有 `/api/v1/run`。"
+        for prefix, limit, window in limits:
+            assert limit >= 1, f"`{prefix}` 配额 {limit} < 1，等于全禁。"
+            assert window == 3600, f"`{prefix}` 窗口是 {window} 秒，文档写的是每小时。"
+        doc = _body_without_distortion_section(_doc_text())
+        assert "每小时 1 次" in doc and "10 次" in doc, (
+            "§4.2 必须写出两档配额（LLM 开启 1 次 / 关闭 10 次），否则读者会以为一律 1 次。"
+        )
+
+    def test_forwarded_for_is_not_naively_trusted(self) -> None:
+        """`X-Forwarded-For` 不能取 `split(",")[0]`。
+
+        本仓 nginx 用 `proxy_add_x_forwarded_for`，会把客户端自带的头**前置**。
+        取第一个值 = 攻击者每次换一个伪造值就能无限刷配额，
+        限流的首要目的（挡 API key 爆破）当场失效。
+
+        ⚠️ 断言必须只看**可执行代码**，不能看 docstring。
+        第一版这条挂了，因为 `_client_ip` 的 docstring 里正好引用了
+        `split(",")[0]` 来解释"为什么不能这么写" —— 于是测试把一段
+        **解释禁止某写法的文字**当成了那个写法本身。
+        这是本仓反复出现的那条：**断言要对着代码，不是对着描述代码的文字。**
+        """
+        code = _executable_source(rate_limit_module, "_client_ip")
+        assert 'split(",")[0]' not in code.replace(" ", ""), (
+            "`_client_ip` 取了 X-Forwarded-For 的第一个值 —— 那个位置可被客户端伪造，限流会被绕过。"
+        )
+        assert "trusted_proxy_count" in code, "没有 `TRUSTED_PROXY_COUNT` 概念 —— 代理层数必须显式配置才能采信转发头。"
+
+    def test_429_carries_retry_after(self) -> None:
+        """429 响应必须带 `Retry-After`，否则调用方无从知道等多久。
+
+        ⚠️ 同样只看**可执行代码**：`rate_limit.py` 的**模块** docstring 第 5 行
+        就写着"超限 429 + Retry-After"。第一版这条读整模块源码，
+        于是删掉真正那行 header 之后测试依然通过 —— 变异存活。
+        这是同一个坑在同一个文件里的**第二次**出现，说明"读源码做断言"
+        天然会撞上注释：**默认就该剥掉文字，而不是等被咬了再剥。**
+        """
+        code = _executable_source(rate_limit_module, "_too_many")
+        assert "429" in code, "限流不返回 429 —— 与 §4.2 不符。"
+        assert "Retry-After" in code, "429 不带 `Retry-After` 头 —— 调用方无从知道等多久，与 §4.2 不符。"
+
+
+class TestReferencedPathsExist:
+    """正文引用的 `backend/...` 文件必须真实存在。"""
+
+    def test_backend_paths_exist(self) -> None:
+        body = _body_without_distortion_section(_doc_text())
+        referenced = set(_BACKEND_PATH_RE.findall(body))
+        assert len(referenced) >= 3, f"只解析到 {sorted(referenced)}，解析器已失效。"
+        missing = sorted(p for p in referenced if not (REPO_ROOT / p).is_file())
+        assert not missing, (
+            f"SECURITY.md 正文引用了这些不存在的文件：{missing}。安全文档里一个错的文件路径会让人以为某处有校验代码。"
+        )
+
+    def test_api_paths_hit_openapi(self) -> None:
+        body = _body_without_distortion_section(_doc_text())
+        referenced = set(_API_PATH_RE.findall(body))
+        assert referenced, "正文一条 `/api/v1` 路径都没解析到 —— 解析器已失效。"
+        real = _openapi_paths()
+        # 文档确实需要提「前缀」（如 /api/v1/run 作为限流分档的前缀），所以前缀匹配也算命中
+        missing = sorted(p for p in referenced if p not in real and not any(r.startswith(p) for r in real))
+        assert not missing, f"SECURITY.md 正文引用了这些不存在的 API 路径：{missing}。"
+
+
+class TestGhostListIsHonest:
+    """§11 点名"不存在"的东西，必须确实都不存在。
+
+    否则这份纠错清单本身就成了新的谎言 —— 而这一节是读者判断
+    「哪些安全控制真的有」的唯一依据，它错了比正文错更糟。
+
+    ⚠️ 这些是**待实现清单，不是禁止实现清单**。真去实现预算熔断时，
+    对应断言会变红 —— 那正是提醒去更新 §10 与 §11 的时机。
+    """
+
+    def test_ghosts_block_lists_the_symbols(self) -> None:
+        """先确认 §11 确实点了这些名字，否则下面的反向断言是在替文档编内容。"""
+        block = _block(_doc_text(), _GHOSTS_BLOCK)
+        missing = [s for s in _GHOST_SYMBOLS if s not in block]
+        assert not missing, (
+            f"§11 失真记录里没有提到这些符号：{missing}，但本测试在替它们做反向断言 —— 断言必须与文档实际写的内容对应。"
+        )
+
+    @pytest.mark.parametrize("symbol", _GHOST_SYMBOLS)
+    def test_ghost_symbol_absent(self, symbol: str) -> None:
+        hits = _grep_app(symbol)
+        assert not hits, (
+            f"`{symbol}` 现在真的出现在代码里了：{hits[:5]}。"
+            "SECURITY.md §10/§11 还在说它不存在 —— 如果这是新实现的控制，请更新文档；"
+            "这条测试挂在这里的意思是「文档需要同步」，不是「不准实现」。"
+        )
+
+    def test_http_client_module_absent(self) -> None:
+        """`backend/app/http_client.py` 不存在；真实出口是 `utils/fetcher.py`。"""
+        ghost = APP_DIR / "http_client.py"
+        assert not ghost.is_file(), (
+            "`backend/app/http_client.py` 现在存在了 —— SECURITY.md §10.2 还标着它"
+            "不存在，请更新文档（并确认它是否真的做了域名校验）。"
+        )
+        real = APP_DIR / "utils" / "fetcher.py"
+        assert real.is_file(), "`backend/app/utils/fetcher.py` 不见了 —— 文档指向的真实 HTTP 出口变了，请同步。"
+
+    def test_llm_budget_is_declared_but_never_enforced(self) -> None:
+        """`LLM_DAILY_BUDGET_USD` 能填、能查、不拦。
+
+        判据不是"没人读它"（实测有 3 处读来回显，搜一下像是实现了），
+        而是"**没人在累计花费**" —— 没有累计就无从超限。
+        这比"配置项完全没被读"更容易骗过检查，所以判据必须落在累计上。
+        """
+        fields = type(settings).model_fields
+        assert "llm_daily_budget_usd" in fields, (
+            "`LLM_DAILY_BUDGET_USD` 配置项不见了 —— 若已删除，请同步 §10.4 与 §11。"
+        )
+        for symbol in _BUDGET_ENFORCEMENT_SYMBOLS:
+            hits = _grep_app(symbol)
+            assert not hits, (
+                f"`{symbol}` 出现在代码里了：{hits[:5]} —— 看起来预算熔断开始被实现了。"
+                "SECURITY.md §10.3/§10.4/§11 还标着「只展示不拦截」，请更新文档。"
+            )
+
+    def test_debug_endpoint_absent(self) -> None:
+        paths = _openapi_paths()
+        ghosts = sorted(p for p in paths if p.endswith("/debug"))
+        assert not ghosts, (
+            f"出现了 /debug 端点：{ghosts}。SECURITY.md §10.5 还说它不存在 —— "
+            "请更新文档，并确认它不会返回 prompt 内容。"
+        )
+
+
+class TestParsersFailLoudly:
+    """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
+
+    def test_search_itself_works(self) -> None:
+        """用一个**已知存在**的符号验证搜索器有效，再去相信它给出的「0 处」。
+
+        这条是本文件最重要的自检。模块 docstring 里记的那次误判
+        （`**` 只匹配一层子目录，漏掉 `app/*.py` 顶层 22 个文件）
+        就是因为缺了这一步：搜索器坏了，而"搜不到"被当成了"不存在"。
+        """
+        assert _grep_app("RateLimitExceededError"), (
+            "grep 找不到一个确实存在的符号 —— 搜索器已失效，所有「0 处」结论不可信。"
+        )
+        # 顶层文件必须在搜索范围内：这正是上次漏掉的那一层
+        assert _grep_app("RateLimitMiddleware"), (
+            "grep 找不到 `RateLimitMiddleware`（在 `app/rate_limit.py`，顶层）—— 搜索没覆盖顶层文件。"
+        )
+        assert _grep_app("rate_limit_enabled"), (
+            "grep 找不到 `rate_limit_enabled`（在 `app/config.py`，顶层）—— 搜索没覆盖顶层文件。"
+        )
+
+    def test_parsers_find_real_content(self) -> None:
+        text = _doc_text()
+        assert len(text) > 8000
+        body = _body_without_distortion_section(text)
+        assert len(_block(text, _GHOSTS_BLOCK)) > 200
+        assert len(_block(text, _DOMAINS_BLOCK)) > 200
+        assert len(TestDomainWhitelistTable._rows()) >= 10
+        assert len(_BACKEND_PATH_RE.findall(body)) >= 3
+        assert _API_PATH_RE.findall(body)
+        assert len(_app_py_files()) > 100
+        assert len(_openapi_paths()) >= 40
+        assert len(_app_source_blob()) > 200_000
+        assert _expensive_limits()
+        assert "getattr" in _executable_source(rate_limit_module, "_client_ip")
+        assert _RPM_RE.findall(body), "正文抓不到任何 `N req/min` —— 限流数字断言会空转。"
+
+    def test_docstring_stripper_actually_strips(self) -> None:
+        """`_executable_source` 必须真的剥掉 docstring，且真的留下代码。
+
+        两个方向都要验：
+        - 剥掉了 → docstring 里的 `split(",")[0]` 不再出现；
+        - 没剥过头 → 函数体里真实存在的 `trusted_proxy_count` 还在。
+
+        只验一个方向不够：一个"把整段都剥掉"的实现会让上面那条
+        禁止性断言永远通过 —— 又是一个永远为真的测试。
+        """
+        code = _executable_source(rate_limit_module, "_client_ip")
+        full = inspect.getsource(rate_limit_module._client_ip)
+        assert 'split(",")[0]' in full, (
+            "`_client_ip` 的 docstring 不再提到那个反例写法 —— 本自检失去意义，请改用别的锚点。"
+        )
+        assert 'split(",")[0]' not in code.replace(" ", ""), "docstring 没被剥掉 —— 禁止性断言会误报。"
+        assert "trusted_proxy_count" in code, "剥过头了，函数体也被删了 —— 断言会变成永远为真。"
+        assert "return" in code, "剥掉后没有 return 语句 —— 显然剥过头了。"
+
+    def test_missing_function_raises(self) -> None:
+        with pytest.raises(AssertionError):
+            _executable_source(rate_limit_module, "_no_such_function")
+
+    def test_domain_row_parser_reads_the_verdict_column(self) -> None:
+        """域名行解析必须同时拿到主机名和判定 —— 只拿主机名等于没判定。"""
+        rows = TestDomainWhitelistTable._rows()
+        verdicts = {host: rest for host, rest in rows}
+        assert any("✅" in rest for rest in verdicts.values()), "一行 ✅ 都没解析到 —— 正向断言全空转。"
+        assert any("❌" in rest for rest in verdicts.values()), "一行 ❌ 都没解析到 —— 反向断言全空转。"
+
+    def test_missing_anchors_raise(self) -> None:
+        with pytest.raises(AssertionError):
+            _body_without_distortion_section("没有失真记录锚点的文本")
+        with pytest.raises(AssertionError):
+            _block("没有标记块", _GHOSTS_BLOCK)
+        with pytest.raises(AssertionError):
+            # 标记块在但内容为空 → 也必须炸
+            _block(f"{_GHOSTS_BLOCK[0]}\n\n{_GHOSTS_BLOCK[1]}", _GHOSTS_BLOCK)
+        with pytest.raises(AssertionError):
+            _block("没有域名块", _DOMAINS_BLOCK)
