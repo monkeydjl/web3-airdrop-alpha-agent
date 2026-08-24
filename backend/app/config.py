@@ -52,6 +52,22 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
     log_file: str = ""  # 可选：日志文件路径（空 = 仅 stdout）
+    # ── 日志轮转（仅在 log_file 非空时生效）────────
+    # 单个日志文件的字节上限，超过就轮转。默认 10 MiB。
+    #
+    # 为什么必须有：`log_file` 此前是**无上限追加写**。实测 `logs/backend.log`
+    # 6 天长到 3.97 MB（约 240 MB/年），代码里没有轮转、compose 没配
+    # docker `max-size`、宿主也没有 logrotate —— 三层都没有。
+    #
+    # 磁盘写满的后果不是"日志丢了"，而是**数据库写入开始失败**：
+    # SQLite 与 PostgreSQL 都在同一块盘上。一个为了排障而存在的机制
+    # 最终把服务本身弄挂，是最不划算的一种故障。
+    #
+    # 设为 0 = 不轮转（保留原行为，但必须是显式选择）。
+    log_max_bytes: int = 10 * 1024 * 1024
+    # 保留多少个历史文件（`backend.log.1` … `backend.log.N`）。
+    # 默认 5 → 配合 10 MiB 上限，磁盘占用上限约 60 MiB（含当前文件），有界。
+    log_backup_count: int = 5
 
     # ── 数据库 ────────────────────────────────────
     db_path: str = "data/airdrop.db"
@@ -297,6 +313,20 @@ class Settings(BaseSettings):
     otel_sample_rate: float = 1.0
 
     # ── 种子数据 ──────────────────────────────────
+    # ⚠️ 这两个开关在**生产环境被强制关闭**（见文件末尾的生产自检）：
+    # 默认 True 是为了本地开箱即演示，但生产环境开着它们会往真实库里灌
+    # 8 个内置假项目（`source='seed'`、`fetched_at=NULL`），Dashboard 汇总
+    # 会把它们算进去 —— 看起来像"已经采集过了"。
+    #
+    # 关键是**它们的失败方式是静默的**：不报错、不告警，只是让"采集全挂"
+    # 这件事看起来像"系统在正常工作"。运维不会去查一个看起来有数据的系统。
+    #
+    # `seed_on_startup` / `seed_data_path` 目前**全仓没有任何代码读取**
+    # （实测：除 config.py 的声明处外 0 处引用；启动灌种子靠手动跑
+    # `scripts/seed.py`）。仍然保留并纳入生产自检，因为
+    # `.env.example` 与 `configs/development/.env.development` 都在教人填它 ——
+    # **一个能填但什么也不做的配置键，比缺一个更坏**：填的人以为生效了。
+    # 真要删就得连模板、文档、部署脚本一起删，那是另一个 PR 的事。
     seed_on_startup: bool = True
     seed_data_path: str = "scripts/seed.py"
     # 外部采集源全量失败时回退到内置 seed 数据（§10.2 / V2 B2）
@@ -470,6 +500,24 @@ class Settings(BaseSettings):
 
         # 生产环境安全自检：不安全组合直接拒绝启动，避免默认放行式部署上线
         if self.is_production:
+            # ── 种子数据：生产强制关闭，而不是"建议关闭" ──────────
+            #
+            # 为什么是强制改而不是拒绝启动：这两个开关的默认值 True 是为了本地
+            # 开箱即演示，忘了改不代表配置**冲突**，只代表用了默认值。
+            # 上面那几条（空 API_KEY、localhost CORS）拒绝启动是因为它们无法
+            # 自动修正成一个正确的值 —— 密钥和域名只有部署者知道。
+            # 种子开关不一样：生产环境的正确值只有一个，就是关。
+            #
+            # 这两个开关开着的危害不是"多了 8 条假数据"，而是**它让故障看起来
+            # 像正常**：采集全挂时库里仍然有项目、Dashboard 仍然有数字，
+            # 没人会去查一个看起来有数据的系统。
+            # 静默的错误状态比明确的空状态坏得多。
+            #
+            # 强制关闭会被写回字段本身，所以 `/api/v1/settings/config` 回显的
+            # 就是真实生效值 —— 不留"配置说开着、实际关着"的落差。
+            self.seed_on_startup = False
+            self.seed_fallback_enabled = False
+
             errors: list[str] = []
             # 按解析后的列表判断：原先只比较整串是否等于 "*"，于是 "*,*" 或
             # "*,https://evil.com" 配 credentials=true 能通过校验（虽然
