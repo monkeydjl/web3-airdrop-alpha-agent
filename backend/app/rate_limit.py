@@ -1,17 +1,35 @@
 """Per-IP rate limiting middleware.
 
+**这个文件就是限流的实现本体**，由 `main.py` 通过 `add_middleware` 装上。
 `RATE_LIMIT_ENABLED` / `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` 三个配置项
-在 `config.py` 里定义了，但全仓库没有任何代码读取它们——`SECURITY.md §4.2`
-要求的"每 IP 60 req/min，超限 429 + Retry-After"从未实现，`§10.4` 要求的
-"`/run` 每小时 1 次"同样没有。这意味着：
+在本文件里被真实读取（默认 100 req/min），超限返回 429 + `Retry-After`。
+`/run` 另有单独配额，见 `_expensive_limits()`。
 
-  - 生产环境的 API_KEY 可以按线速爆破（配合 §4.2 的长度下限一起看）
-  - `POST /api/v1/run` 可被连续触发，在 `ENABLE_LLM_ENHANCEMENT=1` 时
-    直接击穿 `LLM_DAILY_BUDGET_USD`
+⚠️ 这段 docstring 曾经写着「这三个配置项没有任何代码读取、限流从未实现」，  # denial-quote-ok
+而下面 100 多行就是在读它们。成因记录在案，因为犯法很典型：
+用 `Select-String -Path "app\\**\\*.py"` 搜过一遍，**0 命中**，就据此下了结论。
+但那个 glob 在 PowerShell 里**只匹配一层目录** —— 实测递归有 117 个 `.py`，
+它只看到 66 个，漏掉的 51 个恰好包含所有顶层模块，也就是**本文件自己**。
+
+由此产生的连锁后果不止这段注释：`SECURITY.md` 的 §4.2 / §8.3 / §10.4 / §10.5
+一度被据此改成"❌ 未实现"，之后才逐条实测纠正回来。
+一份安全文档把已实现的控制写成未实现，会让人去重复实现；
+反过来则会让人在评估风险时把不存在的控制算进去 —— 两个方向都有实际代价。
+
+教训固化为两条，已写成测试而不是只写在注释里
+（`backend/tests/test_security_doc_parity.py::TestParsersFailLoudly`）：
+
+  1. **搜索器本身必须先被证明有效**：在信任任何"0 命中"结论之前，
+     先拿一个**已知存在**的符号去搜，搜不到就说明搜索器坏了而不是代码没有。
+  2. 全仓检索一律走 `pathlib.rglob`，不用 shell glob。
 
 实现用进程内滑动窗口计数。单实例部署（Dockerfile 默认单 worker uvicorn）下
 准确；多实例时每个实例各自计数，属于已知近似——真要跨实例精确限流需要
-Redis，那是 V2 的事，这里先把"完全没有限流"这个状态解决掉。
+Redis，那是 V2 的事。
+
+注意方向：本文件是**入站**限流（外部 → 我们）。
+`app/collectors/rate_limiter.py` 是**出站**限流（我们 → 第三方 API），
+两者互不相关，改一个不影响另一个。
 """
 
 from __future__ import annotations

@@ -1,11 +1,22 @@
-"""编码修复工具的回归测试（新增部分：二型损坏检测）。
+"""编码修复工具的回归测试（新增部分：二型 / 三型 / 四型损坏检测）。
 
 一型 = 3 字节字符丢第 3 字节，文件变成非法 UTF-8。
 二型 = 整个中文字符被替换成半角 `?`，文件**仍是合法 UTF-8**。
+三型 = 字面 U+FFFD 替换符。
+四型 = 含中文的 Windows 脚本缺 UTF-8 BOM ——
+       **文件内容完全正确，是 PowerShell 5.1 把它读坏的**。
 
 二型的检测比一型难，因为它必须靠"半角 ? 紧贴中文"这个启发式判据，而
 mermaid 流程图的 `{全绿?}`、以及描述判据本身的文档文字都长得一样。
 所以这里的测试重点是**误报**：判据必须排除代码块与行内代码。
+
+四型的性质与前三型不同，值得单独说：前三型是"文件坏了"，
+四型是"文件好的，读的人读坏了"。无 BOM 时 PowerShell 5.1 按 ANSI 代码页
+（简中 = GBK）解码，GBK 会吃掉紧跟中文标点后的 ASCII 引号，
+于是字符串不闭合、后面几十行代码被静默吞进字面量，
+**语法仍然合法所以毫无报错** —— 脚本只是跳过那几十行然后 exit 0。
+这一型的测试因此从"字节事实"开始证明（`test_gbk_really_swallows_the_quote`），
+因为如果那个事实不成立，整个门禁就没有理由存在。
 """
 
 from __future__ import annotations
@@ -304,3 +315,346 @@ def test_three_modes_are_mutually_distinguishable(checker):
     mode3 = f"运维手{chr(0xFFFD)}每周检查\n"
     assert checker.count_replacement_chars(mode3) == 1
     assert checker.count_mojibake(mode3) == 0
+
+
+# ─────────────────────────────────────────────────────────────────
+# 四型：含中文的 Windows 脚本缺 UTF-8 BOM
+#
+# 这一型和前三型性质不同：**文件内容完全正确，是读它的人把它读坏了。**
+# Windows PowerShell 5.1 在无 BOM 时按 ANSI 代码页（简中 = GBK）解码，
+# GBK 会吃掉紧跟中文标点后的 ASCII 引号，字符串不闭合，
+# 后面几十行代码被静默吞进字面量 —— 语法仍合法，不报错、不警告。
+#
+# 2026-08-24 实测被咬：改完 `scripts/auto_backup.ps1` 跑验证，
+# 脚本跳过前 150 行直接执行末尾，返回 exit 0 说"备份成功"，
+# 而 Docker 根本连不上、什么都没备份。
+# ─────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────
+# 四型的"真值表"：在这台机器上用 PowerShell 5.1 实测出来的
+# `[System.Text.Encoding]::GetEncoding(936).GetString(bytes)` 结果。
+#
+# ⚠️ **不能用 Python 的 `bytes.decode("gbk")` 当真值** —— 这是本轮踩的第二个坑，
+# 而且比第一个更隐蔽：
+#
+#   同一串字节 EF BC 89 22（'）' + '"'）
+#     .NET cp936（PowerShell 实际用的）→ 2 个字符，**引号被吃掉**
+#     Python gbk codec + errors="replace" → 3 个字符，**引号保留**
+#
+# 原因：GBK 前导字节后跟一个非法尾字节时，
+#   .NET 是**宽容**的 —— 无条件吃掉 2 个字节，产出一个替换字符；
+#   Python 是**严格**的 —— 报 UnicodeDecodeError，`replace` 只消耗那 1 个前导字节，
+#   于是后面的引号被单独解码出来，活了下来。
+#
+# 所以拿 Python 的 codec 去"验证" PowerShell 的行为，会得到相反的结论。
+# 我第一版就是这么写的，而且当时"验证通过"了 —— 因为那个样本恰好两边一致。
+# **验证用的解码器必须和被验证的解码器是同一个**，否则验证的是另一件事。
+# 既然 CI 上跑的是 Python（拿不到 .NET），真值就只能是**实测记录下来的表**。
+#
+# 每项 = (源码片段, .NET cp936 解码后仍然保留的双引号个数)
+_DOTNET_CP936_KEPT_QUOTES: tuple[tuple[str, int], ...] = (
+    ('Write-Log "done"', 2),  # 纯 ASCII：不受影响
+    ('Write-Log "备份完成"', 2),  # 4 个中文字（12 字节，偶）→ 引号存活
+    ('Write-Log "中"', 1),  # 1 个中文字（3 字节，奇）→ 引号被吃
+    ('Write-Log "中文"', 2),  # 2 个（6 字节，偶）
+    ('Write-Log "中文字"', 1),  # 3 个（9 字节，奇）
+    ('Write-Log "中文字符"', 2),  # 4 个（12 字节，偶）
+    ('Write-Log "压缩失败（$msg）"', 1),
+    ('Write-Log "错误: 压缩失败（$($_.Exception.Message)）"', 1),
+    ("# 备份脚本", 0),
+    ("$x = 1", 0),
+)
+
+
+def _dotnet_kept_quotes(checker, src: str) -> int:
+    """按 .NET DBCS 规则算出：解码后还剩几个双引号没被吞掉。"""
+    data = src.encode()
+    eaten = checker.gbk_eaten_byte_offsets(data)
+    return sum(1 for k, b in enumerate(data) if b == 0x22 and k not in eaten)
+
+
+def test_model_matches_measured_dotnet_behavior(checker):
+    """`gbk_eaten_byte_offsets` 必须复现实测的 .NET cp936 行为。
+
+    真值来自 `_DOTNET_CP936_KEPT_QUOTES`（PowerShell 5.1 实测），
+    不是来自 Python 的 gbk codec —— 理由见那张表上面的说明。
+
+    模型和现实对不上的话，报错会指向错的行，那比不报错更误导。
+    """
+    for src, expected in _DOTNET_CP936_KEPT_QUOTES:
+        got = _dotnet_kept_quotes(checker, src)
+        assert got == expected, f"模型算出保留 {got} 个引号，实测 .NET 是 {expected} 个：{src!r}"
+
+
+def test_the_parity_rule_is_real(checker):
+    """核心事实：引号能否存活取决于**前面中文的字节奇偶性**，与"是什么标点"无关。
+
+    ⚠️ 第一版这条测试写错了，值得记下来：我以为判据是"全角括号后面紧跟引号"，
+    于是拿 `Write-Log "压缩失败（$msg）"` 当样本去证明 —— 但那一行里
+    全角括号前面的字节数正好让引号活下来还是被吃，取决于整行前缀，
+    跟"括号"本身毫无关系。**照着猜想构造的样本只能验证猜想，不能验证事实。**
+
+    真规律：UTF-8 中文是 3 字节（奇数），GBK 按 2 字节一组啃，
+    所以 1 个中文字后的引号被吃、2 个不被吃、3 个又被吃……
+    """
+    for n, expected_kept in ((1, 1), (2, 2), (3, 1), (4, 2), (5, 1)):
+        src = 'Write-Log "' + "中" * n + '"'
+        got = _dotnet_kept_quotes(checker, src)
+        assert got == expected_kept, f"{n} 个中文字时应保留 {expected_kept} 个引号，模型给出 {got}：{src!r}"
+
+
+def test_swallowed_quote_would_stay_syntactically_valid(checker):
+    """最危险的一点：引号被吃掉之后代码**依然是合法 PowerShell**。
+
+    正是因为合法，才没有任何报错 —— 只是静默跳过几十行。
+    这里证明的是"剩余引号数变成奇数"，即字符串不闭合、
+    后续代码被吞进字面量，而不是产生语法错误。
+    """
+    src = 'Write-Log "中"\nRemove-Item $x\nexit 3\n'
+    kept = _dotnet_kept_quotes(checker, src)
+    assert kept % 2 == 1, f"剩余引号数是偶数（{kept}），样本没复现问题：{src!r}"
+
+
+def test_eaten_offsets_never_flags_pure_ascii(checker):
+    """纯 ASCII 文件不该有任何字节被判为"被吞"。
+
+    这是"纯 ASCII 脚本不需要 BOM"这条豁免的根据。
+    如果这里出现命中，说明模型把 ASCII 也当成了双字节前导 ——
+    那会让门禁去要求一堆根本没风险的文件加 BOM。
+    """
+    data = b'Write-Log "done"\nexit 0\n'
+    assert checker.gbk_eaten_byte_offsets(data) == set()
+
+
+def test_needs_utf8_bom_only_targets_windows_scripts(checker, tmp_path):
+    """判据范围：只管 Windows 脚本，且只在含非 ASCII 时才管。
+
+    .md/.py 不在范围内 —— 它们由 Python/编辑器按 UTF-8 读，不走 ANSI 代码页。
+    把范围扩大到所有文件会造成大量无意义的 BOM。
+    """
+    cn = 'Write-Log "备份完成"\n'.encode()
+    ascii_only = b'Write-Log "done"\n'
+
+    ps1 = tmp_path / "a.ps1"
+    ps1.write_bytes(cn)
+    assert checker.needs_utf8_bom(ps1, cn) is True
+
+    ps1_ascii = tmp_path / "b.ps1"
+    ps1_ascii.write_bytes(ascii_only)
+    assert checker.needs_utf8_bom(ps1_ascii, ascii_only) is False, (
+        "纯 ASCII 脚本不需要 BOM —— GBK 与 UTF-8 对 ASCII 解码一致"
+    )
+
+    for suffix in (".md", ".py", ".ts", ".json"):
+        other = tmp_path / f"c{suffix}"
+        other.write_bytes(cn)
+        assert checker.needs_utf8_bom(other, cn) is False, f"{suffix} 不该被四型门禁管"
+
+    for suffix in (".psm1", ".bat", ".cmd"):
+        script = tmp_path / f"d{suffix}"
+        script.write_bytes(cn)
+        assert checker.needs_utf8_bom(script, cn) is True, f"{suffix} 同样由 cmd/PowerShell 按代码页读，必须管"
+
+
+def test_bom_hazard_description_points_at_the_real_line(checker):
+    """报错必须指出**具体哪一行的引号真的会被吃掉**，不是只说"有中文"。
+
+    只说"有中文"的话，读的人不知道为什么危险，会倾向于认为是洁癖要求。
+    指出那一行之后，"这里会静默吞掉后面的代码"就变成了可验证的事实。
+    """
+    data = ('# 备份脚本\n$x = 1\nWrite-Log "中"\nexit 3\n').encode()
+    detail = checker.describe_bom_hazard(data)
+    assert "第 3 行" in detail, f"没指出正确行号：{detail}"
+    assert "静默" in detail or "不闭合" in detail, f"没说清后果：{detail}"
+
+
+def test_bom_hazard_description_when_parity_happens_to_be_safe(checker):
+    """含中文但引号恰好没落在尾字节位时，仍然要求 BOM。
+
+    理由必须写进提示里：那只是字节奇偶性的巧合，改一个字就翻转。
+    一个"暂时安全"的文件不值得放过 —— 放过它等于把炸弹留给下一个人。
+    """
+    data = "# 备份脚本\n$x = 1\nexit 0\n".encode()
+    detail = checker.describe_bom_hazard(data)
+    assert "奇偶" in detail and "仍必须加 BOM" in detail, f"提示没说清为什么仍需 BOM：{detail}"
+
+
+def _run_main(checker, monkeypatch, *paths: Path) -> int:
+    monkeypatch.setattr(sys, "argv", ["check_encoding.py", *[str(p) for p in paths]])
+    return checker.main()
+
+
+def test_main_actually_enforces_the_bom_rule(checker, monkeypatch, tmp_path):
+    """端到端：`main()` 必须真的因为缺 BOM 而返回 1。
+
+    ⚠️ 这条是变异测试逼出来的，值得单独记：
+    我最初只测了 `needs_utf8_bom()` / `describe_bom_hazard()` / 全仓扫描，
+    然后做变异 —— 把 `main()` 里那个 `if needs_utf8_bom(...)` 分支整段删掉，
+    **36 条测试全绿**。
+
+    也就是说：判据写得再对，只要没接进主流程，门禁就是不存在的。
+    而当时全仓恰好没有违规文件，所以"全仓扫描通过"这条也照样绿 ——
+    **一个只在没有违规时被执行的检查，无法证明它会拦住违规。**
+
+    所以这条测试必须走真正的入口，并且必须构造一个真实的违规文件。
+    """
+    bad = tmp_path / "bad.ps1"
+    bad.write_bytes('Write-Log "中"\nexit 0\n'.encode())  # 合法 UTF-8，无 BOM
+    assert _run_main(checker, monkeypatch, bad) == 1, "缺 BOM 的脚本没被 main() 拦住 —— 四型门禁没有接进主流程"
+
+    good = tmp_path / "good.ps1"
+    good.write_bytes(checker.UTF8_BOM + 'Write-Log "中"\nexit 0\n'.encode())
+    assert _run_main(checker, monkeypatch, good) == 0, "带 BOM 的脚本被误判 —— 会逼着人把正确的文件改坏"
+
+    ascii_no_bom = tmp_path / "ascii.ps1"
+    ascii_no_bom.write_bytes(b'Write-Log "done"\nexit 0\n')
+    assert _run_main(checker, monkeypatch, ascii_no_bom) == 0, "纯 ASCII 脚本不该被要求加 BOM"
+
+
+def test_main_reports_the_offending_path_and_reason(checker, monkeypatch, tmp_path, capsys):
+    """报错输出必须同时给出**文件路径**、**为什么危险**、**怎么修**。
+
+    只打印一个退出码的门禁会被当成误报关掉。
+    这里断言的是"人能照着输出修"，不是"函数返回了 1"。
+
+    ⚠️ 断言要挑**每条信息独有的字样**，这也是变异测试逼出来的：
+    第一版写的是 `"静默" in out or "不闭合" in out`，而这两个词
+    在逐文件的明细行里也出现 —— 把整段解释删掉之后测试照样绿。
+    **一个能被两处满足的断言，只能证明其中一处存在。**
+    现在改成断言解释段独有的内容：ANSI 代码页、以及最反直觉的那句
+    "然后 exit 0"（脚本静默跳过代码却报成功，正是这一型的杀伤力所在）。
+    """
+    bad = tmp_path / "hazard.ps1"
+    bad.write_bytes('# 头部\nWrite-Log "中"\nexit 0\n'.encode())
+    assert _run_main(checker, monkeypatch, bad) == 1
+    out = capsys.readouterr().out
+    assert "hazard.ps1" in out, f"没报出文件名：{out}"
+    assert "BOM" in out, f"没说清缺什么：{out}"
+    # 逐文件明细：指出具体哪一行的引号会被吃
+    assert "第 2 行" in out, f"没指出具体行号：{out}"
+    # 解释段：为什么会这样。三个要素各自独有，缺一个就说不完整
+    assert "代码页" in out, f"没说是代码页问题：{out}"
+    assert "0x80" in out, f"没给出「>= 0x80 吃掉下一字节」这个机制，读者无法自己判断风险：{out}"
+    assert "3 字节" in out, f"没说 UTF-8 中文是 3 字节（奇偶性的来源），解释就断了：{out}"
+    assert "exit 0" in out, f"没说清最要命的后果（静默跳代码却报成功）：{out}"
+    # 修法：可照抄
+    assert "UTF8Encoding" in out, f"没给可照抄的修法：{out}"
+
+
+def test_main_still_prioritises_real_corruption(checker, monkeypatch, tmp_path, capsys):
+    """一个既非法 UTF-8、又缺 BOM 的文件，应当先按一型报，不要两头都报。
+
+    理由：一型是内容已经坏了，修内容时必然要重写文件，BOM 顺手就有了。
+    同一个文件报两种性质不同的问题只会让人不知道先修哪个。
+    """
+    both = tmp_path / "broken.ps1"
+    both.write_bytes("运".encode()[:2] + b"?\nexit 0\n")  # 非法 UTF-8，且无 BOM
+    assert _run_main(checker, monkeypatch, both) == 1
+    out = capsys.readouterr().out
+    assert "一型" in out, f"没按一型报：{out}"
+    assert "四型" not in out, f"同一个文件同时报了一型和四型，会让人不知道先修哪个：{out}"
+
+
+def test_repo_windows_scripts_all_have_bom(checker):
+    """全仓实测：每个含中文的 Windows 脚本都必须带 BOM。
+
+    这一型**零豁免、零登记** —— 修法是加 3 个字节，
+    不存在前三型那种"原字符已不可逆丢失"的情况，没有理由给谁开豁免。
+    """
+    offenders: list[tuple[str, str]] = []
+    checked = 0
+    for path in checker.iter_repo_files():
+        if path.suffix.lower() not in checker.BOM_REQUIRED_SUFFIXES:
+            continue
+        data = path.read_bytes()
+        if not checker.needs_utf8_bom(path, data):
+            continue
+        checked += 1
+        if not data.startswith(checker.UTF8_BOM):
+            try:
+                rel = path.resolve().relative_to(checker.REPO_ROOT).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            offenders.append((rel, checker.describe_bom_hazard(data)))
+    assert checked > 0, "全仓一个含中文的 Windows 脚本都没扫到 —— 解析器已失效，本条门禁在空转"
+    assert not offenders, f"这些 Windows 脚本含中文但缺 UTF-8 BOM，PowerShell 5.1 会静默跳代码：{offenders}"
+
+
+def test_bom_registry_does_not_exist(checker):
+    """四型不设登记清单 —— 断言这一点，防止有人"临时"加一个。
+
+    前三型的登记清单是历史包袱（损坏不可逆，只能先挂起来）。
+    四型没有这个属性：加 3 字节即可修好。一旦有了豁免清单，
+    "先登记着"就会变成默认选项，而门禁的意义就消失了。
+    """
+    assert not hasattr(checker, "KNOWN_BROKEN_BOM"), (
+        "出现了四型豁免清单 —— 四型的修法是加 3 个字节 BOM，不存在需要豁免的情况。"
+        "如果确实有例外，请先在这条测试里写清楚理由。"
+    )
+
+
+def test_precommit_hook_covers_every_bom_required_suffix(checker):
+    """pre-commit 的 `files` 正则必须覆盖四型管的每一个扩展名。
+
+    这是双向登记表的另一半：判据管 `.ps1/.psm1/.bat/.cmd`，
+    但如果 pre-commit 的正则只写了 `ps1|bat`，那么新增一个 `.psm1`
+    脚本时钩子根本不会被触发 —— **判据是对的，触发条件漏了。**
+
+    实测确实漏了：这条测试写出来时正则里只有 `ps1|bat`，
+    没有 `psm1`/`cmd`。CI 的 pytest 会跑本文件的全仓扫描兜底，
+    但 pre-commit 是第一道门，漏在这里意味着问题会先被提交进去。
+
+    ⚠️ 定位钩子必须**整行精确匹配**，不能用 `"id: check-encoding" in config`。
+    变异测试把 id 改成 `check-encoding-DISABLED`（pre-commit 里等于停用这个钩子），
+    子串匹配照样命中，测试全绿。**子串匹配会把"改了名字的东西"当成原来那个。**
+    """
+    config = (checker.REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "check_encoding.py" in config, "pre-commit 里没有 check_encoding 钩子 —— 第一道门不存在。"
+
+    lines = config.splitlines()
+    hook_idx = [i for i, line in enumerate(lines) if line.strip() == "- id: check-encoding"]
+    assert hook_idx, (
+        "找不到 id 恰好为 `check-encoding` 的钩子。"
+        "注意改名（如 `check-encoding-DISABLED`）等于停用它 —— 这里刻意做整行精确匹配，不接受子串。"
+    )
+
+    # 取这个钩子那一段（到下一个 `- id:` 或文件末尾）
+    start = hook_idx[0]
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("- id:")), len(lines))
+    section = "\n".join(lines[start:end])
+    assert "files:" in section, f"`check-encoding` 钩子没有 files 正则：{section}"
+    assert "check_encoding.py" in section, f"`check-encoding` 钩子的 entry 不是 check_encoding.py：{section}"
+
+    missing = [s for s in sorted(checker.BOM_REQUIRED_SUFFIXES) if s.lstrip(".") not in section]
+    assert not missing, (
+        f"这些扩展名被四型判据管着，但 pre-commit 的 files 正则里没有：{missing}。"
+        "判据写对了而触发条件漏了，等于这类文件的第一道门是空的。"
+    )
+
+
+def test_four_modes_are_mutually_distinguishable(checker, tmp_path):
+    """四型与前三型正交：一个只缺 BOM 的文件，前三型判据必须全部判它干净。
+
+    这条锁住"新增第四型不会污染既有判据" —— 与
+    `test_three_modes_are_mutually_distinguishable` 同一目的。
+    """
+    text = 'Write-Log "压缩失败（$msg）"\n'
+    data = text.encode()  # 合法 UTF-8，无 BOM
+    ps1 = tmp_path / "clean_but_no_bom.ps1"
+    ps1.write_bytes(data)
+
+    # 一型：合法 UTF-8
+    assert data.decode("utf-8") == text
+    assert checker.count_errors(data) == 0
+    # 二型 / 三型：干净
+    assert checker.count_mojibake(text) == 0
+    assert checker.count_replacement_chars(text) == 0
+    # 四型：命中
+    assert checker.needs_utf8_bom(ps1, data) is True
+    assert not data.startswith(checker.UTF8_BOM)
+
+    # 加上 BOM 后四型也干净，且不影响前三型
+    with_bom = checker.UTF8_BOM + data
+    assert with_bom.startswith(checker.UTF8_BOM)
+    assert checker.count_errors(with_bom) == 0
