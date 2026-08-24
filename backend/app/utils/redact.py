@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
+from pathlib import Path
 
 from app.config import settings
 
@@ -130,6 +132,90 @@ _VALID_LEVELS = ("debug", "info", "warning", "error", "critical")
 _open_log_file = None
 
 
+class _RotatingLogStream:
+    """按大小轮转的日志写入流。
+
+    ## 为什么不用 `logging.handlers.RotatingFileHandler`
+
+    structlog 在这里走的是 `WriteLoggerFactory`，它要的是一个有
+    `write()`/`flush()` 的对象，而不是 stdlib `logging` 的 handler ——
+    两者不是同一条管道。硬把 stdlib handler 接进来，就要把整条
+    structlog processor 链（含脱敏）搬到 stdlib 的 formatter 里去，
+    等于新增第二条渲染路径。**日志渲染路径每多一条，脱敏就多一处可能漏掉的地方。**
+    所以这里只补"按大小换文件"这一件事，其余照旧走原来的链。
+
+    ## 为什么必须有
+
+    `log_file` 此前是无上限追加写：实测 `logs/backend.log` 6 天 3.97 MB
+    （约 240 MB/年），代码无轮转、compose 无 `max-size`、宿主无 logrotate。
+    磁盘写满的真实后果不是"日志丢了"，是**数据库写入开始失败** ——
+    DB 和日志在同一块盘上。
+
+    ## 轮转失败时**不能**让写日志抛异常
+
+    轮转是在 `write()` 里做的，而 `write()` 挂掉会让**每一条日志调用**
+    都抛异常，进而打断正在处理的业务请求。
+    一个为了保护磁盘而存在的机制，绝不该成为线上故障的来源。
+    所以轮转异常被吞掉并降级为"继续往当前文件写"：
+    磁盘满是慢性问题，请求 500 是即时问题。
+    """
+
+    def __init__(self, path: Path, max_bytes: int, backup_count: int) -> None:
+        self._path = path
+        self._max_bytes = max(0, int(max_bytes))
+        self._backup_count = max(0, int(backup_count))
+        self._handle = path.open("a", encoding="utf-8")
+        # 用已有文件大小做起点，而不是从 0 数：进程重启后如果从 0 开始计，
+        # 一个已经 900 MB 的文件会被认为"还没到 10 MiB"，永远不轮转。
+        try:
+            self._size = path.stat().st_size
+        except OSError:
+            self._size = 0
+
+    @property
+    def _rotation_enabled(self) -> bool:
+        return self._max_bytes > 0 and self._backup_count > 0
+
+    def write(self, text: str) -> int:
+        encoded_len = len(text.encode("utf-8"))
+        if self._rotation_enabled and self._size + encoded_len > self._max_bytes:
+            self._rotate()
+        self._handle.write(text)
+        self._size += encoded_len
+        return len(text)
+
+    def flush(self) -> None:
+        self._handle.flush()
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            self._handle.close()
+
+    def _rotate(self) -> None:
+        """把当前文件挪到 `.1`，历史依次后移，最旧的丢弃。"""
+        try:
+            self._handle.flush()
+            self._handle.close()
+            # 从最旧往最新挪，否则会自己覆盖自己
+            for index in range(self._backup_count - 1, 0, -1):
+                source = self._path.with_name(f"{self._path.name}.{index}")
+                target = self._path.with_name(f"{self._path.name}.{index + 1}")
+                if source.exists():
+                    target.unlink(missing_ok=True)
+                    source.rename(target)
+            first = self._path.with_name(f"{self._path.name}.1")
+            first.unlink(missing_ok=True)
+            self._path.rename(first)
+            self._handle = self._path.open("a", encoding="utf-8")
+            self._size = 0
+        except OSError:
+            # 轮转失败不能把异常抛给日志调用方（见类 docstring）。
+            # 尽力重新打开当前文件继续写；连这一步都失败就只能放弃文件输出。
+            with contextlib.suppress(OSError):
+                self._handle = self._path.open("a", encoding="utf-8")
+                self._size = 0
+
+
 def _resolve_log_level() -> int:
     """把 settings.log_level 解析成 structlog 的数值级别。
 
@@ -169,6 +255,9 @@ def configure_logging() -> None:
     - 与 stdout 共用同一 processor 链，文件行同样经过脱敏，不会引入第二条渲染路径；
     - 落盘时强制 JSON 渲染——console 渲染带 ANSI 颜色与对齐补全，会污染文件行，
       且 JSON 行可直接被 Promtail/Loki 解析（按字段过滤）。
+    - 按 `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` 轮转（见 `_RotatingLogStream`）。
+      此前是**无上限追加**：实测 6 天 3.97 MB，代码无轮转、compose 无 `max-size`、
+      宿主无 logrotate —— 三层都没有。写满盘会让数据库写入一起失败。
 
     `wrapper_class` 必须显式传 filtering bound logger：`settings.log_level` 此前
     **只传给了 uvicorn**（`main.py` 的 `uvicorn.run(log_level=...)`），
@@ -177,7 +266,6 @@ def configure_logging() -> None:
     一个"设了但不生效"的级别开关比没有开关更糟：运维以为已经压掉了噪音。
     """
     import sys
-    from pathlib import Path
 
     import structlog
 
@@ -201,7 +289,11 @@ def configure_logging() -> None:
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _open_log_file = path.open("a", encoding="utf-8")
+        _open_log_file = _RotatingLogStream(
+            path,
+            max_bytes=int(getattr(settings, "log_max_bytes", 0) or 0),
+            backup_count=int(getattr(settings, "log_backup_count", 0) or 0),
+        )
         streams.append(_open_log_file)
 
     structlog.configure(

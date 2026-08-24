@@ -839,6 +839,8 @@ CI 跑 pytest 时加了：
 
 ## 11. 未实现 / 已规划（**别当成能用的功能**）
 
+<!-- unimplemented:begin -->
+
 | 项 | 状态 |
 |---|---|
 | `scripts/diagnose.sh` 自动诊断 | ❌ 文件不存在（上一版文档整段贴了它的"源码"） |
@@ -846,7 +848,6 @@ CI 跑 pytest 时加了：
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
 | LLM 成本预算真实拦截 | ❌ 配置项存在但不生效（§12.3） |
 | LLM token / 成本指标 | ❌ 无任何指标统计 |
-| 日志轮转 | ❌ 完全没有（§12.6） |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
 | `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
@@ -856,11 +857,28 @@ CI 跑 pytest 时加了：
 | `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
 | `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
 | `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
-| `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | ❌ 三个配置项无任何代码读取，限流未实现 |
+| `SEED_ON_STARTUP` / `SEED_DATA_PATH` | ⚠️ 两个键**全仓 0 处读取**（启动灌种子靠手动跑 `scripts/seed.py`）。生产环境另有强制关闭，见 §12.13 |
 | 蓝绿 / 金丝雀发布 | ❌ 未实现 |
 | 值班轮换 / 紧急联系人 | ❌ 未设置（单人项目） |
 | 恢复演练 | ❌ 从未执行 |
-| `SEED_FALLBACK_ENABLED=false` 生产收紧 | ⚠️ 当前 `True`，待所有者决定 |
+
+<!-- unimplemented:end -->
+
+### 11.1 从这张表里**移出去**的三条（2026-08-24）
+
+这三条曾经写在上面，但已经不成立了。单独记下来，因为**"把已实现写成未实现"
+和"把未实现写成已实现"都会造成真实损失**，只是方向相反：前者让人重做一遍
+已有的东西，或者放弃一个可用的控制；后者让人在风险评估里数进一个不存在的控制。
+
+| 曾经的记录 | 真实情况 |
+|---|---|
+| 「日志轮转 ❌ 完全没有」 | ✅ 已实现，`LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` + compose 全服务 `max-size`，见 §12.6 |
+| 「`RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` ❌ 三个配置项无任何代码读取，限流未实现」 | ✅ **这条一直是错的**：`app/rate_limit.py` 三个键全读（`:105` / `:128` / `:129`），中间件真实生效，`/api/v1/run` 另有分档配额 |
+| 「`SEED_FALLBACK_ENABLED=false` 生产收紧 ⚠️ 待所有者决定」 | ✅ 已决定并实现：生产环境强制关闭，见 §12.13 |
+
+其中第二条最值得记：它把一个**已经在挡攻击的控制**写成不存在。
+按它做风险评估，会得出"需要新加限流"的结论，
+而真实缺口在别处（`/metrics` 无鉴权、`/docs` 生产未关）。
 
 ---
 
@@ -954,13 +972,52 @@ CI 跑 pytest 时加了：
 （当前每日跑的 `auto_backup.ps1` 走的是 PostgreSQL 容器路径，
 不受这个问题影响；但 `backup.sh` 的 SQLite 回退分支是个雷。）
 
-### 12.6 完全没有日志轮转
+### 12.6 日志轮转（2026-08-24 已实现）
 
 上一版本 §2.2 说「检查 logs 表增长，超 50MB 考虑清理」，
 但没提**文件**日志。实测 `logs/backend.log` 6 天长到 3.97 MB
-（2026-08-17 → 08-23），代码里没有 `RotatingFileHandler`，
+（2026-08-17 → 08-23），代码里没有轮转 handler，
 compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
-更没有 logrotate。按当前速率一年约 240 MB，且没有任何上限。
+更没有 logrotate —— **三层都没有**，按当前速率一年约 240 MB 且无上限。
+
+真实后果不是"日志丢了"：DB 和日志在同一块盘上，
+写满盘会让**数据库写入开始失败**。
+
+**已实现按大小轮转**（`backend/app/utils/redact.py` 的 `_RotatingLogStream`）：
+
+| 配置键 | 默认值 | 含义 |
+| --- | --- | --- |
+| `LOG_MAX_BYTES` | `10485760`（10 MiB） | 单文件上限，超过换文件；`0` = 不轮转（显式选择） |
+| `LOG_BACKUP_COUNT` | `5` | 保留几个历史文件（`backend.log.1` … `.5`） |
+
+磁盘占用上界约 **60 MiB**。只换文件不删旧的不算轮转 —— 那只是把一个大文件
+换成无数小文件，磁盘照样满。
+
+两个实现细节值得知道：
+
+- 进程重启后按**已有文件大小**继续计数，不从 0 重新开始。
+  从 0 计数的话，一个已经很大的文件会被认为"还没到上限"而永远不轮转 ——
+  而长期运行的服务恰好重启过很多次。
+- **轮转失败不会让写日志抛异常**（降级为继续写当前文件）。
+  轮转发生在 `write()` 里，抛异常会打断正在处理的业务请求 ——
+  一个为了保护磁盘而存在的机制，不该成为线上故障的来源。
+
+#### 容器 stdout 是**另一条**无界路径
+
+应用侧补完轮转后很容易以为问题解决了，但后端**同时**往 stdout 和文件写
+（`_TeeWriter`），而 docker 默认的 `json-file` 驱动**没有任何大小上限** ——
+每一行都无限追加到 `/var/lib/docker/containers/<id>/<id>-json.log`，
+只有删容器才释放。流量和应用日志一样大。
+
+`docker-compose.prod.yml` 现在给**全部 11 个服务**都配了
+`max-size: 10m` / `max-file: 3`（通过 `x-logging` YAML 锚点复用），
+合计上界约 330 MiB。
+
+> 只修一条路径就在清单上打勾，会让同一个症状在完全相同的地方复发一次，
+> 而那时清单显示"已修复"。
+
+排障：日志停在某个时间点不再增长，先看同目录有没有 `backend.log.1` ——
+那是轮转过了，不是日志断了。
 
 ### 12.7 两个鉴权口子（2026-08-24 已修）
 
@@ -1028,6 +1085,40 @@ compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
 `db_backend` —— 照模板复制出来的 `.env` 实际连的是 Postgres。
 
 完整清单与新增门禁见 §9.4。
+
+### 12.13 种子开关只是"建议"，而建议的执行率不可观测
+
+`.env.example` 此前对 `SEED_ON_STARTUP` / `SEED_FALLBACK_ENABLED` 写的是
+「**生产环境建议**设为 false」，`OPERATIONS.md` §11 也把它记成"待所有者决定"。
+
+**2026-08-24 已改成代码强制**：生产环境（`APP_ENV=production` / `prod`，
+含大小写与前后空格变体）会把这两个开关强制置为 `false`，
+配置里显式写 `true` 也不生效，并写回字段本身 ——
+`GET /api/v1/settings/config` 回显的就是真实生效值。
+
+**为什么值得强制**：危害不是"多了 8 条假数据"，而是**它让故障看起来像正常**。
+外部采集全挂时，库里仍然有项目、Dashboard 仍然有数字、
+`airdrop_db_projects_total` 仍然不为零。
+**没人会去查一个看起来有数据的系统。** 静默的错误状态比明确的空状态坏得多。
+
+**为什么是强制改而不是拒绝启动**：§4.2 那几条生产自检（空 `API_KEY`、
+localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** ——
+密钥和真实域名只有部署者知道。种子开关不一样：生产环境的正确值只有一个，
+就是关；忘了改不代表配置冲突，为此拒绝启动是把一个能自动修好的问题
+变成一次上线失败。
+
+非生产环境（development / staging / testing）行为不变 ——
+本地开箱演示与空库兜底正是这两个开关存在的理由。
+
+排障提示：如果在生产环境里发现 `/api/v1/settings/config` 的
+`SEED_FALLBACK_ENABLED` 是 `false` 而 `.env` 里写着 `true`，
+那不是配置没加载，是这条强制在生效。
+
+另注：`SEED_ON_STARTUP` 与 `SEED_DATA_PATH` **全仓 0 处读取**
+（启动灌种子靠手动跑 `python scripts/seed.py`）。
+它们仍然保留在模板里是因为 `configs/development/.env.development`
+与 `scripts/deploy.sh` 都在教人填，要删得连模板、文档、部署脚本一起删。
+**一个能填但什么也不做的配置键比缺一个更坏** —— 填的人以为生效了。
 
 ---
 

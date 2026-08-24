@@ -2,11 +2,27 @@
 # 使用：docker compose -f docker-compose.prod.yml up -d --build
 # 包含：nginx 前端 + FastAPI 后端 + PostgreSQL + 可选监控栈
 
+# ── 容器 stdout 日志上限 ──────────────────────────────────
+# Docker 默认的 json-file 驱动**没有任何大小上限**：容器打的每一行 stdout
+# 都无限追加到 /var/lib/docker/containers/<id>/<id>-json.log，
+# 只有删容器才会释放。这是与应用内 LOG_FILE 轮转**互相独立的第二条**
+# 无界增长路径 —— 应用侧修好了轮转，这一条照样能把宿主盘写满。
+#
+# 写满盘的后果不是"日志丢了"，而是 PostgreSQL 数据卷所在分区写入失败。
+#
+# 每服务上限 10 MiB × 3 个文件 = 30 MiB，11 个服务合计上界约 330 MiB，有界。
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # Nginx 反向代理（HTTP-only，TLS 由上游反向代理终止）
   nginx:
     image: nginx:alpine
     container_name: airdrop-nginx
+    logging: *default-logging
     # 宿主机 18080 → 容器 80（避免与其它项目 80 冲突）
     ports:
       - "18080:80"
@@ -27,6 +43,7 @@ services:
       context: .
       dockerfile: frontend-next/Dockerfile
     container_name: airdrop-frontend
+    logging: *default-logging
     ports:
       - "13002:3002"
     environment:
@@ -45,6 +62,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     container_name: airdrop-web
+    logging: *default-logging
     expose:
       - "8002"
     environment:
@@ -87,6 +105,7 @@ services:
   db:
     image: postgres:15-alpine
     container_name: airdrop-db
+    logging: *default-logging
     environment:
       - POSTGRES_DB=airdrop
       - POSTGRES_USER=airdrop
@@ -107,6 +126,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: airdrop-prometheus
+    logging: *default-logging
     # 宿主机 19090 → 容器 9090
     ports:
       - "19090:9090"
@@ -126,6 +146,7 @@ services:
   alertmanager:
     image: prom/alertmanager:latest
     container_name: airdrop-alertmanager
+    logging: *default-logging
     # 宿主机 19093 → 容器 9093
     ports:
       - "19093:9093"
@@ -149,6 +170,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: airdrop-grafana
+    logging: *default-logging
     # 宿主机 13000 → 容器 3000
     ports:
       - "13000:3000"
@@ -171,6 +193,7 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: airdrop-loki
+    logging: *default-logging
     profiles: ["observability"]
     # 宿主机 13100 → 容器 3100
     ports:
@@ -184,6 +207,7 @@ services:
   promtail:
     image: grafana/promtail:2.9.0
     container_name: airdrop-promtail
+    logging: *default-logging
     profiles: ["observability"]
     volumes:
       - ./docker/loki/promtail-config.yml:/etc/promtail/config.yml:ro
@@ -198,6 +222,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.103.0
     container_name: airdrop-otel
+    logging: *default-logging
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector-config.yml"]
     volumes:
@@ -214,6 +239,7 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.57
     container_name: airdrop-jaeger
+    logging: *default-logging
     profiles: ["observability"]
     # 宿主机 11686 → 容器 16686
     ports:
