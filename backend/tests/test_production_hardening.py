@@ -343,3 +343,96 @@ class TestRotationSettingsAreDocumented:
             "而 docker json-file 驱动那条无界路径还在。"
         )
         assert "json-file" in section, "§12.6 没说明 docker 默认驱动无上限这件事 —— 读者不会知道为什么需要配 max-size。"
+
+
+class TestTheUnimplementedListStaysHonest:
+    """§11「未实现」清单本身也要被钉住。
+
+    **两个方向的错误代价不对称但都真实**：把未实现写成已实现，会让人在
+    风险评估里数进一个不存在的控制；把已实现写成未实现，会让人重做一遍，
+    或者放弃一个其实可用的控制。
+
+    这个类钉的是后者 —— 以及"悄悄删掉一行"这种更省事也更坏的做法。
+    """
+
+    @staticmethod
+    def _doc_text() -> str:
+        doc = REPO_ROOT / "docs" / "OPERATIONS.md"
+        text = doc.read_text(encoding="utf-8")
+        assert len(text) > 20000, f"OPERATIONS.md 只有 {len(text)} 字符，疑似被截断 —— 解析器已失效。"
+        return text
+
+    def test_unimplemented_list_no_longer_lists_fixed_items(self) -> None:
+        """清单里不能还留着已经实现的东西。
+
+        清单的可信度是有限资源：一条假的会让读者怀疑其余每一条。
+        """
+        text = self._doc_text()
+        begin, end = "<!-- unimplemented:begin -->", "<!-- unimplemented:end -->"
+        assert begin in text and end in text, "OPERATIONS.md 里找不到 §11 的锚点块 —— 解析器已失效。"
+        block = text[text.index(begin) + len(begin) : text.index(end)]
+        rows = [line for line in block.splitlines() if line.strip().startswith("|")]
+        # 解析器自检：表为空时下面的"没有留着"会假通过。
+        assert len(rows) >= 10, f"§11 只解析出 {len(rows)} 行，远少于预期 —— 表格格式已变。"
+        assert any("diagnose.sh" in row for row in rows), (
+            "§11 里连 `scripts/diagnose.sh` 都找不到 —— 解析到的不是这张表。"
+        )
+
+        # 每一项都配一句"为什么它不能再出现在这张表里"
+        fixed = {
+            "日志轮转": "轮转已实现（LOG_MAX_BYTES / LOG_BACKUP_COUNT + compose max-size）",
+            "RATE_LIMIT_ENABLED": "限流一直是真的：app/rate_limit.py 读全部三个键并真实拦截",
+            "SEED_FALLBACK_ENABLED=false": "已决定并实现：生产环境强制关闭",
+        }
+        still_listed = [key for key in fixed if any(key in row for row in rows)]
+        assert not still_listed, "§11「未实现」清单里还留着这些已经实现的项：" + "；".join(
+            f"{key}（{fixed[key]}）" for key in still_listed
+        )
+
+    def test_the_moved_out_items_are_recorded_not_silently_deleted(self) -> None:
+        """从清单里删掉一条，必须留下"它去哪了"的记录。
+
+        直接删是最省事的做法，也是最坏的：读者记得上次看到过这条，
+        找不到之后无法判断是"修好了"还是"被人悄悄拿掉了"。
+        尤其那条**一直写错的**限流记录 —— 它把一个正在挡攻击的控制写成不存在，
+        按它做风险评估会得出"需要新加限流"的错误结论，而真实缺口在别处。
+        """
+        text = self._doc_text()
+        anchor = "### 11.1"
+        assert anchor in text, "OPERATIONS.md 里找不到 §11.1（移出记录）—— 三条被删掉的记录没有留痕。"
+        start = text.index(anchor)
+        # 不能用 text.index("---", start) 截断：§11.1 里的表格分隔行 `|---|---|`
+        # 本身含 `---`，那样切出来的"节"只有标题和表头，下面的关键词一个都不在里面
+        # —— 断言会失败，而失败原因和文档内容毫无关系。切到下一个 `## ` 级标题。
+        nxt = text.find("\n## ", start)
+        section = text[start:] if nxt == -1 else text[start:nxt]
+        assert len(section) > 400, f"§11.1 只切出 {len(section)} 字符 —— 切分逻辑失效了。"
+        for keyword in ("日志轮转", "RATE_LIMIT_ENABLED", "SEED_FALLBACK_ENABLED"):
+            assert keyword in section, f"§11.1 没记录 `{keyword}` 为什么从「未实现」表里移出去了。"
+
+    def test_the_rate_limit_claim_really_was_wrong(self) -> None:
+        """反向钉住：限流那三个键**确实**被代码读了。
+
+        §11.1 说"这条一直是错的"。如果哪天限流真被拆掉了，
+        §11.1 就变成了新的假记录 —— 所以这里直接查代码，不查文档。
+        """
+        rate_limit = REPO_ROOT / "backend" / "app" / "rate_limit.py"
+        code = rate_limit.read_text(encoding="utf-8")
+        for attr in ("rate_limit_enabled", "rate_limit_requests", "rate_limit_window"):
+            assert f"settings.{attr}" in code, (
+                f"`app/rate_limit.py` 不再读 `settings.{attr}` —— §11.1 说「限流一直是真的」现在成了假记录，请同步。"
+            )
+
+    def test_seed_forcing_is_documented_in_the_runbook(self) -> None:
+        """生产强制关闭必须写进 runbook，否则会被当成"配置没加载"来排障。
+
+        一个"配置文件写 true、实际是 false"的现象，如果 runbook 里没写，
+        值班第一反应一定是去查 env 加载链路 —— 那是完全错误的方向，
+        而且很容易"修"成把强制删掉。
+        """
+        text = self._doc_text()
+        anchor = "### 12.13"
+        assert anchor in text, "OPERATIONS.md 里找不到 §12.13 —— 种子强制关闭没有写进 runbook。"
+        section = text[text.index(anchor) :]
+        assert "SEED_FALLBACK_ENABLED" in section, "§12.13 没点出被强制的键名。"
+        assert "排障" in section, "§12.13 没有排障提示 —— 值班会把强制生效误判成配置没加载。"

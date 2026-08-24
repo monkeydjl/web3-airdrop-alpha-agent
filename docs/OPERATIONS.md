@@ -839,6 +839,8 @@ CI 跑 pytest 时加了：
 
 ## 11. 未实现 / 已规划（**别当成能用的功能**）
 
+<!-- unimplemented:begin -->
+
 | 项 | 状态 |
 |---|---|
 | `scripts/diagnose.sh` 自动诊断 | ❌ 文件不存在（上一版文档整段贴了它的"源码"） |
@@ -846,7 +848,6 @@ CI 跑 pytest 时加了：
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
 | LLM 成本预算真实拦截 | ❌ 配置项存在但不生效（§12.3） |
 | LLM token / 成本指标 | ❌ 无任何指标统计 |
-| 日志轮转 | ❌ 完全没有（§12.6） |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
 | `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
@@ -856,11 +857,28 @@ CI 跑 pytest 时加了：
 | `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
 | `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
 | `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
-| `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | ❌ 三个配置项无任何代码读取，限流未实现 |
+| `SEED_ON_STARTUP` / `SEED_DATA_PATH` | ⚠️ 两个键**全仓 0 处读取**（启动灌种子靠手动跑 `scripts/seed.py`）。生产环境另有强制关闭，见 §12.13 |
 | 蓝绿 / 金丝雀发布 | ❌ 未实现 |
 | 值班轮换 / 紧急联系人 | ❌ 未设置（单人项目） |
 | 恢复演练 | ❌ 从未执行 |
-| `SEED_FALLBACK_ENABLED=false` 生产收紧 | ⚠️ 当前 `True`，待所有者决定 |
+
+<!-- unimplemented:end -->
+
+### 11.1 从这张表里**移出去**的三条（2026-08-24）
+
+这三条曾经写在上面，但已经不成立了。单独记下来，因为**"把已实现写成未实现"
+和"把未实现写成已实现"都会造成真实损失**，只是方向相反：前者让人重做一遍
+已有的东西，或者放弃一个可用的控制；后者让人在风险评估里数进一个不存在的控制。
+
+| 曾经的记录 | 真实情况 |
+|---|---|
+| 「日志轮转 ❌ 完全没有」 | ✅ 已实现，`LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` + compose 全服务 `max-size`，见 §12.6 |
+| 「`RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` ❌ 三个配置项无任何代码读取，限流未实现」 | ✅ **这条一直是错的**：`app/rate_limit.py` 三个键全读（`:105` / `:128` / `:129`），中间件真实生效，`/api/v1/run` 另有分档配额 |
+| 「`SEED_FALLBACK_ENABLED=false` 生产收紧 ⚠️ 待所有者决定」 | ✅ 已决定并实现：生产环境强制关闭，见 §12.13 |
+
+其中第二条最值得记：它把一个**已经在挡攻击的控制**写成不存在。
+按它做风险评估，会得出"需要新加限流"的结论，
+而真实缺口在别处（`/metrics` 无鉴权、`/docs` 生产未关）。
 
 ---
 
@@ -1067,6 +1085,40 @@ compose 里也没有 docker `logging` 驱动的 `max-size` / `max-file`，
 `db_backend` —— 照模板复制出来的 `.env` 实际连的是 Postgres。
 
 完整清单与新增门禁见 §9.4。
+
+### 12.13 种子开关只是"建议"，而建议的执行率不可观测
+
+`.env.example` 此前对 `SEED_ON_STARTUP` / `SEED_FALLBACK_ENABLED` 写的是
+「**生产环境建议**设为 false」，`OPERATIONS.md` §11 也把它记成"待所有者决定"。
+
+**2026-08-24 已改成代码强制**：生产环境（`APP_ENV=production` / `prod`，
+含大小写与前后空格变体）会把这两个开关强制置为 `false`，
+配置里显式写 `true` 也不生效，并写回字段本身 ——
+`GET /api/v1/settings/config` 回显的就是真实生效值。
+
+**为什么值得强制**：危害不是"多了 8 条假数据"，而是**它让故障看起来像正常**。
+外部采集全挂时，库里仍然有项目、Dashboard 仍然有数字、
+`airdrop_db_projects_total` 仍然不为零。
+**没人会去查一个看起来有数据的系统。** 静默的错误状态比明确的空状态坏得多。
+
+**为什么是强制改而不是拒绝启动**：§4.2 那几条生产自检（空 `API_KEY`、
+localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** ——
+密钥和真实域名只有部署者知道。种子开关不一样：生产环境的正确值只有一个，
+就是关；忘了改不代表配置冲突，为此拒绝启动是把一个能自动修好的问题
+变成一次上线失败。
+
+非生产环境（development / staging / testing）行为不变 ——
+本地开箱演示与空库兜底正是这两个开关存在的理由。
+
+排障提示：如果在生产环境里发现 `/api/v1/settings/config` 的
+`SEED_FALLBACK_ENABLED` 是 `false` 而 `.env` 里写着 `true`，
+那不是配置没加载，是这条强制在生效。
+
+另注：`SEED_ON_STARTUP` 与 `SEED_DATA_PATH` **全仓 0 处读取**
+（启动灌种子靠手动跑 `python scripts/seed.py`）。
+它们仍然保留在模板里是因为 `configs/development/.env.development`
+与 `scripts/deploy.sh` 都在教人填，要删得连模板、文档、部署脚本一起删。
+**一个能填但什么也不做的配置键比缺一个更坏** —— 填的人以为生效了。
 
 ---
 
