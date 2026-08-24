@@ -153,7 +153,9 @@
 ### 10. LLM 增强（可选）
 
 - [ ] `OPENAI_API_KEY` 已设置（不设则仅走规则引擎，功能完整但无 LLM 增强）
-- [ ] `LLM_DAILY_BUDGET_USD=1.0`（每日费用上限，按预算调整）
+- [ ] `LLM_DAILY_BUDGET_USD=1.0`（每日费用上限，按预算调整。**2026-08-24 起真的会拦**：超出后拒绝调用并降级回规则引擎；填 `0` 表示不限额）
+- [ ] `LLM_FALLBACK_PRICE_PER_1M_USD=10.0`（价格表里没有的模型按此单价估算，故意偏高 —— 宁可高估导致提前熔断）
+- [ ] **上线后第一天核对一次**：`GET /api/v1/llm/status` 的 `spend_today_usd` 应随调用增长。如果一直是 `0` 而确实调了 LLM，说明记账断了（预算等于不生效）；如果是 `null`，看同响应里的 `ledger_error`
 - [ ] `LLM_DISCOVERY_SCORE_THRESHOLD=0.7`（仅高分项目启用 LLM，节省费用）
 - [ ] 或配置多接口故障转移（`LLM_BASEURL_1`/`LLM_API_KEY_1`/`LLM_MODELS_1_*`）
 

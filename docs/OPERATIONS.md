@@ -363,16 +363,38 @@ cd backend
 **症状**：`airdrop_llm_errors_total{model}` 上涨，告警 `HighLLMErrorRate`。
 
 **排查**：看 `airdrop_llm_requests_total{model}` 与 `airdrop_llm_duration_seconds`
-（桶上界到 30s）；日志事件前缀 `llm.`（共 8 个事件）。
+（桶上界到 30s）；日志事件前缀 `llm.`。
 
 **止损**：`LLM_ENABLED=false` 重启，回落到**规则引擎**路径（离线可用、无外部依赖）。
 
-> ⚠️ **`LLM_DAILY_BUDGET_USD` 目前不会真的限制任何东西。**
-> 这个配置只被 `/api/v1/llm/status` 和 `/api/v1/settings/config` 读出来展示，
-> 代码里**没有任何地方按它拦截调用**，也没有指标统计 token 或成本。
-> 唯一真实生效的成本闸门是 `/api/v1/run` 的**请求频率限制**：
-> LLM 开启时每小时 **1** 次，关闭时放宽到每小时 **10** 次
-> （`backend/app/rate_limit.py` 的 `_expensive_limits`）。详见 §12.3。
+> ✅ **`LLM_DAILY_BUDGET_USD` 现在真的会拦（2026-08-24 实现）。**
+> 此前它只被两个只读接口读出来展示、不拦任何调用（旧版本这里的警告写的就是这件事，
+> 保留在 §12.3 里作为记录）。
+>
+> 现在的行为：每次成功调用的 token 与估算成本写入 `llm_spend_daily` 表（按 UTC 日），
+> 下一次调用**在发出任何网络请求之前**查当日累计，达到或超过预算就拒绝，
+> 降级回规则引擎。
+>
+> **超预算时你会看到什么**：
+> - 日志 `llm.budget.exceeded`（含当日花费与预算）、`llm.refused_by_budget`
+> - 指标 `airdrop_llm_budget_blocked_total{reason="budget_exceeded"}` 上涨
+> - 指标 `airdrop_llm_spend_today_usd` ≥ `airdrop_llm_budget_usd`
+> - 项目解读退回 `mode: "rule"`（这是预期的降级，不是故障）
+>
+> **要临时放开**：调大 `LLM_DAILY_BUDGET_USD` 重启即可；设为 `0` 表示不限额
+> （不是"全部拒绝"）。
+>
+> **两个容易误判成故障的现象**：
+> 1. 账单比预算多一点点。拦截在调用前、成本在调用后才知道，所以最后一次被放行的
+>    调用会把当日花费推过线，超出量最多是单次调用成本。这是软上限。
+> 2. `airdrop_llm_budget_blocked_total{reason="ledger_unavailable"}` 上涨 =
+>    **账本读不出来**（DB 锁 / 磁盘满 / 表缺失），此时策略是拒绝调用（fail closed）。
+>    先查 `llm.budget.ledger_unavailable` 日志和 SQLite 是否可写，不要先怀疑预算配置。
+>
+> 另一道独立的成本闸门仍然在：`/api/v1/run` 的请求频率限制 ——
+> LLM 开启时每小时 **1** 次，关闭时每小时 **10** 次
+> （`backend/app/rate_limit.py` 的 `_expensive_limits`）。它管频率，预算管金额，
+> 两者是不同的轴。
 
 ### 4.5 库内项目不增长
 
@@ -626,13 +648,24 @@ curl http://localhost:18080/health
 
 ## 8. 监控栈
 
-### 8.1 告警规则（实测 7 条）
+### 8.1 告警规则（实测 10 条）
 
 `configs/observability/prometheus/alert_rules.yml`：
 `PipelineConsecutiveFailures`、`PipelineFailureRate`、`NoProjectsDiscovered`、
-`DBGaugeStale`、`HighLLMErrorRate`、`HighAPIErrorRate`、`BackendDown`。
+`DBGaugeStale`、`HighLLMErrorRate`、`LLMBudgetExhausted`、
+`LLMBudgetLedgerUnavailable`、`LLMSpendNotRecorded`、
+`HighAPIErrorRate`、`BackendDown`。
 
-这 7 条引用的指标名**全部真实存在**（有测试钉住，见 §10）。
+这 10 条引用的指标名**全部真实存在**（有测试钉住，见 §10）。
+
+后三条是 2026-08-24 随日预算拦截一起加的，级别差异见
+OBSERVABILITY §5.1。收到时的处置口径：
+
+| 告警 | 是故障吗 | 先看哪里 |
+| --- | --- | --- |
+| `LLMBudgetExhausted` | **不是**，是设计好的降级（退回规则引擎） | 要放开就调大 `LLM_DAILY_BUDGET_USD` 重启；解读质量下降是预期的 |
+| `LLMBudgetLedgerUnavailable` | **是**，基础设施问题 | 数据库可写性、磁盘空间、`llm_spend_daily` 表是否存在。不要先怀疑预算配置 |
+| `LLMSpendNotRecorded` | **是**，预算正在静默失效 | `llm.budget.record_failed` 日志 + 数据库写入。这些花费永远不会计入预算 |
 
 ### 8.2 代码侧的采集告警
 
@@ -846,8 +879,6 @@ CI 跑 pytest 时加了：
 | `scripts/diagnose.sh` 自动诊断 | ❌ 文件不存在（上一版文档整段贴了它的"源码"） |
 | `scripts/heal.sh` 自动自愈 | ❌ 文件不存在 |
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
-| LLM 成本预算真实拦截 | ❌ 配置项存在但不生效（§12.3） |
-| LLM token / 成本指标 | ❌ 无任何指标统计 |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
 | `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
@@ -864,17 +895,21 @@ CI 跑 pytest 时加了：
 
 <!-- unimplemented:end -->
 
-### 11.1 从这张表里**移出去**的三条（2026-08-24）
+### 11.1 从这张表里**移出去**的五条（2026-08-24）
 
-这三条曾经写在上面，但已经不成立了。单独记下来，因为**"把已实现写成未实现"
+这些曾经写在上面，但已经不成立了。单独记下来，因为**"把已实现写成未实现"
 和"把未实现写成已实现"都会造成真实损失**，只是方向相反：前者让人重做一遍
 已有的东西，或者放弃一个可用的控制；后者让人在风险评估里数进一个不存在的控制。
+
+直接删行是最省事也最糟的做法 —— 读者分不清"修好了"和"被悄悄拿掉了"。
 
 | 曾经的记录 | 真实情况 |
 |---|---|
 | 「日志轮转 ❌ 完全没有」 | ✅ 已实现，`LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` + compose 全服务 `max-size`，见 §12.6 |
 | 「`RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` ❌ 三个配置项无任何代码读取，限流未实现」 | ✅ **这条一直是错的**：`app/rate_limit.py` 三个键全读（`:105` / `:128` / `:129`），中间件真实生效，`/api/v1/run` 另有分档配额 |
 | 「`SEED_FALLBACK_ENABLED=false` 生产收紧 ⚠️ 待所有者决定」 | ✅ 已决定并实现：生产环境强制关闭，见 §12.13 |
+| 「LLM 成本预算真实拦截 ❌ 配置项存在但不生效」 | ✅ 已实现：`llm_spend_daily` 表按 UTC 日累计，调用前查、超限拒绝并降级回规则引擎，见 §4.4 与 §12.3 |
+| 「LLM token / 成本指标 ❌ 无任何指标统计」 | ✅ 已实现：`airdrop_llm_cost_usd_total`、`airdrop_llm_tokens_total`、`airdrop_llm_budget_blocked_total` 等 6 个新指标；原有 3 个 LLM 指标此前**注册了但从未递增过一次**，现在也接上了 |
 
 其中第二条最值得记：它把一个**已经在挡攻击的控制**写成不存在。
 按它做风险评估，会得出"需要新加限流"的结论，
@@ -888,10 +923,10 @@ CI 跑 pytest 时加了：
 所以没人读它"**。登记豁免掩盖的不只是字节问题，还有内容问题。
 写下来，也让 §10.6 的门禁有反向断言的靶子。
 
-### 12.1 18 个不存在的指标名
+### 12.1 16 个不存在的指标名
 
 上一版本引用 19 个 `airdrop_*` 指标，**只有 1 个真实存在**（`airdrop_http_requests_total`）。
-以下 18 个在 registry 里查不到 —— §10.6 的门禁会反过来断言它们**确实都不存在**，
+以下 16 个在 registry 里查不到 —— §10.6 的门禁会反过来断言它们**确实都不存在**，
 免得这份清单自己变成新的谎言：
 
 <!-- ghost-metrics:begin -->
@@ -905,8 +940,6 @@ CI 跑 pytest 时加了：
 - `airdrop_fetcher_circuit_open`
 - `airdrop_fetcher_errors_total`
 - `airdrop_llm_calls_total`
-- `airdrop_llm_cost_usd_total`
-- `airdrop_llm_tokens_total`
 - `airdrop_projects_in_db`
 - `airdrop_projects_inserted_total`
 - `airdrop_quarantine_pending`
@@ -914,6 +947,11 @@ CI 跑 pytest 时加了：
 - `airdrop_run_total`
 - `airdrop_test`
 <!-- ghost-metrics:end -->
+
+**2026-08-24 从这张清单里移出了两个**：老文档写的 LLM 成本与 token 指标
+（那两个名字现在真实存在，见 §11.1 与 OBSERVABILITY §3.2）。
+移出而不是留着标注 ✅，是因为**本节整块会被门禁当作"这些都不存在"来核对** ——
+在这里写出一个真实指标名会立刻让 CI 变红，这正是它该做的事。
 
 **为什么这比写错更糟**：Prometheus 查一个不存在的指标**不报错，返回空结果**。
 于是仪表盘显示"一切平静"、告警规则永远不触发 —— 看起来系统很健康，
@@ -943,14 +981,31 @@ CI 跑 pytest 时加了：
 比 404 更能把人骗住，文档里的错误也就一直没人发现。
 用管理员凭据打才会露出真相：404。
 
-### 12.3 "LLM 超预算自动停用"是假的
+### 12.3 "LLM 超预算自动停用"曾经是假的（2026-08-24 已补成真的）
 
-上一版本 §4.4 写「自动停用已生效（超预算当日不再调 LLM）」。
-实测：`llm_daily_budget_usd` 只在两个只读接口里被回显，
+**当时的问题**：更早的版本 §4.4 写「自动停用已生效（超预算当日不再调 LLM）」。
+实测 `llm_daily_budget_usd` 只在两个只读接口里被回显，
 代码里**没有任何拦截逻辑**，也没有 token / 成本指标。
 真实存在的成本闸门只有 `/api/v1/run` 的频率限制（LLM 开 1 次/时，关 10 次/时）。
 
 一条写在 runbook 里、值班照着信的"自动保护"，实际不存在 —— 这比没写更危险。
+
+**现在**：所有者选择"真正实现"而不是删掉配置项。实现见 §4.4 的操作说明。
+
+**这一节保留下来，是因为它记录的失效模式仍然值得警惕**：
+这个配置**被读了 3 处**，搜一下像是实现了 —— 比"配置项完全没被读"更能骗过检查。
+判据必须落在「有没有人在累计花费」上，而不是「有没有人读这个配置」。
+现在 CI 里那两条门禁（`test_operations_doc_parity.py` /
+`test_security_doc_parity.py`）已经从"断言它必须仍然不存在"整体转向为
+"断言拦截真的接在调用路径上，且在发请求之前"。
+
+**顺带修掉的另一个假绿**：`airdrop_llm_requests_total` /
+`airdrop_llm_errors_total` / `airdrop_llm_duration_seconds` 这三个指标
+从注册那天起**从未被递增过一次** —— 注册了、暴露在 `/metrics` 里、
+文档记录了、还有一条 `HighLLMErrorRate` 告警建立在其上，但没有任何递增点。
+一个存在但永不增长的指标，在面板上是平直的 0 线、在告警里是永不触发，
+两者看起来都像"系统很健康"。**这比指标名写错更坏**：名字写错时查询查不到数据，
+还有机会被发现。
 
 ### 12.4 端口写错（8000 vs 8002）
 

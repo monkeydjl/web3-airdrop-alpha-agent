@@ -79,10 +79,15 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `app` | 10 | `app.startup`、`app.shutdown` |
 
 **别按老文档写查询**：它列的 `run.start`、`agent.run.start`、`db.write.error`、
-`fetcher.fetch.start`、`llm.budget.exceeded` 等 15 个事件名**全部不存在**。
+`fetcher.fetch.start` 等 14 个事件名**全部不存在**。
 真实对应事件示例：`orchestrator.pipeline_start`、`agent.started`、`agent.completed`、
 `circuit_breaker.opened`、`collection.alert`。完整清单以 `backend/app/` 源码为准；
 `test_observability_doc_parity.py` 会保证本文档列出的每个事件名都真实存在。
+
+> `llm.budget.exceeded` 是这批名字里**唯一一个后来变成真的**的：
+> 2026-08-24 实现日预算拦截时，实现方按原来的设计意图用了同一个事件名
+> （另有 `llm.refused_by_budget`、`llm.budget.ledger_unavailable`、
+> `llm.budget.record_failed`）。所以它已从"虚构"清单移出。
 
 ### 2.3 级别使用
 
@@ -160,7 +165,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（33 个，实测全量）
+### 3.2 完整指标目录（39 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -211,15 +216,46 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `source` 闭合为 `defillama` / `coingecko` / `cryptorank`；
 各 `result` 词表见 `metrics.py` 的 `OPPORTUNITY_ECONOMIC_*_RESULTS` 常量。
 
-#### LLM（3）
+#### LLM（9）
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
-| `airdrop_llm_requests_total` | counter | `model` | LLM 请求数 |
+| `airdrop_llm_requests_total` | counter | `model` | LLM 请求数（成功与失败都计入 —— 错误率的分母必须是尝试次数） |
 | `airdrop_llm_errors_total` | counter | `model` | LLM 请求失败数 |
 | `airdrop_llm_duration_seconds` | histogram | — | LLM 请求耗时（buckets 0.5,1,2.5,5,10,30） |
+| `airdrop_llm_cost_usd_total` | counter | `model`, `basis` | 估算花费（美元）。`basis` 见下 |
+| `airdrop_llm_tokens_total` | counter | `model`, `direction` | token 用量，`direction` = `prompt` / `completion` |
+| `airdrop_llm_budget_blocked_total` | counter | `reason` | 调用前被预算拒绝的次数。`reason` 见下 |
+| `airdrop_llm_spend_record_failures_total` | counter | — | 钱花了但账没记上的次数（见下方警告） |
+| `airdrop_llm_budget_usd` | gauge | — | 当前配置的日预算（0 = 不限额） |
+| `airdrop_llm_spend_today_usd` | gauge | — | 当日（UTC）累计估算花费 |
 
-**没有成本与 token 指标**（老文档列的三个成本/预算指标都不存在，见 §3.3）。
+> ⚠️ **前三个指标在 2026-08-24 之前从未被递增过一次。**
+> 它们注册了、暴露在 `/metrics` 里、被本文档记录、还有一条 `HighLLMErrorRate`
+> 告警建立在其上 —— 但代码里没有任何递增点。
+> **一个存在但永不增长的指标，在面板上是平直的 0 线、在告警里是永不触发，
+> 两者看起来都像"系统很健康"。** 这比指标名写错更坏：名字写错时查询查不到数据，
+> 还有机会被发现。现在 `app/llm/client.py` 在每次尝试后递增。
+
+`basis` 闭合为三个值（定义在 `app/llm/pricing.py`），它回答"这笔账是怎么算出来的"：
+
+| `basis` | 含义 | 该关注什么 |
+| --- | --- | --- |
+| `table` | 命中价格表，且接口返回了真实 `usage` | 正常 |
+| `fallback_price` | 模型不在价格表里，按 `LLM_FALLBACK_PRICE_PER_1M_USD` 兜底价估 | 占比高说明价格表该补新模型了；金额偏高是有意的（宁可高估） |
+| `estimated_tokens` | 接口**没返回 `usage`**，token 数按字符估的 | 占比高说明连输入量都不确定，预算精度下降 |
+
+`reason` 闭合为（定义在 `app/llm/budget.py`）：`budget_exceeded`（当日花超）、
+`ledger_unavailable`（账本读不出来 → fail closed 拒绝调用）。
+后者上涨是**基础设施问题**，不是预算配置问题 —— 先查 DB 可写性。
+
+> ⚠️ `airdrop_llm_spend_record_failures_total` 上涨的含义要特别注意：
+> **这些花费永远不会计入预算**。记账发生在 LLM 已成功返回之后，为了记账失败
+> 而丢弃一个已经付过钱的结果是纯亏损，所以实现上不抛异常、只记指标。
+> 但累积起来就是预算静默失效 —— 这个指标是唯一能看到它的地方。
+
+成本指标的准确性边界：价格表是**手工维护的近似值**，会过时。
+用途是"够准地估出能触发熔断的量级"，**不是账单核对**，真实账单以各家控制台为准。
 
 #### DB gauge（3）
 
@@ -257,7 +293,25 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 这是刻意的基数控制。**没有 HTTP 耗时 histogram**：请求耗时只进日志
 （`api.request.completed` 的 `duration_ms` 字段）。
 
-### 3.3 老文档虚构、代码中不存在的指标（35 个）
+#### 从 §3.3「不存在」清单里移出的两个（2026-08-24）
+
+`airdrop_llm_cost_usd_total` 与 `airdrop_llm_tokens_total` 曾被列在下面那份
+"代码里一个都没有"的清单里。日预算拦截实现后它们成了真实注册的指标
+（见上面的 LLM 段），所以从清单里移出。
+
+**把一个真实存在的指标列进"不存在"清单，会让人放弃一个可用的指标 ——
+这份纠错清单本身就成了新的谎言。** 清单的可信度是有限资源：
+一条假行会让读者怀疑其余每一行。
+`test_observability_doc_parity.py` 的 `test_ghost_list_contains_no_real_metric`
+就是为了让这种反向错误在 CI 里变红，而不是靠人复读发现。
+
+那批名字里的"剩余预算"指标（老文档写的是 llm budget remaining usd 那个名字，
+这里不写成 `airdrop_` 开头的完整形式，否则本节会被门禁当成"文档声称它存在"）
+**仍然不存在**，且是有意不做的：实现暴露的是 `airdrop_llm_budget_usd` 与
+`airdrop_llm_spend_today_usd` 两个 gauge，剩余额度在查询侧相减得出。
+多暴露一个第三个数，就多一个会与前两个漂移的来源。
+
+### 3.3 老文档虚构、代码中不存在的指标（33 个）
 
 以下名字在上一版文档里出现过，代码里**一个都没有**。列在这里是为了让照旧文档
 写过查询的人一眼对上，不要再找：
@@ -271,11 +325,16 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_collection_signal_freshness_seconds`、`airdrop_rate_limiter_tokens`、
 `airdrop_discovery_score_distribution`、`airdrop_projects_discovered_total`、
 `airdrop_projects_analyzed_from_discovery_total`、`airdrop_llm_calls_total`、
-`airdrop_llm_cost_usd_total`、`airdrop_llm_tokens_total`、`airdrop_llm_budget_remaining_usd`、
+`airdrop_llm_budget_remaining_usd`、
 `airdrop_db_write_errors_total`、`airdrop_db_query_duration_seconds`、`airdrop_projects_in_db`、
 `airdrop_http_request_duration_seconds`、`airdrop_narrative_heat_score`、
 `airdrop_feedback_total`、`airdrop_project_score`、`airdrop_data_completeness_ratio`、
 `airdrop_data_freshness_seconds`。
+
+**2026-08-24 从这张清单里移出了两个 LLM 成本/token 指标** —— 移出记录见上一小节，
+那里说明了为什么"把真指标写成假指标"和反过来一样有害。
+（移出的名字**故意不在这一节里重复**：本节整块会被 CI 门禁当作"这些都不存在"
+来核对，在这里写出一个真实指标名会让门禁立刻变红 —— 这正是它该做的事。）
 
 **为什么这比写错更危险**：Prometheus 查一个不存在的指标**不报错**，
 返回空结果。面板上是一条空曲线、一个「No data」，看起来像"系统很安静"，
@@ -357,7 +416,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 
 系统里有**两套互不相同**的告警机制，别混为一谈。
 
-### 5.1 Prometheus 告警规则（已就位，7 条）
+### 5.1 Prometheus 告警规则（已就位，10 条）
 
 文件：`configs/observability/prometheus/alert_rules.yml`，
 由 `prometheus.yml` 的 `rule_files` 加载，路由到 `alertmanager:9093`。
@@ -370,8 +429,25 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | `NoProjectsDiscovered` | 24h 内 `airdrop_projects_scored_total` 增量为 0，持续 6h | warning |
 | `DBGaugeStale` | `airdrop_db_projects_total` 超 24h 未刷新 | warning |
 | `HighLLMErrorRate` | 5min 内 `airdrop_llm_errors_total` 有增长 | warning |
+| `LLMBudgetExhausted` | 15min 内 `airdrop_llm_budget_blocked_total{reason="budget_exceeded"}` 有增长 | warning |
+| `LLMBudgetLedgerUnavailable` | 同上但 `reason="ledger_unavailable"` | critical |
+| `LLMSpendNotRecorded` | 1h 内 `airdrop_llm_spend_record_failures_total` 有增长 | critical |
 | `HighAPIErrorRate` | `airdrop_http_requests_total{status_class="5xx"}` 速率 > 0.1/s | critical |
 | `BackendDown` | `up{job="airdrop-backend"} == 0` 持续 1min | critical |
+
+> `HighLLMErrorRate` 值得单独说一句：它**在 2026-08-24 之前永远不可能触发** ——
+> 规则本身没问题，但它依赖的 `airdrop_llm_errors_total` 从注册起就没有任何
+> 递增点。**一条永不触发的告警和"一切正常"看起来完全一样。**
+> 递增点补上后它才真的在工作。
+
+> 三条预算相关告警的级别差异是有理由的：
+> - `LLMBudgetExhausted` = warning：这是**设计好的降级**（退回规则引擎），不是故障。
+>   但必须能看见，否则"解读质量突然变差"会被当成模型问题排查半天。
+> - `LLMBudgetLedgerUnavailable` = critical：账本读不出来是**基础设施问题**
+>   （DB 锁 / 磁盘满 / 表缺失），不是预算配置问题。
+> - `LLMSpendNotRecorded` = critical：钱花了但账没记上，**预算正在静默失效**。
+>   记账失败被有意做成不抛异常（为记账失败而丢弃已付费的结果是纯亏损），
+>   代价就是它只在这个指标里可见。
 
 > 老文档那张告警表里的 PromQL **全部引用不存在的指标**（见 §3.3 的清单）。
 > 那些规则装上去也永远不会触发。
@@ -459,7 +535,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | 用户 `note` 入日志前截断 200 字符 | 未实现 |
 | `X-Run-Id` 响应头 | 未实现，只有 `X-Disclaimer` |
 | `run_id` 贯穿每条日志 | 部分：287 处调用里 19 处带 `run_id` |
-| LLM 成本 / token / 预算指标 | 未实现 |
+| LLM 成本 / token / 预算指标 | ✅ **2026-08-24 已实现**（6 个新指标，见 §3.2），本行保留为移出记录 |
 | Agent 粒度指标（耗时、错误、跳过） | 未实现，agent 信息只进日志与 `logs` 表 |
 | 数据质量指标（完整性、新鲜度） | 未实现 |
 | 采集配额 / 限流令牌 / 信号新鲜度指标 | 未实现 |
@@ -474,6 +550,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 
 ---
 
-_本文档所有数字与行为均于 2026-08-23 实测。指标目录导出自 `backend/app/metrics.py`
-注册表；事件名扫描自 `backend/app/` 下全部 logger 调用；
+_本文档所有数字与行为均于 2026-08-23 实测（§2.2 / §3.2 / §3.3 / §7 / §9 的
+LLM 相关内容于 2026-08-24 随日预算拦截实现更新）。指标目录导出自
+`backend/app/metrics.py` 注册表；事件名扫描自 `backend/app/` 下全部 logger 调用；
 `/metrics`、`/health`、`/version` 与日志级别行为通过真实请求与子进程验证。_

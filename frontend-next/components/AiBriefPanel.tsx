@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { apiFetch } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
@@ -8,6 +8,13 @@ export interface AiBriefData {
   project_name?: string;
   mode: 'rule' | 'llm' | string;
   llm_available?: boolean;
+  /**
+   * 回退到规则引擎的原因。mode === 'llm' 时为 null。
+   * 之所以需要它：只有 mode 时前端只能对所有降级说同一句话，
+   * 而「没配密钥」和「今日预算用完了」的处置动作完全不同 ——
+   * 说错会让人去查密钥，而问题在预算。
+   */
+  degraded_reason?: string | null;
   headline?: string;
   summary?: string;
   bullets?: string[];
@@ -16,6 +23,24 @@ export interface AiBriefData {
   label_zh?: string;
   score?: number;
   confidence?: number;
+}
+
+/** 把降级原因翻成一句「该怎么办」，而不是只说「降级了」。 */
+function degradedNotice(data: AiBriefData): string {
+  if (data.mode === 'llm') {
+    return '以上由大模型根据系统评分因子生成，可能有误差；';
+  }
+  switch (data.degraded_reason) {
+    case 'budget_exceeded':
+      return '今日大模型预算已用完，以上为规则引擎生成的解读（UTC 零点自动恢复；要立即恢复请调大 LLM_DAILY_BUDGET_USD 并重启）；';
+    case 'ledger_unavailable':
+      return '预算账本暂时读不出来，为避免超支已暂停大模型调用，以上为规则引擎生成的解读；请检查数据库可写性；';
+    case 'llm_error':
+      return '大模型接口暂时不可用，以上为规则引擎生成的解读，稍后可重新生成；';
+    case 'llm_disabled':
+    default:
+      return '当前未配置大模型密钥，以上为规则引擎根据评分因子自动拼装的解读；配置 OPENAI_API_KEY 后可获得更自然的文案。';
+  }
 }
 
 export function AiBriefPanel({
@@ -133,9 +158,7 @@ export function AiBriefPanel({
             </div>
 
             <p className="border-t border-line pt-3 text-[11px] text-ink-faint">
-              {data.mode === 'llm'
-                ? '以上由大模型根据系统评分因子生成，可能有误差；'
-                : '当前未配置大模型密钥，以上为规则引擎根据评分因子自动拼装的解读；配置 OPENAI_API_KEY 后可获得更自然的文案。'}
+              {degradedNotice(data)}
               不构成投资建议。
             </p>
           </div>

@@ -283,6 +283,16 @@ HTTP_REQUESTS = Counter(
 
 
 # ── LLM metrics ─────────────────────────────────────────────────────
+#
+# ⚠️ 这三个指标从注册那天起到 2026-08-24 之前**从来没有被 inc() 过一次** ——
+# 声明了、暴露在 /metrics 里、被 OBSERVABILITY.md 记录、还有一条告警规则
+# （HighLLMErrorRate）建立在其上，但没有任何递增点。
+#
+# **这比指标名写错更坏。** 名字写错时查询报不出数据，还有机会被发现；
+# 一个存在但永不增长的指标，在面板上是一条平直的 0 线，在告警里是永不触发 ——
+# 两者看起来都像"系统很健康"。值班的人以为有人盯着。
+#
+# 现在由 `app/llm/client.py` 在每次尝试后递增。
 LLM_REQUESTS = Counter(
     "airdrop_llm_requests_total",
     "LLM API requests issued.",
@@ -300,6 +310,93 @@ LLM_DURATION = Histogram(
     "LLM API request duration.",
     buckets=[0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
 )
+
+# ── LLM 成本与预算 ─────────────────────────────────────────────────
+#
+# 成本指标的特殊风险：**算错会被发现，算成 0 不会。**
+# 所以除了金额本身，还要暴露"这笔账是怎么算出来的"（basis 标签）与
+# "有多少次记账失败"—— 记账失败的花费永远不会计入预算，
+# 累积起来就是预算静默失效。
+LLM_COST_USD = Counter(
+    "airdrop_llm_cost_usd_total",
+    "Estimated LLM spend in USD (see app/llm/pricing.py for accuracy bounds).",
+    ["model", "basis"],
+)
+
+LLM_TOKENS = Counter(
+    "airdrop_llm_tokens_total",
+    "LLM tokens consumed, split by direction.",
+    ["model", "direction"],
+)
+
+LLM_BUDGET_BLOCKED = Counter(
+    "airdrop_llm_budget_blocked_total",
+    "LLM calls refused before dispatch, by reason.",
+    ["reason"],
+)
+
+LLM_SPEND_RECORD_FAILURES = Counter(
+    "airdrop_llm_spend_record_failures_total",
+    "Ledger writes that failed after a paid LLM call (spend not counted toward budget).",
+)
+
+LLM_BUDGET_USD = Gauge(
+    "airdrop_llm_budget_usd",
+    "Configured LLM daily budget in USD (0 = unlimited).",
+)
+
+LLM_SPEND_TODAY_USD = Gauge(
+    "airdrop_llm_spend_today_usd",
+    "Estimated LLM spend for the current UTC day in USD.",
+)
+
+# 闭合词表：这两个标签的取值必须来自模块级常量，不允许运行时拼字符串。
+# `basis` 与 `reason` 的真值分别定义在 app/llm/pricing.py 与 app/llm/budget.py，
+# 由门禁比对两边一致。
+LLM_TOKEN_DIRECTIONS: frozenset[str] = frozenset({"prompt", "completion"})
+
+
+def record_llm_attempt(*, model: str, ok: bool, duration_seconds: float) -> None:
+    """记录一次 LLM 尝试（成功或失败都算一次请求）。
+
+    失败也计入 `LLM_REQUESTS`：错误率的分母必须是"尝试次数"，
+    只统计成功的请求会让错误率算出大于 1 的值。
+    """
+    LLM_REQUESTS.labels(model=model).inc()
+    if not ok:
+        LLM_ERRORS.labels(model=model).inc()
+    LLM_DURATION.observe(max(duration_seconds, 0.0))
+
+
+def record_llm_cost(
+    *,
+    model: str,
+    basis: str,
+    cost_usd: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    """记录一次调用的成本与 token 用量。"""
+    LLM_COST_USD.labels(model=model, basis=basis).inc(max(cost_usd, 0.0))
+    LLM_TOKENS.labels(model=model, direction="prompt").inc(max(prompt_tokens, 0))
+    LLM_TOKENS.labels(model=model, direction="completion").inc(max(completion_tokens, 0))
+
+
+def record_llm_budget_block(*, reason: str) -> None:
+    """记录一次被预算拦下的调用。"""
+    LLM_BUDGET_BLOCKED.labels(reason=reason).inc()
+
+
+def record_llm_spend_record_failure() -> None:
+    """记录一次记账失败（钱花了但没进账本）。"""
+    LLM_SPEND_RECORD_FAILURES.inc()
+
+
+def set_llm_budget_state(*, budget_usd: float, spent_today_usd: float) -> None:
+    """刷新预算与当日花费 gauge。"""
+    LLM_BUDGET_USD.set(max(budget_usd, 0.0))
+    LLM_SPEND_TODAY_USD.set(max(spent_today_usd, 0.0))
+
 
 # ── Database / inventory gauges ───────────────────────────────────
 DB_PROJECTS = Gauge(

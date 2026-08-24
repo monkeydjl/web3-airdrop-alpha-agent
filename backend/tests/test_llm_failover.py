@@ -21,10 +21,40 @@ from app.llm.client import (
     _build_combinations,
     _is_connection_error,
     _is_model_error,
+    _RawCompletion,
     llm_chat,
 )
 
 # ── 辅助函数 ──────────────────────────────────
+
+
+def _completion(text: str, *, usage: dict | None = None) -> _RawCompletion:
+    """构造 `_try_single` 的返回值。
+
+    `_try_single` 现在返回 `_RawCompletion`（文本 + 接口自报 usage），
+    不再是裸字符串 —— 预算拦截需要 token 数才能算钱。
+
+    用 dataclass 而不是 `tuple[str, dict]` 是有意的：如果某个 mock 还返回裸
+    字符串，元组解包会把 `"ab"` 静默拆成 `text="a"`, `usage="b"`；
+    dataclass 会在 `.text` 上立刻 AttributeError。
+    """
+    return _RawCompletion(text=text, raw_usage=usage)
+
+
+def _mock_settings(providers: list[dict]) -> MagicMock:
+    """构造只关心故障转移的 settings。
+
+    `llm_daily_budget_usd = 0.0` = 不限额，让这一组用例专注于故障转移本身、
+    不碰账本 DB。预算行为另有 `test_llm_budget_enforcement.py` 专门覆盖 ——
+    **一个用例同时测两件事，挂掉时分不清是哪件坏了。**
+    """
+    mock = MagicMock()
+    mock.llm_providers = providers
+    mock.llm_temperature = 0.3
+    mock.llm_max_tokens = 512
+    mock.llm_daily_budget_usd = 0.0
+    mock.llm_fallback_price_per_1m_usd = 10.0
+    return mock
 
 
 def _clear_llm_env(monkeypatch):
@@ -229,27 +259,26 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_first_provider_success(self, monkeypatch):
         """第一个接口成功，不尝试第二个。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = [
-            {
-                "base_url": "https://api1.com/v1",
-                "api_key": "key1",
-                "name": "provider-1",
-                "models": ["model-a", "model-b"],
-            },
-            {
-                "base_url": "https://api2.com/v1",
-                "api_key": "key2",
-                "name": "provider-2",
-                "models": ["model-a", "model-b"],
-            },
-        ]
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a", "model-b"],
+                },
+                {
+                    "base_url": "https://api2.com/v1",
+                    "api_key": "key2",
+                    "name": "provider-2",
+                    "models": ["model-a", "model-b"],
+                },
+            ]
+        )
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         async def mock_try_single(**kwargs):
-            return "LLM response from provider 1"
+            return _completion("LLM response from provider 1")
 
         monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
 
@@ -264,19 +293,18 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_connection_error_triggers_provider_switch(self, monkeypatch):
         """接口1连接失败 → 自动切换到接口2。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = [
-            {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a"]},
-            {"base_url": "https://api2.com/v1", "api_key": "key2", "name": "provider-2", "models": ["model-a"]},
-        ]
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings(
+            [
+                {"base_url": "https://api1.com/v1", "api_key": "key1", "name": "provider-1", "models": ["model-a"]},
+                {"base_url": "https://api2.com/v1", "api_key": "key2", "name": "provider-2", "models": ["model-a"]},
+            ]
+        )
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         async def mock_try_single(provider, model, **kwargs):
             if provider.name == "provider-1":
                 raise httpx.ConnectError("Connection refused")
-            return "Response from provider 2"
+            return _completion("Response from provider 2")
 
         monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
 
@@ -291,17 +319,16 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_model_error_triggers_model_switch(self, monkeypatch):
         """模型1调用失败 → 自动切换到模型2。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = [
-            {
-                "base_url": "https://api1.com/v1",
-                "api_key": "key1",
-                "name": "provider-1",
-                "models": ["model-a", "model-b"],
-            },
-        ]
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a", "model-b"],
+                },
+            ]
+        )
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         async def mock_try_single(provider, model, **kwargs):
@@ -310,7 +337,7 @@ class TestFailover:
                 resp.status_code = 404
                 resp.text = "model not found"
                 raise httpx.HTTPStatusError("404", request=MagicMock(), response=resp)
-            return "Response with model-b"
+            return _completion("Response with model-b")
 
         monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
 
@@ -324,23 +351,22 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_all_providers_fail(self, monkeypatch):
         """所有接口和模型都失败 → 返回 None。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = [
-            {
-                "base_url": "https://api1.com/v1",
-                "api_key": "key1",
-                "name": "provider-1",
-                "models": ["model-a", "model-b"],
-            },
-            {
-                "base_url": "https://api2.com/v1",
-                "api_key": "key2",
-                "name": "provider-2",
-                "models": ["model-a", "model-b"],
-            },
-        ]
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a", "model-b"],
+                },
+                {
+                    "base_url": "https://api2.com/v1",
+                    "api_key": "key2",
+                    "name": "provider-2",
+                    "models": ["model-a", "model-b"],
+                },
+            ]
+        )
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         async def mock_try_single(**kwargs):
@@ -358,10 +384,7 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_no_providers_configured(self, monkeypatch):
         """未配置任何接口 → 返回 None。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = []
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings([])
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         result = await llm_chat(messages=[{"role": "user", "content": "hi"}])
@@ -372,23 +395,22 @@ class TestFailover:
     @pytest.mark.asyncio
     async def test_failover_chain_p1_conn_p2_model_p2_ok(self, monkeypatch):
         """完整故障转移链：接口1连接失败 → 接口2模型1失败 → 接口2模型2成功。"""
-        mock_settings = MagicMock()
-        mock_settings.llm_providers = [
-            {
-                "base_url": "https://api1.com/v1",
-                "api_key": "key1",
-                "name": "provider-1",
-                "models": ["model-a", "model-b"],
-            },
-            {
-                "base_url": "https://api2.com/v1",
-                "api_key": "key2",
-                "name": "provider-2",
-                "models": ["model-a", "model-b"],
-            },
-        ]
-        mock_settings.llm_temperature = 0.3
-        mock_settings.llm_max_tokens = 512
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a", "model-b"],
+                },
+                {
+                    "base_url": "https://api2.com/v1",
+                    "api_key": "key2",
+                    "name": "provider-2",
+                    "models": ["model-a", "model-b"],
+                },
+            ]
+        )
         monkeypatch.setattr("app.llm.client.settings", mock_settings)
 
         async def mock_try_single(provider, model, **kwargs):
@@ -399,7 +421,7 @@ class TestFailover:
                 resp.status_code = 400
                 resp.text = "model not found"
                 raise httpx.HTTPStatusError("400", request=MagicMock(), response=resp)
-            return "Success on provider-2+model-b"
+            return _completion("Success on provider-2+model-b")
 
         monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
 

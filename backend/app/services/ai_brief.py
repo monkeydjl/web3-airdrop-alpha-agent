@@ -328,14 +328,31 @@ def build_rule_brief(project: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def try_llm_brief(project: dict[str, Any], rule_brief: dict[str, Any]) -> str | None:
-    """Optional LLM polish. Returns markdown/plain text or None.
+async def try_llm_brief(project: dict[str, Any], rule_brief: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Optional LLM polish. Returns `(text, degraded_reason)`.
 
     使用多接口/多模型故障转移客户端：接口1连不上切接口2，模型1失败切模型2。
-    所有接口都失败时返回 None，调用方回退到 rule-based brief。
+    所有接口都失败时返回 `(None, ...)`，调用方回退到 rule-based brief。
+
+    ## 为什么返回一个二元组，而不是只返回文本
+
+    回退到规则引擎有**三种完全不同的原因**，而前端要说的话也不一样：
+
+    | 原因 | 该对用户说 |
+    |---|---|
+    | 没配密钥 | 「配置 `OPENAI_API_KEY` 后可获得更自然的文案」 |
+    | 日预算用完了 | 「今日 LLM 预算已用完，明天恢复；要立即恢复请调大预算」 |
+    | 接口挂了 | 「大模型接口暂时不可用，已回退到规则引擎」 |
+
+    此前这里只返回 `str | None`，三种情况在这一层**完全无法区分**，
+    于是前端对所有 `mode === 'rule'` 一律显示「当前未配置大模型密钥」——
+    在密钥配好、只是预算耗尽的时候，这句话是**错的**，
+    而且会把人引向完全错误的排查方向（去检查密钥，而问题在预算）。
+
+    **降级本身不是问题，把降级原因说错才是问题。**
     """
     if not settings.is_llm_enabled:
-        return None
+        return (None, "llm_disabled")
 
     name = project.get("name")
     payload_ctx = {
@@ -367,23 +384,34 @@ async def try_llm_brief(project: dict[str, Any], rule_brief: dict[str, Any]) -> 
     ]
 
     try:
-        from app.llm.client import llm_chat_simple
+        from app.llm.client import llm_chat
 
-        content = await llm_chat_simple(
+        result = await llm_chat(
             messages=messages,
             temperature=min(0.5, float(settings.llm_temperature) + 0.1),
             max_tokens=max(400, int(settings.llm_max_tokens)),
         )
+        content = result.text
         if content and str(content).strip():
-            return str(content).strip()
+            return (str(content).strip(), None)
+        # 走到这里说明调用没成功。`refused_reason` 只在被预算拦下时非空 ——
+        # 用它把"预算耗尽"和"接口挂了"分开，两者的处置动作完全不同。
+        if result.refused_reason:
+            logger.info(
+                "ai_brief.degraded_by_budget",
+                project=name,
+                reason=result.refused_reason,
+            )
+            return (None, result.refused_reason)
     except Exception as e:
         logger.warning("ai_brief.llm_failed", error=str(e), project=name)
-    return None
+        return (None, "llm_error")
+    return (None, "llm_error")
 
 
 async def generate_project_brief(project: dict[str, Any]) -> dict[str, Any]:
     rule = build_rule_brief(project)
-    llm_text = await try_llm_brief(project, rule)
+    llm_text, degraded_reason = await try_llm_brief(project, rule)
     if llm_text:
         return {
             **rule,
@@ -391,6 +419,7 @@ async def generate_project_brief(project: dict[str, Any]) -> dict[str, Any]:
             "llm_text": llm_text,
             "display_text": llm_text,
             "fallback_paragraphs": rule["paragraphs"],
+            "degraded_reason": None,
         }
     return {
         **rule,
@@ -398,4 +427,6 @@ async def generate_project_brief(project: dict[str, Any]) -> dict[str, Any]:
         "llm_text": None,
         "display_text": "\n\n".join(rule["paragraphs"]),
         "fallback_paragraphs": rule["paragraphs"],
+        # 为什么回退到规则引擎，让前端能说对话（见 try_llm_brief 的 docstring）。
+        "degraded_reason": degraded_reason,
     }

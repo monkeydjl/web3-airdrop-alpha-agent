@@ -103,7 +103,24 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 512
+    # 日预算（美元）。**这个值现在真的会拦截调用** —— 在 2026-08-24 之前它只被
+    # 两个只读接口读出来展示，没有任何累计与拦截。实现见 app/llm/budget.py。
+    #
+    # 0 或负数 = 不限额（而不是"全部拒绝"）：0 是"没配"的自然表达，
+    # 把它解释成"一律禁止 LLM"会让一个漏填的配置静默关掉功能。
+    # 真要关 LLM 用 ENABLE_LLM_ENHANCEMENT。
+    #
+    # 这是**软上限**：拦截在调用前，成本在调用后才知道，所以最后一次被放行的
+    # 调用会把当日花费推过预算线，超出量最多是单次调用成本（由 LLM_MAX_TOKENS
+    # 决定上界）。这不是 bug，是"事前拦截 + 事后计费"的必然结果。
     llm_daily_budget_usd: float = 1.0
+    # 价格表里查不到的模型，按这个单价（美元/1M token，输入输出同价）估算。
+    #
+    # 故意定得偏高：**宁可高估导致提前熔断，也不要低估导致不熔断。**
+    # 高估的后果是少花钱 + 一条明确的超预算日志；低估的后果是账单。
+    # 如果这里返回 0，那么"换一个价格表里没有的模型名"就等于关掉预算 ——
+    # 一个能被随手绕过的预算不是预算。
+    llm_fallback_price_per_1m_usd: float = 10.0
     llm_semaphore_size: int = 5
     # v2.0 分级使用：仅 discovery_score ≥ 此阈值的项目启用 LLM（ADR-012）
     llm_discovery_score_threshold: float = 0.7

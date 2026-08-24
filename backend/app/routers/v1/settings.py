@@ -231,6 +231,10 @@ def get_settings_config() -> SettingsConfigResponse:
         "MISSING_FIELDS_THRESHOLD": settings.missing_fields_threshold,
         "LLM_DISCOVERY_SCORE_THRESHOLD": settings.llm_discovery_score_threshold,
         "LLM_DAILY_BUDGET_USD": settings.llm_daily_budget_usd,
+        # 未知模型的兜底单价。它属于阈值而不是 flag，因为它直接参与成本估算：
+        # 配成 0 就等于"换一个价格表里没有的模型名即可绕过预算"，
+        # 所以必须可见（代码另有非零下限兜底，见 llm/pricing.py）。
+        "LLM_FALLBACK_PRICE_PER_1M_USD": settings.llm_fallback_price_per_1m_usd,
         "LLM_TEMPERATURE": settings.llm_temperature,
         "LLM_MAX_TOKENS": settings.llm_max_tokens,
         # 标签分档来自 scorer.LABEL_THRESHOLDS（不是环境变量）。之所以要在这里

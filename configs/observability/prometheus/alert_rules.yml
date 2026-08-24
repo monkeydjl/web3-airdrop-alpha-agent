@@ -62,6 +62,50 @@ groups:
           summary: "LLM 请求错误"
           description: "最近 5 分钟内有 LLM 请求失败"
 
+      # 这条与上面那条一起解决了一个隐患：airdrop_llm_errors_total 从注册那天起
+      # 到 2026-08-24 之前**从未被递增过一次**，所以 HighLLMErrorRate 永远不会
+      # 触发 —— 一条永不触发的告警看起来和"一切正常"完全一样，
+      # 值班的人以为有人盯着。递增点补上后这条才真的在工作。
+
+      - alert: LLMBudgetExhausted
+        # 日预算耗尽 → LLM 调用被拒 → 项目解读退回规则引擎。
+        # 这不是故障（是设计好的降级），所以是 warning 不是 critical，
+        # 但必须能被看见：否则"解读质量突然变差"会被当成模型问题排查半天。
+        expr: increase(airdrop_llm_budget_blocked_total{reason="budget_exceeded"}[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "LLM 日预算已耗尽，调用被拒并降级回规则引擎"
+          description: "当日累计花费已达 LLM_DAILY_BUDGET_USD。这是设计好的降级，不是故障；要放开就调大预算并重启。"
+
+      - alert: LLMBudgetLedgerUnavailable
+        # 账本读不出来时策略是 fail closed（拒绝调用）—— 理由见 SECURITY.md §10.4。
+        # 这个是**基础设施问题**（DB 锁 / 磁盘满 / 表缺失），不是预算配置问题，
+        # 级别比"预算耗尽"高：它同时意味着数据库有麻烦。
+        expr: increase(airdrop_llm_budget_blocked_total{reason="ledger_unavailable"}[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "LLM 预算账本读取失败，调用被 fail-closed 拒绝"
+          description: "llm_spend_daily 表读不出来（DB 锁 / 磁盘满 / 表缺失）。先查数据库可写性，不要先怀疑预算配置。"
+
+      - alert: LLMSpendNotRecorded
+        # 钱花了但账没记上。这些花费**永远不会计入预算**，累积起来就是预算静默失效。
+        # 这个指标是唯一能看到它的地方 —— 记账失败被有意做成不抛异常
+        # （为记账失败而丢弃一个已付费的结果是纯亏损），代价就是它只在这里可见。
+        expr: increase(airdrop_llm_spend_record_failures_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "LLM 花费未能写入账本，预算正在静默失效"
+          description: "已发生的花费没有计入日累计，预算上限实际被抬高。查 llm.budget.record_failed 日志与数据库写入。"
+
   - name: system_alerts
     interval: 60s
     rules:

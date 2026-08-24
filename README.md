@@ -323,7 +323,8 @@ Web3-Airdrop-Alpha-Agent-System/
 | `DB_PATH` | 否 | data/app.db | SQLite 文件路径 |
 | `POSTGRES_*` | postgres 时 | - | PostgreSQL 连接配置 |
 | `OPENAI_API_KEY` | 否 | - | LLM 增强（不设则走规则引擎） |
-| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限 |
+| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限，**超出后拒绝调用并降级回规则引擎**；`0` = 不限额 |
+| `LLM_FALLBACK_PRICE_PER_1M_USD` | 否 | 10.0 | 价格表里没有的模型按此单价估算（美元/1M token），故意偏高 |
 | `CRON_EXPRESSION` | 否 | 0 8 * * * | 每日分析触发时间 |
 | `MAX_CONCURRENT_PROJECTS` | 否 | 10 | 并行评分上限 |
 | `RATE_LIMIT_ENABLED` | 否 | true | API 限流开关 |
