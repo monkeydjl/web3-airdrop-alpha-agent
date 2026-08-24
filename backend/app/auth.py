@@ -12,6 +12,12 @@ payload: {"user_id": "anon-<uuid>", "role": "anonymous", "exp": <unix_ts>}
 受保护端点（需要管理员权限）：
     POST /api/v1/run, POST /api/v1/re-score, DELETE 类操作
 
+    整前缀锁见 `ADMIN_ONLY_PREFIXES`；另有**按方法**锁的规则
+    （`ADMIN_ONLY_METHOD_RULES`），用于"同一路径读开放、写受限"的情况：
+    `/api/v1/collections/*` 的写操作会真的跑采集并消耗第三方配额，
+    `PATCH /api/v1/projects/{id}/funding` 会改数据并触发重算，
+    但两者的 `GET` 都是普通只读信息，不该一起锁掉。
+
 匿名用户允许：GET /projects, GET /discoveries, POST /feedback, GET /watchlist 等
 
 Reference:
@@ -26,6 +32,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -51,7 +58,7 @@ PUBLIC_PREFIXES = (
     "/api/v1/auth/anonymous",  # 匿名 token 签发端点
 )
 
-# 需要管理员权限的端点（匿名 token 不可访问）
+# 需要管理员权限的端点（匿名 token 不可访问），**不分方法**——整个前缀都锁。
 ADMIN_ONLY_PREFIXES = (
     "/api/v1/run",
     "/api/v1/re-score",
@@ -67,6 +74,50 @@ ADMIN_ONLY_PREFIXES = (
     # 走的是同一条服务端注入密钥的代理路径，不影响页面可用性。
     "/api/v1/archive",
 )
+
+
+# 按**方法**锁的规则：(方法集合, 路径正则)。
+#
+# 为什么需要这一层，而不是把前缀塞进 ADMIN_ONLY_PREFIXES：
+#
+# 1. `/api/v1/collections/sources` 是**只读**的采集源就绪状态，首页和
+#    /discoveries 页都在读它。整条前缀锁掉会让匿名角色看不到"数据从哪来"，
+#    而那不是敏感信息 —— 真正危险的是同一前缀下会**跑采集**的写操作。
+# 2. `funding` 的路径是 `/api/v1/projects/{id}/funding`，通配段在中间，
+#    前缀匹配根本表达不了；同一路径的 `GET` 也应当保持开放。
+#
+# 这两个口子的实测证据（2026-08-23，匿名 token）：
+#   - `POST /api/v1/collections/{id}/trigger` → **200**，而且真的跑了一次采集
+#     （写 raw_projects / project_signals / collection_runs 三张表，并消耗
+#     第三方 API 配额）。
+#   - `PATCH /api/v1/collections/{id}` → **200**，能改采集源开关与 cron。
+#   - `PATCH /api/v1/projects/{id}/funding` → **200**，改融资数据并触发重算。
+#
+# `/collections/` 下的写操作用**方法白名单取反**（GET/HEAD/OPTIONS 之外全锁），
+# 而不是逐条列出 trigger / PATCH：新加一个写端点时默认就是受保护的。
+# **一个需要人记得来登记的白名单，迟早会漏掉一条。**
+ADMIN_ONLY_METHOD_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/collections(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/projects/[^/]+/funding(?:/|$)"),
+    ),
+)
+
+
+def requires_admin(method: str, path: str) -> bool:
+    """这个 (方法, 路径) 是否只允许管理员访问。
+
+    两层规则：整前缀锁（`ADMIN_ONLY_PREFIXES`，不分方法）+ 按方法锁
+    （`ADMIN_ONLY_METHOD_RULES`）。抽成函数是为了让测试能直接断言判定结果，
+    而不是只能通过发请求间接观察 —— 中间件里内联的 `any(...)` 没法单独验证。
+    """
+    if any(path.startswith(p) for p in ADMIN_ONLY_PREFIXES):
+        return True
+    return any(method.upper() in methods and pattern.match(path) for methods, pattern in ADMIN_ONLY_METHOD_RULES)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -266,8 +317,8 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             user_id = payload.get("user_id", "anonymous")
             role = payload.get("role", "anonymous")
 
-            # 检查管理员专用端点
-            if any(path.startswith(p) for p in ADMIN_ONLY_PREFIXES):
+            # 检查管理员专用端点（整前缀 + 按方法两层规则）
+            if requires_admin(request.method, path):
                 return JSONResponse(
                     status_code=403,
                     content={
