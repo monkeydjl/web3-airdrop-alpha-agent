@@ -156,7 +156,7 @@ AUTH_TOKEN_SECRET=<生成的值>
 
 | # | 检查项 | 结果 | 详情 |
 |---|--------|------|------|
-| 9.1 | 备份脚本存在 | PASS | scripts/backup.sh |
+| 9.1 | 备份脚本存在 | PASS | scripts/backup.sh。⚠️ **这条检查当时太宽**：它只核对文件存在，而当时该脚本的本地回退分支会 `cp data/airdrop.db`（94 项目的过期副本，真库 288 项目），且找不到库时"跳过并报成功"——**一份看起来成功的、没用的备份**。已于 2026-08-24 修好（读 `.env` 的 `DB_PATH` + `sqlite3 .backup` + 找不到就 `exit 1`）。重跑此报告时应改为核对备份产物里**真的有 `app.db` 且行数与线上一致** |
 | 9.2 | docker-compose 挂载 data 卷 | PASS | ./data:/app/data |
 | 9.3 | docker-compose 挂载 logs 卷 | PASS | ./logs:/app/logs |
 | 9.4 | PostgreSQL 数据卷 | PASS | airdrop_pg_data |

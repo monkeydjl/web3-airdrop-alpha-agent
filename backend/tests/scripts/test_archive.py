@@ -599,3 +599,37 @@ class TestRunRecording:
     def test_dry_run_recorded_as_dry_run(self, db_conn):
         RawDataArchiver(dry_run=True).run_and_record(db_conn, trigger=TRIGGER_MANUAL)
         assert ArchiveRunRepository(db_conn).list_recent()[0]["dry_run"] == 1
+
+    def test_run_with_nothing_to_archive_still_records_a_row(self, db_conn):
+        """空转也必须留痕 —— 这条决定了「archive_runs 为 0」该怎么解读。
+
+        2026-08-24 实测线上库 `archive_runs` **0 行**，此前文档把原因写成
+        「数据还没超过保留期，所以每次触发都无事可做」。**那个解释是错的。**
+
+        因为空转同样会写一条 `status=success` 的记录，所以 0 行只可能是
+        **一次都没被触发过**。两个诊断的处置动作完全不同：
+        「无事可做」是"再等等就好"，「从没触发」是"调度那一段从未被验证"。
+
+        这条断言就是那个判据。如果哪天改成"没活干就不记录"，
+        `archive_runs = 0` 会重新变成二义的 —— 而它是运维唯一的可观测入口
+        （`GET /api/v1/archive/runs` 的 `summary.total_runs`）。
+        """
+        # 空库，一行都不够老，各分项必然全 0
+        result = RawDataArchiver(raw_retention_days=30, dry_run=False).run_and_record(
+            db_conn, trigger=TRIGGER_SCHEDULER
+        )
+
+        expected_archived = 0
+        assert result.raw_archived == expected_archived
+        assert result.signals_archived == expected_archived
+        assert result.logs_deleted == expected_archived
+
+        runs = ArchiveRunRepository(db_conn).list_recent()
+        expected_runs = 1
+        assert len(runs) == expected_runs, "空转也必须留下一条记录，否则 archive_runs=0 无法区分「没活干」和「没跑过」"
+        assert runs[0]["status"] == STATUS_SUCCESS
+        assert runs[0]["raw_archived"] == expected_archived
+        assert runs[0]["error_message"] is None
+
+        # 反向：这条记录必须真的能被运维那个入口数到
+        assert ArchiveRunRepository(db_conn).counts()["total"] == expected_runs

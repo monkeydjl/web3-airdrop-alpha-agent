@@ -237,10 +237,23 @@ Trivy                     pass    3s
   契约，补了 18 个测试（`app/tracing.py` 覆盖率 44% → 58%）。
   正向路径（真装 OTel 能上报）本机无法验证，PyPI 不可达。
 - `SEED_FALLBACK_ENABLED` 生产建议设 `false`（默认 `true`）
-- **Python 版本口径不一致**：镜像与 CI 用 3.12、mypy 配置写 3.12，
+- ~~**Python 版本口径不一致**：镜像与 CI 用 3.12、mypy 配置写 3.12，
   但本地 venv 是 3.11.9（`requires-python = ">=3.11"`）。
-  意味着本地跑通 2500+ 测试的解释器与生产镜像里的不是同一个。
-  需所有者决定统一到哪个版本 —— 两种选择代价不同，未擅自改。
+  需所有者决定统一到哪个版本~~ →
+  **已修（2026-08-24），而且不是"选一个版本"的取舍问题**。
+  实测发现这是一个**无人看守的缺口**：用 `itertools.batched`（3.12 新增标准库
+  API）做探针，`mypy --python-version 3.12` 报 Success、`ruff --target-version
+  py311` 报 All checks passed、而真 3.11.9 解释器抛 `AttributeError`。
+  也就是说 `requires-python = ">=3.11"` 这句承诺**一道门都没有** ——
+  用了 3.12 新 API 的代码会通过全部 CI，然后在 3.11 上运行时才炸，
+  报错信息完全不提 Python 版本。
+  正确规则是**检查器按声明下限（3.11），运行时可以更新（3.12）**：
+  在新解释器上跑旧版本的检查是"多拦"，反过来才是"少拦"。
+  两份 pyproject 的 mypy 都改成 3.11，加门禁
+  `backend/tests/test_toolchain_version_parity.py`（8 条，8 个变异全部验过）。
+  顺带查出根 `pyproject.toml` 的 `[tool.mypy]`（`strict = true`）是**死配置**：
+  CI 从 `backend/` 运行并显式 `--config-file pyproject.toml`，读的是 backend 那份；
+  真按根配置跑是 373 个错误。这条单独记着，没在本轮改。
 - ~~Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）~~ →
   **已锁定**（2026-08-21）：拆成三个文件，运行时 13 个 + 开发 7 个全部精确 `==`，
   逐包与本地跑通 2500 测试的环境核对一致，并在干净 venv 里实测装完能启动。

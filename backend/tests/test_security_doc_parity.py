@@ -651,6 +651,137 @@ class TestGhostListIsHonest:
         )
 
 
+class TestImageSecurityClaims:
+    """§6.3 讲镜像安全 —— 这一节此前三条里错了两条。
+
+    2026-08-24 实测：
+      · 写「基础镜像 `python:3.11-slim`」→ 实际两阶段都是 `python:3.12-slim`
+      · 写「固定 digest」→ 实际没有任何 `@sha256:`
+      · 写「Trivy/Grype」→ 仓库里只有 Trivy，没有 Grype
+
+    为什么这种错值得钉门禁：**安全文档里的"已经做了"会被直接算进风险评估**。
+    "固定了 digest"意味着"基础层不会在我不知情时变化" —— 而实际用的是
+    可变 tag。读者按文档做威胁建模时，会漏掉整整一类供应链风险。
+
+    与 §10/§11 那些"点名不存在"的断言方向相反：这里断言的是
+    **文档不能声称超出代码的保护**。
+    """
+
+    _DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile"
+    _SECURITY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "security.yml"
+
+    @classmethod
+    def _dockerfile(cls) -> str:
+        assert cls._DOCKERFILE.is_file(), f"{cls._DOCKERFILE} 不存在 —— 被测对象没了。"
+        text = cls._DOCKERFILE.read_text(encoding="utf-8")
+        assert "FROM python:" in text, "Dockerfile 里找不到 `FROM python:` —— 解析锚点变了，先修这里。"
+        return text
+
+    @classmethod
+    def _section(cls) -> str:
+        """§6.3 那一节的正文。"""
+        text = _doc_text()
+        start = text.index("### 6.3 镜像安全")
+        end = text.index("## 7.", start)
+        section = text[start:end]
+        assert len(section) > 200, "§6.3 解析出来不到 200 字 —— 解析器失效，别信下面的断言。"
+        return section
+
+    def test_documented_base_image_matches_dockerfile(self) -> None:
+        """§6.3 提到的每个 `python:X.Y-slim` 都必须是 Dockerfile 真在用的。
+
+        ⚠️ 这条第一版写错了，变异测试才抓出来：原来只断言"真实版本号必须
+        出现在本节里"。但本节会**多次**提到镜像名（一次在结论、一次在实测
+        引述里），把其中一处改成 3.11 后，另一处仍是 3.12 —— 断言照样通过。
+
+        **"至少写对一处"不是判据**：读者读到的是错的那一处。
+        改成双向核对集合：文档提到的版本集合必须等于 Dockerfile 里的集合。
+        这也是本仓库第三次踩"锚点是另一行的子串"这个坑。
+        """
+        real = set(re.findall(r"FROM (python:[0-9.]+-slim)", self._dockerfile()))
+        assert real, "Dockerfile 里解析不到基础镜像 —— 先修解析器。"
+
+        section = self._section()
+        mentioned = set(re.findall(r"(python:[0-9.]+-slim)", section))
+        assert mentioned, "§6.3 一个 `python:X.Y-slim` 都没提到 —— 解析器失效或本节被改空了。"
+
+        stale = sorted(mentioned - real)
+        assert not stale, (
+            f"§6.3 提到了 Dockerfile 并没在用的镜像 {stale}（真实：{sorted(real)}）。\n"
+            "安全文档里一个过期的版本号会让人按错的基础层做威胁建模。"
+        )
+        missing = sorted(real - mentioned)
+        assert not missing, f"Dockerfile 用的是 {missing}，但 SECURITY.md §6.3 没提到。"
+
+    def test_digest_pinning_claim_matches_reality(self) -> None:
+        """声称固定 digest 时，Dockerfile 里必须真的有 `@sha256:`。
+
+        方向是单向的：**没固定却说固定**才是问题（读者会少算一类风险）；
+        真固定了而文档没提只是漏写，不构成误导。
+        """
+        pinned = "@sha256:" in self._dockerfile()
+        section = self._section()
+        claims_pinned = "固定 digest" in section and "未固定 digest" not in section
+        assert not (claims_pinned and not pinned), (
+            "§6.3 声称「固定 digest」，但 docker/Dockerfile 里没有任何 `@sha256:`。\n"
+            "可变 tag 意味着同一份 Dockerfile 在不同时间可能构建出不同基础层 —— "
+            "这正是读者会按文档漏掉的那一类供应链风险。"
+        )
+
+    def test_named_scanners_actually_exist_in_ci(self) -> None:
+        """文档点名的扫描器必须真的在工作流里。
+
+        ⚠️ 这条第一次跑就拦住了它自己的修复文案 —— §6.3 里那句
+        「用 Grype 的说法是错的，仓库里没有 Grype」正是在**纠正**这个错，
+        却因为提到了 `grype` 而被判成"点名了不存在的扫描器"。
+
+        这是本仓库反复出现的同一个坑：**描述某个错误的文字，和犯那个错的文字，
+        长得一模一样。** 之前在术语门禁、编码门禁（`check_encoding.py`
+        自己被自己误报）、以及 8000 端口门禁上各犯过一次。
+
+        解法沿用仓库既有的**行级显式豁免**约定（可 `grep -rn` 审计），
+        而不是整节豁免 —— 整节豁免会让真正的幻影扫描器藏在里面。
+        """
+        workflows = REPO_ROOT / ".github" / "workflows"
+        blob = "\n".join(p.read_text(encoding="utf-8") for p in workflows.glob("*.yml")).lower()
+        assert "trivy" in blob, "解析不到 trivy —— 搜索器或工作流结构变了，先修这里。"
+
+        # 逐行判，跳过带行级豁免标记的行（那些行在说"这个东西不存在"）
+        lines = [
+            line
+            for line in self._section().lower().splitlines()
+            if "scanner-absence-ok" not in line and not line.lstrip().startswith("#")
+        ]
+        assert lines, "§6.3 剔掉豁免行后一行不剩 —— 解析器失效。"
+        section = "\n".join(lines)
+
+        for scanner in ("grype", "snyk", "clair"):
+            if scanner in section:
+                assert scanner in blob, (
+                    f"§6.3 点名了 `{scanner}`，但 .github/workflows 里一处都没有。"
+                    "一个不存在的扫描器会让人以为镜像已经被扫过。"
+                    f"\n（如果这一行是在说明「没有 {scanner}」，行尾加 `scanner-absence-ok` 标记。）"
+                )
+
+    def test_ignore_unfixed_is_disclosed(self) -> None:
+        """扫描带 `ignore-unfixed: true` 时，文档必须说出来。
+
+        因为它改变了"CI 绿"的含义：绿只代表**有补丁可修的**高危为零，
+        不代表镜像无高危。这个差别不写出来，绿灯会被当成"干净"。
+        """
+        workflow = self._SECURITY_WORKFLOW
+        assert workflow.is_file(), f"{workflow} 不存在 —— 被测对象没了。"
+        text = workflow.read_text(encoding="utf-8")
+        if "ignore-unfixed" not in text:
+            pytest.skip("工作流没用 ignore-unfixed，这条不适用")
+
+        section = self._section()
+        assert "ignore-unfixed" in section, (
+            "security.yml 的 Trivy 带 `ignore-unfixed: true`，但 SECURITY.md §6.3 没提。\n"
+            "不写出来的话，「CI 绿」会被读成「镜像无高危」—— 实际只是「无可修的高危」。"
+        )
+
+
 class TestParsersFailLoudly:
     """解析器自检：永远返回空值的解析器会让上面全部断言假通过。"""
 

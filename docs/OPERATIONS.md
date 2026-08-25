@@ -33,8 +33,8 @@
   前端 `13002→3002`、Grafana `13000→3000`、OTel exporter `18889→8889`。
   后端在生产 compose 里**不映射宿主机端口**（只在 compose 网络内以 `airdrop-web:8002` 暴露）。
 
-> ⚠️ `scripts/deploy.sh` 与 `scripts/health-check.sh` 里写的是 **8000**，
-> 直接跑会健康检查超时。见 §12.4。
+> ✅ 2026-08-24：`scripts/deploy.sh` 与 `scripts/health-check.sh` **已修好**，
+> 不再硬编码 8000（端口从 `.env` 的 `PORT`/`API_PORT` 读，默认 8002）。见 §3.4、§12.4。
 
 ### 1.2 数据库文件到底在哪（**实测，最容易踩的坑**）
 
@@ -87,7 +87,9 @@ cd backend
 - 依赖漏洞：`pip-audit`（CI 每次 PR 都跑，本地可复跑）。
 - 备份恢复演练（§6.3）——**目前从未演练过**。
 - 归档任务有没有真跑过：`GET /api/v1/archive/runs` 的 `summary.total_runs`
-  —— **实测当前为 0，即归档从上线到现在一次都没执行过**（§7.3）。
+  —— **实测当前为 0，即归档从上线到现在一次都没被触发过**。
+  注意这不是"数据还不够老"（那种情况也会留下一条 `raw_archived=0` 的成功记录，
+  已实测），而是调度那一段从未被验证。处置办法见 §7.3。
 
 ---
 
@@ -170,19 +172,55 @@ TLS 由上游反向代理终结，这里是 HTTP-only。
 
 ### 3.4 部署脚本的可用性
 
-`scripts/deploy.sh` 和 `scripts/health-check.sh` 存在，但**都硬编码 8000 端口**，
-现状下会失败。修好之前请按 §3.1–3.3 手工执行。见 §12.4。
+**2026-08-24 已修好，可以用了。** 三个脚本各自原本带一个不报错的缺陷，
+全部修掉并加了门禁（`backend/tests/test_shell_scripts.py`，20 条）：
+
+| 脚本 | 原来的缺陷 | 原来的表现 | 现在 |
+|---|---|---|---|
+| `deploy.sh` | 健康检查打 8000；5 行 `s/X/X/` 空操作 sed；生产用空 `API_KEY` 直接启动 | 报「服务启动超时」 | 端口从 `.env` 读；sed 全删；生产四项预检不通过就 `exit 1` |
+| `health-check.sh` | 默认 `API_URL` 是 8000；硬查 `data/app.db` | 健康的系统被报成不健康 | 默认 8002；从 `.env` 的 `DB_PATH` 找库；新增预算账本检查 |
+| `backup.sh` | 本地回退 `cp data/airdrop.db`（过期副本） | **报告"备份完成"，产出没用的备份** | 从 `DB_PATH` 找库，用 `sqlite3 .backup`；找不到就 `exit 1` |
+
+> 这三个缺陷的共同点：**都不是功能缺失，而是把真实原因掩盖成另一个原因。**
+> 最贵的不是它失败，是它指错方向 —— 照原来的 `deploy.sh` 跑，
+> 你会去查容器日志、查依赖、查数据库，而问题在脚本自己那一行。
+
+用法：
+
+```bash
+./scripts/deploy.sh dev     # 开发：模板默认值可直接跑
+./scripts/deploy.sh prod    # 生产：先过 4 项预检（APP_ENV / API_KEY / AUTH_TOKEN_SECRET / CORS_ORIGINS）
+
+API_URL=http://localhost:8002 ./scripts/health-check.sh
+API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM 预算账本
+```
+
+**生产预检为什么是"停下"而不是"自动补"**：`API_KEY` / `AUTH_TOKEN_SECRET` /
+`CORS_ORIGINS` 的正确值只有部署者知道。自动塞一个值进去，会让一个配错的
+生产环境**看起来部署成功了**。这与 `config.py` 的判据一致 ——
+能推断出唯一正确值的（种子开关）强制改，推断不出的（密钥、域名）拒绝启动。
+
+**本地无法真跑**：这台 Windows 机器上 bash 不可用（Git bash
+`CreateFileMapping` Win32 error 5，WSL `E_ACCESSDENIED`），Docker 守护进程也连不上。
+所以 `bash -n` 语法校验只在 CI（Linux）上执行，本地自动跳过；
+其余 20 条门禁（端口、空操作 sed、预检控制流、CRLF/BOM、账本检查）本地就能跑。
+**首次在真 Linux 环境跑 `deploy.sh prod` 仍需人工盯一遍** —— 静态门禁能证明
+它不再犯已知的那几个错，不能证明它在真容器里跑得通。
 
 ### 3.5 回滚
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前只有 **3 个版本**（`backend/alembic/versions/`）。
+- **数据库回滚**：Alembic 迁移目前有 **4 个版本**（`backend/alembic/versions/`）：
+  `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
+  `0004_llm_spend_daily`。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
   ```
   破坏性迁移的回滚请先做备份（§6）。
+  回滚到 `0003` 之前会丢掉 LLM 花费账本 —— 预算拦截会转为 fail-closed
+  （拒绝所有 LLM 调用并报 `ledger_unavailable`），不是静默放行。
 
 ### 3.6 Opportunity Shadow 灰度
 
@@ -625,7 +663,8 @@ curl http://localhost:18080/health
 
 ### 7.3 归档任务
 
-`ARCHIVE_SCHEDULER_ENABLED = True`，cron 表达式 `0 3 * * *`。
+`ARCHIVE_SCHEDULER_ENABLED = True`，cron 表达式 `0 3 * * *`（UTC），
+`misfire_grace_time = 3600`。
 
 保留策略（实测 `GET /api/v1/archive/runs`）：
 
@@ -638,11 +677,57 @@ curl http://localhost:18080/health
 
 归档表保留期：`RAW_ARCHIVE_RETENTION_DAYS=180`、`SIGNALS_ARCHIVE_RETENTION_DAYS=365`。
 
-⚠️ **归档从未真正执行过**：`archive_runs` 表 0 行，
-`raw_projects_archive` / `project_signals_archive` 都是 0 行，`summary.total_runs = 0`。
-原因是本地数据最早只到 2026-08-09，还没有任何记录超过 30 天保留期，
-所以每次触发都"无事可做"。**这条路径在生产上等于未验证**，
-第一次真正命中保留期时才会第一次跑真实逻辑。
+#### 归档从未执行过 —— 但原因不是上一版说的那个
+
+`archive_runs` 表 **0 行**，`raw_projects_archive` / `project_signals_archive`
+都是 0 行，`summary.total_runs = 0`。
+
+上一版把原因写成「数据还没超过保留期，所以每次触发都无事可做」。
+**这个解释是错的**，2026-08-24 拿线上库副本真跑一次归档验证了：
+
+> `run_and_record()` 即使一行都没归档，**也会写下一条 `status=success` 的记录**
+> （实测：`raw_archived=0`，`archive_runs` 仍然 +1，
+> 内容 `{'id': 1, 'trigger': 'manual', 'status': 'success', 'raw_archived': 0, ...}`）。
+
+所以 `archive_runs` 为 0 只能说明一件事：**这个任务一次都没被触发过**。
+本机后端是手工起停的开发进程，从没在 UTC 03:00（本地 11:00）那一刻活着，
+`misfire_grace_time=3600` 也没兜住。这跟保留期毫无关系。
+
+**两个诊断的处置动作完全不同**：
+「无事可做」是"再等等就好"，「从没触发」是"这条路径的调度部分从未被验证"。
+把后者写成前者，会让人以为已经跑过很多次、只是每次都空转。
+
+#### 归档逻辑本身是好的（同一次实跑证明）
+
+同一份线上库副本上把保留期全设为 0 天再 dry-run，命中数：
+
+| 分项 | 命中行数 |
+|---|---|
+| `raw_processed` | **106** |
+| `raw_unprocessed` | **509** |
+| `signals` | **2261** |
+| `logs` | **20** |
+
+也就是说 SQL 条件、`processed=0` 那一档、`dry_run` 只统计不改数据
+（实测 dry-run 后所有表行数不变），都是对的。
+**待验证的只剩"调度会不会按时把它叫起来"这一段。**
+
+#### 什么时候会第一次真的归档到东西
+
+本机数据最早 `2026-08-09`（`raw_projects.discovered_at` / `project_signals.captured_at`
+都是这一天，`collection_logs.started_at` 是 08-09 06:00）。
+按 30 天保留期，`raw_processed` 那一档最早在 **2026-09-08** 前后开始命中。
+
+**建议**：在那之前手工跑一次，别把首次真实执行留给生产。
+
+```powershell
+cd backend
+& ".\venv\Scripts\python.exe" ..\scripts\archive_raw_data.py --dry-run
+```
+
+`--dry-run` 只统计不改数据（已实测），确认数字合理后去掉该参数。
+跑完用 `GET /api/v1/archive/runs` 核对 `summary.total_runs` 从 0 变成 1 ——
+**判据落在"有没有留下记录"上，不是"命令有没有报错"。**
 
 ---
 
@@ -883,7 +968,7 @@ CI 跑 pytest 时加了：
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
 | `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
-| 归档任务真实执行 | ⚠️ 逻辑与调度都在，但**从未命中保留期**（§7.3） |
+| 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
 | `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
 | `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
@@ -1007,14 +1092,19 @@ CI 跑 pytest 时加了：
 两者看起来都像"系统很健康"。**这比指标名写错更坏**：名字写错时查询查不到数据，
 还有机会被发现。
 
-### 12.4 端口写错（8000 vs 8002）
+### 12.4 端口写错（8000 vs 8002）（2026-08-24 已修）
 
 上一版本全篇用 8000，`scripts/deploy.sh` 和 `scripts/health-check.sh`
 也写 8000。真实端口 **8002**。
-照文档执行 `deploy.sh` 会在健康检查环节卡满 30 次重试后失败。
-脚本本身没改（改脚本要单独验证），本文 §3.4 已标注。
+照文档执行 `deploy.sh` 会在健康检查环节卡满 30 次重试后失败 ——
+而服务其实已经起来了，只是没人在 8000 上听。
 
-### 12.5 备份可能备错库
+**已修**：文档全篇改成 8002；两个脚本改成从 `.env` 的 `PORT` / `API_PORT` 读，
+读不到才用默认 8002。门禁 `test_no_executable_port_8000` 禁止
+非注释行再出现 `localhost:8000` 这类可直接复制执行的地址。
+注释里为解释这段历史而写的 8000 是允许的 —— 把散文一起禁掉会逼着文档删掉真实的警告。
+
+### 12.5 备份可能备错库（2026-08-24 已修）
 
 上一版本说库在 `data/airdrop.db`，恢复示例是 `sqlite3 data/airdrop.db`。
 实测运行时真正连的是 **`D:\app\data\app.db`**（288 项目 / 9.3 MB），
@@ -1024,8 +1114,19 @@ CI 跑 pytest 时加了：
 —— 在容器都不在的情况下，它会**安静地备份那个过期副本并报告"备份完成"**。
 一个报成功却备错文件的备份，比明确失败的备份危险。
 
+**已修**：本地回退分支改成从 `.env` 读 `DB_PATH`（相对路径同时试 `backend/` 前缀），
+用 `sqlite3 .backup` 或 `python3 sqlite3.backup` 取一致快照而不是 `cp`
+（`cp` 一个正在被写入的 SQLite 文件可能拿到撕裂快照，而它照样能被打开，
+只是内容不一致 —— 又一种"看起来成功"的失败）。
+**找不到库时改成 `exit 1`，不再"跳过并报成功"**：原来会一路走到「✅ 备份成功！」，
+最后打包出一个只含 `backup-info.txt` 的压缩包。
+门禁 `test_backup_fails_when_no_database_found` 守这一条。
+
+不猜其它文件名是刻意的：**猜中一个过期副本比找不到更坏** ——
+前者会给你一份看起来成功的、没用的备份。
+
 （当前每日跑的 `auto_backup.ps1` 走的是 PostgreSQL 容器路径，
-不受这个问题影响；但 `backup.sh` 的 SQLite 回退分支是个雷。）
+本来就不受这个问题影响。）
 
 ### 12.6 日志轮转（2026-08-24 已实现）
 

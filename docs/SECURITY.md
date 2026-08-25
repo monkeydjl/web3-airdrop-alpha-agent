@@ -151,8 +151,20 @@
 - 前端 CDN 资源加 SRI hash：`<script src="..." integrity="sha384-..." crossorigin="anonymous">`。
 
 ### 6.3 镜像安全
-- 基础镜像用 `python:3.11-slim`（非 `latest`，固定 digest）。
-- 镜像扫描：Trivy/Grype 在 CI 构建后扫描，高危失败。
+- 基础镜像 **`python:3.12-slim`**（两个构建阶段同一版本）。
+  ⚠️ **未固定 digest**：实测 `docker/Dockerfile` 写的是
+  `FROM python:3.12-slim`，没有 `@sha256:` —— 上一版本文写「固定 digest」
+  且版本号写成 3.11，两处都与代码不符。tag 会被上游重新推送，
+  意味着同一份 Dockerfile 在不同时间可能构建出不同的基础层。
+  （Python 版本口径见 `docs/DEPLOYMENT.md` §11：检查器按声明下限 3.11，
+  运行时用 3.12。）
+- 镜像扫描：**Trivy 已接入**（`.github/workflows/security.yml`，两步 ——
+  先出人能读的表格 `exit-code: 0`，再由 SARIF 步骤 `exit-code: "1"` 判定），
+  `severity: HIGH,CRITICAL` 命中即失败。
+  ⚠️ 但带 **`ignore-unfixed: true`**：上游还没出补丁的高危**不会**让 CI 红。
+  这是刻意的（无法修的漏洞挡住合并只会逼人关扫描），
+  代价是"CI 绿"不等于"镜像无高危" —— 要看全量得读 SARIF 上传的结果。
+  用 Grype 的说法是错的，仓库里没有 Grype。<!-- scanner-absence-ok: 本行在说明该扫描器不存在 -->
 - 非 root 用户运行：Dockerfile `USER appuser`。
 - 多阶段构建减小攻击面（builder 阶段不进最终镜像）。
 
