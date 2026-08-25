@@ -548,9 +548,11 @@ class TestCriticalNumbersMatchCode:
         """上一版本全篇把后端端口写成 8000（真实 8002）。
 
         这里只查**可执行形态**的 8000（`localhost:8000` / `:8000` 这类
-        URL 与端口映射），不查散文。文档确实需要在 §3.4 说明
-        「`deploy.sh` 里硬编码的是 8000」—— 那是在纠错，不是在给错命令。
-        把散文一起禁掉会逼着文档删掉这条真实的警告。
+        URL 与端口映射），不查散文。文档需要在 §3.4 / §12.4 讲清
+        「脚本原来硬编码的是 8000，2026-08-24 已修」—— 那是在纠错，
+        不是在给错命令。把散文一起禁掉会逼着文档删掉这条真实的历史记录，
+        而**知道某个坑存在过**对排查有价值：这条报错（「服务启动超时」）
+        以后再出现时，第一件事仍然是确认探测地址对不对。
         """
         text = _doc_text()
         body = _body_without_distortion_section(text)
@@ -696,6 +698,55 @@ class TestClaimsOfAbsenceAreStillTrue:
         assert writers <= {"repositories/v2.py"}, (
             f"`metrics` 表出现了新的写入方：{sorted(writers - {'repositories/v2.py'})} —— §11 已过期，请同步文档。"
         )
+
+
+class TestMigrationCountIsCurrent:
+    """§3.5 写了 Alembic 有几个版本 —— 这种"数出来的数字"每加一个迁移就过期。
+
+    2026-08-24 实测它已经过期了：文档写「只有 3 个版本」，实际 4 个
+    （`0004_llm_spend_daily` 是当天随预算账本加的）。
+
+    为什么这条值得钉：回滚步骤是**出事时照着做**的，那时没人有空核对。
+    数字少一个，`downgrade -1` 回到的位置就和预期差一格 ——
+    而 `downgrade` 不会因为文档写错而报错，它会老老实实退一步，
+    只是运维以为自己退到了别的地方。
+    """
+
+    def test_documented_migration_count_matches_reality(self):
+        versions_dir = REPO_ROOT / "backend" / "alembic" / "versions"
+        real = sorted(p.stem for p in versions_dir.glob("[0-9][0-9][0-9][0-9]_*.py"))
+
+        minimum_expected = 4
+        assert len(real) >= minimum_expected, (
+            f"只找到 {len(real)} 个迁移文件（{real}）—— 命名规则可能变了，解析不到就等于断言空转，先修这里的 glob。"
+        )
+
+        text = _doc_text()
+        # 锚点刻意不含中文可选组：`(?:只)?` 这种写法会被 check_encoding.py
+        # 判成「二型：整字变 '?'」—— 它的启发式无法区分正则语法里的 `?`
+        # 和真被写坏的中文字。改用「数量 + 个版本」这个不带可选中文的形状。
+        documented = re.findall(r"Alembic 迁移目前有 \*\*(\d+) 个版本\*\*", text)
+        assert documented, (
+            "§3.5 里解析不到「Alembic 迁移目前有 N 个版本」这句话 —— "
+            "措辞可能改了。解析不到就等于这条门禁空转，先修锚点再说。"
+        )
+        assert int(documented[0]) == len(real), (
+            f"§3.5 说有 {documented[0]} 个 Alembic 版本，实际 {len(real)} 个：{real}\n"
+            "回滚步骤是出事时照着做的，数字错了会让人以为自己退到了别的位置。"
+        )
+
+    def test_every_migration_file_is_named_in_the_doc(self):
+        """光对数字不够 —— 4 个版本里换掉一个，数字还是 4。
+
+        所以逐个核对文件名都出现在文档里。这条也顺便保证新增迁移时
+        必须回来改文档，而不是只把数字 +1。
+        """
+        versions_dir = REPO_ROOT / "backend" / "alembic" / "versions"
+        real = sorted(p.stem for p in versions_dir.glob("[0-9][0-9][0-9][0-9]_*.py"))
+        text = _doc_text()
+
+        missing = [name for name in real if name not in text]
+        assert not missing, f"这些迁移在 OPERATIONS.md 里没提到：{missing}（§3.5 请同步）"
 
 
 # ═══════════════════════════════════════════════════════════════

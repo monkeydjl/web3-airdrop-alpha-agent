@@ -60,16 +60,49 @@ elif docker ps --filter "name=$WEB_CONTAINER" --format "{{.Names}}" 2>/dev/null 
     echo "✅ SQLite 数据库备份完成"
 
 # 最后回退：本地文件
+#
+# 2026-08-24 修复：原来这里硬写 `cp data/airdrop.db`。
+# 实测运行时真正连的库由 `.env` 的 DB_PATH 决定，而 `data/airdrop.db`
+# 在这台机器上是一个 94 个项目的**过期副本**（真库 288 项目 / 9.3 MB）。
+# 于是在容器都不在的情况下，这个分支会**安静地备份那个过期副本
+# 并报告"备份完成"** —— 一次成功的备份报告，配一份没用的备份文件。
+# 备份的失败方式里最坏的一种，就是它看起来成功了。
 else
     BACKUP_TYPE="sqlite-local"
-    if [ -f "data/airdrop.db" ]; then
-        cp "data/airdrop.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
-        echo "✅ 本地 SQLite 备份完成 (data/airdrop.db)"
-    elif [ -f "backend/data/airdrop.db" ]; then
-        cp "backend/data/airdrop.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
-        echo "✅ 本地 SQLite 备份完成 (backend/data/airdrop.db)"
+    DB_PATH_ENV=""
+    if [ -f .env ]; then
+        DB_PATH_ENV="$(grep -E '^DB_PATH=' .env | tail -1 | cut -d= -f2- | tr -d '[:space:]')"
+    fi
+
+    DB_SRC=""
+    if [ -n "$DB_PATH_ENV" ] && [ -f "$DB_PATH_ENV" ]; then
+        DB_SRC="$DB_PATH_ENV"
+    elif [ -n "$DB_PATH_ENV" ] && [ -f "backend/$DB_PATH_ENV" ]; then
+        # DB_PATH 是相对路径时，服务的工作目录是 backend/
+        DB_SRC="backend/$DB_PATH_ENV"
+    fi
+
+    if [ -n "$DB_SRC" ]; then
+        # 用 sqlite3 .backup 而不是 cp：cp 一个正在被写入的 SQLite 文件
+        # 可能拿到一个撕裂的快照（尤其有 -wal 时），而它照样能被打开，
+        # 只是内容不一致 —— 又一种"看起来成功"的失败。
+        if command -v sqlite3 &> /dev/null; then
+            sqlite3 "$DB_SRC" ".backup '$BACKUP_DIR/$BACKUP_NAME/app.db'"
+        elif command -v python3 &> /dev/null; then
+            python3 -c "import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()" \
+                "$DB_SRC" "$BACKUP_DIR/$BACKUP_NAME/app.db"
+        else
+            cp "$DB_SRC" "$BACKUP_DIR/$BACKUP_NAME/app.db"
+            echo "   ⚠️  无 sqlite3/python3，退化为 cp（运行中的库可能拿到不一致快照）"
+        fi
+        echo "✅ 本地 SQLite 备份完成（源: $DB_SRC，来自 .env 的 DB_PATH）"
     else
-        echo "⚠️  未找到数据库文件，跳过数据库备份"
+        # 这里必须失败，不能"跳过并报成功"。
+        echo "❌ 未找到数据库文件，备份失败"
+        echo "   .env 里 DB_PATH=${DB_PATH_ENV:-<未设置>}"
+        echo "   不猜其它文件名：猜中一个过期副本比找不到更坏 ——"
+        echo "   前者会给你一份看起来成功的、没用的备份。"
+        exit 1
     fi
 fi
 

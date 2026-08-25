@@ -163,6 +163,17 @@ class RawDataArchiver:
         失败也记一行（status=failed + error_message），否则"归档三天没跑成功"
         这种事在界面上看不出来 —— 只有成功记录的历史会让人误以为一切正常。
         记录本身失败不能吃掉原始异常，所以记录写入包在自己的 try 里。
+
+        **空转也记一行**（2026-08-24 补注）。这一点决定了运维怎么解读
+        `archive_runs` 为空：既然一行都没归档也会留下 `status=success`
+        的记录，那么 `archive_runs = 0` 就只可能是**一次都没被触发过**，
+        不可能是"每次触发都无事可做"。
+
+        这个区分很重要，两者的处置动作完全不同：
+        「无事可做」是"再等等就好"，「从没触发」是"调度那一段从未被验证"。
+        文档曾把前者写成后者（OPERATIONS §7.3，已纠正），
+        门禁见 `tests/scripts/test_archive.py::TestRunRecording
+        ::test_run_with_nothing_to_archive_still_records_a_row`。
         """
         started_at = datetime.now(UTC)
         try:

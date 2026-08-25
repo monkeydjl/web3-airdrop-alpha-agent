@@ -64,8 +64,29 @@ source = ["app"]
 omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.mypy]
-# 与 CI / Dockerfile 的 Python 3.12 对齐（此前写 3.13，而运行时根本不是 3.13）
-python_version = "3.12"
+# ⚠️ 这个值必须等于 `requires-python` 的**下限**（3.11），不是运行时镜像的版本。
+#
+# 2026-08-24 实测的理由（写下来是因为直觉会指向相反方向）：
+#
+#   探针 `itertools.batched(...)`（Python 3.12 新增的标准库 API）
+#     · mypy --python-version 3.11 → error: Module has no attribute "batched" ✅ 拦住
+#     · mypy --python-version 3.12 → Success, no issues                      ❌ 放过
+#     · ruff --target-version py311 → All checks passed                      ❌ 放过
+#     · 真 3.11.9 解释器            → AttributeError: module 'itertools' has no attribute 'batched'
+#
+# ruff 的 `target-version = "py311"`（根 pyproject）只拦 3.12 专属**语法**
+# （实测能拦 PEP 695 的 `type X = int` 与 `def f[T]()`），
+# **拦不住标准库 API 的版本差** —— 那是类型检查器的活。
+#
+# 所以之前写 3.12 的后果是：`requires-python = ">=3.11"` 这句承诺
+# **没有任何一道门在守**。一段用了 3.12 新 API 的代码会通过全部 CI，
+# 然后在任何 3.11 环境上抛 AttributeError —— 而且是运行时才抛，
+# 报错信息完全不提 Python 版本。
+#
+# 把它设成下限是"多拦"而不是"少拦"：在 3.12 上跑 3.11 的检查完全安全，
+# 反之才危险。改这一行时如果 CI 红了，说明真有代码用了 3.12 专属 API ——
+# 那时该改的是代码，或者把 `requires-python` 一起提到 >=3.12。
+python_version = "3.11"
 mypy_path = "."
 ignore_missing_imports = true
 strict_optional = false

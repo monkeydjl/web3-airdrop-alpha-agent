@@ -48,7 +48,7 @@ C4Container
     Person(user, "用户")
     
     Container(nginx, "Nginx", "反向代理")
-    Container(backend, "FastAPI", "Python 3.11", "REST API + Agent 编排")
+    Container(backend, "FastAPI", "Python 3.12", "REST API + Agent 编排")
     ContainerDb(db, "SQLite", "WAL 模式", "项目数据 + 评分历史")
     Container(scheduler, "APScheduler", "进程内", "每日批处理")
     Container(frontend, "Static HTML", "单页应用", "Dashboard")

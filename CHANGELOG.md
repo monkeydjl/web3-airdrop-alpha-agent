@@ -8,6 +8,236 @@
 
 ## [Unreleased]
 
+### Fixed — `requires-python = ">=3.11"` 这句承诺此前一道门都没有
+
+`backend/pyproject.toml` 的 mypy 写 `python_version = "3.12"`，
+而两份 pyproject 的 `requires-python` 都写 `>=3.11`。
+
+**这不是"版本号不统一"的整洁问题**。用 `itertools.batched`
+（3.12 新增的标准库 API）做探针实测四道门：
+
+| 门 | 结果 |
+|---|---|
+| `mypy --python-version 3.11` | `error: Module has no attribute "batched"` ✅ 拦住 |
+| `mypy --python-version 3.12` | `Success: no issues found` ❌ 放过 |
+| `ruff --target-version py311` | `All checks passed` ❌ 放过 |
+| 真 3.11.9 解释器 | `AttributeError: module 'itertools' has no attribute 'batched'` |
+
+ruff 的 `target-version` 拦得住 3.12 专属**语法**（实测能拦 PEP 695 的
+`type X = int` 与 `def f[T]()`），**但拦不住标准库 API 的版本差** ——
+那只有类型检查器管。所以一段用了 3.12 新 API 的代码会通过全部 CI，
+然后在 3.11 环境上运行时才抛 AttributeError，报错完全不提 Python 版本。
+
+正确规则：**检查器按声明下限（3.11），运行时可以更新（3.12）**。
+在新解释器上跑旧版本的检查是"多拦"，反过来才是"少拦"。
+两份 pyproject 的 mypy 都改成 3.11，实测仍 `Success: 119 source files`。
+
+新增门禁 `backend/tests/test_toolchain_version_parity.py`（8 条）：
+两份 pyproject 的 `requires-python` 与 `version` 必须一致；mypy 与 ruff
+必须等于声明下限；CI 与镜像**不得低于**下限（可以更高 —— 这个方向刻意不对称，
+强行要求相等会逼人在升级镜像时改一堆无关配置）；Dockerfile 各阶段必须同一版本
+（`site-packages` 路径写死在 `python3.X` 目录里，不一致会在容器启动时才炸）。
+8 个变异全部符合预期（含 1 个反向：CI 升到 3.13 不该被拦）。
+
+顺带查出**根 `pyproject.toml` 的 `[tool.mypy]`（`strict = true`）是死配置**：
+CI 从 `backend/` 运行且显式 `--config-file pyproject.toml`，读的是 backend 那份；
+真按根配置跑是 373 个错误。已记入 `docs/PHASES.md`，本轮未改。
+
+### Fixed — SECURITY.md §6.3 镜像安全三条里错了两条
+
+- 写「基础镜像 `python:3.11-slim`」→ 实际两阶段都是 `python:3.12-slim`
+- 写「固定 digest」→ 实际没有任何 `@sha256:`
+- 写「Trivy/Grype」→ 仓库里只有 Trivy
+
+**安全文档里的"已经做了"会被直接算进风险评估**。"固定了 digest"意味着
+"基础层不会在我不知情时变化"，而实际用的是可变 tag —— 读者做威胁建模时
+会漏掉整整一类供应链风险。
+
+同时补上一个此前完全没写的事实：Trivy 带 **`ignore-unfixed: true`**。
+这改变了"CI 绿"的含义 —— 绿只代表**有补丁可修的**高危为零，
+不代表镜像无高危。不写出来，绿灯会被读成"干净"。
+（这个选项本身是合理的：无法修的漏洞挡住合并只会逼人关掉扫描。）
+
+新增门禁 `TestImageSecurityClaims`（4 条）：文档提到的镜像版本集合必须
+**等于** Dockerfile 实际用的集合；声称固定 digest 时必须真有 `@sha256:`；
+点名的扫描器必须真在工作流里；带 `ignore-unfixed` 时必须披露。
+
+两处自我纠错都由变异测试抓出，都是本仓库的老坑复发：
+
+1. 「点名扫描器」那条**第一次跑就拦住了它自己的修复文案** ——
+   §6.3 里那句"仓库里没有 Grype"正是在纠正这个错，却因为提到了
+   `grype` 而被判成"点名了不存在的扫描器"。沿用仓库既有的**行级显式豁免**
+   （`scanner-absence-ok`，可 `grep -rn` 审计），不做整节豁免。
+2. 「版本号」那条第一版只断言"真实版本号必须出现在本节里"。
+   本节会多次提到镜像名，改掉其中一处后另一处仍对 —— 断言照样通过。
+   **"至少写对一处"不是判据，读者读到的是错的那一处。**
+   改成双向集合核对。这是第三次踩"锚点是另一行的子串"。
+
+顺带修掉三处同源的过期版本号：`docs/02_architecture.md` 容器标签
+（3.11 → 3.12，那里指的是运行时）、`docs/DEPLOYMENT.md` §0 与 §12 的表述、
+`docs/PHASES.md` 里"待所有者决定统一到哪个版本"那条待决项。
+
+### Fixed — 回滚步骤里的 Alembic 版本数写少了一个
+
+`docs/OPERATIONS.md` §3.5 写「Alembic 迁移目前只有 **3 个版本**」，
+实际 4 个（`0004_llm_spend_daily` 是当天随预算账本加的）。
+
+**为什么这一条不算小事**：回滚步骤是**出事时照着做**的，那时没人有空核对。
+而 `alembic downgrade -1` 不会因为文档写错而报错 ——
+它老老实实退一步，只是运维以为自己退到了别的位置。
+
+改成列出全部 4 个版本名，并补一句回滚到 `0003` 之前的后果：
+LLM 花费账本表消失，预算拦截转为 fail-closed（拒绝所有 LLM 调用并报
+`ledger_unavailable`），**不是静默放行** —— 这个方向必须写清楚，
+否则运维会以为回滚后 LLM 会照常工作。
+
+新增门禁 `TestMigrationCountIsCurrent`（2 条）：核对文档里的数字与
+`alembic/versions/` 实际文件数一致，**并逐个核对文件名都被提到** ——
+光对数字不够，4 个版本里换掉一个，数字还是 4。
+锚点解析不到时报「解析不到」而不是静默通过。
+
+4 个变异全部被拦（数字写回 3、换掉一个文件名、改掉门禁依赖的措辞、
+以及归档那条），1 个反向变异（加一句无关说明）确认不误拦。
+
+### Fixed — 「归档从没跑过」的原因文档写错了（实跑验证）
+
+`archive_runs` 表 **0 行** —— 归档功能从上线到现在一次都没留下记录。
+文档（OPERATIONS §7.3）把原因解释成「数据还没超过 30 天保留期，
+所以每次触发都无事可做」。
+
+拿线上库副本真跑一次，**这个解释是错的**：
+`run_and_record()` 即使一行都没归档，**也会写下一条 `status=success` 的记录**
+（实测 `raw_archived=0`，`archive_runs` 仍然 +1）。
+
+所以 0 行只能说明一件事：**这个任务一次都没被触发过。**
+本机后端是手工起停的开发进程，从没在 UTC 03:00 那一刻活着。
+
+**两个诊断的处置动作完全不同**：「无事可做」是"再等等就好"，
+「从没触发」是"这条路径的调度部分从未被验证"。
+把后者写成前者，会让人以为已经跑过很多次、只是每次都空转 ——
+于是不会有人去手工验证。
+
+同一次实跑也确认了逻辑本身是好的：把保留期全设 0 天再 dry-run，
+命中 `raw_processed` 106 / `raw_unprocessed` 509 / `signals` 2261 / `logs` 20 行，
+且 dry-run 后所有表行数不变。**待验证的只剩"调度会不会按时把它叫起来"这一段。**
+
+新增门禁 `test_run_with_nothing_to_archive_still_records_a_row`：
+锁住"空转也必须留痕"这个性质。如果哪天改成"没活干就不记录"，
+`archive_runs = 0` 会重新变成二义的 —— 而它是运维唯一的可观测入口。
+
+文档补上：什么时候会第一次真的命中保留期（本机数据最早 2026-08-09，
+按 30 天算约 2026-09-08），以及在那之前手工跑一次的命令，
+判据落在 `summary.total_runs` 从 0 变 1，而不是"命令有没有报错"。
+
+### Fixed — `docs/DEPLOYMENT.md` 几乎每条可执行命令都是错的（全文重写）
+
+不是"有几处过时"，而是照它做**没有一步能跑通**，而且没有一条错误信息
+指向真正的原因：
+
+| 文档写的 | 实际 | 照它做会怎样 |
+|---|---|---|
+| `python run.py` | 没有 `run.py` | `can't open file 'run.py'` |
+| `docker build -t airdrop-alpha:latest .` | Dockerfile 在 `docker/` 下 | `failed to read dockerfile` |
+| `-p 8000:8002 -e PORT=8000` | 端口是 8002 | 容器内外自相矛盾 |
+| `-v ./data:/app/backend/data` | 挂载点是 `/app/data` | **挂载成功但挂错位置，数据仍会丢** |
+| compose 服务名 `web` | 是 `backend` | `no such service: web` |
+| `frontend/index.html` | 不存在，前端是 Next.js（`frontend-next`） | 打不开 |
+| `DB_PATH` 默认 `backend/data/airdrop.db` | `data/airdrop.db`（相对 cwd） | 找错库 |
+| `CRON_HOUR` / `CRON_MINUTE` | 真名 `CRON_EXPRESSION` | **填了不报错也不生效** |
+| `DEFILLAMA_BASE` | 真名 `DEFILLAMA_BASE_URL` | 同上 |
+| `TWITTER_BEARER` | 真名 `TWITTER_BEARER_TOKEN` | 同上 |
+| `/health` 返回 `{ok, data:{status, db:"connected"}}` | 扁平结构，`db` 的值是 `"ok"` | 照它写的监控解析不出字段 |
+| 指标 `run_total` / `run_errors` / `analyze_latency_seconds` / `db_write_errors` | **四个都不存在** | 面板永远空、告警永不触发 |
+| CI 只有一个 `test` 作业、Python 3.11 | 6 个作业 + 4 个工作流，Python 3.12 | 严重低估门禁 |
+| 「MVP 无迁移需求，V2 引入 Alembic」 | Alembic 已启用，4 个版本 | 跳过 `alembic upgrade` |
+
+其中最坏的三条：
+
+1. **挂载路径错** —— 挂载不会报错，容器跑得好好的，直到容器重建那天数据没了。
+2. **四个不存在的环境变量名** —— **一个填了不生效的配置键，比缺一个更坏**：
+   缺的会被发现，填错的会让人以为自己配好了。
+3. **四个幻影指标名** —— 照它建的面板是空的、告警永不触发，
+   而**空面板和"系统很健康"长得一模一样**。
+
+三条的共同点：都不产生任何错误信号。
+
+重写而不是打补丁，因为**清单的可信度是有限资源** —— 一条假行会让读者
+怀疑其余每一行。新版每个数字都是实测出来的（28 张表、39 个指标、
+4 个 Alembic 版本、380 行 `.env.example`、compose 三个服务名与容器名、
+`/health` 的真实响应体）。§12 整节留痕记下上一版错在哪，不直接删。
+
+环境变量一节刻意**不再复制全表**，只列启动必看的十几项，指向 `.env.example`
+作为唯一权威 —— 复制出来的表会过期，而过期的配置表就是上面第 2 条的成因。
+
+同时补上原来完全没写的内容：三道成本闸门各管什么轴、`degraded_reason`
+四个取值对应的排查方向、`API_PORT` / `NGINX_PORT` 不在 `.env.example` 里
+（只在 compose 的 `${VAR:-默认}` 里）、开发 compose 没配 logging 驱动
+（只有生产 compose 有 `x-logging` 锚点）、以及 Python 版本四处不一致的现状。
+
+7 个相对链接全部实测可解析。
+
+### Fixed — 三个部署脚本都"跑成功了但什么都没做"
+
+`scripts/deploy.sh` / `health-check.sh` / `backup.sh` 各带一个**不会报错**的缺陷。
+它们的共同点不是功能缺失，而是**把真实原因掩盖成另一个原因**：
+
+| 脚本 | 缺陷 | 你会看到什么 | 真实原因 |
+|---|---|---|---|
+| `deploy.sh` | 健康检查打 8000（真实 8002） | 「服务启动超时」，65 秒后失败 | 服务早起来了，只是没人在 8000 上听 |
+| `deploy.sh` | **5 行 `sed 's/X/X/'`**，把 X 替换成 X | 无任何异常，每行 exit 0 | 五行 sed，零个生效 |
+| `deploy.sh` | 生产环境直接拿空 `API_KEY` / `AUTH_TOKEN_SECRET` 启动 | 「✅ .env 已创建」→ 60 秒后「启动超时」 | `config.py` 生产自检拒绝启动，容器 CrashLoop |
+| `deploy.sh` | 检测了 `docker compose` 和 `docker-compose` 两种，后面只调后者 | `command not found` | 只装了 compose v2 的机器上必然踩 |
+| `health-check.sh` | 默认 `API_URL` 是 8000 | 健康的系统被**持续报成不健康** | 这是给监控告警用的脚本 |
+| `health-check.sh` | 硬查 `data/app.db`（本地真实是 `data/airdrop.db`） | 「⚠️ 数据库文件未找到」 | 这个检查项从没检查过真的那个库 |
+| `health-check.sh` | 只查容器名 `airdrop-alpha-backend` | 生产环境永远打印「未找到容器」 | 生产 compose 里叫 `airdrop-web` |
+| `backup.sh` | 本地回退 `cp data/airdrop.db` | **「✅ 备份成功！」** | 那是 94 项目的过期副本，真库 288 项目 |
+| `backup.sh` | 找不到库时"跳过并继续" | 一路走到「✅ 备份成功！」 | 压缩包里只有一个 `backup-info.txt` |
+
+最贵的一条是 `backup.sh`：**备份的失败方式里最坏的一种，就是它看起来成功了。**
+你不会去查一个报告成功的备份，直到需要恢复的那天。
+
+修法：
+
+- 端口一律从 `.env` 的 `PORT` / `API_PORT` 读，读不到才用默认 8002。
+- 五行空操作 sed 全部删掉 —— 模板的默认值本来就能跑，不需要改写。
+- 生产路径加**四项启动前预检**（`APP_ENV` / `API_KEY` 长度 ≥32 /
+  `AUTH_TOKEN_SECRET` 非空 / `CORS_ORIGINS` 不含 localhost），
+  不通过就在启动前 `exit 1` 并说清要填什么。**不自动生成密钥** ——
+  密钥和域名的正确值只有部署者知道，自动塞一个值进去会让一个配错的
+  生产环境看起来部署成功了。
+- compose 调用统一到一个 `$COMPOSE` 变量。
+- 等待就绪的循环里加一条：容器已退出就立刻打日志退出，不再等满 30 次
+  —— 「启动慢」和「起不来」的处置动作完全不同，报成同一句会让人查错方向。
+- `backup.sh` 从 `.env` 读 `DB_PATH`，用 `sqlite3 .backup`（而不是 `cp`，
+  `cp` 一个正在被写入的 SQLite 可能拿到撕裂快照，而它照样能打开，
+  只是内容不一致 —— 又一种"看起来成功"的失败）；找不到库就 `exit 1`。
+  刻意不猜其它文件名：**猜中一个过期副本比找不到更坏。**
+- `health-check.sh` 新增 LLM 预算账本检查（需 `API_KEY` 环境变量）。
+  判据是 `ledger_error` 而不是花费数字 —— **一个坏掉的账本和一个还没花钱的
+  账本，在数字上都是 0。**
+
+新增门禁 `backend/tests/test_shell_scripts.py`（20 条），把上面每一条都锁住：
+禁止非注释行出现 `localhost:8000`、禁止 `s/X/X/` 空操作 sed、
+禁止硬编码那个过期副本、要求预检出现在 `up -d` **之前**且真的会 `exit 1`、
+禁止 CRLF 与 BOM（CRLF 会让 shebang 变成 `/bin/bash\r`）。
+CI 上额外跑 `bash -n` 真解析器。
+
+12 个变异全部符合预期（11 个该拦的拦住了，1 个"改段落标题"的无害重构确认不误拦）。
+这轮变异抓出我自己写的三个假绿判据：拿中文段落标题当锚点（改标题就静默失效）、
+只断言 `PRECHECK_FAILED` 出现过（删掉初始化行照样绿）、
+以及 `ledger_error` 只在**注释**里出现也算通过 —— 今天第三次栽在
+"词出现过就算实现了"这个判据上。
+
+**本地无法真跑**：这台 Windows 机器上 bash 不可用（Git bash
+`CreateFileMapping` Win32 error 5，WSL `E_ACCESSDENIED`），Docker 也连不上。
+所以首次在真 Linux 环境跑 `deploy.sh prod` 仍需人工盯一遍 ——
+静态门禁能证明它不再犯已知的那几个错，不能证明它在真容器里跑得通。
+这一点写进了 `docs/OPERATIONS.md` §3.4，没有含糊过去。
+
+顺带修正两条历史清单里过宽的检查（**移出清单要留痕**）：
+`docs/GO_LIVE_REPORT.md` 9.1「备份脚本存在 PASS」只核对了文件存在，
+而当时那个脚本会备份过期副本；10.2 的说明补齐重跑时该改成什么判据。
+
 ### Added — 降级原因现在说得清了（`degraded_reason`）
 
 `GET/POST /api/v1/projects/{id}/ai-brief` 新增 `degraded_reason` 字段。
