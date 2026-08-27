@@ -113,8 +113,15 @@ jobs:
           file: docker/Dockerfile
           push: false
           tags: airdrop-alpha:scan-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ⚠ 这一次构建的目的就是"看到将要上线的东西"，所以不吃任何旧层。
+          # 起因（2026-08-27）：trixie-security 修复了 libssl3t64 的
+          # CVE-2026-14456（HIGH），但 gha 缓存里的 apt-get 层是修复发布前
+          # 存下的 —— Docker 命中该层就整个跳过，apt 永远不知道有新包，
+          # 镜像里一直装着 3.5.6。Debian 仓里明明已经有 3.5.7
+          # （实测Packages.xz 索引可查），扫描却一直报旧版。
+          # **缓存能加速普通构建，但会让"安全快照"变成"历史快照"。**
+          # 普通的 ci.yml 构建保留缓存不动 —— 只有这次构建禁用。
+          no-cache: true
           load: true
 
       # 先出一份人能读的表格。此前只跑 SARIF 那一步，失败时日志里只有
