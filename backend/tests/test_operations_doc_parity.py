@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -697,6 +698,116 @@ class TestClaimsOfAbsenceAreStillTrue:
         }
         assert writers <= {"repositories/v2.py"}, (
             f"`metrics` 表出现了新的写入方：{sorted(writers - {'repositories/v2.py'})} —— §11 已过期，请同步文档。"
+        )
+
+
+class TestDeadTableListIsComplete:
+    """§12.14 列的 7 张死表 —— 这一栏此前只写了 `metrics` 一张。
+
+    2026-08-25 在线上库上逐表实测才发现是 7 张。
+    **只钉一张的门禁会让另外 6 张继续隐形** —— 而其中 `audit_logs`
+    是审计日志，会被直接算进合规评估。
+
+    三个方向都要守：
+      · 死表里出现了生产写入方 → 文档过期（好事，但必须同步）
+      · 文档列的表在 schema 里不存在 → 这份清单自己变成了幻影清单
+      · 隔离实现改成用那张表 → 它就不再是死表
+    """
+
+    # 判据：0 行 + 除 repositories/ 外无写入方（2026-08-25 线上库实测）
+    _DEAD_TABLES = (
+        "metrics",
+        "audit_logs",
+        "llm_eval_changelog",
+        "narratives",
+        "dedup_keys",
+        "prompt_versions",
+        "quarantine",
+    )
+    _REPO_FILES: ClassVar[frozenset[str]] = frozenset({"repositories/v2.py"})
+
+    @staticmethod
+    def _dead_table_rows() -> set[str]:
+        """抽出 §12.14 死表表格里被反引号点名的表名。
+
+        只认「| `名字` | 数字 | ... |」这种表格行，不认散文里的提及。
+        """
+        text = _doc_text()
+        start = text.find("### 12.14")
+        assert start != -1, "OPERATIONS.md 里找不到 §12.14 —— 章节被删或改名了，先修文档。"
+        end = text.find("\n### ", start + 1)
+        section = text[start:] if end == -1 else text[start:end]
+
+        rows = set(re.findall(r"^\|\s*`([a-z_]+)`\s*\|\s*\d+\s*\|", section, re.MULTILINE))
+        assert rows, "§12.14 里一行死表表格都没抽到 —— 解析器失效，别信结论。"
+        return rows
+
+    def test_doc_lists_every_dead_table(self):
+        """每张死表都必须在 §12.14 **那张表格里**有自己的一行。
+
+        ⚠️ 第一版写的是「整篇文档里搜表名」，变异测试直接证明它拦不住：
+        把 `audit_logs` 从 §12.14 表格里删掉，门禁**照常通过** ——
+        因为 `audit_logs` 在 §11 那行里也出现了，全文搜索照样命中。
+
+        **"这个词在文档里出现过"和"这一行还在"是两件事。**
+        本会话第三次踩同一个形状了（前两次：术语门禁、版本号门禁）。
+        判据必须落在读者真正会看的那张表上，不是整篇文档。
+        """
+        rows = self._dead_table_rows()
+        missing = [name for name in self._DEAD_TABLES if name not in rows]
+        assert not missing, (
+            f"这些死表在 §12.14 的表格里没有自己的一行：{missing}\n"
+            "（注意：写在文档别处不算 —— 读者是在这张表里找它的。）"
+        )
+
+    def test_dead_tables_still_have_no_production_writer(self):
+        """逐张核对，而不是只核对 `metrics`。"""
+        app_dir = REPO_ROOT / "backend" / "app"
+        sources = {
+            path.relative_to(app_dir).as_posix(): path.read_text(encoding="utf-8") for path in app_dir.rglob("*.py")
+        }
+        assert len(sources) > 100, f"只扫到 {len(sources)} 个文件 —— 搜索器失效，别信下面的结论。"
+
+        revived: dict[str, list[str]] = {}
+        for table in self._DEAD_TABLES:
+            writers = {
+                rel
+                for rel, text in sources.items()
+                if f"INSERT INTO {table}" in text or f'INSERT INTO "{table}"' in text
+            }
+            extra = sorted(writers - self._REPO_FILES)
+            if extra:
+                revived[table] = extra
+
+        assert not revived, (
+            f"这些「死表」出现了生产写入方：{revived}\n"
+            "如果是新接上的功能，请更新 OPERATIONS.md §12.14 与 §11 —— "
+            "一张已经在用的表被文档记成死表，会让人去删它。"
+        )
+
+    def test_dead_tables_exist_in_schema(self):
+        """反向：文档点名的表必须真的在 schema 里。
+
+        否则这份"死表清单"自己就成了幻影清单 —— 和它想揭露的问题同一种。
+        """
+        db_source = (REPO_ROOT / "backend" / "app" / "db.py").read_text(encoding="utf-8")
+        phantom = [name for name in self._DEAD_TABLES if f"CREATE TABLE IF NOT EXISTS {name} " not in db_source]
+        assert not phantom, f"§12.14 列的这些表在 db.py 里找不到建表语句：{phantom}"
+
+    def test_quarantine_feature_uses_the_flag_not_the_table(self):
+        """`quarantine` 表是死的，但隔离**功能**是真的 —— 这个区分必须钉住。
+
+        差点搞错的地方：只看表名和行数会得出"隔离功能是假的"，
+        而真实实现走 `raw_projects.quarantined` 标志位（实测线上库 3 行）。
+        **同名但无关**是这类误判里最容易踩的一种。
+
+        如果哪天真实实现改成用那张表，这条会红 —— 那时该更新 §12.14。
+        """
+        source = (REPO_ROOT / "backend" / "app" / "quarantine.py").read_text(encoding="utf-8")
+        assert "raw_projects" in source, "`app/quarantine.py` 不再操作 raw_projects —— 实现变了，§12.14 请同步。"
+        assert "quarantined" in source, "找不到 `quarantined` 标志位 —— 实现变了。"
+        assert "INSERT INTO quarantine" not in source, (
+            "隔离实现开始写 `quarantine` 表了 —— 那它就不再是死表，请更新 §12.14。"
         )
 
 

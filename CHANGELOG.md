@@ -8,6 +8,139 @@
 
 ## [Unreleased]
 
+### Added — `GET /api/v1/scheduler/jobs`：把"任务到底有没有注册"变成可见的
+
+`UnifiedScheduler.get_jobs()` 一直存在，返回每个任务的 `next_run_time`，
+但**没有任何路由暴露它** —— 运维台看不到任务表。
+
+归档功能从上线到 2026-08-24 一次都没被触发过，这件事是靠翻数据库
+（`archive_runs` 表 0 行）才发现的。有这张表的话，
+「`archive_cleanup` 不在列表里」一眼就能看出来。
+**一个看不见调度状态的运维台，会把"任务没注册"表现成"功能好像不太对"。**
+
+管理员专用（与 `/settings`、`/archive` 同级：这张表是一份
+"系统几点在干活、哪些自动化关着"的地图）。前端 `/ops` 页同步接上。
+
+#### 设计要点：四种"空"必须分得开
+
+「任务表是空的」有四种原因，处置动作完全不同 ——
+只返回 `{"jobs": []}` 会让它们长得一模一样，而其中一种是生产事故：
+
+| `scheduler_state` | 含义 | 处置 |
+|---|---|---|
+| `not_initialized` | 调度器对象不存在（testing 环境正常） | 生产出现即异常 |
+| `disabled` | 三个开关全关 | 正常配置 |
+| `running` 且 `job_count = 0` | 开关开着却没注册任何任务 | **真故障** |
+| `read_error` | 读取本身失败 | 诊断接口自己坏了 |
+
+`read_error` 时 `job_count` / `missing_jobs` 返回 **`null`** 而不是 `0` / `[]` ——
+沿用 `/api/v1/llm/status` 的口径：读不出来和"确实没有"是两件事，
+都返回 0 会让一个坏掉的诊断接口看起来像一个空闲的调度器。
+
+#### 拿真后端一打，立刻抓出 3 个 mock 测不出来的错
+
+24 个测试里前 17 个全用 MagicMock，全绿。起真服务打一次就露馅：
+
+1. **分析任务 id 我凭印象写成 `daily_analysis`，真实是 `analysis_run_queue`**
+   （`scheduler.py:246`）。**替身会照着我的误解回答我** ——
+   假数据里写的就是那个错名字，断言拿同一个错名字去比，两边一致所以绿。
+   现在门禁 `TestJobIdsMatchTheScheduler` 直接从 `scheduler.py` 源码抽
+   `id="..."` 核对，并反向禁止映射表里出现幻影 id。
+2. **`missing_jobs` 报出 6 个假缺失**。第一版只要
+   `COLLECTION_SCHEDULER_ENABLED` 为真就把 10 个采集源全算进"应当注册"，
+   而 `scheduler.py:121` 的真实条件是 `if collector and collector.is_enabled()`
+   —— **没配 API key 的源不注册是正常的**。改成问 `collector_registry`，
+   与调度器注册时同一判据。修复后实测 `expected=7 / missing=[]`。
+   这个方向的错比漏报更坏：**一栏天天亮红灯的告警等于没有这一栏。**
+3. 真 `AsyncIOScheduler.start()` 需要 running event loop —— MagicMock 的
+   `start()` 永远成功，这条差异只有真对象能暴露。
+
+#### 实测（2026-08-25 本机开发配置）
+
+```
+state=running  registered=7  expected=7  missing=[]
+  collect_etherscan   2026-08-25T18:00  archive_cleanup    2026-08-26T03:00
+  analysis_run_queue  2026-08-26T08:00  collect_defillama  2026-08-26T08:00
+  collect_github      2026-08-26T08:30  collect_coingecko  2026-08-26T09:00
+  collect_cryptorank  2026-08-26T09:15
+```
+
+7 个而不是 12 个：galxe / layer3 / rootdata / twitter_kol / twitter_keyword
+没配凭据，不注册是正常的。
+
+顺带把归档那条诊断收了个尾：新端点显示 `archive_cleanup` **已在任务表里**、
+下次 `2026-08-26T03:00`，而 `/archive/runs` 的 `total_runs` 仍是 0 ——
+两者合起来才说明真正原因是**这个进程从没活到过 03:00**（开发机不常驻），
+而不是任务没注册。这两种原因处置动作相反，在新端点之前完全无法区分。
+
+`/archive` 页的空状态文案同步改了：原文写"定时归档会在下一个 cron 时点
+写入第一条"，那是个**承诺**，只在"任务已注册"且"进程活到那一刻"两个前提
+都成立时才为真。改成指向运维台那张任务表，让人能自己判断是哪一种。
+
+### Changed — 死表不止 `metrics` 一张，实测是 7 张（`audit_logs` 最需要注意）
+
+此前 OPERATIONS.md §11 只点了 `metrics`。在**线上库**
+（`D:\app\data\app.db`，28 张表）上逐表实测行数 + 逐文件搜写入方，
+按「真库 0 行 **且** 除 `repositories/` 外无写入方」这个判据，实际有 7 张：
+
+`metrics`、`audit_logs`、`llm_eval_changelog`、`narratives`、
+`dedup_keys`、`prompt_versions`、`quarantine`。
+
+**只钉一张的门禁会让另外 6 张继续隐形。** 其中 `audit_logs` 最需要注意：
+审计日志会被直接算进合规与安全评估，一张有 schema、有 repository、
+有测试的空审计表，比一张不存在的表更容易被当成"这个能力有" ——
+和 SECURITY.md §6.3 那个"固定 digest"是同一类错。
+（SECURITY.md §4.3 把审计日志列在「V3 前瞻」里，那是诚实的表述。）
+
+对照组证明判据不是恒真：`project_history` 1575 行、`events` 1 行；
+`weight_changelog` / `feedback` / `notification_reads` 是 0 行但**有**生产写入方，
+属"还没触发过"，不算死表。
+
+#### `quarantine` 差点被误判成"隔离功能是假的"
+
+`quarantine` 表 0 行、只有 repository 写它 —— 照判据是死表。
+但 `/api/v1/quarantine` **是能用的**，`/health` 也报 `quarantined_raw: 3`。
+
+两者同时成立，因为**真实实现根本不用那张表**：`app/quarantine.py`
+全部走 `raw_projects.quarantined` 标志位（实测 615 行里 3 行被标记，
+正是 `/health` 那个数字）。
+
+正确结论是「隔离功能是真的，另有一张**同名的**死表」。
+**同名但无关**是这类误判里最容易踩的 —— 只看表名和行数下结论，
+会把一个能用的功能报成坏的。
+
+本轮**没有删任何表**（删表不可逆，且 `prompt_versions` / `dedup_keys`
+看得出是为未来功能预留的），只做实测与记录。待所有者决定接上还是删掉。
+
+#### 新门禁 `TestDeadTableListIsComplete`，以及它第一版的漏洞
+
+4 条测试：文档必须逐张点名、7 张表都不能出现生产写入方、
+文档列的表必须真在 schema 里（防清单自己变成幻影清单）、
+隔离实现必须仍走标志位。
+
+**变异测试当场抓出第一版的漏洞**：我写的是"整篇文档里搜表名"，
+把 `audit_logs` 从 §12.14 表格里删掉，门禁**照常通过** ——
+因为 `audit_logs` 在 §11 那行里也出现，全文搜索照样命中。
+
+**"这个词在文档里出现过"和"这一行还在"是两件事。**
+这已经是本会话第三次踩同一个形状（前两次：术语门禁、版本号门禁）。
+改成只认 §12.14 表格里的 `| 名字 | 数字 |` 行，并对解析结果做空值自检。
+修复后 9 条变异全部符合预期（7 条该拦的拦住，2 条无害改动没误伤）。
+
+### Fixed — `.gitattributes` 缺失导致「本地红、CI 绿」
+
+`tests/test_shell_scripts.py` 有一条检查 `scripts/*.sh` 不含 CRLF。
+仓库里存的确实是干净的 LF，但本机 `core.autocrlf=true` 会在**签出时**
+把它们转成 CRLF，而那条测试读的是工作区文件 ——
+于是 **Windows 本地必红 3 条，CI 的 Linux runner 上全绿**。
+
+这种不一致最麻烦的地方不是红，而是**它会训练人忽略本地失败**：
+看几次"CI 反正是绿的"之后，下一个真的本地专属 bug 也会被当成同一种噪音。
+
+新增 `.gitattributes`：`*.sh` / Dockerfile / compose / yml 钉成 `eol=lf`，
+`*.bat` / `*.cmd` / `*.ps1` 钉成 `eol=crlf`（Windows 脚本反过来需要 CRLF），
+图片与 db 标 binary 不做转换。修复后本机 3 个文件都是纯 LF。
+
 ### Fixed — `requires-python = ">=3.11"` 这句承诺此前一道门都没有
 
 `backend/pyproject.toml` 的 mypy 写 `python_version = "3.12"`，

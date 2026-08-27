@@ -91,6 +91,16 @@ cd backend
   注意这不是"数据还不够老"（那种情况也会留下一条 `raw_archived=0` 的成功记录，
   已实测），而是调度那一段从未被验证。处置办法见 §7.3。
 
+  **两个端点要一起看**（2026-08-25 新增了后者）：
+
+  | 组合 | 含义 | 处置 |
+  |---|---|---|
+  | `/scheduler/jobs` 里**有** `archive_cleanup` + `total_runs = 0` | 调度已就位，只是还没到过 03:00 | 等，或手工跑一次 |
+  | `/scheduler/jobs` 里**没有** `archive_cleanup` + `total_runs = 0` | 任务根本没注册 | 查 `ARCHIVE_SCHEDULER_ENABLED` 与启动日志 |
+
+  这两种此前**长得一模一样**（都只看得到 `total_runs = 0`），
+  而处置动作完全不同。见 §5.4。
+
 ---
 
 ## 3. 启动、停止、部署
@@ -529,6 +539,7 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/import`
 - `/api/v1/settings`
 - `/api/v1/archive`
+- `/api/v1/scheduler`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。
@@ -562,6 +573,65 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 > ⚠️ `/docs` `/redoc` `/openapi.json` 在**任何环境都开着**
 > （`backend/app/main.py` 里是写死的 `docs_url="/docs"`，不看 `APP_ENV`）。
 > 生产环境等于把完整 API 结构公开。见 §12.8。
+
+### 5.4 调度器任务表（2026-08-25 新增）
+
+`GET /api/v1/scheduler/jobs`（管理员专用）。运维台 `/ops` 页也展示同一份数据。
+
+排查任何"某个定时任务好像没在跑"时，**这是第一个该看的地方**。
+`UnifiedScheduler.get_jobs()` 一直存在，但此前没有任何路由暴露它 ——
+所以"任务根本没注册"这件事在界面上完全不可见，只能靠翻数据库发现。
+归档那次（§7.3）就是这么发现的。
+
+#### `scheduler_state` 的四个取值
+
+「任务表是空的」有四种原因，处置动作完全不同：
+
+| 取值 | 含义 | 处置 |
+|---|---|---|
+| `not_initialized` | 调度器对象不存在（`APP_ENV=testing` 时正常） | 生产环境出现即异常，查启动日志 |
+| `disabled` | 三个开关全关，调度器没启动 | 正常配置，确认是否有意 |
+| `running` 且 `job_count = 0` | 开关开着、调度器在跑，一个任务都没注册 | **真故障**，查启动日志 |
+| `read_error` | 读任务表本身失败 | 诊断接口自己坏了，看 `read_error` 字段 |
+
+`read_error` 时 `job_count` 与 `missing_jobs` 是 **`null`** 而不是 `0` / `[]` ——
+与 `/api/v1/llm/status` 的 `spend_today_usd` 同一口径：
+**读不出来和"确实没有"是两件事**，都返回 0 会让一个坏掉的诊断接口
+看起来像一个空闲的调度器。
+
+#### `missing_jobs` 的判据（这一栏最容易做错）
+
+只统计**开关开着、且采集器已启用，却没出现在任务表里**的任务。
+
+采集任务的"应当注册"要问 `collector_registry`，不能只看
+`COLLECTION_SCHEDULER_ENABLED` —— `scheduler.py:121` 的真实条件是
+`if collector and collector.is_enabled()`，**没配 API key 的源不会注册，
+那是正常的**。第一版只看总开关，本机实测报出 5 个假缺失。
+
+方向错了比漏报更坏：**一栏天天亮红灯的告警等于没有这一栏** ——
+人会先学会忽略它，然后在真出事那天照样忽略。
+
+#### 本机实测（2026-08-25，开发配置）
+
+```
+state=running  registered=7  expected=7  missing=[]
+  collect_etherscan     2026-08-25T18:00:00+00:00  [COLLECTION_SCHEDULER_ENABLED]
+  archive_cleanup       2026-08-26T03:00:00+00:00  [ARCHIVE_SCHEDULER_ENABLED]
+  analysis_run_queue    2026-08-26T08:00:00+00:00  [SCHEDULER_ENABLED]
+  collect_defillama     2026-08-26T08:00:00+00:00  [COLLECTION_SCHEDULER_ENABLED]
+  collect_github        2026-08-26T08:30:00+00:00  [COLLECTION_SCHEDULER_ENABLED]
+  collect_coingecko     2026-08-26T09:00:00+00:00  [COLLECTION_SCHEDULER_ENABLED]
+  collect_cryptorank    2026-08-26T09:15:00+00:00  [COLLECTION_SCHEDULER_ENABLED]
+```
+
+7 个而不是 12 个：galxe / layer3 / rootdata / twitter_kol / twitter_keyword
+没配凭据，不注册是正常的。
+
+注意分析任务的真实 id 是 **`analysis_run_queue`**，不是 `daily_analysis`
+（后者是我凭印象编的名字，实测才发现 —— 门禁
+`TestJobIdsMatchTheScheduler` 现在直接从 `scheduler.py` 源码抽 id 核对）。
+
+**这个端点不触发任何任务**。手动跑归档仍用 `scripts/archive_raw_data.py`。
 
 ---
 
@@ -728,6 +798,12 @@ cd backend
 `--dry-run` 只统计不改数据（已实测），确认数字合理后去掉该参数。
 跑完用 `GET /api/v1/archive/runs` 核对 `summary.total_runs` 从 0 变成 1 ——
 **判据落在"有没有留下记录"上，不是"命令有没有报错"。**
+
+在此之前先用 `GET /api/v1/scheduler/jobs`（§5.4）确认 `archive_cleanup`
+真的在任务表里。2026-08-25 本机实测**已在表里**，下次运行
+`2026-08-26T03:00:00+00:00` —— 所以"从没跑过"的原因是这个进程从没活到过
+03:00（开发机不常驻），不是任务没注册。**这两种原因的处置动作相反，
+而在新端点之前它们看起来完全一样。**
 
 ---
 
@@ -966,7 +1042,7 @@ CI 跑 pytest 时加了：
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
-| `metrics` 数据库表 | ❌ 表和 repository 都在，**0 个生产写入方、0 行数据** |
+| **7 张死表**（不只 `metrics`） | ❌ `metrics`、`audit_logs`、`llm_eval_changelog`、`narratives`、`dedup_keys`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14 |
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
@@ -1269,6 +1345,66 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 排障提示：如果在生产环境里发现 `/api/v1/settings/config` 的
 `SEED_FALLBACK_ENABLED` 是 `false` 而 `.env` 里写着 `true`，
 那不是配置没加载，是这条强制在生效。
+
+---
+
+### 12.14 死表不止 `metrics` 一张，是 7 张
+
+此前 §11 只点了 `metrics`。2026-08-25 在**线上库**（`D:\app\data\app.db`，
+28 张表）上逐表实测行数 + 逐文件搜写入方，结果如下。
+
+判据是两条同时成立：**真库里 0 行**，且**除 `repositories/` 之外没有写入方**。
+（只看 grep 会漏 —— repository 里的 `INSERT` 会让搜索有命中，
+看起来像"有人在写"。）
+
+| 表 | 行数 | 写入方 |
+|---|---|---|
+| `metrics` | 0 | 仅 repository |
+| `audit_logs` | 0 | 仅 repository |
+| `llm_eval_changelog` | 0 | 仅 repository |
+| `narratives` | 0 | 仅 repository |
+| `dedup_keys` | 0 | 仅 repository |
+| `prompt_versions` | 0 | 仅 repository |
+| `quarantine` | 0 | 仅 repository（**但隔离功能是真的，见下**） |
+
+对照组（**不是**死表，用来证明这个判据不是恒真）：
+
+| 表 | 行数 | 写入方 |
+|---|---|---|
+| `project_history` | 1575 | `repository.py` |
+| `events` | 1 | `routers/v1/feedback.py` |
+| `weight_changelog` | 0 | `calibration.py` —— 0 行但**有**生产写入方，属"还没触发过" |
+| `feedback` | 0 | `routers/v1/feedback.py` —— 同上 |
+| `notification_reads` | 0 | `routers/v1/notifications.py` —— 同上 |
+
+#### `audit_logs` 是这批里最需要注意的一张
+
+审计日志会被**直接算进合规与安全评估**。一张有 schema、有 repository、
+有单元测试的空审计表，比一张不存在的表更容易被当成"这个能力有"。
+和 SECURITY.md §6.3 那个"固定 digest"是同一类错：
+**声称存在的保护，比缺少保护更危险，因为它会被算进防护面。**
+
+（注：SECURITY.md §4.3 把审计日志列在「V3 前瞻」里，那是诚实的表述 ——
+它说的是"将来要做"，没有声称现在有。）
+
+#### `quarantine` 是一次差点搞错的诊断
+
+`quarantine` 表 0 行、只有 repository 写它 —— 照上面的判据，是死表。
+但 `/api/v1/quarantine` **是能用的**，`/health` 也报 `quarantined_raw: 3`。
+
+两件事同时成立，因为**真实实现根本不用那张表**：
+`app/quarantine.py` 全部走 `raw_projects.quarantined` 标志位
+（实测 615 行 raw_projects 里有 3 行被标记，正是 `/health` 那个数字）。
+
+所以正确结论是「隔离功能是真的，另有一张**同名的**死表」，
+而不是「隔离功能是假的」。**同名但无关**是这类误判里最容易踩的一种 ——
+如果只看表名和行数就下结论，会把一个能用的功能报成坏的。
+
+#### 处置
+
+需所有者决定：接上还是删掉（待决清单第 4 条已扩展为这 7 张）。
+本轮只做实测与记录，**没有删任何表** —— 删表是不可逆操作，
+而且其中几张（`prompt_versions`、`dedup_keys`）看得出是为未来功能预留的。
 
 另注：`SEED_ON_STARTUP` 与 `SEED_DATA_PATH` **全仓 0 处读取**
 （启动灌种子靠手动跑 `python scripts/seed.py`）。

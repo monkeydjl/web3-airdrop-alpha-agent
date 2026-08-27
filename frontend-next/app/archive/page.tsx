@@ -196,7 +196,14 @@ export default function ArchivePage() {
 
         {runs.length === 0 ? (
           <div className="p-5 text-sm text-ink-muted">
-            {loading ? '加载中…' : '还没有运行记录。定时归档会在下一个 cron 时点写入第一条。'}
+            {/* 原文写的是"定时归档会在下一个 cron 时点写入第一条" ——
+                那是个**承诺**，而它只在两个前提都成立时才为真：
+                归档任务真的注册了，且进程活到那个时刻。
+                实测本机 0 条记录的真正原因是后者（开发机不常驻，从没活到 03:00），
+                而这句话会让人以为"等着就行"。改成把判断入口指出来。 */}
+            {loading
+              ? '加载中…'
+              : '还没有运行记录。请到运维台的「调度器任务表」确认 archive_cleanup 是否已注册：已注册说明只是还没到过 cron 时点，没注册则需要检查 ARCHIVE_SCHEDULER_ENABLED。'}
           </div>
         ) : (
           <div className="overflow-x-auto">

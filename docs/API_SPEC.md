@@ -190,6 +190,7 @@
 | GET | `/api/v1/settings/config` | v1 | V2（已实现） | 运行时配置只读快照 |
 | GET | `/api/v1/llm/status` | v1 | V2（已实现） | LLM 开关与提供方状态 |
 | GET | `/api/v1/archive/runs` | v1 | V2（已实现） | 归档运行历史（只读，详见 §37） |
+| GET | `/api/v1/scheduler/jobs` | v1 | V2（已实现） | 调度器任务表（只读，**管理员专用**，详见 §37b） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -1718,3 +1719,86 @@ Alchemy webhook 回调端点（接收链上事件推送）。
 `raw_archive`、`signals_archive`；`action` 为 `archive`（搬入归档表）或
 `delete`（直接删除）。`pending` 是"下一次运行会动多少行"的实时预估，与归档器
 使用同一组条件。详见 [DATABASE_DDL.md §6](DATABASE_DDL.md)。
+
+---
+
+### 37b. GET /api/v1/scheduler/jobs
+
+只读诊断端点，**管理员专用**（匿名 token 得 403）。返回当前已注册的定时任务
+及各自下次运行时间、三个调度开关的真实值、以及**按配置应当注册却没注册**的任务。
+
+不触发任何任务。
+
+#### 为什么有这个端点
+
+`UnifiedScheduler.get_jobs()` 一直存在，但此前没有任何路由暴露它 ——
+运维台看不到任务表。归档功能从上线到 2026-08-24 **一次都没被触发过**，
+这件事是靠翻数据库（`archive_runs` 表 0 行）才发现的。
+有了这张表，「`archive_cleanup` 不在列表里」一眼可见。
+
+#### 响应 200（实测，本机开发配置）
+
+```json
+{
+  "ok": true,
+  "data": {
+    "scheduler_state": "running",
+    "running": true,
+    "timezone": "UTC",
+    "jobs": [
+      {
+        "id": "archive_cleanup",
+        "name": "Archive expired raw collection data",
+        "next_run_time": "2026-08-26T03:00:00+00:00",
+        "owner_switch": "ARCHIVE_SCHEDULER_ENABLED"
+      }
+    ],
+    "job_count": 7,
+    "expected_job_count": 7,
+    "missing_jobs": [],
+    "switches": {
+      "SCHEDULER_ENABLED": true,
+      "COLLECTION_SCHEDULER_ENABLED": true,
+      "ARCHIVE_SCHEDULER_ENABLED": true,
+      "COLLECTION_AUTO_RUN_ENABLED": false
+    },
+    "read_error": null,
+    "note": null
+  }
+}
+```
+
+`jobs` 按 `next_run_time` 升序 —— 运维最常问的是"下一个要跑的是谁"。
+
+#### `scheduler_state` 的四个取值 —— 「任务表是空的」有四种原因
+
+这是本端点的设计要点。四种情况的处置动作完全不同，
+如果只返回 `{"jobs": []}`，它们会长得一模一样，而其中一种是生产事故：
+
+| 取值 | 含义 | 该怎么办 |
+|---|---|---|
+| `not_initialized` | 调度器对象不存在（`APP_ENV=testing` 时如此） | 生产环境出现即异常，查启动日志 |
+| `disabled` | 三个开关全关，调度器没启动 | 正常配置，检查 `.env` 是否有意为之 |
+| `running` 且 `job_count` 为 0 | 开关开着、调度器在跑，却一个任务都没注册 | **真故障**，查启动日志 |
+| `read_error` | 读取任务表本身失败 | 诊断接口自己坏了，看 `read_error` |
+
+`read_error` 时 `job_count` 与 `missing_jobs` 是 **`null`**，不是 `0` / `[]` ——
+与 `/api/v1/llm/status` 的 `spend_today_usd` 同一口径：
+读不出来和"确实没有"是两件事，都返回 0 会让一个坏掉的诊断接口
+看起来像一个空闲的调度器。
+
+#### `missing_jobs` 的判据
+
+只统计**开关开着、且采集器已启用，却没出现在任务表里**的任务。
+
+采集任务的"应当注册"要问 `collector_registry`，不能只看
+`COLLECTION_SCHEDULER_ENABLED`：`scheduler.py:121` 的真实条件是
+`if collector and collector.is_enabled()`，**没配 API key 的源不会注册，
+那是正常的**。第一版只看总开关，实测报出 5 个假缺失。
+
+方向搞反会让这一栏天天亮红灯，然后被人忽略 —— 那比没有这一栏更坏。
+
+`owner_switch` 告诉运维「这个任务由哪个环境变量控制」，
+因为看到"任务不在表里"之后的下一个问题必然是"那我该开哪个开关"。
+
+注意分析任务的真实 id 是 **`analysis_run_queue`**，不是 `daily_analysis`。
