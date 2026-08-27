@@ -761,6 +761,39 @@ git 的对象库里根本没有它们的副本，**无法找回**。只有三个
 
 ---
 
+## 十九、CI 里 Trivy 突然红了：缓存让"安全快照"变成"历史快照"
+
+PR #23 的 CI 36 项里只有一项红：Docker 镜像扫描报 3 个 HIGH，
+其中 OpenSSL（libssl3t64）装着 3.5.6、修复版是 3.5.7。重跑一次还是一样
+—— 不是抖动。
+
+排查走了三步，每步都有实物证据：
+
+1. 先怀疑"镜像没打安全更新" —— 翻 Dockerfile，生产阶段本来就有
+   `apt-get update && upgrade -y`，直觉错了。
+2. 再怀疑"官方仓还没发修复版" —— 直接去查 Debian 安全仓的包索引，
+   **修复版已经在里面了**。这一步本身差点产出一个假结论：
+   我先用 `.gz` 格式查（新套件已经改成只发 `.xz`，404），又因为本机
+   PowerShell / curl 对那个站的 TLS 握手失败拿不到数据，管道里打印出了
+   一行"❌ 没找到"。幸好认出那一行是从空值里出来的、不是真数据，
+   换 Python 才拿到真的。**探测失败时打印的"没有"，和真的"没有"，长得一模一样。**
+3. 官方仓有修复版 + 构建时确实跑了 upgrade，唯一剩下的解释就是
+   **Docker 层缓存**：安全工作流的构建带着 GitHub 的层缓存，
+   apt 那一层是修复发布前存下的，命中就整层跳过 —— apt 根本没跑过。
+
+修法：安全那次构建禁用缓存（只这一处）。理由写成了一句话放在配置里：
+**缓存能让普通构建变快，也会让"要上线的安全快照"退化成"历史的快照"。**
+改完重跑，36/36 全绿，镜像里的 libssl3t64 是 3.5.7。
+
+这条对以后的价值：看到"突然红了、重跑也一样"，别急着当环境抖动；
+三步取证（构建脚本本来做了什么 → 上游到底有没有 → 还剩什么解释）
+每一步都留下实物证据，最后那个结论才立得住。
+
+（本轮产物归档在 PR #23 / merge commit `4bb4683`；
+补这份记录走的是 PR。）
+
+---
+
 ## 本轮的验证记录（实际跑过的命令）
 
 | 检查 | 结果 |
@@ -793,6 +826,11 @@ git 的对象库里根本没有它们的副本，**无法找回**。只有三个
 | **`.sh` 行尾取证**（Python 读原始字节对比 git blob 与工作区） | 仓库 = 纯 LF；工作区 CRLF 来自 `core.autocrlf=true` 签出转换 → 加 `.gitattributes` 后本机 3 文件纯 LF |
 | 前端 `tsc --noEmit` / `eslint` / `node test.mjs`（重写后复跑） | 0 / 0 / **20 pass, 0 fail** |
 | 完整后端套件（reset 前跑完的那次） | **3028 passed, 9 skipped，88.77% cov** —— 3 失败全是 `.sh` CRLF（本地专属，见「十八」） |
+| 完整后端套件（重写 8 处改动之后，最终那轮） | **3031 passed, 9 skipped, 88.77% cov, exit 0**（40m18s） |
+| **PR #23 CI** | 首轮 35/36（仅 Trivy 红）→ 排查缓存并修 security.yml → 复跑 **36/36 全绿**，已合并 `4bb4683` |
+| **Trivy 取证三连** | Dockerfile 有 upgrade ✅ / Debian trixie-security 索引实测有 3.5.7 ✅（`.xz` + Python urllib）/ gha 缓存命中 apt 层 = 根因 |
+| 本机 `.sh` CRLF 门禁复验（加 .gitattributes 后） | `TestScriptsParse` **3 passed, 3 skipped**（skip 是无 bash 的 bash -n） |
+| `git check-attr` 抽查新规则 | *.sh→lf ✅ / .bat→crlf ✅ / db→binary ✅ |
 | `pytest` 四份 parity 套件 + env_example | **149 passed** |
 | `pytest test_admin_only_rules + production_hardening + api_spec_parity + env_example_parity` | **82 passed**（4m01s） |
 | `pytest test_data_source_strategy_parity + utf8_repair_tools + encoding_mojibake` | **95 passed / 2 skipped** |
