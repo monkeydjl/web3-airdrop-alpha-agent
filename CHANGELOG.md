@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+### Fixed — 安全扫描的镜像缓存让 apt-get 层停在漏洞修复之前
+
+PR #23 的 `Docker Image Trivy Scan` 突然报 3 个 HIGH，其中
+`libssl3t64` 的 CVE-2026-14456（OpenSSL DoS）装着 3.5.6、修复版 3.5.7。
+两次重跑结果相同 —— 不是抖动。
+
+取证链（每步都实测，不靠推断）：
+
+1. `docker/Dockerfile` 生产阶段**本来就有** `apt-get update && upgrade -y`
+   —— "没打安全更新"这个第一直觉是错的；
+2. 实测查 Debian trixie-security 的 Packages.xz 索引，修复版
+   **已经在官方仓里**。（取证本身踩了两脚：`.gz` 索引新套件已改为 `.xz`
+   得 404；PowerShell 的 WebClient/curl 在本机对 deb.debian.org 直接握手
+   失败。最后用 Python urllib + lzma 拿到真数据。
+   **一次失败的探测打印出来的"没有"，和真的"没有"长得一模一样**
+   —— 第一次探测失败时管道输出过一行"❌ 没找到"，幸好先认出它来自 null。）
+3. 那么全新构建怎么会装旧包？security.yml 的构建带
+   `cache-from: type=gha` —— **apt-get 层是修复发布之前缓存的，
+   Docker 命中就整层跳过，apt 根本没跑过**。
+
+修法：这次构建 `no-cache: true`（仅此一处）。它的目的是
+"看到将要上线的东西"，而缓存能让普通构建变快、也会让
+**安全快照变成历史快照**。重跑后 36/36 全绿，3.5.7 已进镜像。
+
 ### Added — `GET /api/v1/scheduler/jobs`：把"任务到底有没有注册"变成可见的
 
 `UnifiedScheduler.get_jobs()` 一直存在，返回每个任务的 `next_run_time`，
