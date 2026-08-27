@@ -1,0 +1,44 @@
+# 行尾规范化
+#
+# 起因：`scripts/*.sh` 在仓库里存的是干净的 LF，但本机 `core.autocrlf=true`
+# 会在**签出时**把它们转成 CRLF。于是 `tests/test_shell_scripts.py`
+# （读工作区文件）在 Windows 本地必红 3 条，而 CI 的 Linux runner 上全绿 ——
+# PR #22 就是这样 18/18 通过、我本地却看到 3 个失败的。
+#
+# 这种"本地红、CI 绿"最麻烦的地方不是红，而是**它会训练人忽略本地失败**：
+# 看几次"CI 反正是绿的"之后，下一个真的本地专属 bug 也会被当成同一种噪音。
+#
+# 带 shebang 的脚本必须是 LF：CRLF 会让 Linux 把 `\r` 当成解释器路径的一部分，
+# 报 `/bin/bash^M: bad interpreter`。
+
+# 默认：让 git 自己判断文本/二进制，并在仓库里统一存 LF
+* text=auto
+
+# shell 脚本：无论在哪个平台签出，工作区都必须是 LF
+*.sh text eol=lf
+
+# 其它在 Linux 容器里执行的东西，同样钉死 LF
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows 专用脚本反过来：必须 CRLF，否则 cmd.exe 解析会出问题
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不做任何行尾转换，也不参与 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary

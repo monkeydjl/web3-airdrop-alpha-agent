@@ -52,6 +52,85 @@ function boolZh(v?: boolean): string {
   return v ? '已启用' : '已停用';
 }
 
+/**
+ * 调度器任务表（`GET /api/v1/scheduler/jobs`）。
+ *
+ * 这一块此前整个运维台都没有 —— 而归档功能从上线到 2026-08-24
+ * **一次都没被触发过**，是靠翻数据库才发现的。任务表看不见，
+ * 「archive_cleanup 根本不在列表里」这个一眼可见的事实就没有地方可见。
+ */
+interface SchedulerJob {
+  id: string;
+  name: string;
+  next_run_time: string | null;
+  owner_switch: string;
+}
+
+interface SchedulerJobsPayload {
+  /** not_initialized | disabled | running | read_error —— 四种「空」的原因不同 */
+  scheduler_state: string;
+  running: boolean;
+  timezone: string;
+  jobs: SchedulerJob[];
+  /** read_error 时是 null，不是 0 —— 读不出来和确实没有是两件事 */
+  job_count: number | null;
+  expected_job_count: number;
+  missing_jobs: string[] | null;
+  switches: Record<string, boolean>;
+  read_error: string | null;
+  note: string | null;
+}
+
+/**
+ * 把 `scheduler_state` 翻成人话 + 该不该报警。
+ *
+ * 关键是 `running` 且 0 个任务这一种：它和"开关全关"在界面上极易混为一谈，
+ * 但前者是故障、后者是配置。所以这里必须给出不同的语气与颜色。
+ */
+function schedulerStateLabel(p?: SchedulerJobsPayload | null): {
+  text: string;
+  tone: 'farm' | 'watch' | 'default';
+  detail: string;
+} {
+  if (!p) return { text: '—', tone: 'default', detail: '' };
+  if (p.scheduler_state === 'read_error') {
+    return {
+      text: '读取失败',
+      tone: 'watch',
+      detail: p.read_error ? `诊断接口自身出错：${p.read_error}` : '诊断接口自身出错',
+    };
+  }
+  if (p.scheduler_state === 'not_initialized') {
+    return {
+      text: '未初始化',
+      tone: 'watch',
+      detail: p.note ?? '调度器对象不存在；生产环境出现这个值意味着启动流程没走完',
+    };
+  }
+  if (p.scheduler_state === 'disabled') {
+    return {
+      text: '已停用',
+      tone: 'default',
+      detail: '三个调度开关都是关的 —— 这是配置，不是故障',
+    };
+  }
+  if (p.job_count === 0) {
+    return {
+      text: '运行中但无任务',
+      tone: 'watch',
+      detail: '开关开着、调度器在跑，却一个任务都没注册 —— 这是故障，请查启动日志',
+    };
+  }
+  return { text: '运行中', tone: 'farm', detail: '' };
+}
+
+function formatNextRun(iso: string | null): string {
+  if (!iso) return '未排期';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+
 function numOr(v?: number, suffix = ''): string {
   return v == null ? '—' : `${v}${suffix}`;
 }
@@ -160,6 +239,7 @@ export default function OpsPage() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [automation, setAutomation] = useState<AutomationConfig | null>(null);
   const [runtimeSources, setRuntimeSources] = useState<SettingsConfig['sources']>(undefined);
+  const [schedJobs, setSchedJobs] = useState<SchedulerJobsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [partialError, setPartialError] = useState<string[]>([]);
@@ -180,7 +260,7 @@ export default function OpsPage() {
     setError('');
     setPartialError([]);
     try {
-      const [src, q, ix, h, cfg] = await Promise.all([
+      const [src, q, ix, h, cfg, sj] = await Promise.all([
         apiFetch<{ sources: CollectionSourceApi[] }>('/collections/sources'),
         apiFetch<{ count: number; items: QuarantineItem[] }>('/quarantine?limit=50').catch(
           (err: unknown) => {
@@ -206,6 +286,11 @@ export default function OpsPage() {
           void err;
           return null;
         }),
+        apiFetch<SchedulerJobsPayload>('/scheduler/jobs').catch((err: unknown) => {
+          setPartialError((prev) => [...prev, '调度器任务表加载失败']);
+          void err;
+          return null;
+        }),
       ]);
       setSources((src.sources || []).map(normalizeCollectionSource));
       setQuarantine(q.items || []);
@@ -214,6 +299,7 @@ export default function OpsPage() {
       if (h) setHealth(h as HealthData);
       setAutomation(cfg?.automation ?? null);
       setRuntimeSources(cfg?.sources);
+      setSchedJobs(sj);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -810,9 +896,107 @@ export default function OpsPage() {
         </div>
       </section>
 
+      {/* 调度器任务表（GET /api/v1/scheduler/jobs）。
+          此前整个运维台看不到"哪些定时任务真的注册上了"，而归档功能从上线到
+          2026-08-24 一次都没被触发过 —— 靠翻数据库才发现。
+          这里刻意把「应当注册却没注册」单独列出来：缺失才是那次事故的形态。 */}
+      <section className="mt-4 ops-card">
+        <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+          <h2 className="text-sm font-semibold text-ink">调度器任务表</h2>
+          <span className="text-xs text-ink-muted">只读 · 时区 {schedJobs?.timezone ?? '—'}</span>
+        </div>
+
+        {(() => {
+          const state = schedulerStateLabel(schedJobs);
+          const missing = schedJobs?.missing_jobs ?? null;
+          return (
+            <>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-4 py-3 text-[13px] sm:px-5">
+                <span className="text-ink-muted">
+                  状态{' '}
+                  <span
+                    className={
+                      state.tone === 'farm'
+                        ? 'font-medium text-farm'
+                        : state.tone === 'watch'
+                          ? 'font-medium text-watch'
+                          : 'font-medium text-ink'
+                    }
+                  >
+                    {state.text}
+                  </span>
+                </span>
+                <span className="text-ink-muted">
+                  已注册{' '}
+                  <span className="font-mono font-medium tabular-nums text-ink">
+                    {schedJobs?.job_count ?? '—'}
+                  </span>
+                  {' / 应有 '}
+                  <span className="font-mono font-medium tabular-nums text-ink">
+                    {schedJobs?.expected_job_count ?? '—'}
+                  </span>
+                </span>
+                {missing && missing.length > 0 && (
+                  <span className="font-medium text-watch">缺失 {missing.length} 个</span>
+                )}
+              </div>
+
+              {state.detail && (
+                <div className="border-b border-line px-4 py-2.5 text-xs text-ink-muted sm:px-5">
+                  {state.detail}
+                </div>
+              )}
+
+              {missing && missing.length > 0 && (
+                <div className="border-b border-line bg-watch/5 px-4 py-2.5 text-xs sm:px-5">
+                  <span className="font-medium text-watch">开关开着却没注册：</span>{' '}
+                  <span className="font-mono text-ink">{missing.join('、')}</span>
+                  <span className="text-ink-muted"> —— 请查启动日志</span>
+                </div>
+              )}
+
+              {schedJobs && schedJobs.jobs.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-left text-sm">
+                    <thead className="border-b border-line bg-surface-2/80">
+                      <tr className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-muted">
+                        <th className="px-4 py-2.5 font-semibold sm:px-5">任务</th>
+                        <th className="px-3 py-2.5 font-semibold">下次运行</th>
+                        <th className="px-4 py-2.5 font-semibold sm:px-5">受控开关</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {schedJobs.jobs.map((job) => (
+                        <tr key={job.id} className="border-b border-line last:border-b-0">
+                          <td className="px-4 py-3 sm:px-5">
+                            <span className="font-mono text-[12px] text-ink">{job.id}</span>
+                            <span className="ml-2 text-xs text-ink-muted">{job.name}</span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-ink-muted">
+                            {formatNextRun(job.next_run_time)}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[11px] text-ink-faint sm:px-5">
+                            {job.owner_switch}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-4 py-4 text-sm text-ink-muted sm:px-5">
+                  {loading ? '加载中…' : '任务表为空 —— 原因见上方状态说明'}
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </section>
+
       {/* 调度配置（真实值来自 /settings/config 的 automation 块）。
-          后端没有「调度任务运行历史 / 手动触发单个 job」的接口，所以这里只展示
-          配置事实，不再编造 nextRun / lastResult，也不放点了没反应的开关和按钮。 */}
+          「运行历史 / 手动触发单个 job」后端仍没有接口，所以这里只展示配置事实，
+          不编造 lastResult，也不放点了没反应的开关和按钮。
+          （「下次运行时间」已经有了 —— 见上面那张任务表。） */}
       <section className="mt-4 ops-card">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
           <h2 className="text-sm font-semibold text-ink">调度配置</h2>

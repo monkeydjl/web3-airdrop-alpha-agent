@@ -492,6 +492,12 @@ def create_app(db_override=None) -> FastAPI:
         watchlist,
         webhook,
     )
+
+    # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`
+    # 所在的同名概念混淆（那个是调度器实现，这个是只读诊断路由）。
+    from app.routers.v1 import (
+        scheduler as scheduler_router,
+    )
     from app.routers.v1 import (
         settings as settings_router,
     )
@@ -509,6 +515,7 @@ def create_app(db_override=None) -> FastAPI:
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
     app.include_router(action_queue.router, prefix="/api/v1", tags=["v1"])
     app.include_router(archive.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(scheduler_router.router, prefix="/api/v1", tags=["v1"])
     app.include_router(funding.router, prefix="/api/v1", tags=["v1"])
     app.include_router(opportunity.router, prefix="/api/v1", tags=["v1"])
     app.include_router(llm.router, prefix="/api/v1", tags=["v1"])
