@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .advice import build_suggestions, cluster_bootstrap_interval, gate_state, segment_key
 from .metrics import decision_metrics, economic_metrics, probability_metrics
@@ -123,7 +123,7 @@ def _group_by_project(records: Sequence[Any]) -> tuple[tuple[str, tuple[Any, ...
 def _project_net_records(records: Sequence[tuple[CalibrationSample, OutcomeValues]]) -> tuple[dict[str, Any], ...]:
     groups: dict[str, list[float]] = {}
     for sample, outcome in records:
-        groups.setdefault(sample.project_id, []).append(outcome.realized_net_usd)
+        groups.setdefault(sample.project_id, []).append(cast(float, outcome.realized_net_usd))
     return tuple(
         {"project_id": project, "net": sum(values) / len(values)} for project, values in sorted(groups.items())
     )
@@ -134,7 +134,7 @@ def _project_label_net_records(
 ) -> tuple[dict[str, Any], ...]:
     groups: dict[tuple[str, str], list[float]] = {}
     for sample, outcome in records:
-        groups.setdefault((sample.project_id, sample.public_label), []).append(outcome.realized_net_usd)
+        groups.setdefault((sample.project_id, sample.public_label), []).append(cast(float, outcome.realized_net_usd))
     return tuple(
         {"project_id": project, "label": label, "net": sum(values) / len(values)}
         for (project, label), values in sorted(groups.items())
@@ -301,7 +301,7 @@ def _decision_view(
 ) -> dict[str, Any]:
     samples = tuple(item.sample for item in mapped)
     outcomes = tuple(item.outcome for item in mapped)
-    result = _plain(decision_metrics(samples, outcomes, view="cohort_weighted", mapped=True))
+    result: dict[str, Any] = _plain(decision_metrics(samples, outcomes, view="cohort_weighted", mapped=True))
     if view == "project_equal":
         result = _project_equal_decision(mapped)
     eligible = tuple(
@@ -523,7 +523,7 @@ def build_calibration_report(
     }
     digest = hashlib.sha256(_canonical_bytes(report)).hexdigest()
     report["metadata"]["report_id"] = digest
-    return _plain(report)
+    return cast(Mapping[str, Any], _plain(report))
 
 
 def _format_number(value: Any) -> str:
@@ -618,21 +618,21 @@ def write_report_pair(report: Mapping[str, Any], output_dir: str | Path) -> tupl
             published.append(final)
         return json_path, markdown_path
     except Exception as publication_error:
-        rollback_failures: list[tuple[Path, Path, OSError]] = []
+        rollback_failures: list[tuple[Path, Path | None, OSError]] = []
         for final in reversed(published):
             try:
-                backup = backups.get(final)
-                if existed[final] and backup is not None and backup.exists():
-                    backup.replace(final)
+                recorded_backup = backups.get(final)
+                if existed[final] and recorded_backup is not None and recorded_backup.exists():
+                    recorded_backup.replace(final)
                 else:
                     final.unlink(missing_ok=True)
             except OSError as rollback_error:
-                backup = backups.get(final)
-                if backup is not None and backup.exists():
-                    retained_backups.add(backup)
+                recorded_backup = backups.get(final)
+                if recorded_backup is not None and recorded_backup.exists():
+                    retained_backups.add(recorded_backup)
                 with suppress(OSError):
                     final.unlink(missing_ok=True)
-                rollback_failures.append((final, backup, rollback_error))
+                rollback_failures.append((final, recorded_backup, rollback_error))
         if rollback_failures:
             recovery = ", ".join(str(backup) for _, backup, _ in rollback_failures if backup is not None)
             raise RuntimeError(

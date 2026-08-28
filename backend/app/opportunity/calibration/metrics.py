@@ -2,7 +2,7 @@ import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 from .models import BinaryObservation, CalibrationSample, NumericObservation, OutcomeValues
 from .outcomes import map_outcomes
@@ -248,14 +248,14 @@ def decision_metrics(
         ):
             eligible_records.append((sample, derived_outcome))
     eligible = tuple(eligible_records)
-    if any(not math.isfinite(outcome.realized_net_usd) for _, outcome in eligible):
+    if any(not math.isfinite(cast(float, outcome.realized_net_usd)) for _, outcome in eligible):
         raise ValueError("realized net values must be finite")
 
     eligible_samples = tuple(sample for sample, _ in eligible)
     weights = sample_weights(eligible_samples, view)
     matrix = {label: {realized_class: 0.0 for realized_class in _REALIZED_CLASSES} for label in _DECISION_LABELS}
     for (sample, outcome), weight in zip(eligible, weights, strict=True):
-        matrix[sample.public_label][outcome.realized_class] += weight
+        matrix[sample.public_label][cast(str, outcome.realized_class)] += weight
 
     label_weights = {label: sum(matrix[label].values()) for label in _DECISION_LABELS}
     class_weights = {
@@ -267,7 +267,7 @@ def decision_metrics(
     for label in _DECISION_LABELS:
         members = tuple(index for index, (sample, _) in enumerate(eligible) if sample.public_label == label)
         member_weights = tuple(weights[index] for index in members)
-        nets = tuple(eligible[index][1].realized_net_usd for index in members)
+        nets = tuple(cast(float, eligible[index][1].realized_net_usd) for index in members)
         denominator = sum(member_weights)
         utility[label] = MappingProxyType(
             {
@@ -289,7 +289,7 @@ def decision_metrics(
                     denominator,
                 ),
                 "downside_rate": _safe_ratio(
-                    sum(weights[index] for index in members if eligible[index][1].realized_net_usd < 0),
+                    sum(weights[index] for index in members if cast(float, eligible[index][1].realized_net_usd) < 0),
                     denominator,
                 ),
             }

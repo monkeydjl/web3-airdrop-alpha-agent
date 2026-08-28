@@ -117,7 +117,7 @@ def _build_sample(
         eligibility_probability=_range(assessment.eligibility_probability),
         survival_probability=_range(assessment.survival_probability),
         reward_probability=_range(assessment.reward_probability),
-        net_reward=_range(assessment.economics.net_reward),
+        net_reward=_range(assessment.economics.net_reward if assessment.economics else None),
         hard_cost=_range(assessment.hard_cost_usd),
         total_time_hours=_range(assessment.total_time_hours),
         outcome=interaction["outcome"],
