@@ -1,7 +1,8 @@
 import logging
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Iterator, Literal, Self
+from typing import Any, Literal, Self
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator

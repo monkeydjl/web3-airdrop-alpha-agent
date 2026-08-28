@@ -139,7 +139,9 @@ def _legacy_signals(project_row: Mapping[str, Any]) -> Mapping[str, Any]:
     return signals if isinstance(signals, Mapping) else {}
 
 
-def _range_value(record: EvidenceRecord, model: type[ProbabilityRange] | type[MoneyRange]) -> ProbabilityRange | MoneyRange:
+def _range_value(
+    record: EvidenceRecord, model: type[ProbabilityRange] | type[MoneyRange]
+) -> ProbabilityRange | MoneyRange:
     value = record.value
     if not isinstance(value, Mapping):
         raise TypeError(f"{record.factor_key} must be a range object")

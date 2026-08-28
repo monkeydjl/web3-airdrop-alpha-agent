@@ -81,9 +81,7 @@ def _redact_value(key: str, value: Any, secrets: list[str], depth: int = 0) -> A
     return value
 
 
-def redact_processor(
-    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
-) -> Mapping[str, Any]:
+def redact_processor(_logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]) -> Mapping[str, Any]:
     """structlog processor：按字段名脱敏，并对所有字符串值做已知密钥替换。
 
     SECURITY.md §3.3 要求"字段名匹配 `*_key|*_token|*_bearer|authorization|password`

@@ -303,10 +303,9 @@ async def import_projects(
 
         # 根据文件类型导入。解析（pandas/openpyxl）是重 CPU 同步操作，
         # 放到线程池执行，避免阻塞事件循环拖垮其他并发请求。
-        if (
-            (file.filename or "").endswith(".xlsx")
-            or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ):
+        if (file.filename or "").endswith(
+            ".xlsx"
+        ) or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             projects_data = await asyncio.to_thread(import_projects_from_excel, content)
         elif (file.filename or "").endswith(".csv") or file.content_type == "text/csv":
             projects_data = await asyncio.to_thread(import_projects_from_csv, content.decode("utf-8"))

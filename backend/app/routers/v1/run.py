@@ -10,9 +10,9 @@ Reference:
 - API_SPEC.md /run 端点定义
 """
 
-import structlog
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 

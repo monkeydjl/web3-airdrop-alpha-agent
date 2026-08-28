@@ -9,9 +9,10 @@ import asyncio
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from math import floor
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 

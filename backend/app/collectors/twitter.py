@@ -13,9 +13,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any, AsyncIterator, ClassVar, cast
+from typing import Any, ClassVar, cast
 
 import httpx
 import structlog
@@ -104,9 +105,7 @@ class TwitterCollector(DataCollector):
         }
 
     @asynccontextmanager
-    async def _http_client(
-        self, client: httpx.AsyncClient | None = None
-    ) -> AsyncIterator[httpx.AsyncClient]:
+    async def _http_client(self, client: httpx.AsyncClient | None = None) -> AsyncIterator[httpx.AsyncClient]:
         """复用调用方传入的客户端，否则临时自建一个。
 
         批量查询（KOL 分批 / 多关键词）传入同一客户端即可跨请求复用连接，

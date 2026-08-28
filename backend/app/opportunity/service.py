@@ -252,7 +252,8 @@ def _build_confidence(
         evidence_coverage = len(resolved) / len(factor_keys)
         source_independence = len({record.independence_group for record in resolved}) / len(resolved)
         freshness_consistency = sum(
-            _freshness_score(cast(EvidenceRecord, resolution.record), now) * resolution.consistency for resolution in resolutions
+            _freshness_score(cast(EvidenceRecord, resolution.record), now) * resolution.consistency
+            for resolution in resolutions
         ) / len(resolutions)
         domain_scores[domain] = calculate_domain_confidence(
             source_reliability=source_reliability,

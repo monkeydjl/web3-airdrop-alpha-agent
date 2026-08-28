@@ -6,9 +6,9 @@ GET /api/v1/llm/status
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
 
+import structlog
 from fastapi import APIRouter
 
 from app.config import settings
