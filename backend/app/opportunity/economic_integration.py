@@ -76,7 +76,7 @@ def process_persisted_collection(
         return None
 
     try:
-        summary = writer.process(result, run_id=run_id, enabled=True)
+        summary: EconomicWriteSummary | None = writer.process(result, run_id=run_id, enabled=True)
     except Exception as exc:
         logger.warning(
             "opportunity.economic.writer_failed",
@@ -85,6 +85,9 @@ def process_persisted_collection(
             error_type=type(exc).__name__,
             error=str(exc)[:200],
         )
+        return None
+
+    if summary is None:
         return None
 
     evidence_enabled = settings_obj.opportunity_economic_evidence_emit_enabled
