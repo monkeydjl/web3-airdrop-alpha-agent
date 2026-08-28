@@ -22,11 +22,14 @@ any deployment (compose / k8s) without extra code:
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -131,7 +134,7 @@ def setup_tracing() -> bool:
         return False
 
 
-def instrument_fastapi_app(app) -> None:
+def instrument_fastapi_app(app: FastAPI) -> None:
     """Apply FastAPI instrumentation to a specific app instance.
 
     Must be called **after** the FastAPI app is created (and after all

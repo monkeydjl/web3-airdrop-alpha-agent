@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -200,7 +200,7 @@ class GitHubCollector(DataCollector):
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected GitHub response type: {type(data)}")
 
-        return data.get("items", [])
+        return cast(list[dict[str, Any]], data.get("items", []))
 
     def _is_relevant_repo(self, repo: dict[str, Any]) -> bool:
         """Noise filter: denylist, language, keyword relevance."""

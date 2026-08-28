@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.db import get_connection, scalar
+from app.db import DbConnection, get_connection, scalar
 from app.repositories.archive_runs import ArchiveRunRepository
 
 logger = structlog.get_logger(__name__)
@@ -27,19 +27,19 @@ router = APIRouter(tags=["archive"])
 
 class ArchiveRunsResponse(BaseModel):
     ok: bool = True
-    data: dict = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 def _cutoff(days: int) -> str:
     return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
-def _count(conn, sql: str, *params) -> int:
+def _count(conn: DbConnection, sql: str, *params: Any) -> int:
     row = conn.execute(sql, params).fetchone()
     return int(scalar(row) or 0)
 
 
-def _pending_snapshot(conn) -> list[dict[str, Any]]:
+def _pending_snapshot(conn: DbConnection) -> list[dict[str, Any]]:
     """各档保留策略当前"够格被清理"的行数。
 
     这是给运维看"下一次跑会动多少行"的预估，与归档器用的是同一组条件。

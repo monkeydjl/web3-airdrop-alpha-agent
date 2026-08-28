@@ -108,7 +108,7 @@ class TokenBucketRateLimiter:
         await self.acquire()
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         return None
 
 

@@ -303,8 +303,11 @@ def extract_funding_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
             total = sum(valid_amts)
         if dates and not raw.get("funding_last_date"):
             # pick latest parseable
-            parsed = [(d, _parse_date(d)) for d in dates]
-            parsed = [(d, dt) for d, dt in parsed if dt]
+            parsed: list[tuple[Any, datetime]] = []
+            for d in dates:
+                dt = _parse_date(d)
+                if dt is not None:
+                    parsed.append((d, dt))
             if parsed:
                 parsed.sort(key=lambda x: x[1], reverse=True)
                 raw = {**raw, "funding_last_date": str(parsed[0][0])[:10]}

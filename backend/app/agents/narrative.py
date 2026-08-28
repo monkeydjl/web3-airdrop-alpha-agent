@@ -9,6 +9,7 @@ Reference:
 """
 
 import time
+from typing import Any
 
 import structlog
 
@@ -21,7 +22,7 @@ logger = structlog.get_logger(__name__)
 
 # Sector profile configuration
 # Format: sector -> {base_heat, stage, momentum}
-SECTOR_PROFILE: dict[str, dict] = {
+SECTOR_PROFILE: dict[str, dict[str, Any]] = {
     # Layer 2
     "L2": {
         "base_heat": 0.85,
@@ -241,7 +242,7 @@ if __name__ == "__main__":
 
     from app.agents.base import AgentContext, RawProject
 
-    async def test():
+    async def test() -> None:
         print("=== Testing Narrative Agent ===\n")
 
         # Test cases

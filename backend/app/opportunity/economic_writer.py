@@ -27,6 +27,7 @@ from app.metrics import (
 from app.opportunity.economic_models import (
     SCHEMA_VERSION,
     EconomicSnapshotRow,
+    NormalizedFactor,
     NormalizedObservation,
     build_snapshot_id,
     canonical_json_bytes,
@@ -73,7 +74,7 @@ class EconomicReconstructionError(ValueError):
 def observation_from_snapshot(
     snapshot: EconomicSnapshotRow,
     *,
-    normalizer=normalize_provider_payload,
+    normalizer: Callable[..., tuple[NormalizedFactor, ...]] = normalize_provider_payload,
 ) -> NormalizedObservation:
     """Rebuild a seven-field ``NormalizedObservation`` from a persisted snapshot.
 

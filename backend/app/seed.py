@@ -236,7 +236,7 @@ def get_seed_raw_projects() -> list[RawProject]:
     # fetched_at = project.created_at 在 repository 的 INSERT 中映射。
     # seed 数据没有外部抓取行为，故强制 created_at=None 使 fetched_at 为 NULL。
     for p in projects:
-        p.created_at = None  # type: ignore[misc]
+        p.created_at = None  # type: ignore[assignment]
         # source 已经是 'seed'（由 _raw_to_record 从 raw["source"] 继承）
 
     logger.info("seed.fallback_loaded", count=len(projects))

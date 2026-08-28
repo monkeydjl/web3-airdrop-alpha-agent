@@ -72,7 +72,7 @@ def export_projects(
     sector: str | None = Query(None, description="按赛道筛选"),
     stage: str | None = Query(None, description="按阶段筛选"),
     min_score: int | None = Query(None, ge=0, le=100, description="最低分数"),
-):
+) -> Response:
     """导出项目列表."""
     logger.info(
         "api.export.projects",
@@ -156,7 +156,7 @@ def export_projects(
 )
 def export_project_detail(
     project_id: str = Path(..., description="项目 ID"),
-):
+) -> Response:
     """导出单个项目详情."""
     logger.info(
         "api.export.project",
@@ -224,7 +224,7 @@ def export_project_detail(
     summary="下载导入模板",
     description="下载 Excel 导入模板，包含示例数据和必填字段说明",
 )
-def download_import_template():
+def download_import_template() -> Response:
     """下载导入模板."""
     logger.info("api.export.template")
 
@@ -273,7 +273,7 @@ def download_import_template():
 async def import_projects(
     file: UploadFile = File(..., description="Excel 或 CSV 文件"),
     enable_llm: bool = Query(False, description="是否启用 LLM 增强"),
-):
+) -> RunResponse:
     """批量导入项目并评分."""
     logger.info(
         "api.import.projects",
@@ -303,12 +303,11 @@ async def import_projects(
 
         # 根据文件类型导入。解析（pandas/openpyxl）是重 CPU 同步操作，
         # 放到线程池执行，避免阻塞事件循环拖垮其他并发请求。
-        if (
-            file.filename.endswith(".xlsx")
-            or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ):
+        if (file.filename or "").endswith(
+            ".xlsx"
+        ) or file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             projects_data = await asyncio.to_thread(import_projects_from_excel, content)
-        elif file.filename.endswith(".csv") or file.content_type == "text/csv":
+        elif (file.filename or "").endswith(".csv") or file.content_type == "text/csv":
             projects_data = await asyncio.to_thread(import_projects_from_csv, content.decode("utf-8"))
         else:
             raise HTTPException(status_code=400, detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件")

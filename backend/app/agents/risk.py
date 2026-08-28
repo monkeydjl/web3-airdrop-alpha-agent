@@ -194,7 +194,7 @@ class RiskAgent(BaseAgent):
     V2: Adds real tokenomics data and on-chain metrics
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("risk")
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     from app.agents.base import AgentContext, RawProject
     from app.models import TokenomicsResult
 
-    async def test():
+    async def test() -> None:
         print("=== Testing Risk Agent ===\n")
 
         # Test cases

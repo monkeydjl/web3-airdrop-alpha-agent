@@ -63,7 +63,7 @@ class TeamResult(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _drop_computed_risk_level(cls, data):
+    def _drop_computed_risk_level(cls, data: Any) -> Any:
         """允许把自己 dump 出来的 dict 再喂回来。
 
         与 `TokenomicsResult._drop_computed_risk` 同因同治：computed_field 会出现在
@@ -113,7 +113,7 @@ class TokenomicsResult(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _drop_computed_risk(cls, data):
+    def _drop_computed_risk(cls, data: Any) -> Any:
         """允许把自己 dump 出来的 dict 再喂回来。
 
         `risk` 是 computed_field，会出现在 `model_dump()` 里；而 `extra="forbid"`

@@ -16,7 +16,7 @@ from typing import Any
 import structlog
 
 from app.collectors.base import CollectorResult, RawDiscovery
-from app.db import dict_from_row, get_connection
+from app.db import DbConnection, dict_from_row, get_connection
 from app.utils.redact import redact
 
 logger = structlog.get_logger(__name__)
@@ -25,10 +25,10 @@ logger = structlog.get_logger(__name__)
 class CollectionRepository:
     """采集数据持久化仓库。"""
 
-    def __init__(self, conn=None):
+    def __init__(self, conn: DbConnection | None = None) -> None:
         self._conn = conn
 
-    def _get_conn(self):
+    def _get_conn(self) -> DbConnection:
         return self._conn if self._conn else get_connection()
 
     def _should_close(self) -> bool:
@@ -297,7 +297,7 @@ class CollectionRepository:
                     (project_id, project_id),
                 )
             conn.commit()
-            return cursor.rowcount
+            return int(cursor.rowcount)
         finally:
             if self._should_close():
                 conn.close()

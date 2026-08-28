@@ -8,6 +8,66 @@
 
 ## [Unreleased]
 
+### Changed — 后端类型检查从"宽松"提升到 mypy strict，落地为 CI 门禁（2026-08-25 立项 → 08-28 收口）
+
+`backend/pyproject.toml` 里的 `[tool.mypy]` 此前只是一组 false/true 混合开关，
+效果等于"让 mypy 跑起来但基本不设防"——CI 的 Type Check 绿着，却什么都拦不住。
+根目录那份 `strict = true` 配置谁都没读，真按它跑是 **374 个错误、81 个文件**。
+
+这次把 backend 的 mypy 提到 `strict = true`（外加 `warn_unreachable` /
+`warn_redundant_casts`），374 个错误三批清零，21 个提交：
+
+1. **先消配置噪音** —— apscheduler / structlog / pandas / openpyxl /
+   opentelemetry 五个没配 stub 的第三方库在 override 里豁免 import，
+   否则它们的 import 检查会淹没项目内真正的类型问题。
+2. **再补机械注解** —— `-> None`、`dict[str, Any]`、`cast(...)`、
+   删多余的 `# type: ignore`。占大头，一次几十个，纯机械。
+3. **最后逐个啃真实类型问题** —— 这才是 strict 真正想逼出来的。
+
+最终 `mypy app --config-file pyproject.toml --no-incremental` 对 **120 个
+源文件 0 错误**；`ruff check` / `ruff format --check` 全绿。
+
+几个值得一提的真实问题（不是注解，是**代码本身的边界**）：
+
+- `app/opportunity/repository.py` 的 supersession 环检测：`stored.supersedes_evidence_id`
+  在前面被 `is not None` 窄化成 `str`，循环里"用 None 终止"的写法在 mypy 眼里
+  成了不可达死代码 —— 显式声明 `str | None` + `while True / break` 才把
+  "有环时报错、没环时走到 None 停下"的语义还原。
+- `app/utils/redact.py` 的 `_open_log_file = None` 缺类型注解，被 mypy 当
+  "恒为 None 的部分类型"，把 `is None` 分支后的重赋值判成不可达 —— 补
+  `Any | None` 消灭假阳性。
+- `app/collectors/cryptorank.py` 的 `usd` 用 `or` 链取值可能返回非 dict，
+  却先注解成 `dict[str, Any]`，让"不是 dict 就置空"的防御分支变死代码。
+
+CI 的 Type Check 原本就存在，只是跑宽松口径；现在跑的就是这份 strict 配置，
+以后新代码漏注解、把 `None` 当非空用、留死代码，都在合并前被拦下。
+
+### Fixed — 过程中有两次真实的回归，都是完整套件抓回来的
+
+「删死代码」这一步差点埋了两颗雷，都是同一个误区：
+
+1. **`collections.py` 的 `trigger_collection`**：批次 2 把 `_get_conn()` 标成非
+   None 后，把 `if conn_gate is None: pass` 当 `warn_unreachable` 的死分支删了。
+   但运行时 `conn_gate` 确实可能是 None（测试桩、连接边界——原代码 `finally`
+   块都还留着 `conn_gate is not None` 的检查）。删掉后 None 直接进
+   `_operator_enabled` 调 `.execute()` 崩，`test_collections.py` 12 个失败。
+2. **`economic_integration.py` 的 `process_persisted_collection`**：同理删了
+   `if summary is None: return None`（`writer.process()` 类型声明非 None）。但
+   `test_writer_none_summary_zero_emitter` 这条测试专门验证"writer 返回 None 时
+   应静默返回 None 而不是崩"——删掉后 None 进 `summary.observations` 抛
+   AttributeError。
+
+两处修法一致：把变量显式声明成 `X | None`（诚实反映"类型说非 None、运行时却
+可能为 None"的桥），再恢复 `if is None` 的 early return / 条件跳过。
+两个测试文件（25 + 26）全部转绿。
+
+**教训：mypy 说"恒真 / 不可达"，不一定是代码错——可能是类型标注把
+"可能为 None"的边界写窄了。** 删 `warn_unreachable` 报出来的分支前，先看
+这块代码有没有"类型说非 None、运行时却可能是 None"的桥（测试桩、外部返回
+值、连接失效），否则删掉的不是死代码，而是一道防御。尤其注意：**那个 None
+返回如果是某个测试专门钉住的契约（`test_writer_none_summary_zero_emitter`
+这种名字），删它等于删一条被测试保护的边界行为。**
+
 ### Changed — Agent 路径的预算拦截不再与"调用失败"混作一条
 
 流水线里 Agent 调 LLM 走的是 `BaseAgent.llm_enhance()`，此前它用

@@ -10,6 +10,8 @@ Reference:
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
@@ -39,7 +41,7 @@ class WatchlistResponse(BaseModel):
     """Watchlist 操作响应。"""
 
     ok: bool = True
-    data: dict = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class ErrorResponse(BaseModel):

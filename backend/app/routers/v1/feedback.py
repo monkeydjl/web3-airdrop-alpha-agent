@@ -109,7 +109,7 @@ class FeedbackResponse(BaseModel):
     """反馈/事件响应。"""
 
     ok: bool = True
-    data: dict = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class ErrorResponse(BaseModel):

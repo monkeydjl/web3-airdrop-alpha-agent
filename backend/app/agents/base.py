@@ -206,7 +206,7 @@ class PipelineState:
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
-    def add_error(self, error: AgentError):
+    def add_error(self, error: AgentError) -> None:
         """Add error to state."""
         self.errors.append(error)
         logger.warning(
@@ -217,7 +217,7 @@ class PipelineState:
             message=error.message,
         )
 
-    def mark_completed(self):
+    def mark_completed(self) -> None:
         """Mark pipeline as completed."""
         self.completed_at = datetime.now(UTC)
 
@@ -382,11 +382,11 @@ class BaseAgent(ABC):
         except Exception:
             return None
 
-    def _log_start(self, state: PipelineState):
+    def _log_start(self, state: PipelineState) -> None:
         """Log agent start."""
         self.logger.info("agent.started", agent=self.name, project_id=state.project.id, project_name=state.project.name)
 
-    def _log_complete(self, state: PipelineState, duration_ms: float):
+    def _log_complete(self, state: PipelineState, duration_ms: float) -> None:
         """Log agent completion."""
         self.logger.info(
             "agent.completed",

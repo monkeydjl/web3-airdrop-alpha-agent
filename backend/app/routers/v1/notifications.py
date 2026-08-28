@@ -251,7 +251,7 @@ class NotificationsResponse(BaseModel):
     )
 
     ok: bool = Field(True, description="请求是否成功")
-    data: dict = Field(..., description="通知数据")
+    data: dict[str, Any] = Field(..., description="通知数据")
 
 
 class MarkReadRequest(BaseModel):
@@ -263,7 +263,7 @@ class MarkReadRequest(BaseModel):
 
 class MarkReadResponse(BaseModel):
     ok: bool = True
-    data: dict = Field(..., description="标记结果")
+    data: dict[str, Any] = Field(..., description="标记结果")
 
 
 @router.get(

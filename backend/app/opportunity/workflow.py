@@ -343,7 +343,7 @@ def _derive_state(*, assessment: OpportunityAssessment | None, now: datetime) ->
     current = _as_utc(now)
     if current >= _as_utc(assessment.review_at) or current >= _as_utc(assessment.expires_at):
         return "REVIEW_REQUIRED"
-    return assessment.status.value  # type: ignore[return-value]
+    return assessment.status.value
 
 
 def _project_legacy(project: Mapping[str, Any]) -> LegacyDecisionProjection:

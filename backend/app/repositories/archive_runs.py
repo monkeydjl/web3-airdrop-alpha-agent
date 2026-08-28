@@ -19,7 +19,7 @@ from typing import Any
 
 import structlog
 
-from app.db import dict_from_row
+from app.db import DbConnection, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +37,7 @@ STATUS_FAILED = "failed"
 class ArchiveRunRepository:
     """archive_runs 表数据访问。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def record(

@@ -89,7 +89,7 @@ class ProjectsResponse(BaseModel):
     )
 
     ok: bool = Field(True, description="请求是否成功")
-    data: dict = Field(..., description="响应数据")
+    data: dict[str, Any] = Field(..., description="响应数据")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -278,7 +278,7 @@ def get_project(
         # Parse JSON fields (tolerate already-decoded values / bad rows)
         import json
 
-        def _parse_json_field(value):
+        def _parse_json_field(value: Any) -> Any:
             if value is None or value == "":
                 return None
             if isinstance(value, (dict, list)):

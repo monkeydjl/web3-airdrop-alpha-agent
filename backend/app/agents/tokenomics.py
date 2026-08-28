@@ -148,7 +148,7 @@ class TokenomicsAgent(BaseAgent):
     V2: Adds real tokenomics data from documentation and on-chain sources
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("tokenomics")
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -211,7 +211,7 @@ if __name__ == "__main__":
 
     from app.agents.base import AgentContext, RawProject
 
-    async def test():
+    async def test() -> None:
         print("=== Testing Tokenomics Agent ===\n")
 
         # Test cases

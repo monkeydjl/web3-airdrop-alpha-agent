@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from app.opportunity.economic_models import NormalizedFactor
@@ -114,7 +114,7 @@ def normalize_market_rank(value: Any) -> int:
         raise EconomicNormalizationError("market_rank must be an integer")
     if value < 0:
         raise EconomicNormalizationError("market_rank must be nonnegative")
-    return value
+    return cast(int, value)
 
 
 def normalize_chains_json(value: Any) -> tuple[str, ...]:

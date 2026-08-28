@@ -53,7 +53,7 @@ def _row_to_raw_project(row: dict[str, Any]) -> RawProject:
 
 
 @router.get("/projects/{project_id}/funding")
-def get_funding(project_id: str = Path(...)):
+def get_funding(project_id: str = Path(...)) -> dict[str, Any]:
     repo = ProjectRepository()
     row = repo.get_by_id(project_id)
     if not row:
@@ -75,7 +75,7 @@ async def patch_funding(
     project_id: str = Path(...),
     body: FundingUpdate = Body(...),  # noqa: B008 - FastAPI 惯用写法
     rescore: bool = Query(True, description="保存后是否立即重算评分"),
-):
+) -> dict[str, Any]:
     """Save manual funding fields into meta.signals and optionally rescore."""
     repo = ProjectRepository()
     row = repo.get_by_id(project_id)

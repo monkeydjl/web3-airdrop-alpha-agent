@@ -10,7 +10,7 @@ from typing import Any
 
 import structlog
 
-from app.db import get_connection, scalar
+from app.db import DbConnection, get_connection, scalar
 
 logger = structlog.get_logger(__name__)
 
@@ -19,11 +19,11 @@ def quarantine_raw(
     raw_id: str,
     reason: str,
     *,
-    conn: Any | None = None,
+    conn: DbConnection | None = None,
 ) -> bool:
     """Mark a raw_project as quarantined and processed (leave queue)."""
     owns = conn is None
-    if owns:
+    if conn is None:
         conn = get_connection()
     try:
         # Support raw sqlite3.Connection and DbConnection wrapper
@@ -86,10 +86,10 @@ def quarantine_raw(
             conn.close()
 
 
-def release_quarantine(raw_id: str, *, conn: Any | None = None) -> bool:
+def release_quarantine(raw_id: str, *, conn: DbConnection | None = None) -> bool:
     """Clear quarantine and re-queue for analysis."""
     owns = conn is None
-    if owns:
+    if conn is None:
         conn = get_connection()
     try:
         cur = conn.execute(
@@ -117,7 +117,7 @@ def release_quarantine(raw_id: str, *, conn: Any | None = None) -> bool:
             conn.close()
 
 
-def list_quarantined(limit: int = 100) -> list[dict]:
+def list_quarantined(limit: int = 100) -> list[dict[str, Any]]:
     conn = get_connection()
     try:
         rows = conn.execute(

@@ -1,7 +1,8 @@
 import logging
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
@@ -52,7 +53,7 @@ class EvidenceCreate(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def valid_factor_value(self):
+    def valid_factor_value(self) -> Self:
         if self.factor_key not in SUPPORTED_FACTOR_KEYS:
             raise ValueError(f"unsupported opportunity factor: {self.factor_key}")
         record = EvidenceRecord(**self.model_dump())
@@ -70,12 +71,12 @@ def get_project_repository() -> ProjectRepository:
     return ProjectRepository()
 
 
-def get_opportunity_repository():
+def get_opportunity_repository() -> Iterator[OpportunityRepository]:
     with OpportunityRepository() as repository:
         yield repository
 
 
-def get_opportunity_service():
+def get_opportunity_service() -> Iterator[OpportunityService]:
     with OpportunityService() as service:
         yield service
 
@@ -84,7 +85,7 @@ def get_current_time() -> datetime:
     return datetime.now(UTC)
 
 
-def get_opportunity_workflow_service():
+def get_opportunity_workflow_service() -> Iterator[OpportunityWorkflowService]:
     service = OpportunityWorkflowService()
     try:
         yield service
@@ -109,7 +110,7 @@ def add_evidence(
     payload: EvidenceCreate,
     project_repository: ProjectRepository = Depends(get_project_repository),
     opportunity_repository: OpportunityRepository = Depends(get_opportunity_repository),
-):
+) -> dict[str, Any]:
     _require_project(project_id, project_repository)
     record = EvidenceRecord(project_id=project_id, **payload.model_dump())
     try:
@@ -124,7 +125,7 @@ def list_evidence(
     project_id: str,
     project_repository: ProjectRepository = Depends(get_project_repository),
     opportunity_repository: OpportunityRepository = Depends(get_opportunity_repository),
-):
+) -> dict[str, Any]:
     _require_project(project_id, project_repository)
     evidence = opportunity_repository.list_evidence(project_id, include_invalid=True)
     return {
@@ -137,7 +138,7 @@ def list_evidence(
 def evaluate(
     project_id: str,
     service: OpportunityService = Depends(get_opportunity_service),
-):
+) -> dict[str, Any]:
     try:
         assessment = service.evaluate(project_id, persist=True)
     except LookupError:
@@ -154,7 +155,7 @@ def get_assessment(
     project_repository: ProjectRepository = Depends(get_project_repository),
     opportunity_repository: OpportunityRepository = Depends(get_opportunity_repository),
     now: datetime = Depends(get_current_time),
-):
+) -> dict[str, Any]:
     _require_project(project_id, project_repository)
     assessment = opportunity_repository.latest_assessment(project_id, DEFAULT_PROFILE.profile_id)
     stale = assessment is not None and now >= assessment.expires_at
@@ -174,7 +175,7 @@ def get_opportunity_workflow(
     project_id: str,
     service: OpportunityWorkflowService = Depends(get_opportunity_workflow_service),
     now: datetime = Depends(get_current_time),
-):
+) -> dict[str, Any]:
     try:
         projection = service.get_project_workflow(project_id, now)
     except LookupError:

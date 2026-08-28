@@ -27,9 +27,9 @@ def maturity_state(
 
 
 def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, ...]]:
-    event = {"airdropped": 1, "not_airdropped": 0}.get(sample.outcome)
-    eligibility = {"eligible": 1, "ineligible": 0}.get(sample.eligibility_result)
-    survival = {"passed": 1, "disqualified": 0}.get(sample.survival_result)
+    event = {"airdropped": 1, "not_airdropped": 0}.get(sample.outcome or "")
+    eligibility = {"eligible": 1, "ineligible": 0}.get(sample.eligibility_result or "")
+    survival = {"passed": 1, "disqualified": 0}.get(sample.survival_result or "")
     positive_reward = sample.reward_received_usd is not None and sample.reward_received_usd > 0
     negative_reward = sample.reward_received_usd is not None and sample.reward_received_usd < 0
     explicit_no_reward = sample.reward_received_usd == 0 or event == 0 or eligibility == 0 or survival == 0
@@ -46,19 +46,17 @@ def map_outcomes(sample: CalibrationSample) -> tuple[OutcomeValues, tuple[str, .
 
     realized_net_usd = None
     realized_class = None
+    reward_usd = sample.reward_received_usd
+    hard_cost_usd = sample.actual_hard_cost_usd
+    claim_cost_usd = sample.claim_cost_usd
     if (
         not contradictory
         and reward is not None
-        and all(
-            value is not None
-            for value in (
-                sample.reward_received_usd,
-                sample.actual_hard_cost_usd,
-                sample.claim_cost_usd,
-            )
-        )
+        and reward_usd is not None
+        and hard_cost_usd is not None
+        and claim_cost_usd is not None
     ):
-        realized_net_usd = sample.reward_received_usd - sample.actual_hard_cost_usd - sample.claim_cost_usd
+        realized_net_usd = reward_usd - hard_cost_usd - claim_cost_usd
 
     if not contradictory and not negative_reward:
         if eligibility == 0 or survival == 0 or (realized_net_usd is not None and realized_net_usd < 0):

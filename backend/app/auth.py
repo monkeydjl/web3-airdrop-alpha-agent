@@ -35,12 +35,12 @@ import os
 import re
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from app.config import settings
 
@@ -251,7 +251,7 @@ def verify_token(token: str) -> dict[str, Any] | None:
     if not isinstance(exp, int) or exp < int(time.time()):
         return None
 
-    return payload
+    return cast(dict[str, Any], payload)
 
 
 def is_admin_token(provided: str) -> bool:
@@ -278,7 +278,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     5. 无 token → 401
     """
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         expected = (settings.api_key or "").strip()
         if not expected:
             return await call_next(request)

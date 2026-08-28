@@ -78,7 +78,7 @@ class PipelineContext(BaseModel):
 class Orchestrator:
     """Agent 编排器"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.nodes: dict[str, AgentNode] = {}
         self.graph: dict[str, set[str]] = {}  # 依赖图
 
@@ -86,7 +86,7 @@ class Orchestrator:
         self,
         node_id: str,
         name: str,
-        agent_fn: Callable,
+        agent_fn: Callable[..., Any],
         input_keys: list[str],
         output_key: str,
         depends_on: list[str] | None = None,

@@ -6,6 +6,8 @@ GET /api/v1/llm/status
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from fastapi import APIRouter
 
@@ -29,7 +31,7 @@ def _mask_key(key: str) -> str:
     summary="LLM 多接口故障转移状态",
     description="返回当前 LLM 配置：接口列表、每接口模型列表、故障转移策略、是否已启用。",
 )
-def llm_status():
+def llm_status() -> dict[str, Any]:
     """获取 LLM 多接口/多模型配置状态。
 
     返回每个接口的 base_url、脱敏 api_key、模型列表、名称。

@@ -11,7 +11,7 @@
 
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -463,7 +463,7 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def _resolve_db_backend(self):
+    def _resolve_db_backend(self) -> Self:
         """DB_BACKEND=postgres 时自动组装 DATABASE_URL（A2, ADR-004）。
 
         两种 PG 激活路径：
@@ -486,7 +486,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_opportunity_economic_flag_rollout(self):
+    def validate_opportunity_economic_flag_rollout(self) -> Self:
         """Upstream economic rollout gates: evidence_emit⇒snapshot, resolver⇒evidence."""
         if self.opportunity_economic_evidence_emit_enabled and not self.opportunity_economic_snapshot_enabled:
             raise ValueError(
@@ -498,7 +498,7 @@ class Settings(BaseSettings):
             )
         return self
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context: Any) -> None:
         """启动时断言权重和为 1.0。"""
         total = sum(
             [

@@ -10,6 +10,8 @@ Reference:
 - API_SPEC.md /run 端点定义
 """
 
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -109,13 +111,13 @@ class ProjectResult(BaseModel):
     reason: list[str]
 
     # Agent 分析结果
-    narrative: dict | None = None
-    team: dict | None = None
-    risk: dict | None = None
-    tokenomics: dict | None = None
+    narrative: dict[str, Any] | None = None
+    team: dict[str, Any] | None = None
+    risk: dict[str, Any] | None = None
+    tokenomics: dict[str, Any] | None = None
 
     # 元数据
-    errors: list[dict] = []
+    errors: list[dict[str, Any]] = []
 
 
 class RunResponse(BaseModel):
@@ -148,7 +150,7 @@ class RunResponse(BaseModel):
     )
 
     ok: bool = Field(True, description="请求是否成功")
-    data: dict = Field(..., description="响应数据")
+    data: dict[str, Any] = Field(..., description="响应数据")
 
 
 class ErrorResponse(BaseModel):
@@ -161,7 +163,7 @@ class ErrorResponse(BaseModel):
     )
 
     ok: bool = Field(False, description="请求失败")
-    error: dict = Field(..., description="错误信息")
+    error: dict[str, Any] = Field(..., description="错误信息")
 
 
 # ══════════════════════════════════════════════════════════════

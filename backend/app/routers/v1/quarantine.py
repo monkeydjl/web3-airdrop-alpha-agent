@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import suppress
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -23,7 +24,7 @@ class ReleaseRequest(BaseModel):
 
 
 @router.get("/quarantine")
-def get_quarantine(limit: int = Query(100, ge=1, le=500)):
+def get_quarantine(limit: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
     items = list_quarantined(limit=limit)
     for it in items:
         with suppress(json.JSONDecodeError):
@@ -38,7 +39,7 @@ def get_quarantine(limit: int = Query(100, ge=1, le=500)):
 
 
 @router.post("/quarantine")
-def post_quarantine(req: QuarantineRequest):
+def post_quarantine(req: QuarantineRequest) -> dict[str, Any]:
     ok = quarantine_raw(req.raw_id, req.reason)
     if not ok:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "raw_id not found"})
@@ -46,7 +47,7 @@ def post_quarantine(req: QuarantineRequest):
 
 
 @router.post("/quarantine/release")
-def post_release(req: ReleaseRequest):
+def post_release(req: ReleaseRequest) -> dict[str, Any]:
     ok = release_quarantine(req.raw_id)
     if not ok:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "raw_id not found"})

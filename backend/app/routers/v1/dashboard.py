@@ -67,7 +67,7 @@ class DashboardOverviewResponse(BaseModel):
     )
 
     ok: bool = Field(True, description="请求是否成功")
-    data: dict = Field(..., description="聚合数据")
+    data: dict[str, Any] = Field(..., description="聚合数据")
 
 
 @router.get(

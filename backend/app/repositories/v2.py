@@ -26,7 +26,7 @@ from typing import Any
 
 import structlog
 
-from app.db import dict_from_row
+from app.db import DbConnection, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +37,7 @@ logger = structlog.get_logger(__name__)
 class AuditLogRepository:
     """audit_logs 表数据访问（§5.4.7）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(
@@ -96,7 +96,7 @@ class AuditLogRepository:
 class MetricsRepository:
     """metrics 表数据访问（§5.4.7）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(
@@ -138,7 +138,7 @@ class MetricsRepository:
 class LLMEvalRepository:
     """llm_eval_changelog 表数据访问（§5.4.7）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(
@@ -182,7 +182,7 @@ class LLMEvalRepository:
 class QuarantineRepository:
     """quarantine 表数据访问（§5.4.3）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(
@@ -214,7 +214,7 @@ class QuarantineRepository:
             (status, datetime.now(UTC).isoformat(), quarantine_id),
         )
         self.conn.commit()
-        return cursor.rowcount > 0
+        return bool(cursor.rowcount > 0)
 
     def query_pending(self, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -237,7 +237,7 @@ class QuarantineRepository:
 class ProjectHistoryRepository:
     """project_history 表数据访问（§5.4.4）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(
@@ -283,7 +283,7 @@ class ProjectHistoryRepository:
 class NarrativesRepository:
     """narratives 维表数据访问（§5.4.6）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def upsert(
@@ -328,7 +328,7 @@ class NarrativesRepository:
             (sector,),
         )
         self.conn.commit()
-        return cursor.rowcount > 0
+        return bool(cursor.rowcount > 0)
 
 
 # ── DedupKeysRepository ─────────────────────────
@@ -337,7 +337,7 @@ class NarrativesRepository:
 class DedupKeysRepository:
     """dedup_keys 表数据访问（§5.4.8）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def upsert(
@@ -382,7 +382,7 @@ class DedupKeysRepository:
 class PromptVersionsRepository:
     """prompt_versions 表数据访问（§5.4.9）。"""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: DbConnection) -> None:
         self.conn = conn
 
     def insert(

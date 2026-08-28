@@ -8,8 +8,9 @@ from __future__ import annotations
 import re
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self, cast
 
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Path, Query
@@ -109,7 +110,7 @@ def _is_bech32_shape(token: str) -> bool:
     )
 
 
-def _bech32_candidates(value: str):
+def _bech32_candidates(value: str) -> Iterator[str]:
     for separator, char in enumerate(value):
         if char != "1":
             continue
@@ -222,7 +223,7 @@ class _InteractionOutcomeFields(BaseModel):
                 raise ValueError("outcome_observed_at must be a valid datetime") from None
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("outcome_observed_at must include a timezone")
-        return value.astimezone(UTC)
+        return cast(datetime, value.astimezone(UTC))
 
     @field_validator("started_at", "ended_at", mode="before", check_fields=False)
     @classmethod
@@ -245,7 +246,7 @@ class _InteractionOutcomeFields(BaseModel):
         return _reject_wallet_address(value)
 
     @model_validator(mode="after")
-    def validate_outcome_fields(self):
+    def validate_outcome_fields(self) -> Self:
         if (
             isinstance(self, InteractionCreate)
             and self.survival_result == "disqualified"
@@ -273,7 +274,7 @@ class InteractionCreate(_InteractionOutcomeFields):
     outcome: OutcomeType | None = Field("pending", description="结果状态")
 
     @model_validator(mode="after")
-    def validate_create_linkage(self):
+    def validate_create_linkage(self) -> Self:
         if "wallet_cohort_id" not in self.model_fields_set:
             self.wallet_cohort_id = f"cohort-{uuid.uuid4()}"
         supplied = self.model_fields_set.intersection(_LINKAGE_FIELDS)
@@ -295,7 +296,7 @@ class InteractionUpdate(_InteractionOutcomeFields):
     user_id: str | None = Field(None, max_length=255, description=_SENSITIVE_DATA_WARNING)
 
     @model_validator(mode="after")
-    def validate_update_linkage(self):
+    def validate_update_linkage(self) -> Self:
         supplied = self.model_fields_set.intersection(_LINKAGE_FIELDS)
         if not supplied:
             return self
@@ -373,7 +374,7 @@ def _validate_status_transition(current_status: str | None, new_status: str) -> 
 
 
 @router.post("/interactions")
-def create_interaction(body: InteractionCreate):
+def create_interaction(body: InteractionCreate) -> dict[str, Any]:
     """Create a participation log for a project."""
     repo = ProjectRepository()
     project = repo.get_by_id(body.project_id)
@@ -475,7 +476,7 @@ def list_interactions(
     project_id: str | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
-):
+) -> dict[str, Any]:
     """List interaction logs (optionally filter by project / status)."""
     conn = get_connection()
     try:
@@ -512,7 +513,7 @@ def list_interactions(
 
 
 @router.get("/interactions/summary")
-def interactions_summary():
+def interactions_summary() -> dict[str, Any]:
     """Aggregate stats for calibration / ops."""
     conn = get_connection()
     try:
@@ -570,7 +571,7 @@ def interactions_summary():
 def list_project_interactions(
     project_id: str = Path(...),
     limit: int = Query(50, ge=1, le=200),
-):
+) -> dict[str, Any]:
     return list_interactions(project_id=project_id, status=None, limit=limit)
 
 
@@ -578,7 +579,7 @@ def list_project_interactions(
 def update_interaction(
     interaction_id: int = Path(...),
     body: InteractionUpdate = Body(...),  # noqa: B008 - FastAPI 惯用写法
-):
+) -> dict[str, Any]:
     fields = body.model_dump(exclude_unset=True, mode="json")
     if not fields:
         raise HTTPException(
@@ -680,7 +681,7 @@ def update_interaction(
 
 
 @router.delete("/interactions/{interaction_id}")
-def delete_interaction(interaction_id: int = Path(...)):
+def delete_interaction(interaction_id: int = Path(...)) -> dict[str, Any]:
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM interactions WHERE id = ?", (interaction_id,))

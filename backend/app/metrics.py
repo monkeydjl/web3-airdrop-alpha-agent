@@ -10,6 +10,7 @@ Reference:
 """
 
 from collections.abc import Mapping
+from typing import Any
 
 import structlog
 from prometheus_client import (
@@ -20,6 +21,7 @@ from prometheus_client import (
 )
 
 from app.config import settings
+from app.db import DbConnection
 
 logger = structlog.get_logger(__name__)
 _MISSING = object()
@@ -211,7 +213,7 @@ def set_opportunity_economic_last_success(*, source: str, unixtime: float) -> No
     OPPORTUNITY_ECONOMIC_LAST_SUCCESS.labels(source=source).set(unixtime)
 
 
-def metric_sample_value(metric, **label_kwargs) -> float:
+def metric_sample_value(metric: Any, **label_kwargs: str) -> float:
     """Read a Prometheus sample value by full label match.
 
     Inspects ``metric.collect()`` samples (Counter/Histogram/Gauge). Missing
@@ -258,7 +260,7 @@ def metric_sample_value(metric, **label_kwargs) -> float:
     return candidates[0][1]
 
 
-def metric_label_sets(metric) -> frozenset[frozenset[tuple[str, str]]]:
+def metric_label_sets(metric: Any) -> frozenset[frozenset[tuple[str, str]]]:
     """Return closed label sets from metric samples (excluding ``*_created``).
 
     Each sample contributes ``frozenset`` of ``(label, value)`` pairs; the outer
@@ -520,7 +522,7 @@ def observe_opportunity_shadow_duration(duration_seconds: float) -> None:
         logger.warning("metrics.opportunity_shadow_update_failed", error=str(error))
 
 
-def update_db_gauges(conn) -> None:
+def update_db_gauges(conn: DbConnection) -> None:
     """Refresh database gauges from the provided DB connection.
 
     The caller is responsible for handling connection lifecycle; this helper

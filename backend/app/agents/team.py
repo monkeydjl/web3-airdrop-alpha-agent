@@ -155,7 +155,7 @@ class TeamAgent(BaseAgent):
     V2: Adds real team data (social profiles, funding rounds, prior projects)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("team")
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
     from app.agents.base import AgentContext, RawProject
 
-    async def test():
+    async def test() -> None:
         print("=== Testing Team Agent ===\n")
 
         # Test cases
