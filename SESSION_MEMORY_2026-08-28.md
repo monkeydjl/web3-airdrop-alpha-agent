@@ -79,10 +79,26 @@ CI 的 Type Check 绿着却什么都拦不住。owner 拍板把 backend 提到 `
   `is None` 分支后的重赋值判 unreachable → 补 `Any | None` 消灭假阳性。
 - `collectors/cryptorank.py` 的 `usd` 经 `or` 链可能返回非 dict，却先注解
   `dict[str, Any]`，把"非 dict 就置空"的防御分支变死代码 → 改 `Any`。
-- `opportunity/economic_integration.py`：`writer.process()` 已声明非 None，
-  删掉恒 False 的 `if summary is None` 防御分支出（死代码）。
 - `openapi.py`：给 `app` 补 `FastAPI` 注解后，`openapi_schema` 有了真实 stub
   类型，之前为压 no-any-return 加的 `cast` 变成 redundant → 去掉。
+
+### 最关键的教训：两次"删死分支"都删成了回归，被完整套件抓回
+
+「类型声明说非 None，于是把 `if x is None` 当 dead code 删掉」这个动作，
+今天错了两次、且都是完整 pytest 抓回来的：
+
+| 位置 | 删掉的防御 | 运行时真相 | 抓它的测试 |
+|---|---|---|---|
+| `collections.py` `trigger_collection` | `if conn_gate is None: pass` | 测试桩 `_get_conn()` 返回 None，删后 None 进 `.execute()` 崩 | `test_collections.py` 12 个 |
+| `economic_integration.py` `process_persisted_collection` | `if summary is None: return None` | 测试 `test_writer_none_summary_zero_emitter` 专门钉住"writer 返回 None 应静默返回 None" | 同文件 1 个 |
+
+两处修法一致：变量显式声明 `X | None`（诚实承认"类型说非 None、运行时却可能
+是 None"），再恢复 `if is None` 的 early return / 条件跳过。
+
+**结论**：`warn_unreachable` 报"恒真 / 不可达"时，先查这块代码有没有
+"类型说非 None、运行时却可能是 None"的桥（测试桩、外部返回值、连接失效），
+尤其看那个 None 返回是不是某个测试专门钉住的契约 —— 名字里带
+`none_summary` / `zero_emitter` 这种的，删它等于删一条被测试保护的边界。
 
 ---
 
@@ -93,17 +109,16 @@ CI 的 Type Check 绿着却什么都拦不住。owner 拍板把 backend 提到 `
 | `mypy app --config-file pyproject.toml --no-incremental` | **Success: no issues found in 120 source files** |
 | `ruff check app tests` | All checks passed |
 | `ruff format --check app tests` | 247 files already formatted |
-| 完整后端套件 `pytest`（--cov-fail-under=80） | **待补**（本轮进行中，约 40 分钟） |
+| 完整后端套件 `pytest`（--cov-fail-under=80） | **3036 passed, 9 skipped, 88.82% cov, exit 0**（34m38s） |
 
 ---
 
 ## 六、下一步 & 遗留
 
-1. **补 pytest 结果**（跑完后把上表"待补"换成真实 passed/skipped/cov）。
-2. **push `fix/mypy-strict` → 开 PR #26**（target master），CI 5 个 required
+1. **push `fix/mypy-strict` → 开 PR #26**（target master），CI 5 个 required
    context 全绿后合并：Coverage Gate / Type Check / Frontend Lint & Build /
    Lint & Format Check / Full Backend Test Suite。
-3. **合并后**：确认 master 的 Type Check job 跑的就是 strict 口径（本次核心收益）。
+2. **合并后**：确认 master 的 Type Check job 跑的就是 strict 口径（本次核心收益）。
 
 遗留（非本次范围）：根目录 `pyproject.toml` 里的死配置 `[tool.mypy]`（08-24
 第十四节记过）—— 现在 backend 已是 strict，根那份要不要删/对齐，另议。
