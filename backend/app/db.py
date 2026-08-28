@@ -51,7 +51,7 @@ class DbConnection:
         self._raw = raw
         self.kind = kind  # "sqlite" | "postgres"
 
-    def execute(self, sql: str, params: Iterable[Any] | None = None):
+    def execute(self, sql: str, params: Iterable[Any] | None = None) -> Any:
         sql_n, params_n = self._normalize(sql, params)
         if self.kind == "postgres":
             cur = self._raw.cursor()
@@ -61,7 +61,7 @@ class DbConnection:
             return self._raw.execute(sql_n)
         return self._raw.execute(sql_n, params_n)
 
-    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]):
+    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]) -> Any:
         sql_n, _ = self._normalize(sql, ())
         params_n = [self._normalize_params(params) for params in seq_of_params]
         if self.kind == "postgres":
@@ -105,7 +105,7 @@ class DbConnection:
     def __enter__(self) -> DbConnection:
         return self
 
-    def __exit__(self, *args) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     def _normalize(self, sql: str, params: Iterable[Any] | None) -> tuple[str, tuple[Any, ...] | None]:

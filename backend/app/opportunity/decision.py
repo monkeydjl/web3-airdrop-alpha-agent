@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from app.opportunity.models import (
@@ -345,7 +346,7 @@ def _safest_risk(*values: RiskLevel | None) -> RiskLevel | None:
     return max(known, key=severity.__getitem__) if known else None
 
 
-def _unique_codes(codes) -> tuple[str, ...]:
+def _unique_codes(codes: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(codes))
 
 

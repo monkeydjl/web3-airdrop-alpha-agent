@@ -14,7 +14,7 @@ info; funding rounds may need Plus/Pro — collector degrades gracefully.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -147,7 +147,7 @@ class RootDataCollector(DataCollector):
             # some plans wrap under data/result
             for k in ("data", "result", "project"):
                 if isinstance(data.get(k), dict):
-                    return data[k]
+                    return cast(dict[str, Any], data[k])
             return data
         return None
 

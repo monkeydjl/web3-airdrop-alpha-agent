@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import structlog
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Path
 
 from app.repository import ProjectRepository
@@ -16,7 +18,7 @@ router = APIRouter(tags=["participation"])
 @router.get("/projects/{project_id}/participation-tasks")
 def get_participation_tasks(
     project_id: str = Path(..., description="项目 ID"),
-):
+) -> dict[str, Any]:
     """Return a prioritized checklist of things a user can do for this project."""
     repo = ProjectRepository()
     project = repo.get_by_id(project_id)

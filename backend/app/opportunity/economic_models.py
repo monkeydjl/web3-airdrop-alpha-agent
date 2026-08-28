@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -220,7 +220,7 @@ class NormalizedObservation(BaseModel):
         return tuple(value)
 
     @model_validator(mode="after")
-    def factors_must_be_tuple(self):
+    def factors_must_be_tuple(self) -> Self:
         if not isinstance(self.factors, tuple):
             raise ValueError("factors must be a tuple")
         return self

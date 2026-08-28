@@ -1,4 +1,5 @@
 from math import isfinite
+from typing import cast
 
 from app.opportunity.models import ConfidenceSet, QualityFactors
 
@@ -15,7 +16,7 @@ def calculate_project_quality(factors: QualityFactors) -> float | None:
     values = factors.model_dump()
     if any(value is None for value in values.values()):
         return None
-    return sum(values[key] * weight for key, weight in QUALITY_WEIGHTS.items())
+    return cast(float, sum(values[key] * weight for key, weight in QUALITY_WEIGHTS.items()))
 
 
 def calculate_domain_confidence(

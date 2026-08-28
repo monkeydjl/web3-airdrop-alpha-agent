@@ -42,7 +42,7 @@ class SettingsConfigResponse(BaseModel):
     )
 
     ok: bool = Field(True)
-    data: dict = Field(...)
+    data: dict[str, Any] = Field(...)
 
 
 def _mask_key(val: str | None) -> bool:

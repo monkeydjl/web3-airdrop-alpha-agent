@@ -40,7 +40,8 @@ from collections import defaultdict, deque
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, RequestResponseEndpoint
 
 from app.config import settings
 
@@ -96,12 +97,12 @@ class _SlidingWindow:
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._windows = _SlidingWindow()
         self._last_prune = 0.0
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not settings.rate_limit_enabled:
             return await call_next(request)
 

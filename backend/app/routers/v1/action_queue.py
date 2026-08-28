@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import structlog
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -34,7 +36,7 @@ _CANDIDATE_POOL = 60
 
 class ActionQueueResponse(BaseModel):
     ok: bool = True
-    data: dict = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get(

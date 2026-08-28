@@ -280,8 +280,8 @@ class EtherscanCollector(DataCollector):
 
     def _calculate_discovery_score(self, contract: dict[str, Any]) -> float:
         """基于活跃度计算 discovery_score（上限压在分析阈值之下）。"""
-        event_count = contract["event_count"]
-        unique_to_count = contract.get("unique_to_count", 0)
+        event_count = float(contract["event_count"])
+        unique_to_count = float(contract.get("unique_to_count", 0))
 
         event_score = min(1.0, max(0.0, (event_count - self.MIN_EVENTS) / 1000.0))
         unique_score = min(1.0, unique_to_count / 500.0)

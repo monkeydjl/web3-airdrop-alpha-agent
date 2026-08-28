@@ -124,7 +124,7 @@ def is_noise_protocol(protocol: dict[str, Any]) -> bool:
     )
 
 
-def is_noise_raw_project(name: str, sector: str | None = None, raw_data: dict | None = None) -> bool:
+def is_noise_raw_project(name: str, sector: str | None = None, raw_data: dict[str, Any] | None = None) -> bool:
     """Analysis queue helper from name + optional raw_data."""
     raw = raw_data or {}
     return is_noise_project(
