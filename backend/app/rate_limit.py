@@ -38,10 +38,10 @@ import threading
 import time
 from collections import defaultdict, deque
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, RequestResponseEndpoint
+from starlette.types import ASGIApp
 
 from app.config import settings
 

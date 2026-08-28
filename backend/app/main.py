@@ -12,7 +12,9 @@ Web3 Airdrop Alpha Agent System 主应用入口。
 - API_SPEC.md 完整 API 契约
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -20,12 +22,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.collectors.base import CollectorResult
 from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
 from app.config import settings
-from app.db import get_connection, init_db
+from app.db import DbConnection, get_connection, init_db
 from app.inflight import QueueDrainInProgressError
 from app.metrics import MetricsExporter
 from app.pipeline_run import execute_analysis_pipeline
@@ -41,7 +44,7 @@ setup_tracing()
 logger = structlog.get_logger(__name__)
 
 
-def create_app(db_override=None) -> FastAPI:
+def create_app(db_override: DbConnection | None = None) -> FastAPI:
     """应用工厂函数。
 
     创建并配置 FastAPI 应用实例。
@@ -55,7 +58,7 @@ def create_app(db_override=None) -> FastAPI:
     """
 
     @asynccontextmanager
-    async def lifespan(application: FastAPI):
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         """Initialize and release application-owned resources."""
         logger.info(
             "app.startup",
@@ -201,10 +204,13 @@ def create_app(db_override=None) -> FastAPI:
             yield
         finally:
             logger.info("app.shutdown")
-            unified_scheduler = getattr(application.state, "unified_scheduler", None)
-            if unified_scheduler:
+            scheduler_to_shutdown = cast(
+                UnifiedScheduler | None,
+                getattr(application.state, "unified_scheduler", None),
+            )
+            if scheduler_to_shutdown:
                 try:
-                    unified_scheduler.shutdown(wait=True)
+                    scheduler_to_shutdown.shutdown(wait=True)
                 except Exception as exc:
                     logger.error(
                         "app.shutdown.scheduler_error",
@@ -289,7 +295,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 请求日志中间件 ──────────────────────────
     @app.middleware("http")
-    async def log_requests(request: Request, call_next):
+    async def log_requests(request: Request, call_next: RequestResponseEndpoint) -> Response:
         """记录请求日志（结构化）并附加免责声明响应头。"""
         import time
 
@@ -333,9 +339,9 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 全局异常处理 ────────────────────────────
     @app.exception_handler(HTTPException)
-    async def http_exception_handler(_request: Request, exc: HTTPException):
+    async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
         """统一 HTTP 异常格式。"""
-        detail = exc.detail
+        detail: Any = exc.detail
         error = (
             detail
             if isinstance(detail, dict)
@@ -350,7 +356,7 @@ def create_app(db_override=None) -> FastAPI:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+    async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
         """统一请求校验异常格式。"""
         return JSONResponse(
             status_code=422,
@@ -367,7 +373,7 @@ def create_app(db_override=None) -> FastAPI:
         )
 
     @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """统一异常处理，返回标准错误格式。"""
         logger.error(
             "api.unhandled_exception",
@@ -388,7 +394,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 健康检查 ────────────────────────────────
     @app.get(settings.health_check_path, tags=["system"])
-    def health_check(response: Response):
+    def health_check(response: Response) -> dict[str, Any]:
         """健康检查端点。
 
         降级时返回 503：k8s/负载均衡器的探针按**状态码**判活，恒返回 200 会让
@@ -434,7 +440,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── Prometheus metrics ─────────────────────
     @app.get(settings.metrics_path, tags=["system"])
-    def metrics():
+    def metrics() -> Response:
         """Prometheus metrics endpoint."""
         if not MetricsExporter.is_enabled():
             from fastapi.responses import JSONResponse
@@ -450,7 +456,7 @@ def create_app(db_override=None) -> FastAPI:
 
     # ── 版本信息 ────────────────────────────────
     @app.get("/version", tags=["system"])
-    async def version():
+    async def version() -> dict[str, Any]:
         """获取应用版本信息。"""
         return {
             "ok": True,
@@ -464,7 +470,7 @@ def create_app(db_override=None) -> FastAPI:
     # ── 自定义 OpenAPI ──────────────────────────
     from app.openapi import customize_openapi_schema
 
-    def custom_openapi():
+    def custom_openapi() -> dict[str, Any]:
         return customize_openapi_schema(app)
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
@@ -535,7 +541,7 @@ def create_app(db_override=None) -> FastAPI:
 app = create_app()
 
 
-def main():
+def main() -> None:
     """CLI 入口。"""
     import uvicorn
 
