@@ -156,11 +156,16 @@ def _derive_eligibility(
     profile: OpportunityProfile,
 ) -> ProbabilityRange | None:
     participation = normalized.get("participation_open")
-    if not _approved(participation, minimum_grade="B") or participation[1] is not True:
+    if participation is None or not _approved(participation, minimum_grade="B") or participation[1] is not True:
         return None
     cost_item = normalized.get("hard_cost_usd")
     mechanism_item = normalized.get("eligibility_mechanism")
-    if not _approved(cost_item, minimum_grade="B") or not _approved(mechanism_item, minimum_grade="B"):
+    if (
+        cost_item is None
+        or mechanism_item is None
+        or not _approved(cost_item, minimum_grade="B")
+        or not _approved(mechanism_item, minimum_grade="B")
+    ):
         return None
     cost = cost_item[1]
     if cost.base > profile.hard_cost_limit_per_wallet_usd:
@@ -175,7 +180,9 @@ def _derive_eligibility(
 
 
 def _official_true(item: tuple[EvidenceRecord, Any] | None) -> bool:
-    return _approved(item, minimum_grade="A") and item[1] is True
+    if item is None or not _approved(item, minimum_grade="A"):
+        return False
+    return item[1] is True
 
 
 def _explicit_range(
@@ -183,7 +190,7 @@ def _explicit_range(
 ) -> ProbabilityRange | None:
     # 显式概率证据须满足与规则派生同一档的来源等级下限（B），
     # 否则 U 档（权重 0）证据也能覆盖 A 档规则结论，形成信任绕过。
-    if not _approved(item, minimum_grade="B"):
+    if item is None or not _approved(item, minimum_grade="B"):
         return None
     value = item[1]
     return value if isinstance(value, ProbabilityRange) else None
