@@ -32,7 +32,7 @@ from typing import Any
 import structlog
 
 from app.config import settings
-from app.db import scalar
+from app.db import DbConnection, scalar
 from app.repositories.archive_runs import (
     STATUS_FAILED,
     STATUS_SUCCESS,
@@ -114,7 +114,7 @@ class RawDataArchiver:
         )
         self.dry_run = dry_run
 
-    def run(self, conn) -> ArchiveResult:
+    def run(self, conn: DbConnection) -> ArchiveResult:
         """执行归档清理。
 
         Args:
@@ -157,7 +157,7 @@ class RawDataArchiver:
 
         return result
 
-    def run_and_record(self, conn, *, trigger: str) -> ArchiveResult:
+    def run_and_record(self, conn: DbConnection, *, trigger: str) -> ArchiveResult:
         """执行归档并把结果写入 `archive_runs`。
 
         失败也记一行（status=failed + error_message），否则"归档三天没跑成功"
@@ -200,7 +200,7 @@ class RawDataArchiver:
 
     def _record_run(
         self,
-        conn,
+        conn: DbConnection,
         *,
         started_at: datetime,
         trigger: str,
@@ -255,7 +255,7 @@ class RawDataArchiver:
         cutoff = datetime.now(UTC) - timedelta(days=days)
         return cutoff.strftime("%Y-%m-%d %H:%M:%S")
 
-    def _archive_raw_projects(self, conn) -> int:
+    def _archive_raw_projects(self, conn: DbConnection) -> int:
         """将过期已处理的 raw_projects 归档。"""
         cutoff = self._cutoff(self.raw_retention_days)
 
@@ -306,7 +306,7 @@ class RawDataArchiver:
         )
         return count
 
-    def _archive_unprocessed_raw_projects(self, conn) -> int:
+    def _archive_unprocessed_raw_projects(self, conn: DbConnection) -> int:
         """将过期的**未过分析阈值**的 raw_projects 归档。
 
         与 `_archive_raw_projects` 分开，因为两者语义不同：
@@ -366,7 +366,7 @@ class RawDataArchiver:
         )
         return count
 
-    def _archive_project_signals(self, conn) -> int:
+    def _archive_project_signals(self, conn: DbConnection) -> int:
         """将过期的 project_signals 归档。"""
         cutoff = self._cutoff(self.signals_retention_days)
 
@@ -414,7 +414,7 @@ class RawDataArchiver:
         )
         return count
 
-    def _delete_collection_logs(self, conn) -> int:
+    def _delete_collection_logs(self, conn: DbConnection) -> int:
         """删除过期的 collection_logs。"""
         cutoff = self._cutoff(self.logs_retention_days)
 
@@ -454,7 +454,7 @@ class RawDataArchiver:
 
     def _prune_archive_table(
         self,
-        conn,
+        conn: DbConnection,
         table: str,
         retention_days: int,
         event: str,
@@ -488,7 +488,7 @@ class RawDataArchiver:
         logger.info(f"{event}.pruned", deleted=count, cutoff=cutoff)
         return count
 
-    def _prune_raw_archive(self, conn) -> int:
+    def _prune_raw_archive(self, conn: DbConnection) -> int:
         """删除 raw_projects_archive 中超过保留期的行（默认 180 天）。"""
         return self._prune_archive_table(
             conn,
@@ -497,7 +497,7 @@ class RawDataArchiver:
             "archive.raw_archive",
         )
 
-    def _prune_signals_archive(self, conn) -> int:
+    def _prune_signals_archive(self, conn: DbConnection) -> int:
         """删除 project_signals_archive 中超过保留期的行（默认 365 天）。"""
         return self._prune_archive_table(
             conn,

@@ -11,7 +11,7 @@ import json
 import unicodedata
 import uuid
 from datetime import UTC
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import structlog
 
@@ -315,7 +315,7 @@ _MERGE_SCALAR_BEST_KNOWN = (
 _UNKNOWN_SCALARS = {None, "", "unknown", "none", "None"}
 
 
-def _is_unknown_scalar(value) -> bool:
+def _is_unknown_scalar(value: Any) -> bool:
     """值是否为"未知占位"。
 
     不能直接写 `value in _UNKNOWN_SCALARS`：这些字段来自外部 JSON，上游偶尔会给出
@@ -332,7 +332,7 @@ def _is_unknown_scalar(value) -> bool:
     return False
 
 
-def _discovered_at_sort_key(value) -> tuple[int, float, str]:
+def _discovered_at_sort_key(value: Any) -> tuple[int, float, str]:
     """discovered_at 的可比排序键（容忍字符串 / naive / aware 混用）。
 
     统一折算成 UTC 时间戳；无法解析时退到字符串比较，并排在可解析值之后，
@@ -353,11 +353,11 @@ def _discovered_at_sort_key(value) -> tuple[int, float, str]:
     return (1, 0.0, str(value))
 
 
-def _record_priority(record: dict, source_key: str) -> int:
+def _record_priority(record: dict[str, Any], source_key: str) -> int:
     return get_source_priority(str(record.get(source_key) or "unknown"))
 
 
-def _merge_sort_key(record: dict, source_key: str) -> tuple[int, str, str]:
+def _merge_sort_key(record: dict[str, Any], source_key: str) -> tuple[int, str, str]:
     """合并排序键：优先级 → 来源名 → 内容规范序（全序，保证顺序无关）。"""
     return (
         _record_priority(record, source_key),
@@ -366,7 +366,7 @@ def _merge_sort_key(record: dict, source_key: str) -> tuple[int, str, str]:
     )
 
 
-def _known_field_records(records: list[dict], field: str, source_key: str) -> list[dict]:
+def _known_field_records(records: list[dict[str, Any]], field: str, source_key: str) -> list[dict[str, Any]]:
     """返回对 `field` 有已知取值、且来源优先级并列最高的记录（§128 冲突裁决）。"""
     candidates = [r for r in records if field in r and not _is_unknown_scalar(r.get(field))]
     if not candidates:
@@ -375,7 +375,7 @@ def _known_field_records(records: list[dict], field: str, source_key: str) -> li
     return [r for r in candidates if _record_priority(r, source_key) == best]
 
 
-def _authoritative_value(records: list[dict], field: str, source_key: str):
+def _authoritative_value(records: list[dict[str, Any]], field: str, source_key: str) -> Any:
     """`manual`/`api` 对 `field` 的显式取值（无则返回 sentinel `_NO_VALUE`）。
 
     只有这两类来源是刻意输入而非抓取产物，它们的 `False`/`0` 是真实断言，
@@ -429,9 +429,9 @@ def merge_sources(sources: list[str]) -> str:
 
 
 def merge_raw_records(
-    records: list[dict],
+    records: list[dict[str, Any]],
     source_key: str = "source",
-) -> dict:
+) -> dict[str, Any]:
     """Merge multiple raw project records into one canonical record.
 
     Resolution rules:
@@ -505,7 +505,7 @@ def merge_raw_records(
 
     # 列表：全源并集，按来源优先级顺序去重保序
     for field in _MERGE_LIST_UNION:
-        combined: list = []
+        combined: list[Any] = []
         for record in sorted_records:
             value = record.get(field)
             if isinstance(value, list):
