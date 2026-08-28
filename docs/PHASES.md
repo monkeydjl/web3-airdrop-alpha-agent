@@ -254,6 +254,12 @@ Trivy                     pass    3s
   顺带查出根 `pyproject.toml` 的 `[tool.mypy]`（`strict = true`）是**死配置**：
   CI 从 `backend/` 运行并显式 `--config-file pyproject.toml`，读的是 backend 那份；
   真按根配置跑是 373 个错误。这条单独记着，没在本轮改。
+  → **已修（2026-08-25 立项 → 08-28 收口）**：把 backend 的 mypy 提到
+  `strict = true`（+ `warn_unreachable` / `warn_redundant_casts`），
+  374 个错误三批清零（先消第三方缺 stub 的配置噪音，再补机械注解，最后逐个啃
+  真实类型问题），分支 `fix/mypy-strict` 22 个提交，最终
+  `mypy app --config-file pyproject.toml --no-incremental` = **0 错误 / 120 文件**。
+  详见 CHANGELOG「后端类型检查从宽松提升到 mypy strict」。
 - ~~Docker 依赖未锁版本（`requirements.txt` 全浮动 `>=`）~~ →
   **已锁定**（2026-08-21）：拆成三个文件，运行时 13 个 + 开发 7 个全部精确 `==`，
   逐包与本地跑通 2500 测试的环境核对一致，并在干净 venv 里实测装完能启动。
