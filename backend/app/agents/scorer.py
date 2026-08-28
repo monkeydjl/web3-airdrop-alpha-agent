@@ -557,9 +557,8 @@ class ScorerAgent(BaseAgent):
         # count=0 从而宣称"低竞争"——子分说"我们不知道"，理由却说"竞争很低"。
         comp_score = subscores["competition"]
         sector = state.project.sector
-        has_competition_data = bool(sector) and sector in self.sector_counts
 
-        if has_competition_data:
+        if sector and sector in self.sector_counts:
             count = self.sector_counts[sector]
             if count <= 3:
                 candidates.append(("low competition", abs(comp_score - 50), False))

@@ -12,8 +12,9 @@ Reference:
 
 import asyncio
 import time
+from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 
@@ -155,7 +156,9 @@ class SimpleOrchestrator:
         # Calculate statistics
         elapsed_ms = (time.time() - start_time) * 1000
         scored_projects = [s for s in states if s.score is not None]
-        top_score = max((s.score for s in scored_projects), default=None)
+        top_score: int | None = None
+        if scored_projects:
+            top_score = max(cast(int, s.score) for s in scored_projects)
 
         # 先落库，再定状态。此前状态在持久化**之前**就算好了，于是"评分成功但一行都没
         # 写进去"依然返回 status=completed / error_count=0；上游 pipeline_run 又只看
@@ -219,7 +222,7 @@ class SimpleOrchestrator:
             persisted_project_rows=persisted_project_rows,
         )
 
-    async def _run_agent_span(self, agent_name: str, project_id: str, coro) -> Any:
+    async def _run_agent_span(self, agent_name: str, project_id: str, coro: Awaitable[Any]) -> Any:
         """Wrap an agent coroutine with a named span."""
         with _tracing.tracer.start_as_current_span(f"airdrop.agent.{agent_name}") as span:
             span.set_attribute("project_id", project_id)

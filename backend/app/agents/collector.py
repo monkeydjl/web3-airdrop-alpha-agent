@@ -37,7 +37,7 @@ logger = structlog.get_logger(__name__)
 _UNKNOWN_SECTOR_KEY = "Unknown"
 
 
-def _fold_sectorless_groups(groups: dict[str, list[dict]]) -> dict[str, list[dict]]:
+def _fold_sectorless_groups(groups: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
     """把"赛道未知"的分组并入同名且赛道已知的分组。
 
     dedup_key 是 `name::sector`。任务门户(galxe/layer3)、链上活动(etherscan)、
@@ -97,10 +97,10 @@ class CollectorAgent(BaseAgent):
     V2: Fetches from DefiLlama, CryptoRank, Twitter
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("collector")
 
-    def _raw_to_record(self, raw: dict) -> dict:
+    def _raw_to_record(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Normalize a raw seed/API record and assign deterministic project_id."""
         name = raw.get("name", "")
         sector = raw.get("sector")
@@ -148,7 +148,7 @@ class CollectorAgent(BaseAgent):
         }
 
     @staticmethod
-    def _infer_airdrop_flags(source_id: str, raw_data: dict) -> dict:
+    def _infer_airdrop_flags(source_id: str, raw_data: dict[str, Any]) -> dict[str, Any]:
         """Map collector raw_data → scoring flags used by Scorer/Risk.
 
         DefiLlama unlisted protocols should set no_token_yet; GitHub text
@@ -432,9 +432,9 @@ class CollectorAgent(BaseAgent):
             "funding_quality": float(funding.get("funding_quality") or 0),
         }
 
-    def _dedup_records(self, records: list[dict]) -> list[RawProject]:
+    def _dedup_records(self, records: list[dict[str, Any]]) -> list[RawProject]:
         """Group records by dedup key, merge conflicts, and return RawProjects."""
-        groups: dict[str, list[dict]] = {}
+        groups: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
             key = rec.pop("_dedup_key")
             key_str = key.to_string()
@@ -549,7 +549,7 @@ class CollectorAgent(BaseAgent):
         logger.info("collector.registry.started", collector_count=len(registry.list_enabled()))
         start_time = time.time()
 
-        records: list[dict] = []
+        records: list[dict[str, Any]] = []
         for collector in registry.list_enabled():
             try:
                 result: CollectorResult = await collector.collect()
@@ -624,7 +624,7 @@ class CollectorAgent(BaseAgent):
             limit=fetch_limit,
         )
 
-        records: list[dict] = []
+        records: list[dict[str, Any]] = []
         noise_skipped = 0
         # limit 约束的是**项目数**而非原始行数。此前按 records 长度截断，而
         # `_corroborating_rows` 追加的低分佐证记录排在列表末尾，于是只要过线的
@@ -827,7 +827,7 @@ class CollectorAgent(BaseAgent):
 
         return state
 
-    def collect_from_seed(self, seed_projects: list[dict]) -> list[RawProject]:
+    def collect_from_seed(self, seed_projects: list[dict[str, Any]]) -> list[RawProject]:
         """Collect projects from seed data.
 
         Args:
@@ -871,7 +871,7 @@ if __name__ == "__main__":
     # Test collector
     import asyncio
 
-    async def test():
+    async def test() -> None:
         print("=== Testing Collector Agent ===\n")
 
         # Create test seed data with duplicates
