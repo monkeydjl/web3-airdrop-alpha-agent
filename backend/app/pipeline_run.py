@@ -11,12 +11,12 @@ import json
 import time
 from datetime import UTC, datetime
 from math import floor
-from typing import Any
+from typing import Any, Callable
 
 import structlog
 
 from app import tracing as _tracing
-from app.agents.base import RawProject
+from app.agents.base import PipelineState, RawProject
 from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import run_orchestrator
 from app.collectors.persistence import CollectionRepository
@@ -50,7 +50,7 @@ OPPORTUNITY_SHADOW_EMPTY_STATS = {
 OPPORTUNITY_SHADOW_BUCKETS = 10_000
 
 
-def _record_shadow_metric(callback, *args) -> None:
+def _record_shadow_metric(callback: Callable[..., Any], *args: Any) -> None:
     try:
         callback(*args)
     except Exception as error:
@@ -74,7 +74,7 @@ def run_opportunity_shadow(
     *,
     enabled: bool,
     sample_rate: float,
-    service_factory=None,
+    service_factory: Callable[[], OpportunityService] | None = None,
 ) -> dict[str, int]:
     """Persist opportunity assessments without changing legacy pipeline state."""
     stats = OPPORTUNITY_SHADOW_EMPTY_STATS.copy()
@@ -126,7 +126,7 @@ def run_opportunity_shadow(
         return stats
     finally:
         _record_shadow_metric(record_opportunity_shadow_projects, stats)
-        if stats["sampled"] > 0:
+        if stats["sampled"] > 0 and shadow_start is not None:
             _record_shadow_metric(observe_opportunity_shadow_duration, time.perf_counter() - shadow_start)
 
 
@@ -397,16 +397,16 @@ def record_pipeline_run(
         logger.warning("pipeline.run_record_failed", run_id=run_id, error=str(exc))
 
 
-def _build_top_projects(states) -> list[dict]:
+def _build_top_projects(states: list[PipelineState]) -> list[dict[str, Any]]:
     top_projects = []
     # 按分数降序取前 10（原实现取输入前 10，与 API 文档“按分数排序”不符）
     ranked = sorted(
         states,
-        key=lambda s: s.score if getattr(s, "score", None) is not None else float("-inf"),
+        key=lambda s: s.score if s.score is not None else float("-inf"),
         reverse=True,
     )
     for state in ranked[:10]:
-        project_result = {
+        project_result: dict[str, Any] = {
             "id": state.project.id,
             "name": state.project.name,
             "sector": state.project.sector,
