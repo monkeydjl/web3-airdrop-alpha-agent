@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
+from typing import Any
 
 from app.config import settings
 
@@ -63,7 +65,7 @@ def redact(text: str) -> str:
 _SECRET_KEY_RE = re.compile(r"(?i)(^|_)(api[_-]?key|apikey|token|bearer|authorization|password|secret|dsn)($|_)")
 
 
-def _redact_value(key: str, value, secrets: list[str], depth: int = 0):
+def _redact_value(key: str, value: Any, secrets: list[str], depth: int = 0) -> Any:
     """按字段名与取值递归脱敏（容器最多下探 4 层，防御环状/超深结构）。"""
     if _SECRET_KEY_RE.search(str(key)):
         return "***REDACTED***"
@@ -79,7 +81,9 @@ def _redact_value(key: str, value, secrets: list[str], depth: int = 0):
     return value
 
 
-def redact_processor(_logger, _method_name, event_dict):
+def redact_processor(
+    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
+) -> Mapping[str, Any]:
     """structlog processor：按字段名脱敏，并对所有字符串值做已知密钥替换。
 
     SECURITY.md §3.3 要求"字段名匹配 `*_key|*_token|*_bearer|authorization|password`
@@ -103,7 +107,7 @@ class _TeeWriter:
     每条日志同时写入控制台与文件，两条路径共用同一条 processor 链（含脱敏）。
     """
 
-    def __init__(self, *streams) -> None:
+    def __init__(self, *streams: Any) -> None:
         self._streams = list(streams)
 
     def write(self, text: str) -> int:
@@ -129,7 +133,7 @@ _VALID_LEVELS = ("debug", "info", "warning", "error", "critical")
 #
 # 生产里它只被调一次，所以影响有限；但测试与任何"改完配置重新装一次日志"
 # 的场景都会稳定泄漏。重新配置前显式关掉上一个，是唯一干净的做法。
-_open_log_file = None
+_open_log_file: Any | None = None
 
 
 class _RotatingLogStream:
@@ -285,7 +289,7 @@ def configure_logging() -> None:
     # 重新配置前先释放上一次的句柄，否则每次调用都泄漏一个打开的文件。
     _close_previous_log_file()
 
-    streams: list = [sys.stdout]
+    streams: list[Any] = [sys.stdout]
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
