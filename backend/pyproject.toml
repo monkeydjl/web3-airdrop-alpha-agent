@@ -88,21 +88,25 @@ omit = ["*/tests/*", "*/test_*.py"]
 # 那时该改的是代码，或者把 `requires-python` 一起提到 >=3.12。
 python_version = "3.11"
 mypy_path = "."
+
+# 2026-08-25 从"宽松口径"提升到 strict（owner 决策，立项修完 374 个错误）。
+# 此前这一堆开关是 false/true 的混合，效果等于"让 mypy 跑起来但基本不设防"
+# —— 类型检查器没纪律，和没装的门锁一样：CI 绿，但什么都拦不住。
+# strict = true 等价于同时打开 disallow_untyped_defs / disallow_untyped_calls /
+# disallow_incomplete_defs / warn_return_any / no_implicit_reexport /
+# warn_unused_ignores 等一整套。收紧后若 CI 红，是代码该改，不是开关回退。
+strict = true
+# 与根 pyproject.toml 的 [tool.mypy] 对齐：strict 套餐不含下面两个，
+# 根配置额外开了，这里也补上（warn_unreachable 抓死代码，warn_redundant_casts
+# 抓多余的 cast）。保持两份口径一致，避免"根说严、backend 说松"再次分裂。
+warn_unreachable = true
+warn_redundant_casts = true
+
+# 只豁免"已装依赖但没配 stub"的第三方库的 import 检查，
+# 项目内 app/ 的类型纪律一条都不豁免。
+[[tool.mypy.overrides]]
+module = ["apscheduler.*", "structlog.*", "pandas", "openpyxl.*", "opentelemetry.*"]
 ignore_missing_imports = true
-strict_optional = false
-warn_return_any = false
-warn_unused_ignores = false
-warn_unreachable = false
-disallow_untyped_defs = false
-disallow_untyped_calls = false
-disallow_incomplete_defs = false
-check_untyped_defs = true
-no_implicit_optional = false
-allow_untyped_globals = true
-allow_any_generics = true
-allow_subclassing_any = true
-allow_untyped_decorators = true
-implicit_reexport = true
 
 [tool.coverage.report]
 exclude_lines = [
