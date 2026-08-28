@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, Self, cast
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import (
@@ -110,7 +110,7 @@ class ProbabilityRange(BaseModel):
     high: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
-    def ordered(self):
+    def ordered(self) -> Self:
         if not self.low <= self.base <= self.high:
             raise ValueError("expected low <= base <= high")
         return self
@@ -123,7 +123,7 @@ class MoneyRange(BaseModel):
     high: float = Field(ge=0)
 
     @model_validator(mode="after")
-    def ordered(self):
+    def ordered(self) -> Self:
         if not self.low <= self.base <= self.high:
             raise ValueError("expected low <= base <= high")
         return self
@@ -172,7 +172,7 @@ class SignedMoneyRange(BaseModel):
     high: float
 
     @model_validator(mode="after")
-    def ordered(self):
+    def ordered(self) -> Self:
         if not self.low <= self.base <= self.high:
             raise ValueError("expected low <= base <= high")
         return self
@@ -230,7 +230,7 @@ class DecisionResult(BaseModel):
     expires_at: datetime
 
     @model_validator(mode="after")
-    def remediation_matches_status(self):
+    def remediation_matches_status(self) -> Self:
         if self.requires_remediation != (self.status == DecisionStatus.BLOCKED):
             raise ValueError("requires_remediation must be true exactly when status is BLOCKED")
         return self
@@ -248,7 +248,7 @@ class OpportunityProfile(BaseModel):
     loss_preference: Literal["conservative"]
 
     @model_validator(mode="after")
-    def ordered_limits(self):
+    def ordered_limits(self) -> Self:
         if self.wallet_count_min > self.wallet_count_max:
             raise ValueError("wallet_count_min must not exceed wallet_count_max")
         if self.horizon_months != (3, 6):
@@ -330,7 +330,7 @@ class OpportunityAssessment(BaseModel):
     expires_at: datetime
 
     @model_validator(mode="after")
-    def remediation_matches_status(self):
+    def remediation_matches_status(self) -> Self:
         if self.requires_remediation != (self.status == DecisionStatus.BLOCKED):
             raise ValueError("requires_remediation must be true exactly when status is BLOCKED")
         return self
@@ -338,8 +338,8 @@ class OpportunityAssessment(BaseModel):
     @field_validator("factor_snapshot", mode="after")
     @classmethod
     def freeze_factor_snapshot(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return _freeze_json(value)
+        return cast(Mapping[str, Any], _freeze_json(value))
 
     @field_serializer("factor_snapshot", when_used="json")
     def serialize_factor_snapshot(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return _thaw_json(value)
+        return cast(dict[str, Any], _thaw_json(value))
