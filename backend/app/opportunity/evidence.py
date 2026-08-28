@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from math import isfinite
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, cast
 
 from app.opportunity.models import (
     ConfidenceSet,
@@ -139,7 +139,7 @@ def _legacy_signals(project_row: Mapping[str, Any]) -> Mapping[str, Any]:
     return signals if isinstance(signals, Mapping) else {}
 
 
-def _range_value(record: EvidenceRecord, model: type[ProbabilityRange] | type[MoneyRange]):
+def _range_value(record: EvidenceRecord, model: type[ProbabilityRange] | type[MoneyRange]) -> ProbabilityRange | MoneyRange:
     value = record.value
     if not isinstance(value, Mapping):
         raise TypeError(f"{record.factor_key} must be a range object")
@@ -186,11 +186,11 @@ def _non_negative_number(record: EvidenceRecord) -> float:
 
 
 def _probability_range(record: EvidenceRecord) -> ProbabilityRange:
-    return _range_value(record, ProbabilityRange)
+    return cast(ProbabilityRange, _range_value(record, ProbabilityRange))
 
 
 def _money_range(record: EvidenceRecord) -> MoneyRange:
-    return _range_value(record, MoneyRange)
+    return cast(MoneyRange, _range_value(record, MoneyRange))
 
 
 def _policy_value(record: EvidenceRecord) -> str:
@@ -374,6 +374,8 @@ def _without_validly_superseded_blockers(records: list[EvidenceRecord], now: dat
     edges: dict[str, str] = {}
     for record in records:
         target_id = record.supersedes_evidence_id
+        if target_id is None:
+            continue
         target = by_id.get(target_id)
         if (
             target is not None
@@ -433,10 +435,10 @@ def _without_validly_superseded_blockers(records: list[EvidenceRecord], now: dat
                 break
             ancestor_id = valid_edges[ancestor_id]
         else:
-            ancestor = by_id.get(ancestor_id)
-            ancestor_value = _normalized_record(ancestor) if ancestor is not None else None
-            if ancestor_value is not None and ancestor_value[1] is True:
-                active.append(ancestor)
+            final_ancestor = by_id.get(ancestor_id)
+            ancestor_value = _normalized_record(final_ancestor) if final_ancestor is not None else None
+            if final_ancestor is not None and ancestor_value is not None and ancestor_value[1] is True:
+                active.append(final_ancestor)
     return active
 
 
@@ -499,7 +501,9 @@ def build_inputs(
 
     multiwallet_policy: Literal["allowed", "not_forbidden", "forbidden", "unknown"] = "unknown"
     if "multiwallet_policy" in normalized:
-        multiwallet_policy = normalized["multiwallet_policy"]
+        multiwallet_policy = cast(
+            Literal["allowed", "not_forbidden", "forbidden", "unknown"], normalized["multiwallet_policy"]
+        )
 
     project_failure_risk = None
     if "project_failure_risk" in normalized:
@@ -587,8 +591,12 @@ def build_inputs(
         authorization_exit_known=normalized.get("authorization_exit_known"),
         distribution_catalyst_3_6m=normalized.get("distribution_catalyst_3_6m"),
         project_active=normalized.get("project_active"),
-        opportunity_timing=normalized.get("opportunity_timing", "unknown"),
-        profile_fit=normalized.get("profile_fit", "unknown"),
+        opportunity_timing=cast(
+            Literal["open", "late", "closed", "unknown"], normalized.get("opportunity_timing", "unknown")
+        ),
+        profile_fit=cast(
+            Literal["fit", "single_wallet_only", "mismatch", "unknown"], normalized.get("profile_fit", "unknown")
+        ),
         weekly_time_confirmed_minimum=(
             "weekly_maintenance_hours" in latest
             and latest["weekly_maintenance_hours"][0].observation_type in {"observed", "derived"}
