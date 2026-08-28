@@ -8,6 +8,45 @@
 
 ## [Unreleased]
 
+### Changed — Agent 路径的预算拦截不再与"调用失败"混作一条
+
+流水线里 Agent 调 LLM 走的是 `BaseAgent.llm_enhance()`，此前它用
+`llm_chat_simple()` —— 那个简化入口**丢掉 `refused_reason`**，于是
+「预算耗尽（预期降级）」「账本不可读（fail-closed **事故**）」「接口全挂」
+三者在 agent 路径上长得一模一样：都返回 None，日志都只有一条
+`llm.failed`（或什么都没有）。`/api/v1/run` 路径早就有
+`degraded_reason` 四分法，Agent 路径却还在一锅烩。
+
+现在 `llm_enhance` 改用完整的 `llm_chat()` 结果并按拒绝原因分流：
+
+| 场景 | 日志事件 | 级别 |
+|---|---|---|
+| 预算耗尽（预期降级，规则引擎接管） | `llm.budget_refused`（带 reason） | info |
+| 账本不可读 → fail-closed | `llm.ledger_fail_closed` | **error**（对应 critical 告警 `LLMBudgetLedgerUnavailable`） |
+| 接口/网络真失败 | `llm.failed`（含异常原文） | error |
+
+**把"预算用完了"打成 error 会让它和"LLM 坏了"再次混在一起**
+—— 降级是 ADR-001 的设计行为，级别也是判读的一部分。
+
+新增 5 条测试钉死这张表（`tests/test_agent_budget_refusal.py`）。
+两条实测教训写进了测试文件头：
+
+- pytest 的 `caplog` 收不到本项目的日志 —— 日志走 structlog 自己的
+  输出管道，不经 stdlib handler；要用 `structlog.testing.capture_logs()`。
+- `capture_logs` 的条目里也**没有 level 字段**（level 由生产端渲染
+  处理器补上），「fail-closed 必须 error 级」这条只能用方法替身
+  直接看代码调用的是 `.error` 还是 `.info`。
+
+**变异测试 4/4 符合预期**：把分流拆回 `llm.failed`、事件名并回去、
+error 降成 info，三种倒退全部被门禁拦下；无害注释不误伤。
+
+OPERATIONS §4.4（Agent 路径判读口诀）与 API_SPEC `degraded_reason`
+表同步补了同口径说明。
+
+`llm_chat_simple()` 因此在产品代码里**零调用方**了 —— 保留为公开
+便捷入口（`test_prompt_version.py` 仍在测它的透传行为），
+已标记为"无产品调用方"，待死代码清理时一并处置。
+
 ### Fixed — 安全扫描的镜像缓存让 apt-get 层停在漏洞修复之前
 
 PR #23 的 `Docker Image Trivy Scan` 突然报 3 个 HIGH，其中

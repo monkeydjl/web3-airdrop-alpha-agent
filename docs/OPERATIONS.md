@@ -439,6 +439,20 @@ cd backend
 >    **账本读不出来**（DB 锁 / 磁盘满 / 表缺失），此时策略是拒绝调用（fail closed）。
 >    先查 `llm.budget.ledger_unavailable` 日志和 SQLite 是否可写，不要先怀疑预算配置。
 >
+> **Agent 路径的同一件事（2026-08-25 补齐）**：流水线里的 Agent 调 LLM
+> 走的是另一条入口（`BaseAgent.llm_enhance`），此前它拿不到拒绝原因，
+> 预算拦截和接口全挂在日志里**长得一模一样**（都只有一条 `llm.failed`），
+> 只能靠指标间接分辨。现在已分流：
+>
+> | 场景 | 日志事件 | 级别 |
+> |---|---|---|
+> | 预算耗尽（预期降级） | `llm.budget_refused`（带 reason） | info |
+> | 账本不可读 → fail-closed | `llm.ledger_fail_closed` | **error**（对应上面 critical 告警） |
+> | 接口/网络真失败 | `llm.failed` | error |
+>
+> 判读口诀：先看有没有 `budget_refused` / `ledger_fail_closed` ——
+> 有前者是"今天花完了"，有后者是"账本坏了"，都没有才轮到怀疑接口本身。
+>
 > 另一道独立的成本闸门仍然在：`/api/v1/run` 的请求频率限制 ——
 > LLM 开启时每小时 **1** 次，关闭时每小时 **10** 次
 > （`backend/app/rate_limit.py` 的 `_expensive_limits`）。它管频率，预算管金额，

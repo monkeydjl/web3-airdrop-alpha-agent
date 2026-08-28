@@ -794,6 +794,50 @@ PR #23 的 CI 36 项里只有一项红：Docker 镜像扫描报 3 个 HIGH，
 
 ---
 
+## 二十、Agent 路径的预算拦截终于和"真失败"分得开了
+
+清单上挂了很久的一条：`/api/v1/run` 那边预算耗尽会明说
+（`degraded_reason: budget_exceeded`），但流水线里 Agent 调 LLM 走的另一条
+入口拿不到拒绝原因 —— 「预算用完」「账本坏了」「接口全挂」三种情况
+在日志里都长成一个样子。出问题时没法直接判断该调预算、查数据库
+还是查接口。
+
+修法本身不大：`BaseAgent.llm_enhance()` 从 `llm_chat_simple()`（丢掉
+`refused_reason`）换成完整的 `llm_chat()`，按拒绝原因分流：
+
+| 场景 | 日志事件 | 级别 |
+|---|---|---|
+| 预算耗尽（预期降级，规则引擎接管） | `llm.budget_refused`（带 reason） | info |
+| 账本读不出来 → fail-closed 事故 | `llm.ledger_fail_closed` | **error**（对应 critical 告警） |
+| 接口/网络真失败 | `llm.failed`（含异常原文） | error |
+
+**把"预算用完了"打成 error 会再次混进"LLM 坏了"** —— 降级是 ADR-001
+的设计行为，级别也是判读的一部分。
+
+### 顺手踩到两条测试基建的实情
+
+- **caplog 收不到这个项目的日志**。日志走 structlog 自己的输出管道，
+  不经过 Python 标准库的 handler —— 我第一版用 caplog 断言，拿到的是
+  空字符串，而屏幕上明明打印着那行日志。正确工具是
+  `structlog.testing.capture_logs()`。
+- **capture_logs 的条目里也没有 level 字段**。于是「账本坏了必须是
+  error 级」这条没法用它验证，最后换了个直接的办法：把 agent 的
+  logger 换成会记下"调用了哪个方法"的替身，看代码调的是 `.error`
+  还是 `.info`。
+
+### 门禁做了变异验证
+
+三种"倒退"各变异一次 —— 分流拆掉改回 failed、账本事故并回普通失败、
+error 降成 info —— **全部被测试拦下**；插一行无害注释不误伤。
+4/4 符合预期，这条分类以后不会悄悄退回一锅烩。
+
+一个诚实的注脚：改完之后 `llm_chat_simple()` 在产品代码里就没有
+调用方了。它还是个有测试的公开便捷入口，先保留、标记"无产品调用方"，
+等将来死代码清理时一起决定去留 —— 没有顺手删，因为"顺手"正是
+不该对不可逆操作做的事。
+
+---
+
 ## 本轮的验证记录（实际跑过的命令）
 
 | 检查 | 结果 |
@@ -844,6 +888,13 @@ PR #23 的 CI 36 项里只有一项红：Docker 镜像扫描报 3 个 HIGH，
 | `scripts/check_terminology.py --all` | exit 0 |
 | 前端 `tsc --noEmit` / `eslint` / `node test.mjs` | 0 / 0 / **20 passed, 0 failed** |
 | 完整后端套件（含 CI 的三个 `-W error::`） | 见交接说明 |
+| `pytest tests/test_agent_budget_refusal.py`（新写 5 条：分流 info/error 分级/反向失败/成功/无响应） | **5 passed** |
+| `pytest tests/test_prompt_version.py`（两个 mock 从 llm_chat_simple 改到 llm_chat） | **10 passed** |
+| **变异测试：预算分流门禁 4 条（3 该拦 + 1 反向无害）** | **0 个结果与预期不符** |
+| 完整后端套件（budget refusal 改动全部落定后） | **3036 passed, 9 skipped, 88.82% cov, exit 0**（39m57s） |
+| `ruff check .` / `ruff format --check app tests` | All checks passed / 247 files |
+| `mypy app --config-file pyproject.toml` | **120 源文件**无问题 |
+| `scripts/check_encoding.py --strict` | **513 文件**全部正常 |
 
 **预算的 11 个变异**：移除 `check_budget` 调用、成本估算恒为 0、兜底价降为 0、
 边界 `>=` 改 `>`、账本失败改 fail open、不再记账、缺 usage 时 token 估 0、
