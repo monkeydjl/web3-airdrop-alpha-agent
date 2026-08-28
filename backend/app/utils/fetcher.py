@@ -20,7 +20,7 @@ import json
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import httpx
 import structlog
@@ -57,7 +57,7 @@ class CircuitBreaker:
         threshold: int | None = None,
         timeout: int | None = None,
         window_size: int = 100,
-    ):
+    ) -> None:
         self.threshold = threshold or settings.fetcher_circuit_breaker_threshold
         self.timeout = timeout or settings.fetcher_circuit_breaker_timeout_seconds
         self.window_size = window_size
@@ -67,7 +67,7 @@ class CircuitBreaker:
         self.state = "CLOSED"
         self._update_metric()
 
-    def record_success(self):
+    def record_success(self) -> None:
         """Record successful request"""
         if self.state == "HALF_OPEN":
             self.state = "CLOSED"
@@ -75,7 +75,7 @@ class CircuitBreaker:
             self._update_metric()
             logger.info("circuit_breaker.closed")
 
-    def record_failure(self):
+    def record_failure(self) -> None:
         """Record failed request"""
         self.failures.append(time.time())
         self.last_failure_time = time.time()
@@ -105,7 +105,7 @@ class CircuitBreaker:
         # HALF_OPEN: allow one request to test
         return True
 
-    def _update_metric(self):
+    def _update_metric(self) -> None:
         """Sync circuit breaker state to Prometheus gauge."""
         # 指标是 best-effort，但不能完全静默：suppress 保证不影响主流程，
         # debug 日志保留排查线路（指标注册表冲突等）。
@@ -125,7 +125,7 @@ class HTTPCache:
     settings.fetcher_cache_dir is non-empty.
     """
 
-    def __init__(self, max_size: int = 1000, cache_dir: str | None = None):
+    def __init__(self, max_size: int = 1000, cache_dir: str | None = None) -> None:
         self._cache: dict[str, tuple[Any, float]] = {}
         self._max_size = max_size
         self._cache_dir = Path(cache_dir) if cache_dir else None
@@ -186,7 +186,7 @@ class HTTPCache:
             with contextlib.suppress(OSError):
                 disk_path.unlink(missing_ok=True)
 
-    def set(self, key: str, value: Any):
+    def set(self, key: str, value: Any) -> None:
         """Set cached value in both tiers."""
         # Memory tier
         if len(self._cache) >= self._max_size:
@@ -205,7 +205,7 @@ class HTTPCache:
                 # Disk write failure is non-fatal — memory cache still serves
                 logger.debug("fetch.disk_cache_write_failed", key=key)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all cached values (memory + disk)."""
         self._cache.clear()
         if self._cache_dir and self._cache_dir.exists():
@@ -243,7 +243,7 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _semaphore
 
 
-def _reset_semaphore():
+def _reset_semaphore() -> None:
     """Reset semaphore (for tests)."""
     global _semaphore, _in_flight
     _semaphore = None
@@ -264,7 +264,7 @@ async def fetch(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     method: str = "GET",
-    **kwargs,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Fetch URL with two-tier cache, retry, circuit breaker, and semaphore.
 
@@ -308,7 +308,7 @@ async def fetch(
     if cached is not None:
         FETCHER_CACHE_HITS.inc()
         logger.debug("fetch.cache_hit", url=url, cache_key=cache_key)
-        return cached
+        return cast(dict[str, Any], cached)
 
     FETCHER_CACHE_MISSES.inc()
 
@@ -332,14 +332,14 @@ async def _fetch_with_retry(
     max_retries: int,
     retry_delay: float,
     method: str,
-    **kwargs,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Internal: perform HTTP request with retry and cache result on success.
 
     不收 cache_ttl：写入侧只记时间戳（`_cache.set`），TTL 由读取侧
     `_cache.get(key, ttl)` 判定，因此这里拿到 ttl 也无处可用。
     """
-    last_error = None
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -352,7 +352,7 @@ async def _fetch_with_retry(
             _cache.set(cache_key, data)
 
             logger.info("fetch.success", url=url, attempt=attempt + 1, status=response.status_code)
-            return data
+            return cast(dict[str, Any], data)
 
         except (httpx.HTTPError, httpx.TimeoutException) as e:
             last_error = e
@@ -374,7 +374,11 @@ async def _fetch_with_retry(
                 logger.error("fetch.failed", url=url, attempts=max_retries, error=str(e))
 
     # All retries exhausted
-    raise last_error
+    # max_retries ≤ 0 时循环不执行、last_error 仍为 None，直接 `raise None`
+    # 会抛误导性的 TypeError —— 这里补一个清晰的 RuntimeError。
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"fetch failed for {url} (no attempts made)")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -382,7 +386,7 @@ async def _fetch_with_retry(
 # ═══════════════════════════════════════════════════════════════
 
 
-def clear_cache():
+def clear_cache() -> None:
     """Clear HTTP cache (memory + disk, useful for tests)."""
     _cache.clear()
     logger.info("fetch.cache_cleared")
@@ -393,7 +397,7 @@ def get_circuit_breaker_state() -> str:
     return _circuit_breaker.state
 
 
-def reset_circuit_breaker():
+def reset_circuit_breaker() -> None:
     """Reset circuit breaker (useful for tests)."""
     _circuit_breaker.state = "CLOSED"
     _circuit_breaker.failures.clear()
@@ -401,7 +405,7 @@ def reset_circuit_breaker():
     logger.info("circuit_breaker.reset")
 
 
-def reset_for_testing():
+def reset_for_testing() -> None:
     """Reset all global state for test isolation."""
     clear_cache()
     reset_circuit_breaker()
@@ -409,7 +413,7 @@ def reset_for_testing():
 
 if __name__ == "__main__":
     # Test fetcher
-    async def test():
+    async def test() -> None:
         # Test cache
         data1 = await fetch("https://httpbin.org/json", cache_ttl=60)
         print("First fetch successful")
