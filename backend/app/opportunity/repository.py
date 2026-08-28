@@ -2,7 +2,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 from app.db import _as_db_connection
 from app.opportunity.models import (
@@ -96,9 +96,11 @@ class OpportunityRepository:
                     raise ValueError("supersession target must have the same project and factor")
                 if _as_utc(target["observed_at"]) > _as_utc(stored.observed_at):
                     raise ValueError("supersession target must be chronological")
-                current_id = stored.supersedes_evidence_id
+                current_id: str | None = stored.supersedes_evidence_id
                 visited: set[str] = set()
-                while current_id is not None:
+                while True:
+                    if current_id is None:
+                        break
                     if current_id == stored.evidence_id or current_id in visited:
                         raise ValueError("supersession must not create a cycle")
                     visited.add(current_id)
@@ -107,7 +109,7 @@ class OpportunityRepository:
                            WHERE evidence_id = ?""",
                         (current_id,),
                     ).fetchone()
-                    current_id = ancestor["supersedes_evidence_id"] if ancestor is not None else None
+                    current_id = cast(str | None, ancestor["supersedes_evidence_id"]) if ancestor is not None else None
             self._conn.execute(
                 """INSERT INTO opportunity_evidence (
                        evidence_id, project_id, factor_key, value_json, value_type,

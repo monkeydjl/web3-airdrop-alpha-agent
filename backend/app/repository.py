@@ -327,7 +327,8 @@ class ProjectRepository:
                 return None
             d = dict_from_row(row)
             meta = parse_meta(d.get("meta"))
-            prev = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+            raw_signals = meta.get("signals")
+            prev = raw_signals if isinstance(raw_signals, dict) else {}
             merged = {**prev, **signals}
             # drop Nones that would wipe intentionally? keep explicit null clear
             meta["signals"] = merged
@@ -599,7 +600,7 @@ class ProjectRepository:
         try:
             cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             conn.commit()
-            deleted = cursor.rowcount > 0
+            deleted = bool(cursor.rowcount > 0)
 
             if deleted:
                 logger.info(
@@ -641,8 +642,8 @@ class LogRepository:
         run_id: str,
         project_id: str | None = None,
         agent_name: str | None = None,
-        input_data: dict | None = None,
-        output_data: dict | None = None,
+        input_data: dict[str, Any] | None = None,
+        output_data: dict[str, Any] | None = None,
         error: str | None = None,
         duration_ms: int | None = None,
     ) -> None:

@@ -26,6 +26,7 @@ import structlog
 
 from app.agents.scorer import LABEL_THRESHOLDS, WEIGHTS
 from app.config import settings
+from app.db import DbConnection
 
 logger = structlog.get_logger(__name__)
 
@@ -115,7 +116,7 @@ def _outcome_to_label(outcome: str) -> ScoreLabel | None:
     return mapping.get(outcome)
 
 
-def extract_samples(conn) -> list[CalibrationSample]:
+def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
     """从 DB 提取校准样本。
 
     JOIN feedback ↔ projects，仅保留有监督信号的样本：
@@ -168,7 +169,7 @@ def extract_samples(conn) -> list[CalibrationSample]:
             note = row["note"] or ""
             for label in (LABEL_FARM, LABEL_WATCH, LABEL_IGNORE):
                 if label.lower() in note.lower():
-                    true_label = label  # type: ignore[assignment]
+                    true_label = label
                     break
 
         if true_label is None and outcome:
@@ -386,7 +387,7 @@ def grid_search(
 
 
 def record_candidate(
-    conn,
+    conn: DbConnection,
     from_version: str,
     to_version: str,
     weights: dict[str, float],
@@ -431,7 +432,7 @@ def record_candidate(
 
 
 def run_calibration(
-    conn,
+    conn: DbConnection,
     *,
     search: bool = False,
     triggered_by: str = "human",

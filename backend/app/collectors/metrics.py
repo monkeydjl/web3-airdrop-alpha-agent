@@ -23,7 +23,7 @@ from typing import Any
 
 import structlog
 
-from app.db import get_connection
+from app.db import DbConnection, get_connection
 
 logger = structlog.get_logger(__name__)
 
@@ -66,16 +66,16 @@ class CollectionMetrics:
     Reads from collection_logs, data_sources, raw_projects tables.
     """
 
-    def __init__(self, conn: Any | None = None):
+    def __init__(self, conn: DbConnection | None = None):
         self._conn = conn
 
-    def _get_conn(self):
+    def _get_conn(self) -> DbConnection:
         return self._conn if self._conn is not None else get_connection()
 
     def _should_close(self) -> bool:
         return self._conn is None
 
-    def _execute(self, query: str, params: tuple = ()):
+    def _execute(self, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         conn = self._get_conn()
         try:
             cursor = conn.execute(query, params)

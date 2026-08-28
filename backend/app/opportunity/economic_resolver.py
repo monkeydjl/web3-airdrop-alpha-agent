@@ -152,7 +152,7 @@ def _values_agree(factor_key: str, left: Any, right: Any) -> bool:
         a = _to_decimal(left)
         b = _to_decimal(right)
         if a is None or b is None:
-            return left == right
+            return bool(left == right)
         scale = max(abs(a), abs(b))
         tol = max(_ABS_TOL, _ABS_TOL * scale)
         return abs(a - b) <= tol
@@ -160,10 +160,10 @@ def _values_agree(factor_key: str, left: Any, right: Any) -> bool:
         a = _to_decimal(left)
         b = _to_decimal(right)
         if a is None or b is None:
-            return left == right
+            return bool(left == right)
         return abs(a - b) <= _ABS_TOL
     # JSON / bool / int (and any other exact types): exact equality
-    return left == right
+    return bool(left == right)
 
 
 def _passes_filter(record: EvidenceRecord, project_id: str, now: datetime) -> bool:
@@ -209,7 +209,7 @@ def _resolved(record: EvidenceRecord) -> ResolvedEconomicFactor:
     # Prefer closed contract type; fall back to record when already matching family.
     record_vt = record.value_type
     if record_vt in {"bool", "number", "string", "json"}:
-        value_type = record_vt  # type: ignore[assignment]
+        value_type = record_vt
     return ResolvedEconomicFactor(
         factor_key=record.factor_key,
         value=record.value,
