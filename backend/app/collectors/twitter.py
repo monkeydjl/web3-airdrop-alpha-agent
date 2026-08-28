@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any, AsyncIterator, ClassVar, cast
 
 import httpx
 import structlog
@@ -104,7 +104,9 @@ class TwitterCollector(DataCollector):
         }
 
     @asynccontextmanager
-    async def _http_client(self, client: httpx.AsyncClient | None = None):
+    async def _http_client(
+        self, client: httpx.AsyncClient | None = None
+    ) -> AsyncIterator[httpx.AsyncClient]:
         """复用调用方传入的客户端，否则临时自建一个。
 
         批量查询（KOL 分批 / 多关键词）传入同一客户端即可跨请求复用连接，
@@ -134,7 +136,7 @@ class TwitterCollector(DataCollector):
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected Twitter response type: {type(data)}")
 
-        return data.get("data", [])
+        return cast(list[dict[str, Any]], data.get("data", []))
 
     def _extract_project_signals(self, tweets: list[dict[str, Any]]) -> list[RawDiscovery]:
         """从推文列表中提取项目信号，生成 RawDiscovery。"""
@@ -251,19 +253,19 @@ class TwitterCollector(DataCollector):
         camel_words = re.findall(r"\b[A-Z][a-z]+[A-Z][a-zA-Z0-9]+\b", text)
         for word in camel_words:
             if word not in self.STOP_WORDS:
-                return word
+                return cast(str, word)
 
         # 3. 普通首字母大写词，排除常见非项目词
         words = re.findall(r"\b[A-Z][a-zA-Z0-9]{2,}\b", text)
         for word in words:
             if word not in self.STOP_WORDS:
-                return word
+                return cast(str, word)
 
         # 4. 从 @handle 中提取（非知名账号）
         handles = re.findall(r"@([A-Za-z0-9_]{3,})", text)
         for handle in handles:
             if handle.lower() not in {a.lower() for a in DEFAULT_KOL_ACCOUNTS}:
-                return handle.capitalize()
+                return cast(str, handle.capitalize())
 
         return None
 
@@ -583,7 +585,7 @@ class TwitterKeywordCollector(TwitterCollector):
 if __name__ == "__main__":
     import asyncio
 
-    async def main():
+    async def main() -> None:
         kol = TwitterKolCollector()
         keyword = TwitterKeywordCollector()
         for collector in (kol, keyword):
