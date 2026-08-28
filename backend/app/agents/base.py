@@ -301,12 +301,17 @@ class BaseAgent(ABC):
             return None
 
         try:
-            from app.llm.client import llm_chat_simple
+            from app.llm.client import llm_chat
 
             # E3 (§5.4.9): 尝试从 prompt_versions 表获取当前 agent 的默认版本
             prompt_version = self._resolve_prompt_version()
 
-            content = await llm_chat_simple(
+            # ⚠ 这里刻意用完整的 llm_chat()，不用 llm_chat_simple()：
+            # simple 版丢掉 `refused_reason`，于是「预算拦下（预期行为）」
+            # 和「接口全挂了（要告警）」在 agent 路径上长成一模一样 ——
+            # 都返回 None、都只剩一条日志。OPERATIONS 排障清单里
+            # "budget refusals indistinguishable from failures" 指的就是这里。
+            result = await llm_chat(
                 messages=[
                     {"role": "system", "content": f"You are the {self.name} analysis agent."},
                     {"role": "user", "content": _prompt},
@@ -315,6 +320,31 @@ class BaseAgent(ABC):
                 max_tokens=512,
                 prompt_version=prompt_version,
             )
+
+            if result.refused_reason:
+                if result.refused_reason == "ledger_unavailable":
+                    # fail-closed：账本读不出来 → 整个 LLM 路径被拦。
+                    # 这是**事故**不是策略（alert_rules 里的
+                    # LLMBudgetLedgerUnavailable 是 critical），必须用 error 级别。
+                    self.logger.error(
+                        "llm.ledger_fail_closed",
+                        agent=self.name,
+                        project_id=state.project.id,
+                        reason=result.refused_reason,
+                    )
+                else:
+                    # budget_exceeded 等：预期内的当日降级（ADR-001 的
+                    # 规则引擎接管），info 级别即可 —— 打成 error 会让
+                    # "预算用完了"和"LLM 坏了"再次混在一起。
+                    self.logger.info(
+                        "llm.budget_refused",
+                        agent=self.name,
+                        project_id=state.project.id,
+                        reason=result.refused_reason,
+                    )
+                return None
+
+            content = result.text
             if content:
                 self.logger.info(
                     "llm.success",

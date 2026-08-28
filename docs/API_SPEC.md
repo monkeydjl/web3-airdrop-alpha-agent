@@ -1486,6 +1486,10 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 | `ledger_unavailable` | 预算账本读不出来，按 fail-closed 停用 LLM | 查数据库可写性，**不是**预算配置问题 |
 | `llm_error` | 所有接口都失败了 | 查 `llm.failed` 日志 / 接口可用性 |
 
+> **Agent 路径同口径（2026-08-25 起）**：流水线 Agent 侧按拒绝原因分流成
+> `llm.budget_refused`（info）与 `llm.ledger_fail_closed`（error，fail-closed
+> 事故），不再与 `llm.failed` 混作一条 —— 判读详见 OPERATIONS §4.4。
+
 > 这个字段是 2026-08-24 新增的。此前响应里只有 `mode`，
 > 四种原因**完全无法区分**，前端只能对所有 `rule` 说同一句
 > 「当前未配置大模型密钥」—— 在密钥已配好、只是预算耗尽时那句话是错的，

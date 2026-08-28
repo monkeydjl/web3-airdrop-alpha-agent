@@ -160,10 +160,16 @@ class TestBaseAgentLLMEnhancePromptVersion:
 
         agent = _make_test_agent()
 
-        # Mock llm_chat_simple to return content
+        # 2026-08-25 起 llm_enhance 改用完整的 llm_chat()（为了拿到
+        # refused_reason 区分预算拦截与真失败），所以这里 patch 的是
+        # llm_chat，返回值也从裸字符串变成 LLMResult。
         with (
             patch("app.db.get_connection", return_value=db_conn),
-            patch("app.llm.client.llm_chat_simple", new_callable=AsyncMock, return_value="LLM analysis result"),
+            patch(
+                "app.llm.client.llm_chat",
+                new_callable=AsyncMock,
+                return_value=LLMResult(text="LLM analysis result", provider_used="p1", model_used="m1"),
+            ),
         ):
             result = await agent.llm_enhance(state, "test prompt")
 
@@ -189,7 +195,11 @@ class TestBaseAgentLLMEnhancePromptVersion:
 
         with (
             patch("app.db.get_connection", return_value=db_conn),
-            patch("app.llm.client.llm_chat_simple", new_callable=AsyncMock, return_value="result without PV"),
+            patch(
+                "app.llm.client.llm_chat",
+                new_callable=AsyncMock,
+                return_value=LLMResult(text="result without PV", provider_used="p1", model_used="m1"),
+            ),
         ):
             result = await agent.llm_enhance(state, "test prompt")
 
