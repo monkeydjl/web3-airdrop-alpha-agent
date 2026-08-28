@@ -1,7 +1,7 @@
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal, cast
 
 from app.opportunity.decision import decide
 from app.opportunity.economics import calculate_economics
@@ -16,6 +16,8 @@ from app.opportunity.models import (
     EvidenceRecord,
     OpportunityAssessment,
     OpportunityInputs,
+    OpportunityProfile,
+    ProbabilityRange,
 )
 from app.opportunity.probability import derive_probability_inputs, joint_probability
 from app.opportunity.profile import DEFAULT_PROFILE, MODEL_VERSION
@@ -78,9 +80,9 @@ class OpportunityService:
         *,
         project_repo: ProjectRepository | None = None,
         opportunity_repo: OpportunityRepository | None = None,
-        profile=DEFAULT_PROFILE,
+        profile: OpportunityProfile = DEFAULT_PROFILE,
         now_factory: Callable[[], datetime] | None = None,
-    ):
+    ) -> None:
         self.project_repo = project_repo if project_repo is not None else ProjectRepository()
         self.opportunity_repo = opportunity_repo if opportunity_repo is not None else OpportunityRepository()
         self.profile = profile
@@ -165,7 +167,7 @@ class OpportunityService:
         assessment = OpportunityAssessment(
             project_id=project_id,
             model_version=MODEL_VERSION,
-            profile_version=self.profile.profile_id,
+            profile_version=cast(Literal["low-cost-curated-multiwallet-v1"], self.profile.profile_id),
             event_probability=event,
             eligibility_probability=eligibility,
             survival_probability=survival,
@@ -242,7 +244,7 @@ def _build_confidence(
             for factor_key in factor_keys
             if (resolution := resolve_factor(current, factor_key, now)).record is not None
         ]
-        resolved = [resolution.record for resolution in resolutions]
+        resolved = [cast(EvidenceRecord, resolution.record) for resolution in resolutions]
         if not resolved:
             domain_scores[domain] = 0.0
             continue
@@ -250,7 +252,7 @@ def _build_confidence(
         evidence_coverage = len(resolved) / len(factor_keys)
         source_independence = len({record.independence_group for record in resolved}) / len(resolved)
         freshness_consistency = sum(
-            _freshness_score(resolution.record, now) * resolution.consistency for resolution in resolutions
+            _freshness_score(cast(EvidenceRecord, resolution.record), now) * resolution.consistency for resolution in resolutions
         ) / len(resolutions)
         domain_scores[domain] = calculate_domain_confidence(
             source_reliability=source_reliability,
@@ -282,9 +284,9 @@ def _has_direct_economics_evidence(
 def _factor_snapshot(
     *,
     inputs: OpportunityInputs,
-    event,
-    eligibility,
-    survival,
+    event: ProbabilityRange | None,
+    eligibility: ProbabilityRange | None,
+    survival: ProbabilityRange | None,
     confidence: ConfidenceSet,
 ) -> dict[str, Any]:
     return {
@@ -307,7 +309,7 @@ def _factor_snapshot(
     }
 
 
-def _json_value(value):
+def _json_value(value: Any) -> Any:
     return value.model_dump(mode="json") if value is not None else None
 
 
