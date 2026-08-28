@@ -95,7 +95,8 @@ def _is_missing(value: Any) -> bool:
 def merge_meta(existing: Any, project: RawProject) -> str:
     """Merge project signals into meta JSON string for DB storage."""
     meta = parse_meta(existing)
-    prev = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+    raw_signals = meta.get("signals")
+    prev = raw_signals if isinstance(raw_signals, dict) else {}
     new_sig = signals_from_project(project)
     # 新值缺失且旧值有效时保留旧值；否则一律以新观测为准
     merged = dict(prev)

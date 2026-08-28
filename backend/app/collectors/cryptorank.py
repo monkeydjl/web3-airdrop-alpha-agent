@@ -145,7 +145,7 @@ class CryptoRankCollector(DataCollector):
             return None
         sector = normalize_sector(str(category))
 
-        usd: dict[str, Any] = {}
+        usd: Any = {}
         values = item.get("values") or {}
         if isinstance(values, dict):
             usd = values.get("USD") or values.get("usd") or {}

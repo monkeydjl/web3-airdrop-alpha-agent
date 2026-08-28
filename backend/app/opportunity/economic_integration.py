@@ -87,9 +87,6 @@ def process_persisted_collection(
         )
         return None
 
-    if summary is None:
-        return None
-
     evidence_enabled = settings_obj.opportunity_economic_evidence_emit_enabled
     for observation in summary.observations:
         try:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, HTTPException, Path
 
@@ -16,7 +18,7 @@ router = APIRouter(tags=["ai"])
 @router.post("/projects/{project_id}/ai-brief")
 async def project_ai_brief(
     project_id: str = Path(..., description="项目 ID"),
-):
+) -> dict[str, Any]:
     """Generate a natural-language brief for a scored project.
 
     Uses rule-based synthesis always; upgrades to LLM when OPENAI_API_KEY is set.
@@ -72,6 +74,6 @@ async def project_ai_brief(
 @router.get("/projects/{project_id}/ai-brief")
 async def project_ai_brief_get(
     project_id: str = Path(..., description="项目 ID"),
-):
+) -> dict[str, Any]:
     """GET alias for convenience (same as POST)."""
     return await project_ai_brief(project_id)

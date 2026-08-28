@@ -5,6 +5,8 @@ Provides example data and custom schema for OpenAPI documentation.
 
 from typing import Any
 
+from fastapi import FastAPI
+
 # ══════════════════════════════════════════════════════════════
 # Request Examples
 # ══════════════════════════════════════════════════════════════
@@ -180,7 +182,7 @@ ERROR_RESPONSE_EXAMPLES = {
 # ══════════════════════════════════════════════════════════════
 
 
-def customize_openapi_schema(app) -> dict[str, Any]:
+def customize_openapi_schema(app: FastAPI) -> dict[str, Any]:
     """自定义 OpenAPI schema.
 
     Args:
@@ -231,4 +233,4 @@ def customize_openapi_schema(app) -> dict[str, Any]:
     }
 
     app.openapi_schema = openapi_schema
-    return app.openapi_schema
+    return openapi_schema

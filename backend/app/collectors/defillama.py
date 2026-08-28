@@ -331,7 +331,7 @@ class DefiLlamaCollector(DataCollector):
 if __name__ == "__main__":
     import asyncio
 
-    async def main():
+    async def main() -> None:
         collector = DefiLlamaCollector()
         if not collector.is_enabled():
             print("DefiLlama collector disabled in settings")

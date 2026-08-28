@@ -45,7 +45,7 @@ router = APIRouter(tags=["scheduler"])
 
 class SchedulerJobsResponse(BaseModel):
     ok: bool = True
-    data: dict = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 # 任务 id → 它由哪个开关控制。运维看到"任务不在表里"时，

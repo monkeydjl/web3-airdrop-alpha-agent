@@ -10,7 +10,7 @@ Reference:
 
 import json
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,17 +56,17 @@ class InsightsResponse(BaseModel):
     )
 
     ok: bool = Field(True, description="请求是否成功")
-    data: dict = Field(..., description="聚合数据")
+    data: dict[str, Any] = Field(..., description="聚合数据")
 
 
-def _safe_json(value: Any) -> dict:
+def _safe_json(value: Any) -> dict[str, Any]:
     """安全解析 JSON 字段。"""
     if not value:
         return {}
     if isinstance(value, dict):
         return value
     try:
-        return json.loads(value)
+        return cast(dict[str, Any], json.loads(value))
     except (json.JSONDecodeError, TypeError):
         return {}
 
