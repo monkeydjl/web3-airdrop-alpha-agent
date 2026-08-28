@@ -295,9 +295,9 @@ async def trigger_collection(
         )
 
     repo_gate = CollectionRepository()
-    conn_gate = repo_gate._get_conn()
+    conn_gate: DbConnection | None = repo_gate._get_conn()
     try:
-        if not _operator_enabled(conn_gate, source_id):
+        if conn_gate is not None and not _operator_enabled(conn_gate, source_id):
             raise HTTPException(
                 status_code=400,
                 detail={
