@@ -11,14 +11,17 @@
 from __future__ import annotations
 
 import structlog
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
+from app.collectors.base import DataCollector
 from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
 from app.collectors.registry import CollectorRegistry
 from app.config import settings
-from app.db import get_connection, scalar
+from app.db import DbConnection, get_connection, scalar
 from app.inflight import QueueDrainInProgressError, claim_run, collect_key
 
 logger = structlog.get_logger(__name__)
@@ -30,21 +33,21 @@ class DiscoveriesResponse(BaseModel):
     """自动发现项目列表响应。"""
 
     ok: bool = True
-    data: dict = Field(..., description="包含 items / total / page / page_size")
+    data: dict[str, Any] = Field(..., description="包含 items / total / page / page_size")
 
 
 class CollectionSourcesResponse(BaseModel):
     """数据源列表响应。"""
 
     ok: bool = True
-    data: dict = Field(..., description="包含 sources 列表")
+    data: dict[str, Any] = Field(..., description="包含 sources 列表")
 
 
 class CollectionTriggerResponse(BaseModel):
     """手动触发采集响应。"""
 
     ok: bool = True
-    data: dict = Field(..., description="包含 source_id / status / items_collected")
+    data: dict[str, Any] = Field(..., description="包含 source_id / status / items_collected")
 
 
 class CollectionSourcePatchRequest(BaseModel):
@@ -57,7 +60,7 @@ class CollectionSourcePatchResponse(BaseModel):
     """采集源开关更新响应。"""
 
     ok: bool = True
-    data: dict = Field(..., description="包含 source_id / enabled / config_ready / is_enabled")
+    data: dict[str, Any] = Field(..., description="包含 source_id / enabled / config_ready / is_enabled")
 
 
 def _build_registry() -> CollectorRegistry:
@@ -160,7 +163,7 @@ def list_discoveries(
             conn.close()
 
 
-def _operator_enabled(conn, source_id: str) -> bool:
+def _operator_enabled(conn: DbConnection, source_id: str) -> bool:
     """Runtime toggle from data_sources.enabled; missing row means enabled."""
     row = conn.execute(
         "SELECT enabled FROM data_sources WHERE source_id = ?",
@@ -171,7 +174,7 @@ def _operator_enabled(conn, source_id: str) -> bool:
     return bool(row["enabled"])
 
 
-def _source_payload(conn, collector) -> dict:
+def _source_payload(conn: DbConnection, collector: DataCollector) -> dict[str, Any]:
     """Build list/patch payload: config_ready ∧ operator_enabled → is_enabled."""
     source_id = collector.source_id
     config_ready = bool(collector.is_enabled())
@@ -294,10 +297,7 @@ async def trigger_collection(
     repo_gate = CollectionRepository()
     conn_gate = repo_gate._get_conn()
     try:
-        if conn_gate is None:
-            # 测试桩可能只实现持久化接口而不返回连接，此时跳过运营商开关检查。
-            pass
-        elif not _operator_enabled(conn_gate, source_id):
+        if not _operator_enabled(conn_gate, source_id):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -363,7 +363,7 @@ async def trigger_collection(
                     error=str(exc)[:200],
                 )
 
-            auto_run: dict | None = None
+            auto_run: dict[str, Any] | None = None
             auto_run_skipped: str | None = None
             if settings.collection_auto_run_enabled and result.status in ("success", "partial"):
                 from app.pipeline_run import execute_analysis_pipeline
