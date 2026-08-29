@@ -32,6 +32,7 @@ from app.metrics import (
     FETCHER_CIRCUIT_BREAKER_STATE,
     FETCHER_SEMAPHORE_USAGE,
 )
+from app.utils.domain_allowlist import assert_url_allowed
 
 logger = structlog.get_logger(__name__)
 
@@ -292,6 +293,11 @@ async def fetch(
             cache_ttl=3600
         )
     """
+    # ── 域名白名单（SECURITY §10.2）────────────────────────────
+    # 在任何缓存 / 熔断 / 信号量逻辑之前校验：即使 cache 命中也不该返回
+    # 表外域名的数据。fail-closed，表外域名直接抛 DomainNotAllowedError。
+    assert_url_allowed(url)
+
     # Defaults
     cache_key = cache_key or url
     cache_ttl = cache_ttl or settings.fetcher_cache_ttl_seconds

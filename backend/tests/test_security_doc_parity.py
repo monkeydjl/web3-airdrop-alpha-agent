@@ -99,13 +99,14 @@ _DOMAIN_ROW_RE = re.compile(r"^\|\s*~{0,2}`([a-z0-9.\-]+\.[a-z]{2,})`~{0,2}\s*\|
 # test_documented_global_default_matches_settings 里记的"至少一处写对"陷阱。
 _RPM_RE = re.compile(r"(\d+)\s*req/min")
 
-# 这 8 个符号是 §11 点名"不存在"的。任何一个真的出现在 backend/app 里，
+# 这 6 个符号是 §11 点名"不存在"的。任何一个真的出现在 backend/app 里，
 # 意味着有人实现了它，而 §10/§11 还在说它不存在 —— 文档必须同步。
+#
+# 注意：`ALLOWED_DOMAINS` / `allowed_domains` 已从本清单移除 —— 域名白名单
+# 在 2026-08-29 实现了（`app/utils/domain_allowlist.py`），不再是 ghost。
 _GHOST_SYMBOLS = (
     "PermissionError",
     "allowed_tools",
-    "ALLOWED_DOMAINS",
-    "allowed_domains",
     "output_schema",
     "output_leakage_suspected",
     "llm_budget_exhausted",

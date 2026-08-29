@@ -304,13 +304,12 @@
 | `api.dune.com` | Dune Analytics | V2（可选） | ❌ 未接入（`DUNE_API_KEY` 是装饰性配置项） |
 <!-- domain-whitelist:end -->
 
-> ⚠️ **这张表是设计意图，不是当前的运行时约束。** 实测（2026-08-23）：
-> `backend/app` 全域（117 个 `.py`，递归）搜不到 `ALLOWED_DOMAINS` /
-> `allowed_domains` / `PermissionError` 任何一个 ——
-> **域名白名单从未实现，没有任何代码在拒绝表外域名**。
-> 当前的实际约束只有「代码里写了哪个 base_url」：改一行 URL 就能访问任意域名，
-> 不会被拦、也不会记日志。新增数据源仍应更新本表 + 走 ADR 评审，
-> 但要清楚这是**流程约束**（人来把关），不是**技术约束**（代码来把关）。
+> ✅ **2026-08-29 起，这张表成了运行时约束**（此前只是设计意图）。
+> 2026-08-23 实测 0 处 `ALLOWED_DOMAINS` / `allowed_domains` / `PermissionError`，
+> 域名白名单从未实现、改一行 URL 就能访问任意域名。2026-08-29 补上
+> `app/utils/domain_allowlist.py`：静态白名单 + LLM provider 域名动态放行 +
+> `assert_url_allowed()` 在出站前校验（fail-closed，表外抛 `DomainNotAllowedError`）。
+> 新增数据源仍要更新本表 + 走 ADR 评审。
 
 > 🔎 **一个没实现的白名单，它的清单本身也从没被现实检验过。**
 > 上表实测出三处错：Galxe 的主机名写错了（真实是
@@ -323,13 +322,19 @@
 
 **实现**：
 - 工具以显式白名单注入 Agent 实例（构造函数参数），不通过全局 registry 自由取用。
-- ❌ **未实现**：`backend/app/agents/base.py` 文件确实存在，但里面**没有
-  `allowed_tools` 字段、也没有任何 `PermissionError`**（实测全仓 0 处）。
-  基类目前不校验工具名。
-- ❌ **未实现**：统一的 HTTP 出口不存在。
-  真实出口是 `backend/app/utils/fetcher.py`（带信号量、熔断、文件缓存），
-  采集器另有各自的 `_http_client()` 上下文管理器
-  （如 `collectors/twitter.py:107`）复用连接 —— **两者都不校验域名**。
+- ⚠️ **刻意不实现（2026-08-29 复核）**：Agent 是纯计算 + 纯文本 LLM
+  （`llm_enhance()` 只返回文本、不调工具），实测 `app/agents/` 下 **0 处**
+  `subprocess` / `eval` / `exec` / 文件读写 / function calling。
+  没有工具调用点，`allowed_tools` 白名单只会变成"存在但从不会被查询"的
+  装饰性配置 —— 这正是本仓库反复反对的假实现（见 §11.2 那类教训）。
+  留作 V2 引入 LLM function calling 时再实现（届时白名单才有东西可拦；
+  `base.py` 至今没有 `allowed_tools`、也没有 `PermissionError`，见 §11）。
+- ✅ **已实现（2026-08-29）**：`app/utils/domain_allowlist.py` 提供集中白名单
+  （静态 `_KNOWN_DOMAINS` + LLM provider 域名动态放行），`assert_url_allowed()`
+  在出站前校验 —— 已接入 `utils/fetcher.py::fetch` 与 `llm/client.py` 的
+  出站路径（fail-closed，表外抛 `DomainNotAllowedError`）。采集器各自的
+   `_http_client()` 仍是独立连接，但其 base_url 域名被
+  `test_domain_allowlist.py` 与 §10.3 的表约束在静态白名单内。
   （上一版这里指向一个 `app/` 下的 `http_client` 模块，**那个文件不存在**
   —— 完整记录见 §11。）
 - ✅ **已实现**：采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的
@@ -345,7 +350,7 @@
 | --- | --- | --- | --- |
 | **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） | ✅ asyncio task |
 | **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP | ✅ 并发限制（`agents/base.py:161`）+ 日预算真实拦截（`llm/budget.py`，2026-08-24 实现），见 §10.4 |
-| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ❌ **未实现**，见 §10.2 的实测说明 |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ✅ **已实现**（2026-08-29）：`app/utils/domain_allowlist.py` 出站前校验，表外抛 `DomainNotAllowedError` |
 | **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP | ⚠️ 是**约定**不是强制：没有 `PermissionError` 校验，靠 code review 与 `AGENTS.md` 把关 |
 | **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 | ✅ 见 `docker/Dockerfile` |
 
@@ -432,8 +437,8 @@
 
 | 上一版声称 | 实测 |
 | --- | --- |
-| `backend/app/http_client.py` 是统一 HTTP 出口，校验域名白名单 | **文件不存在**；真实出口是 `backend/app/utils/fetcher.py`，不校验域名 |
-| 表外域名被拒绝并记 `PermissionError` | 全仓 **0 处** `PermissionError`；也没有 `ALLOWED_DOMAINS` / `allowed_domains` |
+| `backend/app/http_client.py` 是统一 HTTP 出口，校验域名白名单 | **文件仍不存在**；真实出口是 `backend/app/utils/fetcher.py`，2026-08-29 起已接入 `domain_allowlist` 出站校验 |
+| 表外域名被拒绝并记 `PermissionError` | `PermissionError` / `ALLOWED_DOMAINS`（大写常量）仍 **0 处**；但 `allowed_domains`（函数）已存在 —— 域名白名单 2026-08-29 实现于 `app/utils/domain_allowlist.py`，异常是 `DomainNotAllowedError` 而非 `PermissionError` |
 | `agents/base.py` 定义 `allowed_tools` 并校验工具名 | 文件存在，但**没有 `allowed_tools`**，不校验 |
 | `LLM_DAILY_BUDGET_USD` 超限自动停用 LLM 并告警 | 当时确实**只被读来做展示**，全仓 0 处在累计花费 —— 已于 **2026-08-24 补齐实现**（见 §11.3 与 §10.4）。注意实现用的原因常量是 `budget_exceeded`；老文档那个 `llm_budget_exhausted` flag **至今仍不存在**，别照它写查询 |
 | LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 这个字段名**仍 0 处**（实现用的是 `leak_detected`，见 §10.5）；但「输出侧无扫描」已不再成立 —— 2026-08-29 补上 `detect_secret_leak`，命中记 `airdrop_llm_secret_leak_detected_total` 并丢弃 |

@@ -45,6 +45,7 @@ from app import metrics
 from app.config import settings
 from app.llm import budget as budget_mod
 from app.llm import pricing
+from app.utils.domain_allowlist import assert_url_allowed
 from app.utils.redact import detect_secret_leak
 
 logger = structlog.get_logger(__name__)
@@ -235,6 +236,9 @@ async def _try_single(
 ) -> _RawCompletion:
     """尝试单个 provider + model 组合。成功返回文本与 usage，失败抛异常。"""
     url = provider.base_url.rstrip("/") + "/chat/completions"
+    # 域名白名单（SECURITY §10.2）：provider 域名已由 allowed_domains() 动态放行，
+    # 这里防御的是 url 拼接 bug 把请求带到表外域名。表外直接 fail-closed。
+    assert_url_allowed(url)
     body: dict[str, Any] = {
         "model": model,
         "temperature": temperature,
