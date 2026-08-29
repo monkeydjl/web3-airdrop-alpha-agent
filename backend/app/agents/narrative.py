@@ -13,6 +13,7 @@ from typing import Any
 
 import structlog
 
+from app import metrics
 from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.agents.heat_signals import HeatSignalProvider, get_heat_signal_provider
 from app.models import NarrativeResult
@@ -214,6 +215,8 @@ class NarrativeAgent(BaseAgent):
 
             # Update state
             state.narrative = result
+
+            metrics.record_narrative_heat_score(heat_score)
 
             self.logger.info(
                 "narrative.completed",

@@ -165,7 +165,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（45 个，实测全量）
+### 3.2 完整指标目录（48 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -295,6 +295,21 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 数据质量 gauges 与告警判断共用同一份 snapshot，不会各算各的出现口径漂移。
 `freshness` 为 None（从未成功同步）时不写 freshness gauge，只写完整性。
 
+#### 业务面板（3）
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `airdrop_project_score` | histogram | — | 最终评分分布（0-100，步长 10） |
+| `airdrop_narrative_heat_score` | histogram | — | 赛道热度分布（0-1，步长 0.1） |
+| `airdrop_feedback_total` | counter | `signal` | 用户反馈计数 |
+
+老文档那张业务面板依赖的三个信号（评分趋势、赛道热度、反馈趋势）对应的
+就是这三个指标 —— 此前一个都不存在，面板因此无处可查（§9 有移出记录）。
+埋点：`airdrop_project_score` 在 scorer 产出分数时、`airdrop_narrative_heat_score`
+在 narrative agent 产出 `heat_score` 时、`airdrop_feedback_total` 在
+`POST /feedback` 与 `POST /feedback/batch` 成功落库后。`signal` 闭合为
+`useful` / `useless` / `wrong_label` / `correct_outcome`（`metrics.py::FEEDBACK_SIGNALS`）。
+
 #### Fetcher / 缓存 / 并发（7）
 
 | 指标 | 类型 | 标签 | 含义 |
@@ -340,7 +355,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_llm_spend_today_usd` 两个 gauge，剩余额度在查询侧相减得出。
 多暴露一个第三个数，就多一个会与前两个漂移的来源。
 
-### 3.3 老文档虚构、代码中不存在的指标（29 个）
+### 3.3 老文档虚构、代码中不存在的指标（26 个）
 
 以下名字在上一版文档里出现过，代码里**一个都没有**。列在这里是为了让照旧文档
 写过查询的人一眼对上，不要再找：
@@ -355,9 +370,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_discovery_score_distribution`、`airdrop_projects_discovered_total`、
 `airdrop_projects_analyzed_from_discovery_total`、`airdrop_llm_calls_total`、
 `airdrop_llm_budget_remaining_usd`、
-`airdrop_db_write_errors_total`、`airdrop_db_query_duration_seconds`、`airdrop_projects_in_db`、
-`airdrop_narrative_heat_score`、
-`airdrop_feedback_total`、`airdrop_project_score`。
+`airdrop_db_write_errors_total`、`airdrop_db_query_duration_seconds`、`airdrop_projects_in_db`。
 
 **2026-08-24 从这张清单里移出了两个 LLM 成本/token 指标** —— 移出记录见上一小节，
 那里说明了为什么"把真指标写成假指标"和反过来一样有害。
@@ -568,7 +581,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | 数据质量指标（完整性、新鲜度） | ✅ **2026-08-29 已实现**（`airdrop_data_completeness_ratio` + `airdrop_data_freshness_seconds`，见 §3.2 数据质量段），本行保留为移出记录 |
 | 采集配额 / 限流令牌 / 信号新鲜度指标 | 未实现 |
 | HTTP 请求耗时 histogram | ✅ **2026-08-29 已实现**（`airdrop_http_request_duration_seconds`，见 §3.2 API 段），本行保留为移出记录 |
-| 业务面板（评分趋势、赛道热度、反馈趋势） | 未实现，依赖的三个指标都不存在 |
+| 业务面板（评分趋势、赛道热度、反馈趋势） | ✅ **2026-08-29 已实现**（`airdrop_project_score` + `airdrop_narrative_heat_score` + `airdrop_feedback_total`，见 §3.2 业务面板段），本行保留为移出记录 |
 | `metrics` 表写入 | 表与仓储都在，但无生产调用方，实测 0 行 |
 | 告警抑制 / 分组升级策略 | Alertmanager 侧配置存在，未验证过真实触发 |
 

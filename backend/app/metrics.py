@@ -462,6 +462,46 @@ def record_data_quality(*, source_id: str, freshness_seconds: float | None, comp
     DATA_COMPLETENESS_RATIO.labels(source_id=source_id).set(max(min(completeness_ratio, 1.0), 0.0))
 
 
+# ── Business panel metrics (§9「业务面板」) ────────────────────────
+# 评分趋势 / 赛道热度 / 反馈趋势 —— 老文档那张业务面板依赖的正是这三个信号。
+FEEDBACK_SIGNALS: frozenset[str] = frozenset({"useful", "useless", "wrong_label", "correct_outcome"})
+
+PROJECT_SCORE = Histogram(
+    "airdrop_project_score",
+    "Final project score (0-100).",
+    buckets=[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
+)
+
+NARRATIVE_HEAT_SCORE = Histogram(
+    "airdrop_narrative_heat_score",
+    "Sector heat score (0-1) emitted by the narrative agent.",
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+)
+
+FEEDBACK_TOTAL = Counter(
+    "airdrop_feedback_total",
+    "User feedback submissions by signal.",
+    ["signal"],
+)
+
+
+def record_project_score(score: float) -> None:
+    """观察一次最终评分（0-100），供评分趋势面板。"""
+    PROJECT_SCORE.observe(max(min(score, 100.0), 0.0))
+
+
+def record_narrative_heat_score(heat: float) -> None:
+    """观察一次赛道热度（0-1），供赛道热度面板。"""
+    NARRATIVE_HEAT_SCORE.observe(max(min(heat, 1.0), 0.0))
+
+
+def record_feedback(*, signal: str) -> None:
+    """记录一条用户反馈，signal 闭合词表见 FEEDBACK_SIGNALS。"""
+    if signal not in FEEDBACK_SIGNALS:
+        raise ValueError(f"illegal feedback signal: {signal!r}")
+    FEEDBACK_TOTAL.labels(signal=signal).inc()
+
+
 # ── Competition cache metrics (ADR-010) ───────────────────────────
 COMPETITION_CACHE_HITS = Counter(
     "airdrop_competition_cache_hits_total",

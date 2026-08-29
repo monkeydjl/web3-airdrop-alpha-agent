@@ -362,6 +362,7 @@ class SimpleOrchestrator:
                     if state.score is not None:
                         scorer_span.set_attribute("score", state.score)
                         scorer_span.set_attribute("label", state.label or "")
+                        metrics.record_project_score(state.score)
 
                 # Mark completion
                 state.completed_at = datetime.now(UTC)

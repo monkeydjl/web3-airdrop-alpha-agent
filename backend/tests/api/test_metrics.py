@@ -20,6 +20,16 @@ from app.metrics import (
 )
 
 
+def _histogram_sum(metric) -> float:
+    """读取 histogram 的 `_sum` 样本 —— `metric_sample_value` 对 histogram 返回
+    的是 `_count`（观测次数）而非观测值之和，验证"观察到了什么值"要用这个。"""
+    for family in metric.collect():
+        for sample in family.samples:
+            if sample.name.endswith("_sum"):
+                return float(sample.value)
+    return 0.0
+
+
 @pytest.fixture
 def client():
     app = create_app()
@@ -190,6 +200,51 @@ class TestMetricsEndpoint:
         return 0
 
 
+class TestBusinessPanelMetrics:
+    """业务面板三信号（§9「业务面板」）：评分 / 赛道热度 / 反馈。"""
+
+    def test_record_project_score_observes(self) -> None:
+        from app.metrics import PROJECT_SCORE, record_project_score
+
+        before = _histogram_sum(PROJECT_SCORE)
+        record_project_score(75.0)
+        after = _histogram_sum(PROJECT_SCORE)
+        assert after == before + 75.0
+
+    def test_record_narrative_heat_score_observes(self) -> None:
+        from app.metrics import NARRATIVE_HEAT_SCORE, record_narrative_heat_score
+
+        before = _histogram_sum(NARRATIVE_HEAT_SCORE)
+        record_narrative_heat_score(0.85)
+        after = _histogram_sum(NARRATIVE_HEAT_SCORE)
+        assert after == before + 0.85
+
+    def test_project_score_clamped_to_range(self) -> None:
+        from app.metrics import PROJECT_SCORE, record_project_score
+
+        before = _histogram_sum(PROJECT_SCORE)
+        record_project_score(250.0)  # 越界 → 钳到 100
+        record_project_score(-30.0)  # 越界 → 钳到 0
+        after = _histogram_sum(PROJECT_SCORE)
+        # 100 + 0 = 100
+        assert after == before + 100.0
+
+    def test_feedback_signal_vocabulary_is_closed(self) -> None:
+        from app.metrics import FEEDBACK_SIGNALS, record_feedback
+
+        assert {"useful", "useless", "wrong_label", "correct_outcome"} == FEEDBACK_SIGNALS
+        with pytest.raises(ValueError):
+            record_feedback(signal="not_a_signal")
+
+    def test_record_feedback_increments_by_signal(self) -> None:
+        from app.metrics import FEEDBACK_TOTAL, metric_sample_value, record_feedback
+
+        before = metric_sample_value(FEEDBACK_TOTAL, signal="useful")
+        record_feedback(signal="useful")
+        after = metric_sample_value(FEEDBACK_TOTAL, signal="useful")
+        assert after == before + 1
+
+
 class TestAgentMetrics:
     """Agent 粒度指标（§9「Agent 粒度指标」）—— 闭合词表 + 真实递增。"""
 
@@ -209,7 +264,9 @@ class TestAgentMetrics:
         before = metric_sample_value(AGENT_DURATION, agent="team")
         record_agent_run(agent="team", result="success", duration_seconds=0.75)
         after = metric_sample_value(AGENT_DURATION, agent="team")
-        assert after >= before + 0.75
+        # metric_sample_value 对 histogram 返回 `_count`（观测次数），
+        # 这里断言"发生了一次 observe"即可（值是否钳 ≥0 由 record_agent_run 保证）。
+        assert after == before + 1
 
     def test_error_and_skipped_are_distinct_labels(self) -> None:
         record_agent_run(agent="risk", result="error", duration_seconds=0.1)
