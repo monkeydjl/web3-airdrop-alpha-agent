@@ -283,6 +283,14 @@ HTTP_REQUESTS = Counter(
     ["method", "status_class"],
 )
 
+# §9「HTTP 请求耗时 histogram」：入站 API 请求耗时（秒）。此前耗时只进日志的
+# duration_ms 字段。无标签 —— 按 path 拆会随路由参数爆炸（§3.4 基数控制）。
+HTTP_DURATION = Histogram(
+    "airdrop_http_request_duration_seconds",
+    "Inbound API request duration in seconds.",
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
 
 # ── LLM metrics ─────────────────────────────────────────────────────
 #

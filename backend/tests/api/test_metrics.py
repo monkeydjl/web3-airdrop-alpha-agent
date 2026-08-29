@@ -134,6 +134,15 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
+    def test_http_request_duration_histogram_observed(self, client):
+        """入站 API 请求耗时 histogram 在每次请求后被 observe（§9）。"""
+        from app.metrics import HTTP_DURATION, metric_sample_value
+
+        before = metric_sample_value(HTTP_DURATION)
+        client.get("/health")
+        after = metric_sample_value(HTTP_DURATION)
+        assert after > before
+
     def test_metrics_disabled_returns_404(self, monkeypatch, client):
         from app import metrics as metrics_module
 

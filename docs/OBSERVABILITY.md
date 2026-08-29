@@ -165,7 +165,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（44 个，实测全量）
+### 3.2 完整指标目录（45 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -310,15 +310,17 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 > **熔断状态是单个无标签 gauge，不是按源拆分的。** 想区分是哪个源熔断，
 > 看日志 `circuit_breaker.opened`（带 `source_id`）。
 
-#### API（1）
+#### API（2）
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
 | `airdrop_http_requests_total` | counter | `method, status_class` | API 处理的请求数 |
+| `airdrop_http_request_duration_seconds` | histogram | — | 入站 API 请求耗时（buckets 0.005…5） |
 
 `status_class` 是**分档**值（`2xx`/`3xx`/`4xx`/`5xx`），不是具体状态码 ——
-这是刻意的基数控制。**没有 HTTP 耗时 histogram**：请求耗时只进日志
-（`api.request.completed` 的 `duration_ms` 字段）。
+这是刻意的基数控制。耗时 histogram **无标签**（按 path 拆会随路由参数爆炸，
+见 §3.4）；埋点在 `main.py` 的请求日志中间件，与 `api.request.completed` 的
+`duration_ms` 同源（毫秒 ÷ 1000 入秒）
 
 #### 从 §3.3「不存在」清单里移出的两个（2026-08-24）
 
@@ -338,7 +340,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_llm_spend_today_usd` 两个 gauge，剩余额度在查询侧相减得出。
 多暴露一个第三个数，就多一个会与前两个漂移的来源。
 
-### 3.3 老文档虚构、代码中不存在的指标（30 个）
+### 3.3 老文档虚构、代码中不存在的指标（29 个）
 
 以下名字在上一版文档里出现过，代码里**一个都没有**。列在这里是为了让照旧文档
 写过查询的人一眼对上，不要再找：
@@ -354,7 +356,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_projects_analyzed_from_discovery_total`、`airdrop_llm_calls_total`、
 `airdrop_llm_budget_remaining_usd`、
 `airdrop_db_write_errors_total`、`airdrop_db_query_duration_seconds`、`airdrop_projects_in_db`、
-`airdrop_http_request_duration_seconds`、`airdrop_narrative_heat_score`、
+`airdrop_narrative_heat_score`、
 `airdrop_feedback_total`、`airdrop_project_score`。
 
 **2026-08-24 从这张清单里移出了两个 LLM 成本/token 指标** —— 移出记录见上一小节，
@@ -565,7 +567,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | Agent 粒度指标（耗时、错误、跳过） | ✅ **2026-08-29 已实现**（`airdrop_agent_runs_total` + `airdrop_agent_duration_seconds`，见 §3.2 Agent 段），本行保留为移出记录 |
 | 数据质量指标（完整性、新鲜度） | ✅ **2026-08-29 已实现**（`airdrop_data_completeness_ratio` + `airdrop_data_freshness_seconds`，见 §3.2 数据质量段），本行保留为移出记录 |
 | 采集配额 / 限流令牌 / 信号新鲜度指标 | 未实现 |
-| HTTP 请求耗时 histogram | 未实现，耗时只在日志字段 |
+| HTTP 请求耗时 histogram | ✅ **2026-08-29 已实现**（`airdrop_http_request_duration_seconds`，见 §3.2 API 段），本行保留为移出记录 |
 | 业务面板（评分趋势、赛道热度、反馈趋势） | 未实现，依赖的三个指标都不存在 |
 | `metrics` 表写入 | 表与仓储都在，但无生产调用方，实测 0 行 |
 | 告警抑制 / 分组升级策略 | Alertmanager 侧配置存在，未验证过真实触发 |
