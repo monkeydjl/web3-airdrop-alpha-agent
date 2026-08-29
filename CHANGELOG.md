@@ -68,6 +68,18 @@ CI 的 Type Check 原本就存在，只是跑宽松口径；现在跑的就是�
 返回如果是某个测试专门钉住的契约（`test_writer_none_summary_zero_emitter`
 这种名字），删它等于删一条被测试保护的边界行为。**
 
+### Changed — 根 pyproject 的 mypy 旧口径与 backend 对齐（2026-08-29，PR #27）
+
+mypy strict 落地进 `backend/pyproject.toml`（PR #26）后，根目录 `pyproject.toml`
+还留着一份历史遗留的 `[tool.mypy]`：只豁免 2 个缺 stub 的库、且实测是「双重坏」
+——CI 不读它、从仓库根跑 mypy 会因缺 `mypy_path` 而 import-not-found，只有
+pre-commit 的单文件 mypy hook（`--ignore-missing-imports`，本就不可靠）会读到。
+
+本次只做两件低风险事：overrides 从 2 库对齐到 5 库（与 backend 一致），顶部注释
+如实标注「权威在 backend、本段是历史死配置」。彻底清理（删根 `[tool.mypy]` /
+`[tool.pytest.ini_options]` + 把 pre-commit mypy hook 从单文件跑改成指向
+backend 配置跑完整 app）留作后续小工程，未在本次动。
+
 ### Changed — Agent 路径的预算拦截不再与"调用失败"混作一条
 
 流水线里 Agent 调 LLM 走的是 `BaseAgent.llm_enhance()`，此前它用

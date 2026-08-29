@@ -113,12 +113,16 @@ CI 的 Type Check 绿着却什么都拦不住。owner 拍板把 backend 提到 `
 
 ---
 
-## 六、下一步 & 遗留
+## 六、下一步 & 遗留（08-29 已全部收口）
 
-1. **push `fix/mypy-strict` → 开 PR #26**（target master），CI 5 个 required
-   context 全绿后合并：Coverage Gate / Type Check / Frontend Lint & Build /
-   Lint & Format Check / Full Backend Test Suite。
-2. **合并后**：确认 master 的 Type Check job 跑的就是 strict 口径（本次核心收益）。
+1. ✅ PR #26 已开 → 合并（merge commit `057b819`），CI 5 个 required context 全绿；
+   合并后 master 的 CI workflow success——Type Check 从此跑 strict 口径，核心收益落地。
+2. ✅ 根目录「死配置」遗留已清理（PR #27，merge commit `a0cfd7c`）：
+   `[tool.mypy]` 的 overrides 对齐 backend（2 库 → 5 库）+ 顶部注释如实标注
+   「权威在 backend、本段是历史死配置」。实测确认根配置是「双重坏」——CI 不读它，
+   且从仓库根跑 mypy 会因缺 `mypy_path` 而 import-not-found；pre-commit 的单文件
+   mypy hook（`--ignore-missing-imports`）本就不可靠。
 
-遗留（非本次范围）：根目录 `pyproject.toml` 里的死配置 `[tool.mypy]`（08-24
-第十四节记过）—— 现在 backend 已是 strict，根那份要不要删/对齐，另议。
+遗留（仍留作后续小工程，非本次范围）：根 `[tool.mypy]` + `[tool.pytest.ini_options]`
+彻底删掉、并把 pre-commit 的 mypy hook 从「单文件跑」改成 `pass_filenames: false`
++ 指向 `backend/pyproject.toml` 跑完整 `backend/app`（现在它是坏形态，靠误打误撞没咬人）。
