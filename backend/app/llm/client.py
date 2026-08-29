@@ -45,6 +45,7 @@ from app import metrics
 from app.config import settings
 from app.llm import budget as budget_mod
 from app.llm import pricing
+from app.utils.redact import detect_secret_leak
 
 logger = structlog.get_logger(__name__)
 
@@ -106,6 +107,9 @@ class LLMResult:
     # 调用方要区分"LLM 试过但失败了"和"LLM 根本没被允许调用" ——
     # 两者都返回 text=None，但前者该重试/告警，后者是预期行为。
     refused_reason: str | None = None
+    # 输出泄漏（SECURITY §10.5）：text 被检测到含密钥值/密钥 pattern 而丢弃。
+    # text 为 None 但 leak_detected=True，与 refused_reason / 接口全挂都不同。
+    leak_detected: bool = False
 
     @property
     def ok(self) -> bool:
@@ -371,6 +375,31 @@ async def llm_chat(
                 completion_tokens=usage.completion_tokens,
             ):
                 metrics.record_llm_spend_record_failure()
+
+            # ── 输出泄漏过滤（SECURITY §10.5）────────────────────────
+            # 成本在前面的 record_spend 已记账（钱已花，不能因丢弃而漏记，否则
+            # 预算静默失效）。命中则丢弃结果：text=None + leak_detected=True，
+            # 调用方据此回退规则引擎。不重试下一个组合 —— 泄漏是内容问题，
+            # 换接口/模型大概率吐出同样的内容，且丢弃应是 fail-closed。
+            leak_category = detect_secret_leak(completion.text)
+            if leak_category is not None:
+                metrics.record_llm_leak_detected()
+                logger.error(
+                    "llm.secret_leak_detected",
+                    provider=provider.name,
+                    model=model,
+                    prompt_version=prompt_version,
+                    pattern=leak_category,
+                )
+                return LLMResult(
+                    text=None,
+                    provider_used=provider.name,
+                    model_used=model,
+                    attempts=attempts,
+                    prompt_version=prompt_version,
+                    usage=usage,
+                    leak_detected=True,
+                )
 
             logger.info(
                 "llm.success",

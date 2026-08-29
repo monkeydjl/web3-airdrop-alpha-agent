@@ -344,6 +344,17 @@ class BaseAgent(ABC):
                     )
                 return None
 
+            if result.leak_detected:
+                # 输出泄漏被丢弃（SECURITY §10.5）：这是安全事件，不是"接口全挂"
+                # 也不是"预算拦下"，单独的事件名 + error 级别，方便告警盯住。
+                self.logger.error(
+                    "llm.secret_leak_discarded",
+                    agent=self.name,
+                    project_id=state.project.id,
+                    prompt_version=prompt_version,
+                )
+                return None
+
             content = result.text
             if content:
                 self.logger.info(

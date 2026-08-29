@@ -396,7 +396,7 @@
 | --- | --- | --- |
 | **system prompt 不入 user 消息** | OpenAI API 的 `system` role 独立传递，不拼入 `user` content | ✅ 已实现 |
 | **跨项目隔离** | 每次 LLM 调用仅传入单个项目的相关字段，禁止 batch 多项目数据进同一 prompt | ✅ 已实现 |
-| **输出过滤** | LLM 输出后扫描是否包含密钥关键词，命中则记 `AgentError` 并丢弃 | ❌ **未实现**：全仓没有 `output_leakage_suspected`，输出侧无扫描 |
+| **输出过滤** | LLM 输出后扫描是否包含密钥关键词，命中则记 `AgentError` 并丢弃 | ✅ **已实现**（2026-08-29）：`app/utils/redact.py::detect_secret_leak` 扫已知密钥值 + 通用密钥 pattern（`sk-` / `ghp_` / `AKIA` / JWT / `Bearer`），命中记指标 `airdrop_llm_secret_leak_detected_total` + `llm.secret_leak_detected` 日志，丢弃结果（`LLMResult.leak_detected=True`），调用方回退规则引擎。注意实现**没有**沿用老文档那个 `output_leakage_suspected` 字段名（该名字仍全仓 0 处，见 §11） |
 | **日志脱敏** | `app/utils/redact.py::redact_processor` 装进 structlog processor 链（`configure_logging()`，`main.py:34` 调用） | ✅ **已实现且是全量**：按字段名脱敏 + 对所有字符串值替换已知密钥；控制台与文件共用同一条链，文件行同样脱敏。另有 `redact()` 单独用在采集器错误信息上 |
 | **不回传 system prompt** | API 端点禁止返回 `system_prompt` 字段 | ⚠️ 事实成立但原因不同：全仓没有 `system_prompt` 这个字段名，也**没有 `/projects/{id}/debug` 这个端点**（实测 46 条 OpenAPI 路径里 0 条含 `debug`） |
 
@@ -417,7 +417,7 @@
 - [ ] ~~Tool Permission 测试~~ — ❌ **机制不存在**：全仓没有 `allowed_tools` / `PermissionError`（见 §10.2）
 - [ ] 输出越界测试：mock LLM 返回 `heat_score_adjustment=0.5`（超上限 0.3），断言被截断为 0.3
 - [x] 预算耗尽测试 — ✅ 2026-08-24 补齐：`backend/tests/test_llm_budget_enforcement.py`，含"超预算时一次网络请求都不发出"与"连续调用最终触发拦截"两条端到端断言
-- [ ] ~~Data Leakage 测试~~ — ❌ **机制不存在**：输出侧无密钥扫描（见 §10.5）
+- [x] Data Leakage 测试 — ✅ 2026-08-29 补齐：`backend/tests/test_llm_failover.py` 的 `TestDetectSecretLeak` / `TestSecretLeakDiscard`，覆盖已知密钥值 + 通用 pattern 命中丢弃、干净输出不误报
 - [ ] 降级链路测试：LLM 超时/异常时，断言规则引擎结果正确填充
 
 ---
@@ -436,7 +436,7 @@
 | 表外域名被拒绝并记 `PermissionError` | 全仓 **0 处** `PermissionError`；也没有 `ALLOWED_DOMAINS` / `allowed_domains` |
 | `agents/base.py` 定义 `allowed_tools` 并校验工具名 | 文件存在，但**没有 `allowed_tools`**，不校验 |
 | `LLM_DAILY_BUDGET_USD` 超限自动停用 LLM 并告警 | 当时确实**只被读来做展示**，全仓 0 处在累计花费 —— 已于 **2026-08-24 补齐实现**（见 §11.3 与 §10.4）。注意实现用的原因常量是 `budget_exceeded`；老文档那个 `llm_budget_exhausted` flag **至今仍不存在**，别照它写查询 |
-| LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 全仓 **0 处**，输出侧无扫描 |
+| LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 这个字段名**仍 0 处**（实现用的是 `leak_detected`，见 §10.5）；但「输出侧无扫描」已不再成立 —— 2026-08-29 补上 `detect_secret_leak`，命中记 `airdrop_llm_secret_leak_detected_total` 并丢弃 |
 | `output_schema` 限定数值范围与枚举集 | **没有叫这个名字的东西**；实际靠 pydantic 模型 |
 | `/projects/{id}/debug` 端点禁止返回 `system_prompt` | **端点不存在**（46 条 OpenAPI 路径里 0 条含 `debug`），`system_prompt` 字段名也不存在 |
 | 每周跑 `evaluation/llm/template_validation.py` 检测模型漂移 | 脚本存在，但**没有任何定时任务在跑它** |

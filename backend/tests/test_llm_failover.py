@@ -431,3 +431,99 @@ class TestFailover:
         assert result.text == "Success on provider-2+model-b"
         assert result.provider_used == "provider-2"
         assert result.model_used == "model-b"
+
+
+# ── 输出泄漏过滤（SECURITY §10.5）─────────────────
+
+
+class TestDetectSecretLeak:
+    """`detect_secret_leak` 单元测试：已知密钥值 + 通用 pattern 两类都有覆盖。"""
+
+    def test_known_secret_value_hit(self, monkeypatch):
+        from app.utils.redact import detect_secret_leak
+
+        monkeypatch.setattr(
+            "app.utils.redact._known_secrets",
+            lambda: ["my-super-secret-value-12345"],
+        )
+        # 首尾加普通文本，确认是子串匹配而非全等匹配
+        assert detect_secret_leak("结论：my-super-secret-value-12345 是密钥") == "known_secret_value"
+
+    def test_generic_openai_key_pattern(self):
+        from app.utils.redact import detect_secret_leak
+
+        assert detect_secret_leak("key is sk-abcdefghijklmnopqrstuvwxyz123456") == "openai_key"
+
+    def test_generic_github_pat_pattern(self):
+        from app.utils.redact import detect_secret_leak
+
+        assert detect_secret_leak("token ghp_abcdefghijklmnopqrstuvwxyz1234567890") == "github_pat"
+
+    def test_clean_text_returns_none(self):
+        from app.utils.redact import detect_secret_leak
+
+        assert detect_secret_leak("FARM：社区热度高，建议参与") is None
+        assert detect_secret_leak("") is None
+        assert detect_secret_leak("short sk-abc") is None  # 长度不足，不误报
+
+    def test_bearer_token_pattern(self):
+        from app.utils.redact import detect_secret_leak
+
+        assert detect_secret_leak("Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456") == "bearer_token"
+
+
+class TestSecretLeakDiscard:
+    """`llm_chat` 集成测试：输出含密钥 pattern 时丢弃结果、不重试。"""
+
+    @pytest.mark.asyncio
+    async def test_secret_pattern_output_is_discarded(self, monkeypatch):
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a", "model-b"],
+                },
+            ]
+        )
+        monkeypatch.setattr("app.llm.client.settings", mock_settings)
+
+        # 输出里夹了一个 OpenAI key 形状的字符串
+        async def mock_try_single(**kwargs):
+            return _completion("结论：FARM。secret=sk-abcdefghijklmnopqrstuvwxyz123456")
+
+        monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
+
+        result = await llm_chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert result.ok is False
+        assert result.text is None
+        assert result.leak_detected is True
+        # 丢弃不应重试其余组合：泄漏是内容问题，不是接口问题
+        assert len(result.attempts) == 1
+
+    @pytest.mark.asyncio
+    async def test_clean_output_is_not_discarded(self, monkeypatch):
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "provider-1",
+                    "models": ["model-a"],
+                },
+            ]
+        )
+        monkeypatch.setattr("app.llm.client.settings", mock_settings)
+
+        async def mock_try_single(**kwargs):
+            return _completion("FARM：社区热度高，规则引擎可离线复现")
+
+        monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
+
+        result = await llm_chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert result.ok is True
+        assert result.text == "FARM：社区热度高，规则引擎可离线复现"
+        assert result.leak_detected is False

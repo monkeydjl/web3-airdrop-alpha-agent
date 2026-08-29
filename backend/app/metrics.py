@@ -342,6 +342,11 @@ LLM_SPEND_RECORD_FAILURES = Counter(
     "Ledger writes that failed after a paid LLM call (spend not counted toward budget).",
 )
 
+LLM_LEAK_DETECTED = Counter(
+    "airdrop_llm_secret_leak_detected_total",
+    "LLM outputs discarded because they contained a known secret value or secret-like pattern (SECURITY §10.5).",
+)
+
 LLM_BUDGET_USD = Gauge(
     "airdrop_llm_budget_usd",
     "Configured LLM daily budget in USD (0 = unlimited).",
@@ -392,6 +397,11 @@ def record_llm_budget_block(*, reason: str) -> None:
 def record_llm_spend_record_failure() -> None:
     """记录一次记账失败（钱花了但没进账本）。"""
     LLM_SPEND_RECORD_FAILURES.inc()
+
+
+def record_llm_leak_detected() -> None:
+    """记录一次因输出含密钥而被丢弃的 LLM 结果（SECURITY §10.5）。"""
+    LLM_LEAK_DETECTED.inc()
 
 
 def set_llm_budget_state(*, budget_usd: float, spent_today_usd: float) -> None:
