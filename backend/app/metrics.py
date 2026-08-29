@@ -426,6 +426,34 @@ DB_COLLECTION_LOGS_24H = Gauge(
     "Collection logs emitted in the last 24 hours.",
 )
 
+# ── Data quality gauges (§9「数据质量指标」) ──────────────────────
+# 计算逻辑在 app/collectors/metrics.py::CollectionMetrics（新鲜度 = 距上次成功
+# 同步的秒数；完整性 = 必填字段覆盖率的 0-1）。这里只做暴露：check_alerts 每次
+# 遍历数据源计算 snapshot 时顺手 set 进来，与告警判断共用同一份计算结果。
+DATA_FRESHNESS_SECONDS = Gauge(
+    "airdrop_data_freshness_seconds",
+    "Seconds since last successful sync, per collection source.",
+    ["source_id"],
+)
+
+DATA_COMPLETENESS_RATIO = Gauge(
+    "airdrop_data_completeness_ratio",
+    "Required-field coverage rate (0-1), per collection source.",
+    ["source_id"],
+)
+
+
+def record_data_quality(*, source_id: str, freshness_seconds: float | None, completeness_ratio: float) -> None:
+    """记录单个采集源的数据质量 gauge。
+
+    freshness_seconds 为 None 表示"从没成功同步过"，此时不写 freshness gauge
+    （保留上一值会谎报新鲜），只写完整性。
+    """
+    if freshness_seconds is not None:
+        DATA_FRESHNESS_SECONDS.labels(source_id=source_id).set(max(freshness_seconds, 0.0))
+    DATA_COMPLETENESS_RATIO.labels(source_id=source_id).set(max(min(completeness_ratio, 1.0), 0.0))
+
+
 # ── Competition cache metrics (ADR-010) ───────────────────────────
 COMPETITION_CACHE_HITS = Counter(
     "airdrop_competition_cache_hits_total",

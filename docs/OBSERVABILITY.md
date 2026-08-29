@@ -165,7 +165,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（42 个，实测全量）
+### 3.2 完整指标目录（44 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -283,6 +283,18 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 这三个是**周期刷新的 gauge**，不是实时查询。刷新失败记
 `metrics.gauge_update_failed`。
 
+#### 数据质量（2）
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `airdrop_data_freshness_seconds` | gauge | `source_id` | 距上一次成功同步的秒数 |
+| `airdrop_data_completeness_ratio` | gauge | `source_id` | 必填字段覆盖率（0-1） |
+
+计算逻辑在 `app/collectors/metrics.py::CollectionMetrics`（`get_freshness` /
+`get_coverage_rate`），在 `check_alerts` 每次遍历数据源时顺手 set 进来 ——
+数据质量 gauges 与告警判断共用同一份 snapshot，不会各算各的出现口径漂移。
+`freshness` 为 None（从未成功同步）时不写 freshness gauge，只写完整性。
+
 #### Fetcher / 缓存 / 并发（7）
 
 | 指标 | 类型 | 标签 | 含义 |
@@ -326,7 +338,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_llm_spend_today_usd` 两个 gauge，剩余额度在查询侧相减得出。
 多暴露一个第三个数，就多一个会与前两个漂移的来源。
 
-### 3.3 老文档虚构、代码中不存在的指标（32 个）
+### 3.3 老文档虚构、代码中不存在的指标（30 个）
 
 以下名字在上一版文档里出现过，代码里**一个都没有**。列在这里是为了让照旧文档
 写过查询的人一眼对上，不要再找：
@@ -343,8 +355,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_llm_budget_remaining_usd`、
 `airdrop_db_write_errors_total`、`airdrop_db_query_duration_seconds`、`airdrop_projects_in_db`、
 `airdrop_http_request_duration_seconds`、`airdrop_narrative_heat_score`、
-`airdrop_feedback_total`、`airdrop_project_score`、`airdrop_data_completeness_ratio`、
-`airdrop_data_freshness_seconds`。
+`airdrop_feedback_total`、`airdrop_project_score`。
 
 **2026-08-24 从这张清单里移出了两个 LLM 成本/token 指标** —— 移出记录见上一小节，
 那里说明了为什么"把真指标写成假指标"和反过来一样有害。
@@ -552,7 +563,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | `run_id` 贯穿每条日志 | 部分：287 处调用里 19 处带 `run_id` |
 | LLM 成本 / token / 预算指标 | ✅ **2026-08-24 已实现**（6 个新指标，见 §3.2），本行保留为移出记录 |
 | Agent 粒度指标（耗时、错误、跳过） | ✅ **2026-08-29 已实现**（`airdrop_agent_runs_total` + `airdrop_agent_duration_seconds`，见 §3.2 Agent 段），本行保留为移出记录 |
-| 数据质量指标（完整性、新鲜度） | 未实现 |
+| 数据质量指标（完整性、新鲜度） | ✅ **2026-08-29 已实现**（`airdrop_data_completeness_ratio` + `airdrop_data_freshness_seconds`，见 §3.2 数据质量段），本行保留为移出记录 |
 | 采集配额 / 限流令牌 / 信号新鲜度指标 | 未实现 |
 | HTTP 请求耗时 histogram | 未实现，耗时只在日志字段 |
 | 业务面板（评分趋势、赛道热度、反馈趋势） | 未实现，依赖的三个指标都不存在 |

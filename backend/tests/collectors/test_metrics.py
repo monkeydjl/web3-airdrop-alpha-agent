@@ -202,3 +202,33 @@ class TestCheckAlerts:
         alerts = metrics.check_alerts(window_hours=24)
         freshness_alerts = [a for a in alerts if a["metric"] == "freshness_minutes"]
         assert len(freshness_alerts) == 1
+
+
+class TestDataQualityGauges:
+    """check_alerts 顺手把数据质量 gauge 写进 Prometheus（OBSERVABILITY §9）。"""
+
+    def test_check_alerts_sets_freshness_and_completeness(self, metrics):
+        from app.metrics import DATA_COMPLETENESS_RATIO, DATA_FRESHNESS_SECONDS, metric_sample_value
+
+        now = datetime.now(UTC)
+        _insert_source(metrics._get_conn(), "defillama", "success", (now - timedelta(minutes=5)).isoformat())
+        _insert_collection_log(metrics._get_conn(), "defillama", "success", now, now, 1, 0)
+        raw_data = '{"name": "LayerX", "url": "https://x.xyz", "sector": "L2", "stage": "testnet"}'
+        _insert_raw_project(metrics._get_conn(), "defillama", raw_data)
+
+        metrics.check_alerts(window_hours=24)
+
+        freshness = metric_sample_value(DATA_FRESHNESS_SECONDS, source_id="defillama")
+        completeness = metric_sample_value(DATA_COMPLETENESS_RATIO, source_id="defillama")
+        # ~5 分钟前同步 → 约 300 秒；留余量容忍时钟分辨率
+        assert freshness >= 250.0
+        assert completeness == 1.0
+
+    def test_no_sync_leaves_freshness_unset(self, metrics):
+        from app.metrics import DATA_COMPLETENESS_RATIO, metric_sample_value
+
+        # 只有 source、没有成功同步 → freshness 不该被写成 0 或旧值，完整性照写
+        _insert_source(metrics._get_conn(), "defillama", "error", None)
+        metrics.check_alerts(window_hours=24)
+
+        assert metric_sample_value(DATA_COMPLETENESS_RATIO, source_id="defillama") == 0.0
