@@ -215,6 +215,17 @@ def test_gate_passes_with_enough_samples():
     assert "GATE_MET" in gate.reason
 
 
+def test_gate_constants_not_lowered():
+    """门槛常量必须钉在协议值（WEIGHT_CALIBRATION.md §3.3）。
+
+    这是防"调低门槛让校准更快达标"的护栏：把 200 → 50 或 30 → 5
+    会直接红掉这条测试。协议说「未达标禁止切换默认 weight_version」，
+    门槛是协议的一部分，不随样本稀缺而下调。
+    """
+    assert cal_module.MIN_VALID_SAMPLES == 200
+    assert cal_module.MIN_FARM_SAMPLES == 30
+
+
 # ── Objective function tests ────────────────────
 
 
