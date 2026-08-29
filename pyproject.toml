@@ -138,6 +138,13 @@ docstring-code-format = true
 docstring-code-line-length = 80
 
 # ── mypy ──────────────────────────────────────
+# ⚠️ 历史遗留的死配置：权威在 backend/pyproject.toml 的 [tool.mypy]（CI 的
+# Type Check = cd backend + `mypy app --config-file pyproject.toml`，读那一份，
+# 2026-08-28 已提升为 strict = true）。
+# 本段只被 pre-commit 的 mypy hook（对单文件跑 + --ignore-missing-imports，
+# 本就不可靠）读到；"从仓库根跑 mypy"会因缺 mypy_path 而 import-not-found。
+# overrides 与 backend 保持一致（5 个缺 stub 的第三方库），只为避免读到旧口径。
+# 彻底清理（删本段 + 修 pre-commit hook 指向 backend）留作后续小工程，另议。
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -157,7 +164,8 @@ namespace_packages = true
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["apscheduler.*", "structlog.*"]
+# 与 backend/pyproject.toml 的 [tool.mypy.overrides] 保持一致（5 个缺 stub 的第三方库）
+module = ["apscheduler.*", "structlog.*", "pandas", "openpyxl.*", "opentelemetry.*"]
 ignore_missing_imports = true
 
 # ── pytest ────────────────────────────────────
