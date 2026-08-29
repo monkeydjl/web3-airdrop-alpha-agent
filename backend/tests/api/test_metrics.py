@@ -10,7 +10,14 @@ from prometheus_client.parser import text_string_to_metric_families
 
 from app import metrics as metrics_module
 from app.main import create_app
-from app.metrics import record_opportunity_shadow_assessment
+from app.metrics import (
+    AGENT_DURATION,
+    AGENT_RESULTS,
+    AGENT_RUNS,
+    metric_sample_value,
+    record_agent_run,
+    record_opportunity_shadow_assessment,
+)
 
 
 @pytest.fixture
@@ -172,3 +179,37 @@ class TestMetricsEndpoint:
                 if len(parts) == 2:
                     return int(float(parts[1]))
         return 0
+
+
+class TestAgentMetrics:
+    """Agent 粒度指标（§9「Agent 粒度指标」）—— 闭合词表 + 真实递增。"""
+
+    def test_agent_result_vocabulary_is_closed(self) -> None:
+        """result 词表必须是闭合三态，非法值要抛错而非静默写脏标签。"""
+        assert {"success", "error", "skipped"} == AGENT_RESULTS
+        with pytest.raises(ValueError):
+            record_agent_run(agent="narrative", result="timeout", duration_seconds=0.1)
+
+    def test_record_agent_run_increments_success(self) -> None:
+        before = metric_sample_value(AGENT_RUNS, agent="narrative", result="success")
+        record_agent_run(agent="narrative", result="success", duration_seconds=0.25)
+        after = metric_sample_value(AGENT_RUNS, agent="narrative", result="success")
+        assert after == before + 1
+
+    def test_record_agent_run_observes_duration(self) -> None:
+        before = metric_sample_value(AGENT_DURATION, agent="team")
+        record_agent_run(agent="team", result="success", duration_seconds=0.75)
+        after = metric_sample_value(AGENT_DURATION, agent="team")
+        assert after >= before + 0.75
+
+    def test_error_and_skipped_are_distinct_labels(self) -> None:
+        record_agent_run(agent="risk", result="error", duration_seconds=0.1)
+        record_agent_run(agent="risk", result="skipped", duration_seconds=0.1)
+        assert metric_sample_value(AGENT_RUNS, agent="risk", result="error") >= 1
+        assert metric_sample_value(AGENT_RUNS, agent="risk", result="skipped") >= 1
+
+    def test_agent_metrics_exposed(self, client) -> None:
+        record_agent_run(agent="scorer", result="success", duration_seconds=0.1)
+        content = client.get("/metrics").text
+        assert "airdrop_agent_runs_total" in content
+        assert "airdrop_agent_duration_seconds" in content

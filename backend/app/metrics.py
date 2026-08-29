@@ -464,6 +464,36 @@ FETCHER_CIRCUIT_BREAKER_STATE = Gauge(
     "Circuit breaker state: 0=CLOSED, 1=HALF_OPEN, 2=OPEN.",
 )
 
+# ── Agent granular metrics (§9「Agent 粒度指标」) ─────────────────
+# 每个分析 agent（narrative/team/tokenomics/risk）与 scorer 在 orchestrator
+# 里跑一次，记一个 result 三元组 + 一次耗时。闭合词表见 AGENT_RESULTS。
+AGENT_RESULTS: frozenset[str] = frozenset({"success", "error", "skipped"})
+
+AGENT_RUNS = Counter(
+    "airdrop_agent_runs_total",
+    "Analysis agent runs by agent and outcome.",
+    ["agent", "result"],
+)
+
+AGENT_DURATION = Histogram(
+    "airdrop_agent_duration_seconds",
+    "Analysis agent wall-clock duration.",
+    ["agent"],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+
+def record_agent_run(*, agent: str, result: str, duration_seconds: float) -> None:
+    """记录一次 agent 执行：result ∈ {success, error, skipped}。
+
+    success = agent 正常返回且产出结果字段；error = agent 抛异常；
+    skipped = agent 正常返回但产出字段为 None（跑了但没东西可输出）。
+    """
+    if result not in AGENT_RESULTS:
+        raise ValueError(f"illegal agent result: {result!r}")
+    AGENT_RUNS.labels(agent=agent, result=result).inc()
+    AGENT_DURATION.labels(agent=agent).observe(max(duration_seconds, 0.0))
+
 
 class MetricsExporter:
     """Render Prometheus metrics if metrics are enabled in settings."""

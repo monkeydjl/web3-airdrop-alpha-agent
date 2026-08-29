@@ -12,12 +12,13 @@ Reference:
 
 import asyncio
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import structlog
 
+from app import metrics
 from app import tracing as _tracing
 from app.agents.base import (
     AgentContext,
@@ -232,6 +233,30 @@ class SimpleOrchestrator:
                 end_span_with_error(span, exc)
                 raise
 
+    async def _run_agent(
+        self,
+        agent_name: str,
+        project_id: str,
+        coro: Awaitable[Any],
+        output_ready: Callable[[], bool],
+    ) -> Any:
+        """Run an agent with per-agent metrics (duration + outcome).
+
+        outcome（`app.metrics.record_agent_run`）三态：
+        - error   = agent 抛异常（span 仍记 error，异常继续向上交给 gather 收集）
+        - skipped = 正常返回但产出字段为 None（跑了但没有可输出结果）
+        - success = 正常返回且产出非 None
+        """
+        start = time.time()
+        try:
+            result = await self._run_agent_span(agent_name, project_id, coro)
+        except Exception:
+            metrics.record_agent_run(agent=agent_name, result="error", duration_seconds=time.time() - start)
+            raise
+        outcome = "success" if output_ready() else "skipped"
+        metrics.record_agent_run(agent=agent_name, result=outcome, duration_seconds=time.time() - start)
+        return result
+
     async def _run_single_project(
         self,
         project: RawProject,
@@ -276,14 +301,18 @@ class SimpleOrchestrator:
 
                 # Stage 1a: 独立 agent 并行执行（Risk 依赖 Tokenomics 结果，故拆到 1b）
                 stage1_results = await asyncio.gather(
-                    self._run_agent_span("narrative", project.id, self.narrative.run(state)),
-                    self._run_agent_span("team", project.id, self.team.run(state)),
-                    self._run_agent_span("tokenomics", project.id, self.tokenomics.run(state)),
+                    self._run_agent(
+                        "narrative", project.id, self.narrative.run(state), lambda: state.narrative is not None
+                    ),
+                    self._run_agent("team", project.id, self.team.run(state), lambda: state.team is not None),
+                    self._run_agent(
+                        "tokenomics", project.id, self.tokenomics.run(state), lambda: state.tokenomics is not None
+                    ),
                     return_exceptions=True,
                 )
                 # Stage 1b: Tokenomics 就绪后再跑 Risk，保证 token_risk 用真实解锁数据
                 risk_result = await asyncio.gather(
-                    self._run_agent_span("risk", project.id, self.risk.run(state)),
+                    self._run_agent("risk", project.id, self.risk.run(state), lambda: state.risk is not None),
                     return_exceptions=True,
                 )
 
@@ -314,13 +343,22 @@ class SimpleOrchestrator:
 
                 # Stage 2: Run Scorer
                 scorer = ScorerAgent(sector_counts=sector_counts)
+                scorer_start = time.time()
                 with _tracing.tracer.start_as_current_span("airdrop.agent.scorer") as scorer_span:
                     scorer_span.set_attribute("project_id", project.id)
                     try:
                         state = await scorer.run(state)
                     except Exception as exc:
                         end_span_with_error(scorer_span, exc)
+                        metrics.record_agent_run(
+                            agent="scorer", result="error", duration_seconds=time.time() - scorer_start
+                        )
                         raise
+                    metrics.record_agent_run(
+                        agent="scorer",
+                        result="success" if state.score is not None else "skipped",
+                        duration_seconds=time.time() - scorer_start,
+                    )
                     if state.score is not None:
                         scorer_span.set_attribute("score", state.score)
                         scorer_span.set_attribute("label", state.label or "")

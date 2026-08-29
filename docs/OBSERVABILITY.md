@@ -165,7 +165,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（39 个，实测全量）
+### 3.2 完整指标目录（42 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -179,6 +179,20 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `airdrop_pipeline_duration_seconds` | histogram | — | 端到端耗时（buckets 0.1,0.5,1,2.5,5,10,30,60） |
 | `airdrop_projects_scored_total` | counter | — | 累计评分项目数 |
 | `airdrop_projects_by_label_total` | counter | `label` | 按最终标签分组的评分数 |
+
+#### Agent（2）
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `airdrop_agent_runs_total` | counter | `agent, result` | 分析 agent 执行结果计数 |
+| `airdrop_agent_duration_seconds` | histogram | `agent` | 单 agent 墙钟耗时（buckets 0.001…10） |
+
+`result` 闭合为 `success` / `error` / `skipped`（定义在 `metrics.py::AGENT_RESULTS`）：
+`success` = agent 正常返回且产出结果字段；`error` = agent 抛异常；
+`skipped` = 正常返回但产出字段为 None（跑了但没有可输出结果）。
+埋点在 `agents/orchestrator_simple.py` 的 `_run_agent`（narrative/team/tokenomics/risk）
+与 scorer 分支。这条取代了老文档把错误/跳过拆成两个独立 counter 的写法
+（老名字仍列在 §3.3，确实不存在）。
 
 #### 采集（4）
 
@@ -216,7 +230,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `source` 闭合为 `defillama` / `coingecko` / `cryptorank`；
 各 `result` 词表见 `metrics.py` 的 `OPPORTUNITY_ECONOMIC_*_RESULTS` 常量。
 
-#### LLM（9）
+#### LLM（10）
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
@@ -229,6 +243,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `airdrop_llm_spend_record_failures_total` | counter | — | 钱花了但账没记上的次数（见下方警告） |
 | `airdrop_llm_budget_usd` | gauge | — | 当前配置的日预算（0 = 不限额） |
 | `airdrop_llm_spend_today_usd` | gauge | — | 当日（UTC）累计估算花费 |
+| `airdrop_llm_secret_leak_detected_total` | counter | — | LLM 输出因含密钥被丢弃的次数（SECURITY §10.5） |
 
 > ⚠️ **前三个指标在 2026-08-24 之前从未被递增过一次。**
 > 它们注册了、暴露在 `/metrics` 里、被本文档记录、还有一条 `HighLLMErrorRate`
@@ -311,14 +326,14 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 `airdrop_llm_spend_today_usd` 两个 gauge，剩余额度在查询侧相减得出。
 多暴露一个第三个数，就多一个会与前两个漂移的来源。
 
-### 3.3 老文档虚构、代码中不存在的指标（33 个）
+### 3.3 老文档虚构、代码中不存在的指标（32 个）
 
 以下名字在上一版文档里出现过，代码里**一个都没有**。列在这里是为了让照旧文档
 写过查询的人一眼对上，不要再找：
 
 `airdrop_run_total`、`airdrop_run_duration_seconds`、`airdrop_projects_analyzed_total`、
 `airdrop_projects_inserted_total`、`airdrop_projects_updated_total`、
-`airdrop_agent_duration_seconds`、`airdrop_agent_errors_total`、`airdrop_agent_skipped_total`、
+`airdrop_agent_errors_total`、`airdrop_agent_skipped_total`、
 `airdrop_fetcher_duration_seconds`、`airdrop_fetcher_errors_total`、`airdrop_fetcher_circuit_open`、
 `airdrop_collection_total`、`airdrop_collection_success_ratio`、`airdrop_collection_status`、
 `airdrop_collection_api_calls`、`airdrop_collection_api_calls_today`、`airdrop_collection_running`、
@@ -536,7 +551,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | `X-Run-Id` 响应头 | 未实现，只有 `X-Disclaimer` |
 | `run_id` 贯穿每条日志 | 部分：287 处调用里 19 处带 `run_id` |
 | LLM 成本 / token / 预算指标 | ✅ **2026-08-24 已实现**（6 个新指标，见 §3.2），本行保留为移出记录 |
-| Agent 粒度指标（耗时、错误、跳过） | 未实现，agent 信息只进日志与 `logs` 表 |
+| Agent 粒度指标（耗时、错误、跳过） | ✅ **2026-08-29 已实现**（`airdrop_agent_runs_total` + `airdrop_agent_duration_seconds`，见 §3.2 Agent 段），本行保留为移出记录 |
 | 数据质量指标（完整性、新鲜度） | 未实现 |
 | 采集配额 / 限流令牌 / 信号新鲜度指标 | 未实现 |
 | HTTP 请求耗时 histogram | 未实现，耗时只在日志字段 |
