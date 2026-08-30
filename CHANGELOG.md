@@ -8,6 +8,32 @@
 
 ## [Unreleased]
 
+### Security / Fixed — 全项目审核修复三连（2026-08-30，独立审核 P1）
+
+- **匿名 token 不再接受调用方自报身份**：`POST /auth/anonymous` 此前接受
+  请求体里的 `user_id` 并直接写进 token —— 而端点在公开路径里，等于任何人
+  都能给别人的 user_id 签 token，读写按 user_id 隔离的 watchlist / feedback /
+  interactions。现在 `user_id` 一律服务端生成（`anon-<uuid>`），请求字段从
+  schema 中删除（带该字段的调用方不受影响，值被忽略）。见 API_SPEC §14。
+- **分析队列中毒防护**：一条损坏的 `raw_data` / `discovered_at` 曾让整批
+  `collect_from_repository` 抛异常，且该行 `processed=0` + 按分数倒序每轮
+  重新被取到，流水线永久卡死（只能手工修库）。现在坏行隔离（quarantine）
+  + 跳过，批次继续；顺手把三处几乎相同的隔离块抽成 `_quarantine_row()`
+  （日志事件名微调：隔离失败事件改为 `<成功事件>.quarantine_failed`，新增
+  `collector.corrupt_raw_data` / `collector.corrupt_discovered_at` /
+  `collector.quarantine_mark_failed`，无监控依赖）。
+- **Alchemy webhook 签名密钥独立成键**：`ALCHEMY_API_KEY` 重命名为
+  `ALCHEMY_WEBHOOK_SIGNING_KEY` —— 它本来就只被 `POST /webhook/alchemy`
+  的 HMAC 校验读取，却顶着「API key」的名字；拿 Data APIs 的 API key 填
+  旧键时合法回调永远 401，webhook 实际不可用。**升级注意**：`.env` 里如配了
+  `ALCHEMY_API_KEY` 需改名为 `ALCHEMY_WEBHOOK_SIGNING_KEY`（值不变）。
+  同步 `.env.example` / 日志脱敏清单 / DATA_SOURCE_STRATEGY §8。
+- **Release 流水线加测试门禁**：tag push 不触发 CI（ci.yml 只匹配分支），
+  发布镜像的 commit 可能从未通过任何测试；且发布构建吃 gha 缓存，会把带
+  已知 CVE 的旧基础层带进镜像（security.yml 已因此改 no-cache，release 漏
+  同步）。现在 release 前置 `Release Test Gate`（ruff + mypy strict + 全量
+  pytest），构建改 `no-cache: true`。
+
 ### Security — 三个安全缺口全堵上（2026-08-29，档1）
 
 - **LLM 输出泄漏过滤**：LLM 返回文本在下游使用前做一次敏感信息清扫
