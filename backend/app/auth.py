@@ -78,6 +78,9 @@ ADMIN_ONLY_PREFIXES = (
     # 对匿名角色开放等于告诉攻击者"这个系统 03:00 会自己动、而这几个源是瞎的"。
     # 与 /settings、/archive 同一口径（只读诊断，但内容是运维情报）。
     "/api/v1/scheduler",
+    # 决策推送（ACTION_LOOP_DESIGN §2）：通道配置布尔、发送历史（目的地、
+    # 频率、失败原因）与触发测试发送的入口，既是运维情报也是运维动作。
+    "/api/v1/notify",
 )
 
 

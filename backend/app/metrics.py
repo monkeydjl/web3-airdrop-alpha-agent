@@ -559,6 +559,30 @@ AGENT_DURATION = Histogram(
 )
 
 
+# ── Notify metrics (ACTION_LOOP_DESIGN §2.8) ─────────────────────
+# 事件评估与出站发送分开计数：评估量只取决于库里的事实变化，
+# 发送量还受 NOTIFY_ENABLED / 通道配置影响 —— 两者背离本身就是信号。
+NOTIFY_SENT = Counter(
+    "airdrop_notify_sent_total",
+    "Outbound decision-push messages sent successfully.",
+    ["channel"],
+)
+
+NOTIFY_FAILURES = Counter(
+    "airdrop_notify_failure_total",
+    "Outbound decision-push send attempts that failed.",
+    ["channel"],
+)
+
+NOTIFY_EVENT_TYPES: frozenset[str] = frozenset({"daily_digest", "score_crossing", "new_farm", "watchlist_signal"})
+
+NOTIFY_EVENTS_EVALUATED = Counter(
+    "airdrop_notify_event_evaluated_total",
+    "Decision-push events produced by the evaluator.",
+    ["event_type"],
+)
+
+
 def record_agent_run(*, agent: str, result: str, duration_seconds: float) -> None:
     """记录一次 agent 执行：result ∈ {success, error, skipped}。
 

@@ -74,11 +74,12 @@ class UnifiedScheduler:
     # ── 生命周期 ──────────────────────────────────
 
     def start(self) -> None:
-        """启动统一调度器：注册全部采集 job + 分析 job + 归档 job，然后启动。"""
+        """启动统一调度器：注册全部采集 job + 分析 job + 归档 job + 推送 job，然后启动。"""
         if (
             not settings.scheduler_enabled
             and not settings.collection_scheduler_enabled
             and not settings.archive_scheduler_enabled
+            and not settings.notify_enabled
         ):
             self._logger.info("unified_scheduler.disabled")
             return
@@ -86,6 +87,7 @@ class UnifiedScheduler:
         self._register_collection_jobs()
         self._register_analysis_job()
         self._register_archive_job()
+        self._register_notify_job()
         self.scheduler.start()
         self._logger.info("unified_scheduler.started")
 
@@ -362,6 +364,46 @@ class UnifiedScheduler:
             self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
         finally:
             conn.close()
+
+    # ── 推送 job 注册（ACTION_LOOP_DESIGN §2）──────
+
+    def _register_notify_job(self) -> None:
+        """注册每日摘要推送 job（决策推送 F1）。
+
+        默认 09:00 UTC，排在采集（08:00-10:30）与分析（08:00）之后：
+        摘要说的是「今天新增了什么」，太早跑会把当天还没采到的算漏。
+        """
+        if not settings.notify_enabled:
+            self._logger.info("unified_scheduler.notify_disabled")
+            return
+
+        self.scheduler.add_job(
+            self._run_notify_digest,
+            trigger=CronTrigger.from_crontab(settings.notify_digest_cron, timezone=settings.timezone),
+            id="notify_digest",
+            name="Decision push daily digest",
+            replace_existing=True,
+            misfire_grace_time=settings.scheduler_misfire_grace_seconds,
+            coalesce=True,
+            max_instances=1,
+        )
+        self._logger.info(
+            "unified_scheduler.notify_job_added",
+            cron=settings.notify_digest_cron,
+            timezone=settings.timezone,
+        )
+
+    async def _run_notify_digest(self) -> None:
+        """执行一次每日摘要评估与发送。失败不外抛 —— 推送失败不该停调度器。"""
+        from app.notify.service import run_daily_digest
+
+        self._logger.info("unified_scheduler.notify_started")
+        try:
+            stats = await run_daily_digest()
+        except Exception as e:
+            self._logger.error("unified_scheduler.notify_failed", error=str(e), exc_info=True)
+            return
+        self._logger.info("unified_scheduler.notify_completed", **stats)
 
     # ── 诊断 ──────────────────────────────────────
 

@@ -218,6 +218,18 @@ class Settings(BaseSettings):
     galxe_cron: str = "0 10 * * *"
     layer3_cron: str = "30 10 * * *"
 
+    # ── 决策推送（ACTION_LOOP_DESIGN.md §2，F1）──
+    # 出站通知总开关：false 时事件评估照常写 notify_log，但不发送。
+    notify_enabled: bool = False
+    # 通道：telegram / discord_webhook
+    notify_channel: str = "telegram"
+    notify_digest_cron: str = "0 9 * * *"  # 每日摘要（UTC）
+    notify_max_per_run: int = 20  # 单轮推送条数上限，防事件风暴
+    telegram_bot_token: str = ""  # Bot Father 签发
+    telegram_chat_id: str = ""
+    # 频道 Webhook URL（URL 路径本身含 secret，redact 整串脱敏）
+    discord_notify_webhook_url: str = ""
+
     # ── 外部数据源 (ADR-012) ─────────────────────
     # DefiLlama（P0，免费）
     defillama_enabled: bool = True

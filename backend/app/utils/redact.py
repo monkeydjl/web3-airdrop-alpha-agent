@@ -31,6 +31,9 @@ _SECRET_ATTRS = (
     "openai_api_key",
     "discord_bot_token",
     "reddit_client_secret",
+    "telegram_bot_token",
+    # Discord 频道 Webhook URL 的路径本身就含 secret —— 整串当密钥脱敏
+    "discord_notify_webhook_url",
     "api_key",
     "database_url",
 )

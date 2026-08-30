@@ -387,6 +387,69 @@ async def _fetch_with_retry(
     raise RuntimeError(f"fetch failed for {url} (no attempts made)")
 
 
+async def post(
+    url: str,
+    *,
+    json_body: dict[str, Any],
+    timeout: int | None = None,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+) -> int:
+    """POST JSON，返回成功响应的状态码。
+
+    与 `fetch()` 同一套出口约束：域名白名单 fail-closed、熔断器、信号量。
+    两个刻意差异（决策推送 senders 等单向发送场景）：
+
+    - **不写缓存** —— POST 没有"结果可复用"的语义，缓存一个发送动作
+      等于假装它没发生过；
+    - **不解析响应体** —— Discord webhook 成功返回 204 No Content，
+      `response.json()` 会直接炸。
+
+    4xx（除 429）是确定性失败，重试没有意义，立即抛错；5xx / 网络错误
+    按指数退避重试后抛最后一个错误。成功与否的判定只看状态码。
+    """
+    assert_url_allowed(url)
+    timeout = timeout or 10
+
+    global _in_flight
+    semaphore = _get_semaphore()
+    async with semaphore:
+        _in_flight += 1
+        FETCHER_SEMAPHORE_USAGE.set(_in_flight)
+        try:
+            last_error: Exception | None = None
+            for attempt in range(max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.request("POST", url, json=json_body)
+                except (httpx.HTTPError, httpx.TimeoutException) as e:
+                    last_error = e
+                    _circuit_breaker.record_failure()
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay * (2**attempt))
+                    continue
+
+                if response.is_success:
+                    _circuit_breaker.record_success()
+                    logger.info("fetch.post_success", url=url, attempt=attempt + 1, status=response.status_code)
+                    return response.status_code
+
+                _circuit_breaker.record_failure()
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    # 客户端错误（凭证错 / 参数错）重试也不会好 —— 立即失败。
+                    raise RuntimeError(f"POST {url} failed with client error {response.status_code} (not retried)")
+                last_error = RuntimeError(f"POST {url} failed with status {response.status_code}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2**attempt))
+
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(f"POST failed for {url} (no attempts made)")
+        finally:
+            _in_flight -= 1
+            FETCHER_SEMAPHORE_USAGE.set(_in_flight)
+
+
 # ═══════════════════════════════════════════════════════════════
 # Utilities
 # ═══════════════════════════════════════════════════════════════

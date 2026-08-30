@@ -365,6 +365,17 @@ async def _run_pipeline(
         errors=response.errors,
     )
     PIPELINE_RUNS.labels(trigger=trigger, status="completed").inc()
+
+    # 决策推送评估钩子（F1，ACTION_LOOP_DESIGN §2）：评分落库后评估跨线 /
+    # 新 FARM / 观察列表信号。失败绝不影响 pipeline 本身 —— 与 opportunity
+    # shadow 同一口径，service 层内部也吞错，这里是第二道保险。
+    try:
+        from app.notify.service import evaluate_after_run
+
+        result["notify"] = await evaluate_after_run(trigger=trigger)
+    except Exception as e:
+        logger.warning("pipeline.notify_evaluate_failed", error=str(e))
+
     return result
 
 
