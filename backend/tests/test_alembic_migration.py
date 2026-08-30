@@ -49,7 +49,30 @@ _EXPECTED_TABLES = {
     "archive_runs",
     # LLM 日花费账本（迁移 0004）
     "llm_spend_daily",
+    # 决策推派出站日志（迁移 0005，ACTION_LOOP_DESIGN §2）
+    "notify_log",
+    # 参与流水（迁移 0006，ACTION_LOOP_DESIGN §3）
+    "participation_plans",
+    "participation_tasks",
 }
+
+# 每个迁移引入的表 —— 可回滚性测试按「回滚到 N ⇒ 移除 N 之后全部表」推导，
+# 新迁移只需在这里登记一行，不必再改各测试的差集。
+_REVISION_TABLES: dict[str, set[str]] = {
+    "0004": {"llm_spend_daily"},
+    "0005": {"notify_log"},
+    "0006": {"participation_plans", "participation_tasks"},
+}
+_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006"]
+
+
+def _tables_removed_after(revision: str) -> set[str]:
+    """回滚到 revision 时应当消失的表（revision 之后的所有迁移引入的表）。"""
+    idx = _REVISION_ORDER.index(revision)
+    out: set[str] = set()
+    for rev in _REVISION_ORDER[idx + 1 :]:
+        out |= _REVISION_TABLES.get(rev, set())
+    return out
 
 
 def _run(cmd: list[str], *, db_path: Path) -> subprocess.CompletedProcess:
@@ -155,7 +178,7 @@ def test_alembic_version_recorded(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     ver = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     conn.close()
-    assert ver is not None and ver[0] == "0004"
+    assert ver is not None and ver[0] == "0006"
 
 
 def test_alembic_0003_is_reversible(tmp_path: Path) -> None:
@@ -174,7 +197,7 @@ def test_alembic_0003_is_reversible(tmp_path: Path) -> None:
     _run_alembic("downgrade", "0002", db_path=db_path)
     tables = _get_user_tables(db_path)
     assert "archive_runs" not in tables
-    assert tables == _EXPECTED_TABLES - {"archive_runs", "llm_spend_daily"}, "回滚 0003 不应影响其它表"
+    assert tables == _EXPECTED_TABLES - {"archive_runs"} - _tables_removed_after("0003"), "回滚 0003 不应影响其它表"
 
     _, indexes = _dump_schema(db_path)
     assert "idx_archive_runs_started" not in indexes
@@ -199,7 +222,7 @@ def test_alembic_0004_is_reversible(tmp_path: Path) -> None:
 
     _run_alembic("downgrade", "0003", db_path=db_path)
     tables = _get_user_tables(db_path)
-    assert tables == _EXPECTED_TABLES - {"llm_spend_daily"}, "回滚 0004 只应移除 llm_spend_daily"
+    assert tables == _EXPECTED_TABLES - _tables_removed_after("0003"), "回滚 0004（到 0003）只应移除 llm_spend_daily"
 
     _run_alembic("upgrade", "head", db_path=db_path)
     assert _get_user_tables(db_path) == _EXPECTED_TABLES

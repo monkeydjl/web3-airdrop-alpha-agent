@@ -271,6 +271,42 @@ CREATE INDEX IF NOT EXISTS idx_notify_log_status ON notify_log(status, created_a
 
 
 -- ============================================
+-- 2.9c participation_plans / participation_tasks 表
+--      （参与流水，ACTION_LOOP_DESIGN §3.3，F2）
+-- ============================================
+-- user_id 来自 token 身份，不接受请求体自报。(user_id, project_id) 唯一：
+-- 同一用户对同一项目最多一个 plan，重复创建 409 而不是静默加倍。
+-- task.ref 保存建议生成器的 task_id：重复 seed 按 (plan_id, ref) 去重。
+-- PostgreSQL 版差异：id SERIAL、时间列 TIMESTAMPTZ（见 alembic 0006）。
+CREATE TABLE IF NOT EXISTS participation_plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active', -- active/paused/completed/abandoned
+    note        TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP,
+    UNIQUE (user_id, project_id)
+);
+
+CREATE TABLE IF NOT EXISTS participation_tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+    ref          TEXT,                          -- 建议生成器的 task_id（seed 去重键）
+    title        TEXT NOT NULL,
+    kind         TEXT NOT NULL DEFAULT 'other', -- 建议生成器的 category
+    status       TEXT NOT NULL DEFAULT 'todo',  -- todo/doing/done/skipped
+    url          TEXT,
+    due_at       TIMESTAMP,
+    note         TEXT,
+    completed_at TIMESTAMP,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan ON participation_tasks(plan_id, status);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (

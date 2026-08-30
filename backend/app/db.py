@@ -493,6 +493,36 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_notify_log_status
                 ON notify_log(status, created_at);
 
+            -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
+            -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
+            -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            CREATE TABLE IF NOT EXISTS participation_plans (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'active',
+                note        TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP,
+                UNIQUE (user_id, project_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS participation_tasks (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+                ref          TEXT,
+                title        TEXT NOT NULL,
+                kind         TEXT NOT NULL DEFAULT 'other',
+                status       TEXT NOT NULL DEFAULT 'todo',
+                url          TEXT,
+                due_at       TIMESTAMP,
+                note         TEXT,
+                completed_at TIMESTAMP,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
+                ON participation_tasks(plan_id, status);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -959,6 +989,36 @@ def _postgres_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_notify_log_status
                 ON notify_log(status, created_at);
+
+            -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
+            -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
+            -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            CREATE TABLE IF NOT EXISTS participation_plans (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'active',
+                note        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMPTZ,
+                UNIQUE (user_id, project_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS participation_tasks (
+                id           SERIAL PRIMARY KEY,
+                plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+                ref          TEXT,
+                title        TEXT NOT NULL,
+                kind         TEXT NOT NULL DEFAULT 'other',
+                status       TEXT NOT NULL DEFAULT 'todo',
+                url          TEXT,
+                due_at       TIMESTAMPTZ,
+                note         TEXT,
+                completed_at TIMESTAMPTZ,
+                created_at   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
+                ON participation_tasks(plan_id, status);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
