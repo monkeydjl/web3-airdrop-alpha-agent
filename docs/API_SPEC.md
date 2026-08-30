@@ -69,14 +69,14 @@
 
 ### 2.1 写操作的鉴权分布（实测，2026-08-31 随决策推送更新）
 
-全仓共 **22 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **26 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 8 |
 | 无鉴权（公开） | 2 |
-| 匿名 token 可调 | 12 |
+| 匿名 token 可调 | 16 |
 <!-- write-auth-split:end -->
 
 管理员专用的 8 个：`/run`、`/import/projects`、`/quarantine`、
@@ -195,6 +195,11 @@
 | POST | `/api/v1/notify/test` | v1 | F1（2026-08-31） | 发送测试推送（**管理员专用**，详见 §38） |
 | GET | `/api/v1/notify/status` | v1 | F1（2026-08-31） | 推送通道状态（**管理员专用**，详见 §38） |
 | GET | `/api/v1/notify/log` | v1 | F1（2026-08-31） | 推送发送历史（**管理员专用**，详见 §38） |
+| POST | `/api/v1/projects/{id}/participation` | v1 | F2（2026-08-31） | 创建参与 plan（匿名 token，详见 §39） |
+| GET | `/api/v1/participation` | v1 | F2（2026-08-31） | 我的参与 plan（匿名 token，详见 §39） |
+| PATCH | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 更新 plan 状态机（匿名 token，详见 §39） |
+| PATCH | `/api/v1/participation/tasks/{task_id}` | v1 | F2（2026-08-31） | 更新任务状态机（匿名 token，详见 §39） |
+| DELETE | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 删除参与 plan（匿名 token，详见 §39） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -1879,3 +1884,57 @@ Alchemy webhook 回调端点（接收链上事件推送）。
   }
 }
 ```
+
+
+---
+
+## 39. participation（参与流水，2026-08-31 新增，匿名 token 可写）
+
+plan/task 两级状态机，按 token 身份（`get_current_user`）隔离 —— **请求体里
+没有也不认 `user_id`**（2026-08-30 审核 P1-1 的教训）。设计详见
+[ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §3。
+
+状态机（闭表，非法迁移 422 `INVALID_TRANSITION`）：
+
+- plan：`active ↔ paused`、`→ completed / abandoned`、`completed → active`
+- task：`todo ↔ doing`、`→ done / skipped`、`done → todo`（done 记
+  `completed_at`，重开清除）
+
+### 39a. POST /api/v1/projects/{id}/participation
+
+创建参与 plan；同项目重复创建 409 `ALREADY_EXISTS`；项目不存在 404。
+
+```json
+{ "seed_from_generated": true, "note": "冲积分" }
+```
+
+`seed_from_generated=true`（默认）把 §38b 的建议清单导入为任务（按生成 id 去重）。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "plan_id": 1, "project_id": "proj-1", "seeded_tasks": 6 } }
+```
+
+### 39b. GET /api/v1/participation?status=active
+
+我的全部 plan（含 tasks 数组），按创建时间倒序；`status` 可选过滤。
+
+### 39c. PATCH /api/v1/participation/{plan_id}
+
+```json
+{ "status": "paused", "note": "先等测试网" }
+```
+
+归属不是当前 token 的 plan 一律 **404**（不确认存在性）。
+
+### 39d. PATCH /api/v1/participation/tasks/{task_id}
+
+```json
+{ "status": "done", "note": "已完成交互", "due_at": "2026-09-15 00:00:00" }
+```
+
+`due_at` 传空串清除。
+
+### 39e. DELETE /api/v1/participation/{plan_id}
+
+删除 plan 并级联删任务。

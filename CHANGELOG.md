@@ -8,6 +8,25 @@
 
 ## [Unreleased]
 
+### Added — M1 执行闭环：决策推送 + 参与流水（2026-08-31，按 ACTION_LOOP_DESIGN 实施）
+
+- **F1 决策推送**：pipeline 收尾钩子评估跨线（65 上穿 FARM / 50 下穿）、新 FARM、
+  观察列表强信号，每日摘要 cron（`NOTIFY_DIGEST_CRON`，默认 09:00 UTC）汇总；
+  Telegram Bot API / Discord Webhook 双通道。出站一律经新增 `fetcher.post()`
+  （域名白名单 fail-closed 生效、不缓存、不解析响应体 —— Discord 204 空体）。
+  「至少一次评估、至多一次发送」由 `notify_log(event_key, channel)` 唯一约束保证；
+  重试 ≤3 次后 failed 落库可查（`GET /notify/log`，管理员专用）。
+  `NOTIFY_ENABLED` 默认 false：关开关 ≠ 停审计，评估照常留痕。
+- **F2 参与流水**：`participation_plans` / `participation_tasks` 服务端状态机
+  （plan 四态 / task 四态，迁移闭表非法即 422），按 token 身份隔离 —— **请求体
+  自报 user_id 被忽略**。建议清单可一键 seed 为任务（按生成 id 去重）；前端
+  ParticipationTasks 接服务端，本机勾选一次性迁移后清除。
+- 新表：`notify_log`（迁移 0005）、`participation_plans` / `participation_tasks`
+  （迁移 0006），SQLite/PG 双方言。API_SPEC §38/§39、OPERATIONS §7.4、
+  OBSERVABILITY（指标 48→51）、SECURITY §10.2（+api.telegram.org）同步。
+- 写端点分布 21→26：管理员 8 / 公开 2 / 匿名 token 16。
+
+
 ### Added — 执行闭环设计稿（2026-08-30，V3 规划）
 
 - **`docs/ACTION_LOOP_DESIGN.md`**：四个后续子系统的设计文档（均为设计稿，未实现）——
