@@ -2,7 +2,7 @@
 # Release Pipeline — Web3 Airdrop Alpha Agent System
 # ──────────────────────────────────────────────
 # 触发器: git tag v*（语义化版本）
-# 阶段: version bump → build → push to registry → deploy to demo
+# 阶段: test gate → build → push to registry → deploy to demo
 # ──────────────────────────────────────────────
 
 name: Release
@@ -17,9 +17,57 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ── Test Gate ────────────────────────────
+  #
+  # 为什么 release 要自己再跑一遍检查：ci.yml 的 push 触发器只匹配分支
+  # （master/main/feat/**/fix/**/docs/**），tag push 不会触发 CI —— 没有这道门，
+  # 发布镜像的那个 commit 可能从未通过任何测试（2026-08-30 审核修复）。
+  # 检查项与 ci.yml 对齐（ruff / mypy strict / 全量 pytest）；前端不在列是因为
+  # 下面的 Docker 构建本身就要在前端容器里跑 next build，前端坏了发布直接失败。
+  test-gate:
+    name: Release Test Gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run ruff check
+        run: python -m ruff check .
+
+      - name: Run ruff format check
+        run: python -m ruff format --check .
+
+      - name: Run mypy (strict)
+        run: mypy app --config-file pyproject.toml
+
+      - name: Run full backend test suite
+        run: >-
+          pytest tests -q
+          -W error::DeprecationWarning
+          -W error::ResourceWarning
+          -W error::pytest.PytestUnraisableExceptionWarning
+
   # ── Build & Publish ──────────────────────
   release:
     name: Build & Publish Release
+    needs: test-gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,8 +105,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 不吃 gha 缓存，与 security.yml 的结论一致：apt 层缓存会把带已知
+          # CVE 的旧基础层带进发布镜像（CVE-2026-14456 案例）。发布镜像
+          # 生命周期最长，宁可每次全量构建。
+          no-cache: true
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
