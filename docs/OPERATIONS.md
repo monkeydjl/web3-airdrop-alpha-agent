@@ -715,7 +715,7 @@ curl http://localhost:18080/health
 
 ## 7. 调度任务
 
-三个调度器都在 `backend/app/scheduler.py` 的统一调度器里注册，
+四个调度器都在 `backend/app/scheduler.py` 的统一调度器里注册，
 时区统一 **UTC**，`misfire_grace_time = 3600` 秒，`coalesce=True`，`max_instances=1`。
 
 ### 7.1 采集任务（实测 cron）
@@ -826,6 +826,25 @@ cd backend
 `2026-08-26T03:00:00+00:00` —— 所以"从没跑过"的原因是这个进程从没活到过
 03:00（开发机不常驻），不是任务没注册。**这两种原因的处置动作相反，
 而在新端点之前它们看起来完全一样。**
+
+### 7.4 决策推送（F1，ACTION_LOOP_DESIGN §2）
+
+`NOTIFY_ENABLED` 默认 **`false`**（2026-08-31 起存在）。开关关着时每日摘要
+job **不注册**，但 pipeline 收尾钩子的评估照常跑 —— 事件照常写入
+`notify_log`（留痕 + `airdrop_notify_event_evaluated_total` 指标可见），
+只是不发送。**关开关 ≠ 停审计**，排查「为什么没收到推送」先看这里。
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| job id | `notify_digest` | cron 表达式 `NOTIFY_DIGEST_CRON`（默认 `0 9 * * *`，UTC） |
+| 事件来源 | `app/notify/evaluator.py` | 跨线 / 新 FARM / 观察列表信号 / 每日摘要 |
+| 发送通道 | `NOTIFY_CHANNEL` | `telegram` / `discord_webhook`，凭证缺失时报错不发送 |
+| 单轮上限 | `NOTIFY_MAX_PER_RUN=20` | 防事件风暴 |
+| 手动验证 | `POST /api/v1/notify/test` | **管理员专用**；发一条测试消息验证凭证与连通 |
+| 排查入口 | `GET /api/v1/notify/log` | 发送历史含失败原因；`status=failed` 表示重试 3 次全败 |
+
+出站经 `utils/fetcher.post`，域名白名单生效（`api.telegram.org` / `discord.com`
+已登记 SECURITY §10.2）。推送是尽力而为：失败不影响采集与分析主链路。
 
 ---
 

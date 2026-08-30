@@ -67,20 +67,21 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-08-24 已收紧）
+### 2.1 写操作的鉴权分布（实测，2026-08-31 随决策推送更新）
 
-全仓共 **21 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **22 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 7 |
+| 管理员专用 | 8 |
 | 无鉴权（公开） | 2 |
 | 匿名 token 可调 | 12 |
 <!-- write-auth-split:end -->
 
-管理员专用的 7 个：`/run`、`/import/projects`、`/quarantine`、
-`/quarantine/release`，加上 2026-08-24 新收紧的三个 ——
+管理员专用的 8 个：`/run`、`/import/projects`、`/quarantine`、
+`/quarantine/release`、`/notify/test`（2026-08-31，决策推送测试发送），
+加上 2026-08-24 新收紧的三个 ——
 `POST /collections/{source_id}/trigger`、`PATCH /collections/{source_id}`、
 `PATCH /projects/{project_id}/funding`。
 
@@ -191,6 +192,9 @@
 | GET | `/api/v1/llm/status` | v1 | V2（已实现） | LLM 开关与提供方状态 |
 | GET | `/api/v1/archive/runs` | v1 | V2（已实现） | 归档运行历史（只读，详见 §37） |
 | GET | `/api/v1/scheduler/jobs` | v1 | V2（已实现） | 调度器任务表（只读，**管理员专用**，详见 §37b） |
+| POST | `/api/v1/notify/test` | v1 | F1（2026-08-31） | 发送测试推送（**管理员专用**，详见 §38） |
+| GET | `/api/v1/notify/status` | v1 | F1（2026-08-31） | 推送通道状态（**管理员专用**，详见 §38） |
+| GET | `/api/v1/notify/log` | v1 | F1（2026-08-31） | 推送发送历史（**管理员专用**，详见 §38） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -1808,3 +1812,70 @@ Alchemy webhook 回调端点（接收链上事件推送）。
 因为看到"任务不在表里"之后的下一个问题必然是"那我该开哪个开关"。
 
 注意分析任务的真实 id 是 **`analysis_run_queue`**，不是 `daily_analysis`。
+
+
+---
+
+## 38. notify（决策推送，2026-08-31 新增，管理员专用）
+
+整个 `/api/v1/notify` 前缀在 `ADMIN_ONLY_PREFIXES` 里（匿名 token 403）：
+通道配置、发送历史与测试发送都是运维情报 / 运维动作。
+事件模型与去重键见 [ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §2.3。
+
+### 38a. POST /api/v1/notify/test
+
+按当前配置向通知通道发一条测试消息。
+
+**响应 200**（通道已配置且发送成功）
+```json
+{ "ok": true, "data": { "sent": true, "channel": "telegram" } }
+```
+
+**响应 503**（通道未配置 —— fail-closed，与 webhook 未配置同口径）
+```json
+{ "ok": false, "error": { "code": "NOTIFY_NOT_CONFIGURED", "message": "…" } }
+```
+
+**响应 502**（已配置但发送失败，错误来自下游）
+
+### 38b. GET /api/v1/notify/status
+
+配置布尔回显，**不回显任何凭证值**（与 `/webhook/alchemy/status` 同一克制口径）。
+
+**响应 200**（实测形状）
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": false,
+    "channel": "telegram",
+    "telegram_configured": false,
+    "discord_configured": false,
+    "digest_cron": "0 9 * * *",
+    "max_per_run": 20
+  }
+}
+```
+
+### 38c. GET /api/v1/notify/log
+
+出站日志（新→旧），排查「为什么没收到推送」的入口。
+查询参数：`limit`（默认 50，≤200）、`status`（可选 `pending / sent / failed`，非法值 422；`failed` 表示重试 3 次全败）。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1, "event_type": "new_farm", "event_key": "new_farm:p-1",
+        "channel": "telegram", "title": "…", "status": "sent",
+        "attempts": 1, "last_error": null,
+        "created_at": "2026-08-31 09:00:00", "sent_at": "2026-08-31 09:00:01"
+      }
+    ],
+    "count": 1
+  }
+}
+```

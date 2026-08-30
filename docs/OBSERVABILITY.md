@@ -62,8 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **269 个不同事件名**、
-**57 个命名空间**；段数分布：2 段 211 个、3 段 52 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **309 个不同事件名**、
+**64 个命名空间**（2026-08-31 随决策推送 `notify.*` 8 个事件重测）；
+段数分布：2 段 211 个、3 段 52 个、4 段 5 个、1 段 1 个。
 
 事件最多的命名空间：
 
@@ -165,7 +166,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（48 个，实测全量）
+### 3.2 完整指标目录（51 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -188,11 +189,23 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `airdrop_agent_duration_seconds` | histogram | `agent` | 单 agent 墙钟耗时（buckets 0.001…10） |
 
 `result` 闭合为 `success` / `error` / `skipped`（定义在 `metrics.py::AGENT_RESULTS`）：
-`success` = agent 正常返回且产出结果字段；`error` = agent 抛异常；
+`success` = agent 正常返回且产出结果字段；error = agent 抛异常；
 `skipped` = 正常返回但产出字段为 None（跑了但没有可输出结果）。
 埋点在 `agents/orchestrator_simple.py` 的 `_run_agent`（narrative/team/tokenomics/risk）
 与 scorer 分支。这条取代了老文档把错误/跳过拆成两个独立 counter 的写法
 （老名字仍列在 §3.3，确实不存在）。
+
+#### Notify（3）
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `airdrop_notify_sent_total` | counter | `channel` | 决策推送成功发送条数（channel: telegram / discord_webhook） |
+| `airdrop_notify_failure_total` | counter | `channel` | 推送发送失败条数（重试 ≤3 次后 failed 落库） |
+| `airdrop_notify_event_evaluated_total` | counter | `event_type` | 评估器产出的事件数（event_type 闭合于 `metrics.py::NOTIFY_EVENT_TYPES`） |
+
+评估量与发送量是两个独立信号：`NOTIFY_ENABLED=false` 时评估照常发生
+（notify_log 留痕），发送恒为 0 —— 两条曲线背离本身就是排查线索。
+埋点在 `app/notify/service.py`。
 
 #### 采集（4）
 
