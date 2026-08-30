@@ -1915,9 +1915,10 @@ plan/task 两级状态机，按 token 身份（`get_current_user`）隔离 —�
 { "ok": true, "data": { "plan_id": 1, "project_id": "proj-1", "seeded_tasks": 6 } }
 ```
 
-### 39b. GET /api/v1/participation?status=active
+### 39b. GET /api/v1/participation
 
-我的全部 plan（含 tasks 数组），按创建时间倒序；`status` 可选过滤。
+我的全部 plan（含 tasks 数组），按创建时间倒序。
+查询参数：`status`（可选，`active / paused / completed / abandoned`）。
 
 ### 39c. PATCH /api/v1/participation/{plan_id}
 

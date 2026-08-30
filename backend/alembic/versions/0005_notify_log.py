@@ -69,13 +69,34 @@ CREATE INDEX IF NOT EXISTS idx_notify_log_status
 """
 
 
+from typing import Any
+
+def _exec_script(bind: Any, script: str) -> None:
+    """按分号拆分逐条执行 —— sqlite3 驱动一次只接受一条语句。
+
+    0004 的模板是单条 DDL 没踩到这个坑；0005 起含 CREATE INDEX 就必须拆。
+    注释行先剥掉，避免空语句/注释残留被当成语句执行。
+    """
+    from sqlalchemy import text
+
+    for raw in script.split(";"):
+        lines = [
+            line
+            for line in raw.splitlines()
+            if not line.strip().startswith("--") and line.strip()
+        ]
+        if lines:
+            newline = chr(10)
+            bind.execute(text(newline.join(lines)))
+
+
 def upgrade() -> None:
     """创建 notify_log 表。"""
     from sqlalchemy import text
 
     bind = op.get_bind()
     is_pg = bind.dialect.name == "postgresql"
-    bind.execute(text((_PG_SQL if is_pg else _SQLITE_SQL).strip()))
+    _exec_script(bind, (_PG_SQL if is_pg else _SQLITE_SQL).strip())
 
 
 def downgrade() -> None:

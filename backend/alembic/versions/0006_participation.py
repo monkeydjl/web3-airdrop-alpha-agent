@@ -11,7 +11,9 @@ Create Date: 2026-08-31
 - task = 具体动作，`ref` 列保存建议生成器（participation_tasks.py）的
   task_id：seed_from_generated 重复导入时按 (plan_id, ref) 去重，
   不产生同一建议的两行。
-- `ON DELETE CASCADE`：删 plan 级联删 task —— 任务不是独立资产。
+- 刻意**不设 SQL 级外键**（全仓约定，opportunity 的 PG schema 同规）：
+  级联删除由路由层显式先删 task 再删 plan（任务不是独立资产，但没有
+  数据库级约束兜底 —— 这与仓内所有其它表一致）。
 
 身份边界：user_id 来自 token（`get_current_user`），**不接受请求体自报**
 —— 2026-08-30 审核 P1-1 的同款教训，匿名入口 + 客户端身份 = 任何人都能
@@ -48,7 +50,7 @@ CREATE TABLE IF NOT EXISTS participation_plans (
 
 CREATE TABLE IF NOT EXISTS participation_tasks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+    plan_id      INTEGER NOT NULL,
     ref          TEXT,
     title        TEXT NOT NULL,
     kind         TEXT NOT NULL DEFAULT 'other',
@@ -77,7 +79,7 @@ CREATE TABLE IF NOT EXISTS participation_plans (
 
 CREATE TABLE IF NOT EXISTS participation_tasks (
     id           SERIAL PRIMARY KEY,
-    plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+    plan_id      INTEGER NOT NULL,
     ref          TEXT,
     title        TEXT NOT NULL,
     kind         TEXT NOT NULL DEFAULT 'other',

@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS participation_plans (
 
 CREATE TABLE IF NOT EXISTS participation_tasks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+    plan_id      INTEGER NOT NULL,
     ref          TEXT,                          -- 建议生成器的 task_id（seed 去重键）
     title        TEXT NOT NULL,
     kind         TEXT NOT NULL DEFAULT 'other', -- 建议生成器的 category

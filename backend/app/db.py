@@ -496,6 +496,9 @@ def _sqlite_ddl() -> str:
             -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
             -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
             -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            -- 刻意不设 SQL 级外键（全仓约定，见 opportunity 的同类测试）：
+            -- 级联删除由路由层显式先删 task 再删 plan 保证。
+            --
             CREATE TABLE IF NOT EXISTS participation_plans (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     TEXT NOT NULL,
@@ -509,7 +512,7 @@ def _sqlite_ddl() -> str:
 
             CREATE TABLE IF NOT EXISTS participation_tasks (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+                plan_id      INTEGER NOT NULL,
                 ref          TEXT,
                 title        TEXT NOT NULL,
                 kind         TEXT NOT NULL DEFAULT 'other',
@@ -993,6 +996,9 @@ def _postgres_ddl() -> str:
             -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
             -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
             -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            -- 刻意不设 SQL 级外键（全仓约定，见 opportunity 的同类测试）：
+            -- 级联删除由路由层显式先删 task 再删 plan 保证。
+            --
             CREATE TABLE IF NOT EXISTS participation_plans (
                 id          SERIAL PRIMARY KEY,
                 user_id     TEXT NOT NULL,
@@ -1006,7 +1012,7 @@ def _postgres_ddl() -> str:
 
             CREATE TABLE IF NOT EXISTS participation_tasks (
                 id           SERIAL PRIMARY KEY,
-                plan_id      INTEGER NOT NULL REFERENCES participation_plans(id) ON DELETE CASCADE,
+                plan_id      INTEGER NOT NULL,
                 ref          TEXT,
                 title        TEXT NOT NULL,
                 kind         TEXT NOT NULL DEFAULT 'other',
