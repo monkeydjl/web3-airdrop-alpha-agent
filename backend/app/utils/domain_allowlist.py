@@ -40,6 +40,11 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "api.etherscan.io",  # Etherscan
         "api.layer3.xyz",  # Layer3
         "graphigo.prd.galaxy.eco",  # Galxe（GraphQL 主机名，见 SECURITY §10.2）
+        "discord.com",  # Discord bot API
+        "www.reddit.com",  # Reddit OAuth token 端点
+        "oauth.reddit.com",  # Reddit OAuth API
+        "medium.com",  # Medium RSS tag feed
+        "arweave.net",  # Mirror（经 Arweave GraphQL 公开读）
         "api.openai.com",  # LLM 单接口默认 endpoint
     }
 )

@@ -74,6 +74,10 @@ class CollectionScheduler:
             "etherscan": settings.etherscan_cron,
             "galxe": settings.galxe_cron,
             "layer3": settings.layer3_cron,
+            "discord": settings.discord_cron,
+            "reddit": settings.reddit_cron,
+            "medium": settings.medium_cron,
+            "mirror": settings.mirror_cron,
         }
 
         for source_id, cron in cron_map.items():

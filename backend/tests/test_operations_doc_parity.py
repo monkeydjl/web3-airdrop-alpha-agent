@@ -163,6 +163,10 @@ def _collection_cron_from_settings() -> dict[str, str]:
         "etherscan": settings.etherscan_cron,
         "galxe": settings.galxe_cron,
         "layer3": settings.layer3_cron,
+        "discord": settings.discord_cron,
+        "reddit": settings.reddit_cron,
+        "medium": settings.medium_cron,
+        "mirror": settings.mirror_cron,
     }
     assert all(mapping.values()), f"有采集源的 cron 是空值：{mapping}"
     return mapping
@@ -187,7 +191,7 @@ def _collection_gating_from_code() -> dict[str, tuple[str, bool]]:
         # `getattr(settings, "rootdata_enabled", False)`。
         switch = re.search(r"settings(?:\.|,\s*\")(\w+_enabled)", source)
         assert switch, f"{type(collector).__name__}.is_enabled() 里找不到 `*_enabled` 开关 —— 解析器已失效。"
-        needs_key = bool(re.search(r"api_key|bearer_token|github_token", source))
+        needs_key = bool(re.search(r"api_key|bearer_token|github_token|bot_token|client_id|client_secret", source))
         gating[collector.source_id] = (switch.group(1), needs_key)
     assert len(gating) >= 10, f"只解析出 {len(gating)} 个采集源的门控，远少于预期（≥10）。"
     return gating

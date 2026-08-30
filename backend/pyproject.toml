@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn[standard]==0.35.6",
     "pydantic==2.10.8",
     "pydantic-settings==2.7.3",
+    "defusedxml==0.7.1",
     "structlog==25.1.0",
     "python-multipart>=0.0.31",
     "openpyxl==3.1.5",
@@ -105,7 +106,7 @@ warn_redundant_casts = true
 # 只豁免"已装依赖但没配 stub"的第三方库的 import 检查，
 # 项目内 app/ 的类型纪律一条都不豁免。
 [[tool.mypy.overrides]]
-module = ["apscheduler.*", "structlog.*", "pandas", "openpyxl.*", "opentelemetry.*"]
+module = ["apscheduler.*", "structlog.*", "pandas", "openpyxl.*", "opentelemetry.*", "defusedxml.*"]
 ignore_missing_imports = true
 
 [tool.coverage.report]

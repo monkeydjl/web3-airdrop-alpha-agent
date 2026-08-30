@@ -15,10 +15,14 @@ import threading
 from app.collectors.coingecko import CoinGeckoCollector
 from app.collectors.cryptorank import CryptoRankCollector
 from app.collectors.defillama import DefiLlamaCollector
+from app.collectors.discord import DiscordCollector
 from app.collectors.etherscan import EtherscanCollector
 from app.collectors.galxe import GalxeCollector
 from app.collectors.github import GitHubCollector
 from app.collectors.layer3 import Layer3Collector
+from app.collectors.medium import MediumCollector
+from app.collectors.mirror import MirrorCollector
+from app.collectors.reddit import RedditCollector
 from app.collectors.registry import CollectorRegistry
 from app.collectors.rootdata import RootDataCollector
 from app.collectors.twitter import TwitterKeywordCollector, TwitterKolCollector
@@ -41,6 +45,10 @@ def build_default_registry() -> CollectorRegistry:
         EtherscanCollector(),
         GalxeCollector(),
         Layer3Collector(),
+        DiscordCollector(),
+        RedditCollector(),
+        MediumCollector(),
+        MirrorCollector(),
     ):
         registry.register(collector)
     return registry

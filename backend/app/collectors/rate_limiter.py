@@ -52,6 +52,10 @@ class TokenBucketRateLimiter:
         "etherscan": RateLimitConfig(requests_per_second=0.2, burst=2),
         "galxe": RateLimitConfig(requests_per_second=0.5, burst=2),
         "layer3": RateLimitConfig(requests_per_second=0.5, burst=2),
+        "discord": RateLimitConfig(requests_per_second=0.5, burst=2),
+        "reddit": RateLimitConfig(requests_per_second=0.5, burst=2),
+        "medium": RateLimitConfig(requests_per_second=0.5, burst=2),
+        "mirror": RateLimitConfig(requests_per_second=0.5, burst=2),
     }
 
     def __init__(self, source_id: str, config: RateLimitConfig | None = None) -> None:

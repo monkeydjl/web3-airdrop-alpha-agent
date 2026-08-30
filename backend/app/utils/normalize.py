@@ -244,6 +244,12 @@ SOURCE_PRIORITY = {
     "etherscan": 6,
     "twitter_kol": 7,
     "twitter_keyword": 8,
+    # 社区/内容源（Discord/Reddit/Medium/Mirror）：二阶"提及"信号，噪声高于门户类
+    # 源，与关键词搜索同档，压在 twitter 通用回退之上。
+    "discord": 8,
+    "reddit": 8,
+    "medium": 8,
+    "mirror": 8,
     "twitter": 9,  # Generic twitter fallback
     "unknown": 99,
 }

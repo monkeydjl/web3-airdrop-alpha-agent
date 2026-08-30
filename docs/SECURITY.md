@@ -297,6 +297,11 @@
 | `api.etherscan.io` | Etherscan 链上数据 | V1+ | ✅ `collectors/etherscan.py:70` |
 | `api.layer3.xyz` | Layer3 任务平台 | V1+ | ✅ `collectors/layer3.py:36` |
 | `graphigo.prd.galaxy.eco` | Galxe 任务平台（GraphQL） | V1+ | ✅ `collectors/galxe.py:27` —— **上一版把它写成了 `api.galxe.com`** |
+| `discord.com` | Discord bot API（读配置频道消息） | P2 | ✅ `collectors/discord.py` |
+| `www.reddit.com` | Reddit OAuth token 端点 | P2 | ✅ `collectors/reddit.py` |
+| `oauth.reddit.com` | Reddit OAuth 搜索 | P2 | ✅ `collectors/reddit.py` |
+| `medium.com` | Medium RSS tag feed | P2 | ✅ `collectors/medium.py` |
+| `arweave.net` | Mirror（经 Arweave GraphQL 公开读） | P2 | ✅ `collectors/mirror.py` |
 | `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
 | `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
 | ~~`dashboard.alchemy.com`~~ | Alchemy webhook | — | ❌ **代码里 0 处**，无此集成 |
