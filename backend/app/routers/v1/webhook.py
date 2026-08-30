@@ -151,7 +151,7 @@ async def receive_alchemy_webhook(
     on-chain activity as a RawDiscovery. Returns 200 even on internal
     errors — Alchemy retries on non-200 responses.
     """
-    signing_key = settings.alchemy_api_key
+    signing_key = settings.alchemy_webhook_signing_key
 
     # Webhook not configured
     if not signing_key:
@@ -247,7 +247,7 @@ async def receive_alchemy_webhook(
 @router.get("/webhook/alchemy/status")
 def alchemy_webhook_status() -> JSONResponse:
     """Health check for the Alchemy webhook endpoint."""
-    configured = bool(settings.alchemy_api_key)
+    configured = bool(settings.alchemy_webhook_signing_key)
     return JSONResponse(
         status_code=200,
         content={

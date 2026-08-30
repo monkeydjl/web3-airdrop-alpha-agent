@@ -431,6 +431,9 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 「当前 `config.py` 与 `.env.example` 均无上述字段」。
 
 **这些字段现在全部存在**，`config.py` 和 `.env.example` 都有。
+（其中 `ALCHEMY_API_KEY` 已于 2026-08-30 重命名为
+`ALCHEMY_WEBHOOK_SIGNING_KEY` —— 它本来就只被 webhook 签名校验读取，
+却顶着「API key」的名字，见 §8.2。）
 配置模板的权威说明见 `.env.example` 本身与 `OPERATIONS.md §9.4`
 （那一节记录了模板此前 47 处与代码不符的失真，以及现在钉住它的门禁）。
 
@@ -440,6 +443,7 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 |---|---|
 | `DUNE_API_KEY` | 配置字段存在，但**没有任何 collector 读它**。要接 Dune 得先写 collector。 |
 | `TWITTER_API_KEY` / `TWITTER_API_SECRET` | 采集器不读，只认 `TWITTER_BEARER_TOKEN`。 |
+| `ALCHEMY_API_KEY` | **已改名**（2026-08-30）：现在是 `ALCHEMY_WEBHOOK_SIGNING_KEY`，只被 `POST /webhook/alchemy` 的 HMAC 签名校验读取。填 Alchemy 控制台该 webhook 的 **Signing key**，不是 Data APIs 的 API key —— 填错的话合法回调永远 401。 |
 | `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | 三个键**无任何代码读取**，HTTP 层限流未实现（见 `OPERATIONS.md §11`）。注意这跟 §8.4 的**采集器**限流是两回事。 |
 
 ### 8.3 安全实践

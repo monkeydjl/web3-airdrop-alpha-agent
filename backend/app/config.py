@@ -266,7 +266,11 @@ class Settings(BaseSettings):
     etherscan_api_key: str = ""
     etherscan_timeout: int = 30
     etherscan_retry: int = 3
-    alchemy_api_key: str = ""
+    # Alchemy Notify webhook 的 HMAC 签名密钥（控制台里每个 webhook 各自的
+    # "Signing key"，不是 Data APIs 的 API key —— 两者不是一个值）。
+    # 2026-08-30 前误用 alchemy_api_key 兼任此职：拿 Data API key 填进来时
+    # 合法回调永远 401，webhook 实际不可用，故拆成独立配置。
+    alchemy_webhook_signing_key: str = ""
     alchemy_webhook_url: str = ""
     # Galxe / Layer3（P1，任务平台）
     galxe_enabled: bool = False

@@ -26,7 +26,7 @@ _SECRET_ATTRS = (
     "rootdata_api_key",
     "galxe_api_key",
     "layer3_api_key",
-    "alchemy_api_key",
+    "alchemy_webhook_signing_key",
     "dune_api_key",
     "openai_api_key",
     "discord_bot_token",
