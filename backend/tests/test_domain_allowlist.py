@@ -22,7 +22,7 @@ from app.utils.domain_allowlist import (
 
 class TestKnownDomains:
     def test_collector_domains_present(self) -> None:
-        # 与 SECURITY §10.2 已对账的表一致（含 Galxe 的正确主机名）
+        # 与 SECURITY §10.2 已对账的表一致（含 Galxe 的正确主机名与本批 4 个 P2 源）
         for host in (
             "api.llama.fi",
             "api.github.com",
@@ -33,6 +33,11 @@ class TestKnownDomains:
             "api.etherscan.io",
             "api.layer3.xyz",
             "graphigo.prd.galaxy.eco",
+            "discord.com",
+            "www.reddit.com",
+            "oauth.reddit.com",
+            "medium.com",
+            "arweave.net",
         ):
             assert host in _KNOWN_DOMAINS
 

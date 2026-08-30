@@ -471,6 +471,27 @@ class TestDetectSecretLeak:
 
         assert detect_secret_leak("Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456") == "bearer_token"
 
+    def test_new_source_secrets_and_llm_provider_keys_are_known(self, monkeypatch):
+        """P2 源的密钥 + 自建 LLM 代理的 Key 必须进「已知密钥值」集合。
+
+        这些值不靠字段名规则、也不靠 sk-/ghp_ 通用 pattern（自建代理 Key 常
+        不是这些形状），只能靠值匹配抓 —— 漏进集合就会两头漏。
+        """
+        from app.config import settings as real_settings
+        from app.utils.redact import _known_secrets
+
+        monkeypatch.setattr(real_settings, "discord_bot_token", "discord-secret-value-123")
+        monkeypatch.setattr(real_settings, "reddit_client_secret", "reddit-secret-value-456")
+        # llm_providers 是只读 property，由编号环境变量现读，不能 setattr ——
+        # 直接喂环境变量让它推导出自建代理 Key。
+        monkeypatch.setenv("LLM_BASEURL_1", "https://custom.example.com/v1")
+        monkeypatch.setenv("LLM_API_KEY_1", "custom-llm-key-789")
+
+        secrets = _known_secrets()
+        assert "discord-secret-value-123" in secrets
+        assert "reddit-secret-value-456" in secrets
+        assert "custom-llm-key-789" in secrets
+
 
 class TestSecretLeakDiscard:
     """`llm_chat` 集成测试：输出含密钥 pattern 时丢弃结果、不重试。"""

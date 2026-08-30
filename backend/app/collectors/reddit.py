@@ -99,7 +99,9 @@ class RedditCollector(DataCollector):
             data = response.json()
         token = data.get("access_token")
         if not token:
-            raise ValueError(f"Reddit OAuth 无 access_token：{data}")
+            # 不把整个 OAuth 响应体塞进异常/日志：只留错误码，避免上游原文外泄
+            error_code = data.get("error") or "missing_access_token"
+            raise ValueError(f"Reddit OAuth 无 access_token（error={error_code}）")
         return str(token)
 
     async def _search_all(self, access_token: str) -> list[dict[str, Any]]:

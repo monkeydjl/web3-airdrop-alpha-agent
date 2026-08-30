@@ -537,8 +537,10 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 
 数据源与面板 provider 配置在同目录的 `datasource.yml` / `dashboard-provider.yml`。
 
-**没有业务面板。** 老文档那张业务面板规格表（评分趋势、赛道热度、
-用户反馈趋势）依赖的三个指标都不存在（见 §3.3），面板本身也不存在。
+**业务面板的 Grafana 看板 JSON 目前还没有。** 但它依赖的三个底层指标
+（评分趋势、赛道热度、用户反馈趋势）已于 2026-08-29 实现（见 §3.2 业务面板段，
+`airdrop_project_score` / `airdrop_narrative_heat_score` / `airdrop_feedback_total`），
+不再是"指标不存在"；缺的只是把这三个指标画成看板的 JSON 配置文件。
 
 ---
 

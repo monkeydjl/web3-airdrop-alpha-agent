@@ -334,12 +334,16 @@
   装饰性配置 —— 这正是本仓库反复反对的假实现（见 §11.2 那类教训）。
   留作 V2 引入 LLM function calling 时再实现（届时白名单才有东西可拦；
   `base.py` 至今没有 `allowed_tools`、也没有 `PermissionError`，见 §11）。
-- ✅ **已实现（2026-08-29）**：`app/utils/domain_allowlist.py` 提供集中白名单
-  （静态 `_KNOWN_DOMAINS` + LLM provider 域名动态放行），`assert_url_allowed()`
-  在出站前校验 —— 已接入 `utils/fetcher.py::fetch` 与 `llm/client.py` 的
-  出站路径（fail-closed，表外抛 `DomainNotAllowedError`）。采集器各自的
-   `_http_client()` 仍是独立连接，但其 base_url 域名被
-  `test_domain_allowlist.py` 与 §10.3 的表约束在静态白名单内。
+- ✅ **已实现（2026-08-29，2026-08-30 复核口径）**：`app/utils/domain_allowlist.py`
+  提供集中白名单（静态 `_KNOWN_DOMAINS` + LLM provider 域名动态放行）。
+  `assert_url_allowed()` 在出站前 fail-closed 校验（表外抛 `DomainNotAllowedError`）。
+  **运行时强制范围只有两条路径**：`utils/fetcher.py::fetch`（抓项目网页，URL 可能
+  来自外部）与 `llm/client.py`（base_url 可配置）——这两条才是「目标地址可能被外部
+  影响」的出口。**各采集器不在调用点做运行时校验**：它们的请求目标全部是代码里写死
+  的常量，无法被外部输入改写，SSRF 面为零；其 host 靠「登记进 `_KNOWN_DOMAINS` +
+  `test_domain_allowlist.py` / §10.2 表对账门禁」两重静态约束兜底（新增 host 不登记
+  即 CI 变红）。若将来某个采集器的 URL 变成可配置，必须补运行时校验，别让这句诚实
+  描述偷偷过期。
   （上一版这里指向一个 `app/` 下的 `http_client` 模块，**那个文件不存在**
   —— 完整记录见 §11。）
 - ✅ **已实现**：采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的
@@ -355,7 +359,7 @@
 | --- | --- | --- | --- |
 | **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） | ✅ asyncio task |
 | **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP | ✅ 并发限制（`agents/base.py:161`）+ 日预算真实拦截（`llm/budget.py`，2026-08-24 实现），见 §10.4 |
-| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ✅ **已实现**（2026-08-29）：`app/utils/domain_allowlist.py` 出站前校验，表外抛 `DomainNotAllowedError` |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ⚠️ **部分实现**（2026-08-29 实现、08-30 复核）：`fetcher` + `llm/client` 两条路径运行时 fail-closed；各采集器靠写死 URL + 静态白名单 + CI 门禁兜底，不在调用点强制（详情见 §10.2 实现注） |
 | **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP | ⚠️ 是**约定**不是强制：没有 `PermissionError` 校验，靠 code review 与 `AGENTS.md` 把关 |
 | **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 | ✅ 见 `docker/Dockerfile` |
 

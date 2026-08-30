@@ -287,7 +287,6 @@ class Settings(BaseSettings):
     # Discord（bot token）/ Reddit（OAuth）需 Key，默认关闭。
     discord_enabled: bool = False
     discord_bot_token: str = ""
-    discord_guild_id: str = ""
     discord_channel_id: str = ""
     discord_timeout: int = 30
     discord_retry: int = 3

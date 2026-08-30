@@ -22,13 +22,15 @@ _SECRET_ATTRS = (
     "github_token",
     "twitter_bearer_token",
     "twitter_api_key",
+    "twitter_api_secret",
     "rootdata_api_key",
     "galxe_api_key",
     "layer3_api_key",
     "alchemy_api_key",
     "dune_api_key",
     "openai_api_key",
-    "llm_api_keys",
+    "discord_bot_token",
+    "reddit_client_secret",
     "api_key",
     "database_url",
 )
@@ -43,6 +45,13 @@ def _known_secrets() -> list[str]:
         val = getattr(settings, attr, None)
         if isinstance(val, str) and len(val.strip()) >= 6:
             values.append(val.strip())
+    # 多接口 LLM 的编号 Key（LLM_API_KEY_1..5）经 `settings.llm_providers` 现读
+    # `os.environ`，不是 Settings 字段、getattr 取不到，需单独收集。自建代理的
+    # Key 常不是 `sk-` 开头，靠上面的字段名规则和通用 pattern 都抓不到。
+    for provider in getattr(settings, "llm_providers", None) or ():
+        key = str(provider.get("api_key") or "").strip()
+        if len(key) >= 6:
+            values.append(key)
     # 长的先替换，避免子串先命中
     return sorted(set(values), key=len, reverse=True)
 

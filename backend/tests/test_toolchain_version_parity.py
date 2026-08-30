@@ -46,8 +46,6 @@ import re
 import tomllib
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 BACKEND_PYPROJECT = REPO_ROOT / "backend" / "pyproject.toml"
@@ -93,18 +91,28 @@ class TestTypeCheckerGuardsTheFloor:
     """mypy 的 python_version 必须等于声明下限，不是运行时镜像的版本。
 
     这是本文件最重要的一条 —— 它守的是 `requires-python` 那句承诺本身。
+
+    2026-08-30 起根 pyproject 的 `[tool.mypy]` 已作为死配置删除（CI 只读
+    backend 的那份），所以权威口径只剩 `backend/pyproject.toml` 一处。
     """
 
-    @pytest.mark.parametrize("path", [ROOT_PYPROJECT, BACKEND_PYPROJECT])
-    def test_mypy_python_version_equals_declared_floor(self, path: Path):
+    def test_root_pyproject_no_longer_carries_dead_mypy_config(self):
+        """根 pyproject 的 [tool.mypy] 已删 —— 别让人悄悄把它加回来造成口径漂移。"""
+        config = _toml(ROOT_PYPROJECT).get("tool", {}).get("mypy", {})
+        assert not config, (
+            "根 pyproject.toml 又出现了 [tool.mypy] —— 它曾是死配置（CI 不读它）。\n"
+            "mypy 的权威口径只在 backend/pyproject.toml，别在根目录重建第二份。"
+        )
+
+    def test_mypy_python_version_equals_declared_floor(self):
         major, minor = _minimum_supported()
         expected = f"{major}.{minor}"
 
-        config = _toml(path).get("tool", {}).get("mypy", {})
-        assert config, f"{path.name} 里没有 [tool.mypy] —— 解析锚点可能变了。"
+        config = _toml(BACKEND_PYPROJECT).get("tool", {}).get("mypy", {})
+        assert config, f"{BACKEND_PYPROJECT.name} 里没有 [tool.mypy] —— 解析锚点可能变了。"
         actual = config.get("python_version")
         assert actual == expected, (
-            f"{path.name} 的 mypy python_version 是 {actual!r}，声明下限是 {expected!r}。\n"
+            f"{BACKEND_PYPROJECT.name} 的 mypy python_version 是 {actual!r}，声明下限是 {expected!r}。\n"
             "\n"
             "配高了的实际后果（2026-08-24 实测）：用了 3.12 新标准库 API 的代码\n"
             "会通过全部 CI，然后在 3.11 环境上抛 AttributeError —— 而 ruff 的\n"

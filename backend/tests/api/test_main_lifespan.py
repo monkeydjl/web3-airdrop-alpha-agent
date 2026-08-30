@@ -171,16 +171,16 @@ def test_non_testing_lifespan_starts_and_stops_each_scheduler_once(monkeypatch) 
 
 
 def test_default_registry_covers_all_collectors_and_is_shared() -> None:
-    """采集器注册表须覆盖全部 10 个源，且调度器与 API 路由共用同一实例。
+    """采集器注册表须覆盖全部 14 个源，且调度器与 API 路由共用同一实例。
 
     共用是限流正确性的前提：令牌桶是实例状态，每请求新建等于每次满桶。
     """
     from app.collectors.factory import build_default_registry, get_default_registry
     from app.routers.v1 import collections as collections_router
 
-    assert len(build_default_registry()) == 10
+    assert len(build_default_registry()) == 14
     shared = get_default_registry()
-    assert len(shared) == 10
+    assert len(shared) == 14
     assert collections_router._build_registry() is shared
     # 同一 source 多次取用必须是同一对象（否则限流器被重置）
     assert shared.get("defillama") is get_default_registry().get("defillama")
