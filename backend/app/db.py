@@ -474,6 +474,25 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_notification_reads_user
                 ON notification_reads(user_id);
 
+            -- 决策推派出站日志（ACTION_LOOP_DESIGN.md §2.5）
+            -- (event_key, channel) 唯一：同事件同通道天然去重，重发靠 UPSERT 忽略。
+            CREATE TABLE IF NOT EXISTS notify_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type  TEXT NOT NULL,
+                event_key   TEXT NOT NULL,
+                channel     TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_at     TIMESTAMP,
+                UNIQUE (event_key, channel)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notify_log_status
+                ON notify_log(status, created_at);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -921,6 +940,25 @@ def _postgres_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_notification_reads_user
                 ON notification_reads(user_id);
+
+            -- 决策推派出站日志（ACTION_LOOP_DESIGN.md §2.5）
+            -- (event_key, channel) 唯一：同事件同通道天然去重，重发靠 UPSERT 忽略。
+            CREATE TABLE IF NOT EXISTS notify_log (
+                id          SERIAL PRIMARY KEY,
+                event_type  TEXT NOT NULL,
+                event_key   TEXT NOT NULL,
+                channel     TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                sent_at     TIMESTAMPTZ,
+                UNIQUE (event_key, channel)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notify_log_status
+                ON notify_log(status, created_at);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (

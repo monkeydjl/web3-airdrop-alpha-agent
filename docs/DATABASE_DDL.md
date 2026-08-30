@@ -246,6 +246,31 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
 
 -- ============================================
+-- 2.9b notify_log 表（决策推派出站日志，ACTION_LOOP_DESIGN §2.5）
+-- ============================================
+-- 「至少一次评估、至多一次发送」由 (event_key, channel) 唯一约束保证：
+-- 评估器可重复产出（cron 重跑/进程重启），入库 UPSERT DO NOTHING，
+-- 发送只挑 status='pending' 的行；重试 ≤3 次后置 failed 不再自动重发。
+-- PostgreSQL 版差异：id SERIAL、时间列 TIMESTAMPTZ（见 alembic 0005）。
+CREATE TABLE IF NOT EXISTS notify_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type  TEXT NOT NULL,                  -- daily_digest/score_crossing/new_farm/watchlist_signal
+    event_key   TEXT NOT NULL,                  -- 跨运行去重键，见设计文档 §2.3
+    channel     TEXT NOT NULL,                  -- telegram / discord_webhook
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',-- pending / sent / failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sent_at     TIMESTAMP,
+    UNIQUE (event_key, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notify_log_status ON notify_log(status, created_at);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (
