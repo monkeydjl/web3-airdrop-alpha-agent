@@ -83,6 +83,17 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
         "同上 —— 旁路机会引擎评估会走 LLM，由预算门而非角色控制成本。"
     ),
     ("POST", "/api/v1/projects/{project_id}/opportunity/evidence"): "只追加证据条目，不花钱、不改评分事实。",
+    # ── 参与流水（F2，ACTION_LOOP_DESIGN §3，2026-08-31）──
+    # 与 feedback / watchlist 同一设计意图：参与记录本来就要让普通使用者写。
+    # user_id 一律来自 token（get_current_user），请求体自报被忽略；
+    # 归属不匹配的资源按 404 处理，不确认存在性。
+    (
+        "POST",
+        "/api/v1/projects/{project_id}/participation",
+    ): "创建自己的参与 plan，按 token 身份隔离，请求体自报 user_id 被忽略。",
+    ("PATCH", "/api/v1/participation/{plan_id}"): "改自己的参与 plan（状态机闭表迁移），跨 token 一律 404。",
+    ("PATCH", "/api/v1/participation/tasks/{task_id}"): "改自己 plan 下的任务状态，归属校验同 plan。",
+    ("DELETE", "/api/v1/participation/{plan_id}"): "删自己的参与 plan（级联删任务），跨 token 一律 404。",
 }
 
 

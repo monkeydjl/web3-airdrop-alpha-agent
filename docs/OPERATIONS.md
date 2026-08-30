@@ -221,9 +221,10 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **4 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **6 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
-  `0004_llm_spend_daily`。
+  `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
+  `0006_participation`（2026-08-31，参与流水）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -231,6 +232,8 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   破坏性迁移的回滚请先做备份（§6）。
   回滚到 `0003` 之前会丢掉 LLM 花费账本 —— 预算拦截会转为 fail-closed
   （拒绝所有 LLM 调用并报 `ledger_unavailable`），不是静默放行。
+  回滚掉 `0005` / `0006` 会丢掉推送历史与参与流水 —— 参与流水是用户操作
+  数据（不可再生成），回滚前务必确认（notify_log 只是运行时日志，可放弃）。
 
 ### 3.6 Opportunity Shadow 灰度
 
@@ -558,6 +561,7 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/settings`
 - `/api/v1/archive`
 - `/api/v1/scheduler`
+- `/api/v1/notify`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。
