@@ -594,6 +594,51 @@ class CollectorAgent(BaseAgent):
         )
         return projects
 
+    def _quarantine_row(
+        self,
+        repo: "CollectionRepository",
+        row: dict[str, Any],
+        reason: str,
+    ) -> str | None:
+        """隔离一条原始记录并让它离开待分析队列。
+
+        隔离写库失败时退化为直接标记 processed —— 坏行绝不能留在
+        `get_unprocessed_raw_projects` 的结果里，否则每轮调度都会撞上同一行
+        （队列中毒，2026-08-30 修复）。成功隔离返回 None，失败返回原因描述。
+
+        成功/失败日志由调用方按各自的事件名记录 —— 事件名必须是调用点的
+        字面量：OBSERVABILITY.md 的 parity 门禁静态扫描
+        `logger.xxx("<事件名>")`（test_observability_doc_parity），
+        经参数传进来的变量名扫不出来。
+        """
+        # Prefer same DB connection as repository (in-memory tests)
+        repo_conn = getattr(repo, "_conn", None)
+        try:
+            from app.quarantine import quarantine_raw
+
+            ok = quarantine_raw(row["raw_id"], reason, conn=repo_conn)
+            if not ok:
+                repo.mark_raw_project_processed(
+                    raw_id=row["raw_id"],
+                    project_id=row.get("project_id"),
+                )
+                return "quarantine_raw 返回 False（已退化标记 processed）"
+            return None
+        except Exception as e:
+            try:
+                repo.mark_raw_project_processed(
+                    raw_id=row["raw_id"],
+                    project_id=row.get("project_id"),
+                )
+            except Exception as e2:
+                logger.warning(
+                    "collector.quarantine_mark_failed",
+                    raw_id=row.get("raw_id"),
+                    reason=reason,
+                    error=str(e2),
+                )
+            return str(e)
+
     def collect_from_repository(
         self,
         repo: "CollectionRepository",
@@ -637,50 +682,45 @@ class CollectorAgent(BaseAgent):
                 # 列表末尾，一旦 break 就永远扫不到它们。已达 limit 时只是不再
                 # 接纳**新项目**，仍继续为已接纳的项目收集佐证。
                 continue
-            raw_data = json.loads(row["raw_data"]) if row["raw_data"] else {}
+            try:
+                raw_data = json.loads(row["raw_data"]) if row["raw_data"] else {}
+            except (ValueError, TypeError) as e:
+                # 队列中毒防护：一条损坏的 raw_data 曾让整批 collect 抛异常，
+                # 而该行 processed=0 + ORDER BY discovery_score DESC 会每轮
+                # 重新被取到，流水线永久卡死（只能手工修库）。隔离 + 放行。
+                logger.warning(
+                    "collector.corrupt_raw_data",
+                    raw_id=row.get("raw_id"),
+                    source_id=row.get("source_id"),
+                    error=str(e),
+                )
+                err = self._quarantine_row(repo, row, f"corrupt_raw_data:{row.get('source_id')}")
+                if err is not None:
+                    logger.warning(
+                        "collector.corrupt_row_quarantine_failed",
+                        raw_id=row.get("raw_id"),
+                        error=err,
+                    )
+                continue
             source_id = row["source_id"]
             name = raw_data.get("name", "") or ""
             sector = raw_data.get("sector")
             if is_noise_raw_project(name, sector, raw_data):
                 noise_skipped += 1
-                # Prefer same DB connection as repository (in-memory tests)
-                repo_conn = getattr(repo, "_conn", None)
-                try:
-                    from app.quarantine import quarantine_raw
-
-                    ok = quarantine_raw(
-                        row["raw_id"],
-                        f"denylist:{source_id}:{name[:80]}",
-                        conn=repo_conn,
-                    )
-                    if not ok:
-                        repo.mark_raw_project_processed(
-                            raw_id=row["raw_id"],
-                            project_id=row.get("project_id"),
-                        )
-                except Exception as e:
-                    try:
-                        repo.mark_raw_project_processed(
-                            raw_id=row["raw_id"],
-                            project_id=row.get("project_id"),
-                        )
-                    except Exception as e2:
-                        logger.warning(
-                            "collector.noise_mark_failed",
-                            raw_id=row.get("raw_id"),
-                            error=str(e2),
-                        )
-                    logger.warning(
-                        "collector.quarantine_failed",
+                err = self._quarantine_row(repo, row, f"denylist:{source_id}:{name[:80]}")
+                if err is None:
+                    logger.info(
+                        "collector.noise_quarantined",
+                        name=name,
+                        source_id=source_id,
                         raw_id=row.get("raw_id"),
-                        error=str(e),
                     )
-                logger.info(
-                    "collector.noise_quarantined",
-                    name=name,
-                    source_id=source_id,
-                    raw_id=row.get("raw_id"),
-                )
+                else:
+                    logger.warning(
+                        "collector.noise_quarantined.quarantine_failed",
+                        raw_id=row.get("raw_id"),
+                        error=err,
+                    )
                 continue
 
             flags = self._infer_airdrop_flags(source_id, raw_data)
@@ -698,44 +738,44 @@ class CollectorAgent(BaseAgent):
             ):
                 noise_skipped += 1
                 # Quarantine same as noise
-                repo_conn = getattr(repo, "_conn", None)
-                try:
-                    from app.quarantine import quarantine_raw
-
-                    ok = quarantine_raw(
-                        row["raw_id"],
-                        f"listed_token_no_airdrop:{source_id}:{name[:80]}",
-                        conn=repo_conn,
-                    )
-                    if not ok:
-                        repo.mark_raw_project_processed(
-                            raw_id=row["raw_id"],
-                            project_id=row.get("project_id"),
-                        )
-                except Exception as e:
-                    try:
-                        repo.mark_raw_project_processed(
-                            raw_id=row["raw_id"],
-                            project_id=row.get("project_id"),
-                        )
-                    except Exception as e2:
-                        logger.warning(
-                            "collector.listed_token_mark_failed",
-                            raw_id=row.get("raw_id"),
-                            error=str(e2),
-                        )
-                    logger.warning(
-                        "collector.listed_token_quarantine_failed",
+                err = self._quarantine_row(repo, row, f"listed_token_no_airdrop:{source_id}:{name[:80]}")
+                if err is None:
+                    logger.info(
+                        "collector.listed_token_filtered",
+                        name=name,
+                        source_id=source_id,
                         raw_id=row.get("raw_id"),
+                    )
+                else:
+                    logger.warning(
+                        "collector.listed_token_filtered.quarantine_failed",
+                        raw_id=row.get("raw_id"),
+                        error=err,
+                    )
+                continue
+
+            discovered_at = row["discovered_at"]
+            if isinstance(discovered_at, str):
+                try:
+                    discovered_at = datetime.fromisoformat(discovered_at)
+                except ValueError as e:
+                    # 同队列中毒防护：解析不了的 discovered_at 会让整批抛异常，
+                    # 该行又永远留在队列头 —— 隔离后继续，不让一行坏数据
+                    # 卡死整条流水线。
+                    logger.warning(
+                        "collector.corrupt_discovered_at",
+                        raw_id=row.get("raw_id"),
+                        source_id=source_id,
                         error=str(e),
                     )
-                logger.info(
-                    "collector.listed_token_filtered",
-                    name=name,
-                    source_id=source_id,
-                    raw_id=row.get("raw_id"),
-                )
-                continue
+                    err = self._quarantine_row(repo, row, f"corrupt_discovered_at:{source_id}")
+                    if err is not None:
+                        logger.warning(
+                            "collector.corrupt_row_quarantine_failed",
+                            raw_id=row.get("raw_id"),
+                            error=err,
+                        )
+                    continue
 
             dedup = create_dedup_key(name, sector)
             project_id = row.get("project_id") or generate_deterministic_id(dedup)
@@ -778,9 +818,7 @@ class CollectorAgent(BaseAgent):
                     "funding_quality": flags.get("funding_quality") or 0,
                     "discovery_score": row["discovery_score"],
                     "auto_discovered": True,
-                    "discovered_at": datetime.fromisoformat(row["discovered_at"])
-                    if isinstance(row["discovered_at"], str)
-                    else row["discovered_at"],
+                    "discovered_at": discovered_at,
                     "_dedup_key": dedup,
                 }
             )
