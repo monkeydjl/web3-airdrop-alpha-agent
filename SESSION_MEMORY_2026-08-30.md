@@ -88,20 +88,38 @@ owner 拍板按顺序做四档，每项都要「补测试 + 实测不破坏运�
 | 4 份 doc parity（data_source_strategy / operations / security / env_example） | 118 passed |
 | observability / operations / hardening / deployment / budget 门禁 | 151 passed, 1 skipped |
 | 采集器全量 + 调度/归一化/白名单（`tests/collectors` 等） | 254 passed |
-
-完整后端套件 `pytest`（--cov-fail-under=80）在后台跑，结果待补。
+| **完整后端套件 `pytest`（--cov-fail-under=80）** | **3083 passed, 9 skipped, 88.82% cov, exit 0（34m08s）** |
 
 ---
 
-## 五、下一步 & 遗留
+## 五、独立评审与收口（2026-08-30 下午）
 
-1. 等后台全量 pytest 出结果（约 34 分钟），确认覆盖率 ≥80% 不因 4 个新采集器
-   掉下去；若 <80% 就给新文件补测试。
-2. 开 PR（master 受保护，5 个 required CI context：Coverage Gate / Type Check
-   mypy / Frontend Lint & Build / Lint & Format Check / Full Backend Test Suite）。
-3. **独立评审**：按 owner 的完成标准，用 subagent 全新上下文审一遍再交付
-   （产出 CODE_REVIEW_REPORT.md）。
-4. 等 owner 提供 Discord/Reddit Key 后，在 `.env` 填入即启用这两个源（代码零改动）。
-5. 档1 的「工具白名单」澄清在 `9933f83`：commit 标题写"刻意不实现"是指**旧版
-   文档把"还没实现"误写成"已实现"**，实际白名单已实现（`base.py` 校验工具名）。
-   别被 commit 标题里的"不实现"三个字带偏。
+`CODE_REVIEW_REPORT.md`：结论「有条件通过」，1 个 blocker + 6 条建议，已逐条处理：
+
+- **Blocker（owner 决策「诚实口径」）**：出站域名白名单运行时强制只 cover
+  fetcher + LLM 两条路径，采集器没接运行时校验但文档宣称 fail-closed。修法 =
+  诚实化 SECURITY §10.2/§10.3 + `domain_allowlist.py` docstring（采集器靠写死
+  URL + 静态白名单 + CI 门禁兜底，真实 SSRF 面为零）。**全量运行时强制留作
+  后续小工程**（owner 拍板）。
+- 修了 5 条建议：泄漏过滤密钥值清单缺口、OBSERVABILITY §6 自相矛盾、白名单
+  测试补 5 域名、删 `discord_guild_id` 死配置、Reddit OAuth 异常不塞上游原文。
+- 1 条不修（`_score` 复制四份）：值一致、各有测试钉住，非阻断。
+
+全量套件还抓出 3 个真回归并修：registry 计数 10→14、前端 sourceZh 补 4 源、
+工具链 parity 改为只守 backend（根 [tool.mypy] 已删）。
+
+**PR #29 已开**（base master ← feat/security-and-observability），CI 5 个
+required context 待走完。
+
+---
+
+## 六、下一步 & 遗留
+
+1. 盯 PR #29 的 CI（Coverage Gate / Type Check mypy / Frontend Lint & Build /
+   Lint & Format Check / Full Backend Test Suite），全绿后合并。
+2. 等 owner 提供 Discord/Reddit Key 后填 `.env`（`DISCORD_BOT_TOKEN`+
+   `DISCORD_CHANNEL_ID`、`REDDIT_CLIENT_ID`+`REDDIT_CLIENT_SECRET`+
+   `REDDIT_USERNAME`），代码零改动即启用这两个源。
+3. （可选后续）把 14 个采集器也接上运行时 `assert_url_allowed`，把「诚实口径」
+   升级成「全量强制」——评审 Blocker 的另一半，owner 已选先交付。
+4. （可选后续）`_score()` 复制四份抽成公共函数（评审 Suggestion 5，非阻断）。
