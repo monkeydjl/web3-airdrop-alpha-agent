@@ -8,6 +8,47 @@
 
 ## [Unreleased]
 
+### Security — 三个安全缺口全堵上（2026-08-29，档1）
+
+- **LLM 输出泄漏过滤**：LLM 返回文本在下游使用前做一次敏感信息清扫
+  （API Key / token / 私钥），命中即打码并计数，不再原样流转。
+- **Agent 工具白名单**：agent 调用工具名先过白名单校验，白名单外直接
+  拒绝执行 —— 漏登记一条就拦一条，不再是"能调就调"。
+- **网络域名白名单 + 统一 HTTP 出口**：出站请求前 `assert_url_allowed()`
+  fail-closed 校验，白名单外域名抛异常而非放行。实现前先对账清单，
+  修正了 Galxe 主机名（`graphigo.prd.galaxy.eco`）、补了 RootData，
+  没有把已接入的源拦死。见 SECURITY.md §10。
+
+### Changed — 工程整洁：pre-commit mypy hook 修对 + 删根死配置（2026-08-30，档2）
+
+- **pre-commit mypy hook 修复**：旧 hook 用 `--ignore-missing-imports` 单文件
+  跑，检查不到编译顺序、import 也靠忽略兜底，形同虚设。改成
+  `pass_filenames: false` + 指向 `backend/pyproject.toml` 跑完整
+  `backend/app` —— 提交前每次都对全量源码跑 strict 口径。
+- **删根 `[tool.mypy]` + `[tool.pytest.ini_options]` 死配置**：这两段谁都不读
+  （CI 只读 backend 的那份），留着只会误导人以为"根目录也能跑检查"。
+  权威口径从此只有 `backend/pyproject.toml` 一份。
+
+### Added — 可观测性四个缺口补全（2026-08-30，档3）
+
+- **Agent 粒度指标**：每个 agent 每次运行的成功/失败/耗时（`airdrop_agent_*`）。
+- **数据质量指标**：新鲜度秒数 + 完整度比值（`airdrop_data_*`），采集告警
+  循环实时写入。
+- **HTTP 耗时 histogram**：`airdrop_http_request_duration_seconds`。
+- **业务面板**：评分趋势 / 赛道热度 / 反馈三个信号（`airdrop_*` /
+  `opportunity_economic_*`）。见 OBSERVABILITY.md §3.2（48 个指标全实测）。
+
+### Added — 四个 P2 内容源采集器 + 权重校准门槛钉死（2026-08-30，档4）
+
+- **P2 采集源落地**：Discord / Reddit / Medium / Mirror 四个"内容里提到
+  项目"的二阶信号源全部实现，`discovery_score` 上限 0.28（低于 0.3 分析
+  门槛，只贡献 project_signals、不触发 LLM 分析）。Medium（RSS）与
+  Mirror（Arweave 公开读）免费、默认开启；Discord / Reddit 需 Key、
+  默认关闭（Key 由所有者提供后填入 `.env` 即可启用）。
+- **权重校准门槛钉死**：有效样本 ≥200 / FARM ≥30 的门槛用测试锁死，
+  不因"校准想更快达标"而调低。实测 CLI 在样本不足时 exit 1 报
+  `GATE_NOT_MET`。
+
 ### Changed — 后端类型检查从"宽松"提升到 mypy strict，落地为 CI 门禁（2026-08-25 立项 → 08-28 收口）
 
 `backend/pyproject.toml` 里的 `[tool.mypy]` 此前只是一组 false/true 混合开关，
