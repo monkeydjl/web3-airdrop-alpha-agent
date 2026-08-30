@@ -355,6 +355,10 @@ cd backend
 | `twitter_keyword` | `TWITTER_ENABLED` | ✅ `TWITTER_BEARER_TOKEN` |
 | `galxe` | `GALXE_ENABLED` | ✅ `GALXE_API_KEY` |
 | `layer3` | `LAYER3_ENABLED` | ✅ `LAYER3_API_KEY` |
+| `discord` | `DISCORD_ENABLED` | ✅ `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` |
+| `reddit` | `REDDIT_ENABLED` | ✅ `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` + `REDDIT_USERNAME` |
+| `medium` | `MEDIUM_ENABLED` | ❌ RSS 免费无需 Key |
+| `mirror` | `MIRROR_ENABLED` | ❌ Arweave 公开读无需 Key |
 <!-- collection-ready:end -->
 
 > 注意两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`：关掉它会同时停掉
@@ -731,6 +735,10 @@ curl http://localhost:18080/health
 | `etherscan` | `0 */6 * * *` |
 | `galxe` | `0 10 * * *` |
 | `layer3` | `30 10 * * *` |
+| `discord` | `0 */3 * * *` |
+| `reddit` | `30 * * * *` |
+| `medium` | `0 */6 * * *` |
+| `mirror` | `30 */6 * * *` |
 <!-- collection-cron:end -->
 
 注册条件是**两道闸**：`COLLECTION_SCHEDULER_ENABLED=true`（实测 `True`）
@@ -1098,10 +1106,10 @@ CI 跑 pytest 时加了：
 所以没人读它"**。登记豁免掩盖的不只是字节问题，还有内容问题。
 写下来，也让 §10.6 的门禁有反向断言的靶子。
 
-### 12.1 16 个不存在的指标名
+### 12.1 15 个不存在的指标名
 
 上一版本引用 19 个 `airdrop_*` 指标，**只有 1 个真实存在**（`airdrop_http_requests_total`）。
-以下 16 个在 registry 里查不到 —— §10.6 的门禁会反过来断言它们**确实都不存在**，
+以下 15 个在 registry 里查不到 —— §10.6 的门禁会反过来断言它们**确实都不存在**，
 免得这份清单自己变成新的谎言：
 
 <!-- ghost-metrics:begin -->
@@ -1110,7 +1118,6 @@ CI 跑 pytest 时加了：
 - `airdrop_collection_status`
 - `airdrop_collection_success_ratio`
 - `airdrop_collection_total`
-- `airdrop_data_completeness_ratio`
 - `airdrop_db_write_errors_total`
 - `airdrop_fetcher_circuit_open`
 - `airdrop_fetcher_errors_total`
@@ -1127,6 +1134,9 @@ CI 跑 pytest 时加了：
 （那两个名字现在真实存在，见 §11.1 与 OBSERVABILITY §3.2）。
 移出而不是留着标注 ✅，是因为**本节整块会被门禁当作"这些都不存在"来核对** ——
 在这里写出一个真实指标名会立刻让 CI 变红，这正是它该做的事。
+
+**2026-08-29 再移出一个**：`airdrop_data_completeness_ratio` —— 数据质量
+指标（§11.2）现在真实存在，不再是幽灵。
 
 **为什么这比写错更糟**：Prometheus 查一个不存在的指标**不报错，返回空结果**。
 于是仪表盘显示"一切平静"、告警规则永远不触发 —— 看起来系统很健康，

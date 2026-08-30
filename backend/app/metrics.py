@@ -283,6 +283,14 @@ HTTP_REQUESTS = Counter(
     ["method", "status_class"],
 )
 
+# §9「HTTP 请求耗时 histogram」：入站 API 请求耗时（秒）。此前耗时只进日志的
+# duration_ms 字段。无标签 —— 按 path 拆会随路由参数爆炸（§3.4 基数控制）。
+HTTP_DURATION = Histogram(
+    "airdrop_http_request_duration_seconds",
+    "Inbound API request duration in seconds.",
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
 
 # ── LLM metrics ─────────────────────────────────────────────────────
 #
@@ -342,6 +350,11 @@ LLM_SPEND_RECORD_FAILURES = Counter(
     "Ledger writes that failed after a paid LLM call (spend not counted toward budget).",
 )
 
+LLM_LEAK_DETECTED = Counter(
+    "airdrop_llm_secret_leak_detected_total",
+    "LLM outputs discarded because they contained a known secret value or secret-like pattern (SECURITY §10.5).",
+)
+
 LLM_BUDGET_USD = Gauge(
     "airdrop_llm_budget_usd",
     "Configured LLM daily budget in USD (0 = unlimited).",
@@ -394,6 +407,11 @@ def record_llm_spend_record_failure() -> None:
     LLM_SPEND_RECORD_FAILURES.inc()
 
 
+def record_llm_leak_detected() -> None:
+    """记录一次因输出含密钥而被丢弃的 LLM 结果（SECURITY §10.5）。"""
+    LLM_LEAK_DETECTED.inc()
+
+
 def set_llm_budget_state(*, budget_usd: float, spent_today_usd: float) -> None:
     """刷新预算与当日花费 gauge。"""
     LLM_BUDGET_USD.set(max(budget_usd, 0.0))
@@ -415,6 +433,74 @@ DB_COLLECTION_LOGS_24H = Gauge(
     "airdrop_db_collection_logs_24h_total",
     "Collection logs emitted in the last 24 hours.",
 )
+
+# ── Data quality gauges (§9「数据质量指标」) ──────────────────────
+# 计算逻辑在 app/collectors/metrics.py::CollectionMetrics（新鲜度 = 距上次成功
+# 同步的秒数；完整性 = 必填字段覆盖率的 0-1）。这里只做暴露：check_alerts 每次
+# 遍历数据源计算 snapshot 时顺手 set 进来，与告警判断共用同一份计算结果。
+DATA_FRESHNESS_SECONDS = Gauge(
+    "airdrop_data_freshness_seconds",
+    "Seconds since last successful sync, per collection source.",
+    ["source_id"],
+)
+
+DATA_COMPLETENESS_RATIO = Gauge(
+    "airdrop_data_completeness_ratio",
+    "Required-field coverage rate (0-1), per collection source.",
+    ["source_id"],
+)
+
+
+def record_data_quality(*, source_id: str, freshness_seconds: float | None, completeness_ratio: float) -> None:
+    """记录单个采集源的数据质量 gauge。
+
+    freshness_seconds 为 None 表示"从没成功同步过"，此时不写 freshness gauge
+    （保留上一值会谎报新鲜），只写完整性。
+    """
+    if freshness_seconds is not None:
+        DATA_FRESHNESS_SECONDS.labels(source_id=source_id).set(max(freshness_seconds, 0.0))
+    DATA_COMPLETENESS_RATIO.labels(source_id=source_id).set(max(min(completeness_ratio, 1.0), 0.0))
+
+
+# ── Business panel metrics (§9「业务面板」) ────────────────────────
+# 评分趋势 / 赛道热度 / 反馈趋势 —— 老文档那张业务面板依赖的正是这三个信号。
+FEEDBACK_SIGNALS: frozenset[str] = frozenset({"useful", "useless", "wrong_label", "correct_outcome"})
+
+PROJECT_SCORE = Histogram(
+    "airdrop_project_score",
+    "Final project score (0-100).",
+    buckets=[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
+)
+
+NARRATIVE_HEAT_SCORE = Histogram(
+    "airdrop_narrative_heat_score",
+    "Sector heat score (0-1) emitted by the narrative agent.",
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+)
+
+FEEDBACK_TOTAL = Counter(
+    "airdrop_feedback_total",
+    "User feedback submissions by signal.",
+    ["signal"],
+)
+
+
+def record_project_score(score: float) -> None:
+    """观察一次最终评分（0-100），供评分趋势面板。"""
+    PROJECT_SCORE.observe(max(min(score, 100.0), 0.0))
+
+
+def record_narrative_heat_score(heat: float) -> None:
+    """观察一次赛道热度（0-1），供赛道热度面板。"""
+    NARRATIVE_HEAT_SCORE.observe(max(min(heat, 1.0), 0.0))
+
+
+def record_feedback(*, signal: str) -> None:
+    """记录一条用户反馈，signal 闭合词表见 FEEDBACK_SIGNALS。"""
+    if signal not in FEEDBACK_SIGNALS:
+        raise ValueError(f"illegal feedback signal: {signal!r}")
+    FEEDBACK_TOTAL.labels(signal=signal).inc()
+
 
 # ── Competition cache metrics (ADR-010) ───────────────────────────
 COMPETITION_CACHE_HITS = Counter(
@@ -453,6 +539,36 @@ FETCHER_CIRCUIT_BREAKER_STATE = Gauge(
     "airdrop_fetcher_circuit_breaker_state",
     "Circuit breaker state: 0=CLOSED, 1=HALF_OPEN, 2=OPEN.",
 )
+
+# ── Agent granular metrics (§9「Agent 粒度指标」) ─────────────────
+# 每个分析 agent（narrative/team/tokenomics/risk）与 scorer 在 orchestrator
+# 里跑一次，记一个 result 三元组 + 一次耗时。闭合词表见 AGENT_RESULTS。
+AGENT_RESULTS: frozenset[str] = frozenset({"success", "error", "skipped"})
+
+AGENT_RUNS = Counter(
+    "airdrop_agent_runs_total",
+    "Analysis agent runs by agent and outcome.",
+    ["agent", "result"],
+)
+
+AGENT_DURATION = Histogram(
+    "airdrop_agent_duration_seconds",
+    "Analysis agent wall-clock duration.",
+    ["agent"],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+
+def record_agent_run(*, agent: str, result: str, duration_seconds: float) -> None:
+    """记录一次 agent 执行：result ∈ {success, error, skipped}。
+
+    success = agent 正常返回且产出结果字段；error = agent 抛异常；
+    skipped = agent 正常返回但产出字段为 None（跑了但没东西可输出）。
+    """
+    if result not in AGENT_RESULTS:
+        raise ValueError(f"illegal agent result: {result!r}")
+    AGENT_RUNS.labels(agent=agent, result=result).inc()
+    AGENT_DURATION.labels(agent=agent).observe(max(duration_seconds, 0.0))
 
 
 class MetricsExporter:

@@ -196,7 +196,10 @@ class TestGhostListIsActuallyGhosts:
     def test_ghost_list_contains_no_real_metric(self):
         _, ghost_block = _split_ghost_section(_doc_text())
         ghosts = set(_METRIC_RE.findall(ghost_block))
-        assert len(ghosts) >= 30, f"§3.3 只解析出 {len(ghosts)} 个名字，远少于预期（≥30）。解析器或该节格式已变化。"
+        # 门槛随 §3.3 逐步"移出为真"而下降：2026-08-29 从 33 → 29（agent 粒度、
+        # 数据质量、HTTP 耗时三个指标已实现移出），档3-4 业务面板后还会再降到 26。
+        # 底线是"解析器失效返回空集"那一类失败 —— 只要还能解析出几十个就不算失效。
+        assert len(ghosts) >= 20, f"§3.3 只解析出 {len(ghosts)} 个名字，远少于预期（≥20）。解析器或该节格式已变化。"
         exported = _exported_metric_names()
         wrongly_listed = sorted(ghosts & exported)
         assert not wrongly_listed, (

@@ -54,15 +54,15 @@
 
 | 事实 | 数字 |
 |---|---|
-| 已注册采集器 | **10 个** |
-| `.env` 开关 + Key 都就绪（`config_ready=true`） | **5 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan`） |
-| `data_sources` 表有记录的源 | **5 个**（就是上面那 5 个） |
+| 已注册采集器 | **14 个**（2026-08-29 起加入 `discord` `reddit` `medium` `mirror` 四个 P2 源） |
+| `.env` 开关 + Key 都就绪（`config_ready=true`） | **7 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan` + P2 的 `medium` `mirror` 无需 Key 默认开） |
+| `data_sources` 表有记录的源 | **5 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan`） |
 | `raw_projects` 累计 | **615 行**，dedup_key 全部互不重复 |
 | `project_signals` 累计 | **2261 行** |
 | `collection_logs` 累计 | **20 行** |
 | 由采集入库的 `projects` | 288 行中 `defillama` 165 / `seed` 99 / `github` 16 / `manual` 7 / `import` 1 |
 
-**别把「10 个已注册」读成「10 个在跑」**：一个源真正会跑需要同时满足
+**别把「14 个已注册」读成「14 个在跑」**：一个源真正会跑需要同时满足
 三条（开关 ∧ Key ∧ `data_sources.enabled`），详见 §4.1。
 
 ---
@@ -83,21 +83,25 @@
 | **CryptoRank** | P1 | ✅ | 自动采集（项目排名聚合） | 融资、排名 | 免费额度 / 付费 |
 | **RootData** | P1 | ✅ | 自动采集（关键词检索） | 项目库补充 | 需 Key |
 | **Alchemy Webhook** | P1 | ⚠️ 半 | 被动接收（`POST /api/v1/webhook/alchemy`） | 新合约事件 | 免费额度 |
-| **Discord** | P2 | ❌ | — | 社区活跃度 | — |
-| **Medium / Mirror** | P2 | ❌ | — | 路线图、公告 | — |
-| **Reddit** | P2 | ❌ | — | 社区情绪 | — |
+| **Discord** | P2 | ✅ | 自动采集（Bot 读配置频道消息） | 社区活跃度 | 免费（需 Bot Token） |
+| **Reddit** | P2 | ✅ | 自动采集（OAuth 关键词搜索） | 社区情绪 | 免费（需 OAuth App） |
+| **Medium** | P2 | ✅ | 自动采集（RSS tag feed） | 路线图、公告 | 免费，无需 Key |
+| **Mirror** | P2 | ✅ | 自动采集（Arweave GraphQL） | 路线图、公告 | 免费，无需 Key |
 | **手动录入 / CSV 导入** | — | ✅ | `POST /api/v1/run`、`POST /api/v1/import/projects` | 覆盖采集盲区 | 免费 |
 | **seed 策展** | — | ✅ | `scripts/seed.py` | 演示 / 测试基线 | 免费 |
 
-> **P2 三个源（Discord / Medium / Mirror / Reddit）没有任何代码**，
-> 不要在排查"社区信号缺失"时去找它们的日志。
+> **P2 四个源（Discord / Reddit / Medium / Mirror）2026-08-29 起已实现**，
+> 都是「内容里提到某项目」的二阶信号源，`discovery_score` 上限刻意压在
+> 0.28（分析阈值 0.3 之下），只贡献 `project_signals`、不触发 LLM 分析。
+> Discord 需 Bot Token、Reddit 需 OAuth App，都默认关闭；
+> Medium（RSS）/ Mirror（Arweave 公开读）无需 Key、默认开启。
 > **Alchemy Webhook 标「半」的含义**：接收端点、签名校验、状态查询都在
 > （`/api/v1/webhook/alchemy` + `/status`），但它是被动接收，
 > 不在 registry 里、不参与采集调度、`data_sources` 表里也没有它的记录。
 
 ---
 
-## 3. 10 个采集器的真实落点
+## 3. 14 个采集器的真实落点
 
 **上一版这张表的 10 个路径全是错的**（都写成
 `{source}_collector.py` 并标「计划实现位置」）。真实文件与类名：
@@ -116,6 +120,10 @@
 | `layer3` | `backend/app/collectors/layer3.py` | `Layer3Collector` |
 | `cryptorank` | `backend/app/collectors/cryptorank.py` | `CryptoRankCollector` |
 | `rootdata` | `backend/app/collectors/rootdata.py` | `RootDataCollector` |
+| `discord` | `backend/app/collectors/discord.py` | `DiscordCollector` |
+| `reddit` | `backend/app/collectors/reddit.py` | `RedditCollector` |
+| `medium` | `backend/app/collectors/medium.py` | `MediumCollector` |
+| `mirror` | `backend/app/collectors/mirror.py` | `MirrorCollector` |
 
 <!-- collector-files:end -->
 
@@ -158,19 +166,21 @@
 `.env.example` 里还有 `TWITTER_API_KEY` / `TWITTER_API_SECRET` 两个键 ——
 **采集器根本不读它们**，填了 twitter 依然不会跑。
 
-### 4.3 本机实测就绪状态（2026-08-23）
+### 4.3 本机实测就绪状态（2026-08-23，P2 源 2026-08-29 补充）
 
 已配 Key：`GITHUB_TOKEN`、`CRYPTORANK_API_KEY`、`ETHERSCAN_API_KEY`、
 `COINGECKO_API_KEY`。
 未配：`TWITTER_BEARER_TOKEN`、`GALXE_API_KEY`、`LAYER3_API_KEY`、
-`ROOTDATA_API_KEY`。
+`ROOTDATA_API_KEY`、`DISCORD_BOT_TOKEN`、`REDDIT_CLIENT_ID/SECRET`。
 
 于是 `config_ready=true` 的是 5 个：
 `defillama` `github` `coingecko` `cryptorank` `etherscan`。
+（P2 的 `medium` `mirror` 无需 Key，`config_ready` 恒为 true，不算"配了 Key"。）
 
-**代码默认值（完全不给 `.env`）下只有 3 个为 true**：
-`defillama` `github` `coingecko` —— 因为只有这三个的 `*_ENABLED`
-默认是 `true`，其余 7 个默认 `false`。
+**代码默认值（完全不给 `.env`）下只有 5 个为 true**：
+`defillama` `github` `coingecko` `medium` `mirror` —— 这五个的 `*_ENABLED`
+默认是 `true`（前三个免费 P0，后两个免费 P2），其余 9 个默认 `false`
+（都需 Key 或付费）。
 
 ---
 
@@ -222,7 +232,7 @@
 | 5 | `github`、`rootdata` |
 | 6 | `cryptorank`、`galxe`、`layer3`、`etherscan` |
 | 7 | `twitter_kol` |
-| 8 | `twitter_keyword` |
+| 8 | `twitter_keyword`、`discord`、`reddit`、`medium`、`mirror` |
 | 9 | `twitter` |
 | 99 | `unknown`（以及任何未登记的来源名） |
 
@@ -340,6 +350,10 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | `etherscan` | `0 */6 * * *` | 每 6 小时 |
 | `twitter_kol` | `0 * * * *` | 每小时 |
 | `twitter_keyword` | `*/15 * * * *` | 每 15 分钟 |
+| `discord` | `0 */3 * * *` | 每 3 小时 |
+| `reddit` | `30 * * * *` | 每小时 30 分 |
+| `medium` | `0 */6 * * *` | 每 6 小时 |
+| `mirror` | `30 */6 * * *` | 每 6 小时 30 分 |
 
 <!-- collection-cron:end -->
 
@@ -459,6 +473,10 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | `twitter` | 0.2 | 1 | 无 |
 | `twitter_kol` | 0.2 | 1 | 无 |
 | `twitter_keyword` | 0.2 | 1 | 无 |
+| `discord` | 0.5 | 2 | 无 |
+| `reddit` | 0.5 | 2 | 无 |
+| `medium` | 0.5 | 2 | 无 |
+| `mirror` | 0.5 | 2 | 无 |
 
 <!-- rate-limits:end -->
 
@@ -595,10 +613,12 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 > 配置项存在但不生效」—— 已实现，见 §9.3。
 > 留痕而不是直接删行：**读者分不清"修好了"和"被悄悄拿掉了"**，
 > 而这张表的可信度是有限资源，一条假行会让人怀疑其余每一行。
+>
+> **2026-08-29 再移出一条**：「Discord / Medium / Mirror / Reddit collector ❌
+> 无任何代码」—— 四个 P2 源已实现（见 §2 优先级矩阵与 §3 采集器表）。
 
 | 项 | 状态 |
 |---|---|
-| Discord / Medium / Mirror / Reddit collector | ❌ 无任何代码 |
 | Twitter Filtered Stream（实时流） | ❌ 未实现（需 Pro Tier） |
 | 采集完成自动触发分析 | ❌ `COLLECTION_AUTO_RUN_ENABLED=false` |
 | `POST /re-score/{id}` 单项目重跑 | ❌ **接口不存在**（前缀在鉴权表里，会先返回 403 —— 见 §6.2） |
@@ -688,9 +708,11 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 
 ### 12.9 P2 源被写成「自动采集」
 
-Discord / Medium / Mirror / Reddit 在优先级矩阵里都填了
-「自动采集（RSS）」「自动采集（讨论爬取）」这样的接入方式，
-读起来像已接入。**四个源都没有任何代码。**
+上一版（v2.0，2026-07-09）在优先级矩阵里把 Discord / Medium / Mirror /
+Reddit 都填成「自动采集（RSS）」「自动采集（讨论爬取）」，读起来像已接入，
+**那时四个源确实一行代码都没有**。到了 2026-08-29 这四个 P2 源才真正落地
+（见 §2 矩阵与 §3 采集器表），本条失真记录随之失效但保留在此，
+说明「文档写的是计划却读成现状」这类失效有多能骗人。
 
 ---
 

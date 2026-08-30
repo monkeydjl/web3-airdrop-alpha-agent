@@ -22,13 +22,15 @@ _SECRET_ATTRS = (
     "github_token",
     "twitter_bearer_token",
     "twitter_api_key",
+    "twitter_api_secret",
     "rootdata_api_key",
     "galxe_api_key",
     "layer3_api_key",
     "alchemy_api_key",
     "dune_api_key",
     "openai_api_key",
-    "llm_api_keys",
+    "discord_bot_token",
+    "reddit_client_secret",
     "api_key",
     "database_url",
 )
@@ -43,6 +45,13 @@ def _known_secrets() -> list[str]:
         val = getattr(settings, attr, None)
         if isinstance(val, str) and len(val.strip()) >= 6:
             values.append(val.strip())
+    # 多接口 LLM 的编号 Key（LLM_API_KEY_1..5）经 `settings.llm_providers` 现读
+    # `os.environ`，不是 Settings 字段、getattr 取不到，需单独收集。自建代理的
+    # Key 常不是 `sk-` 开头，靠上面的字段名规则和通用 pattern 都抓不到。
+    for provider in getattr(settings, "llm_providers", None) or ():
+        key = str(provider.get("api_key") or "").strip()
+        if len(key) >= 6:
+            values.append(key)
     # 长的先替换，避免子串先命中
     return sorted(set(values), key=len, reverse=True)
 
@@ -59,6 +68,39 @@ def redact(text: str) -> str:
     if not text:
         return text
     return _mask(text, _known_secrets())
+
+
+# LLM 输出泄漏检测用的通用密钥 pattern（保守：明确前缀 + 足够长度，防误报）。
+# 已知密钥的**实际值**由 `_known_secrets()` 提供，比 pattern 精确得多；
+# 但 LLM 也可能转述一个"长得像密钥"、却并非本系统配置的值（幻觉编造或第三方的），
+# 这类只能靠 pattern 兜底。
+_GENERIC_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b")),
+    ("github_pat", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
+    ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._-]{20,}\b")),
+)
+
+
+def detect_secret_leak(text: str) -> str | None:
+    """检测文本是否包含已知密钥值或通用密钥 pattern（LLM 输出泄漏过滤）。
+
+    SECURITY §10.5 要求"LLM 输出后扫描是否包含密钥关键词，命中则丢弃"。
+    命中返回命中的**类别名**（用于日志），未命中返回 None。
+
+    ⚠️ 返回类别名而非密钥内容：把命中的密钥写进返回值或日志等于二次泄露。
+    日志里只记类别，不记值。
+    """
+    if not text:
+        return None
+    for secret in _known_secrets():
+        if secret and secret in text:
+            return "known_secret_value"
+    for category, pattern in _GENERIC_SECRET_PATTERNS:
+        if pattern.search(text):
+            return category
+    return None
 
 
 # 字段名匹配这些模式时，值一律替换为 ***REDACTED***（SECURITY.md §3.3）

@@ -30,6 +30,9 @@ APScheduler==3.11.3
 # ── HTTP 客户端 ──
 httpx==0.28.1
 
+# ── XML 安全解析（Medium RSS，防 XXE/实体膨胀） ──
+defusedxml==0.7.1
+
 # ── 数据处理 / 导出 ──
 pandas==3.0.5
 openpyxl==3.1.5

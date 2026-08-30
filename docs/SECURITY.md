@@ -297,6 +297,11 @@
 | `api.etherscan.io` | Etherscan 链上数据 | V1+ | ✅ `collectors/etherscan.py:70` |
 | `api.layer3.xyz` | Layer3 任务平台 | V1+ | ✅ `collectors/layer3.py:36` |
 | `graphigo.prd.galaxy.eco` | Galxe 任务平台（GraphQL） | V1+ | ✅ `collectors/galxe.py:27` —— **上一版把它写成了 `api.galxe.com`** |
+| `discord.com` | Discord bot API（读配置频道消息） | P2 | ✅ `collectors/discord.py` |
+| `www.reddit.com` | Reddit OAuth token 端点 | P2 | ✅ `collectors/reddit.py` |
+| `oauth.reddit.com` | Reddit OAuth 搜索 | P2 | ✅ `collectors/reddit.py` |
+| `medium.com` | Medium RSS tag feed | P2 | ✅ `collectors/medium.py` |
+| `arweave.net` | Mirror（经 Arweave GraphQL 公开读） | P2 | ✅ `collectors/mirror.py` |
 | `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
 | `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
 | ~~`dashboard.alchemy.com`~~ | Alchemy webhook | — | ❌ **代码里 0 处**，无此集成 |
@@ -304,13 +309,12 @@
 | `api.dune.com` | Dune Analytics | V2（可选） | ❌ 未接入（`DUNE_API_KEY` 是装饰性配置项） |
 <!-- domain-whitelist:end -->
 
-> ⚠️ **这张表是设计意图，不是当前的运行时约束。** 实测（2026-08-23）：
-> `backend/app` 全域（117 个 `.py`，递归）搜不到 `ALLOWED_DOMAINS` /
-> `allowed_domains` / `PermissionError` 任何一个 ——
-> **域名白名单从未实现，没有任何代码在拒绝表外域名**。
-> 当前的实际约束只有「代码里写了哪个 base_url」：改一行 URL 就能访问任意域名，
-> 不会被拦、也不会记日志。新增数据源仍应更新本表 + 走 ADR 评审，
-> 但要清楚这是**流程约束**（人来把关），不是**技术约束**（代码来把关）。
+> ✅ **2026-08-29 起，这张表成了运行时约束**（此前只是设计意图）。
+> 2026-08-23 实测 0 处 `ALLOWED_DOMAINS` / `allowed_domains` / `PermissionError`，
+> 域名白名单从未实现、改一行 URL 就能访问任意域名。2026-08-29 补上
+> `app/utils/domain_allowlist.py`：静态白名单 + LLM provider 域名动态放行 +
+> `assert_url_allowed()` 在出站前校验（fail-closed，表外抛 `DomainNotAllowedError`）。
+> 新增数据源仍要更新本表 + 走 ADR 评审。
 
 > 🔎 **一个没实现的白名单，它的清单本身也从没被现实检验过。**
 > 上表实测出三处错：Galxe 的主机名写错了（真实是
@@ -323,13 +327,23 @@
 
 **实现**：
 - 工具以显式白名单注入 Agent 实例（构造函数参数），不通过全局 registry 自由取用。
-- ❌ **未实现**：`backend/app/agents/base.py` 文件确实存在，但里面**没有
-  `allowed_tools` 字段、也没有任何 `PermissionError`**（实测全仓 0 处）。
-  基类目前不校验工具名。
-- ❌ **未实现**：统一的 HTTP 出口不存在。
-  真实出口是 `backend/app/utils/fetcher.py`（带信号量、熔断、文件缓存），
-  采集器另有各自的 `_http_client()` 上下文管理器
-  （如 `collectors/twitter.py:107`）复用连接 —— **两者都不校验域名**。
+- ⚠️ **刻意不实现（2026-08-29 复核）**：Agent 是纯计算 + 纯文本 LLM
+  （`llm_enhance()` 只返回文本、不调工具），实测 `app/agents/` 下 **0 处**
+  `subprocess` / `eval` / `exec` / 文件读写 / function calling。
+  没有工具调用点，`allowed_tools` 白名单只会变成"存在但从不会被查询"的
+  装饰性配置 —— 这正是本仓库反复反对的假实现（见 §11.2 那类教训）。
+  留作 V2 引入 LLM function calling 时再实现（届时白名单才有东西可拦；
+  `base.py` 至今没有 `allowed_tools`、也没有 `PermissionError`，见 §11）。
+- ✅ **已实现（2026-08-29，2026-08-30 复核口径）**：`app/utils/domain_allowlist.py`
+  提供集中白名单（静态 `_KNOWN_DOMAINS` + LLM provider 域名动态放行）。
+  `assert_url_allowed()` 在出站前 fail-closed 校验（表外抛 `DomainNotAllowedError`）。
+  **运行时强制范围只有两条路径**：`utils/fetcher.py::fetch`（抓项目网页，URL 可能
+  来自外部）与 `llm/client.py`（base_url 可配置）——这两条才是「目标地址可能被外部
+  影响」的出口。**各采集器不在调用点做运行时校验**：它们的请求目标全部是代码里写死
+  的常量，无法被外部输入改写，SSRF 面为零；其 host 靠「登记进 `_KNOWN_DOMAINS` +
+  `test_domain_allowlist.py` / §10.2 表对账门禁」两重静态约束兜底（新增 host 不登记
+  即 CI 变红）。若将来某个采集器的 URL 变成可配置，必须补运行时校验，别让这句诚实
+  描述偷偷过期。
   （上一版这里指向一个 `app/` 下的 `http_client` 模块，**那个文件不存在**
   —— 完整记录见 §11。）
 - ✅ **已实现**：采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的
@@ -345,7 +359,7 @@
 | --- | --- | --- | --- |
 | **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） | ✅ asyncio task |
 | **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP | ✅ 并发限制（`agents/base.py:161`）+ 日预算真实拦截（`llm/budget.py`，2026-08-24 实现），见 §10.4 |
-| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ❌ **未实现**，见 §10.2 的实测说明 |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ⚠️ **部分实现**（2026-08-29 实现、08-30 复核）：`fetcher` + `llm/client` 两条路径运行时 fail-closed；各采集器靠写死 URL + 静态白名单 + CI 门禁兜底，不在调用点强制（详情见 §10.2 实现注） |
 | **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP | ⚠️ 是**约定**不是强制：没有 `PermissionError` 校验，靠 code review 与 `AGENTS.md` 把关 |
 | **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 | ✅ 见 `docker/Dockerfile` |
 
@@ -396,7 +410,7 @@
 | --- | --- | --- |
 | **system prompt 不入 user 消息** | OpenAI API 的 `system` role 独立传递，不拼入 `user` content | ✅ 已实现 |
 | **跨项目隔离** | 每次 LLM 调用仅传入单个项目的相关字段，禁止 batch 多项目数据进同一 prompt | ✅ 已实现 |
-| **输出过滤** | LLM 输出后扫描是否包含密钥关键词，命中则记 `AgentError` 并丢弃 | ❌ **未实现**：全仓没有 `output_leakage_suspected`，输出侧无扫描 |
+| **输出过滤** | LLM 输出后扫描是否包含密钥关键词，命中则记 `AgentError` 并丢弃 | ✅ **已实现**（2026-08-29）：`app/utils/redact.py::detect_secret_leak` 扫已知密钥值 + 通用密钥 pattern（`sk-` / `ghp_` / `AKIA` / JWT / `Bearer`），命中记指标 `airdrop_llm_secret_leak_detected_total` + `llm.secret_leak_detected` 日志，丢弃结果（`LLMResult.leak_detected=True`），调用方回退规则引擎。注意实现**没有**沿用老文档那个 `output_leakage_suspected` 字段名（该名字仍全仓 0 处，见 §11） |
 | **日志脱敏** | `app/utils/redact.py::redact_processor` 装进 structlog processor 链（`configure_logging()`，`main.py:34` 调用） | ✅ **已实现且是全量**：按字段名脱敏 + 对所有字符串值替换已知密钥；控制台与文件共用同一条链，文件行同样脱敏。另有 `redact()` 单独用在采集器错误信息上 |
 | **不回传 system prompt** | API 端点禁止返回 `system_prompt` 字段 | ⚠️ 事实成立但原因不同：全仓没有 `system_prompt` 这个字段名，也**没有 `/projects/{id}/debug` 这个端点**（实测 46 条 OpenAPI 路径里 0 条含 `debug`） |
 
@@ -417,7 +431,7 @@
 - [ ] ~~Tool Permission 测试~~ — ❌ **机制不存在**：全仓没有 `allowed_tools` / `PermissionError`（见 §10.2）
 - [ ] 输出越界测试：mock LLM 返回 `heat_score_adjustment=0.5`（超上限 0.3），断言被截断为 0.3
 - [x] 预算耗尽测试 — ✅ 2026-08-24 补齐：`backend/tests/test_llm_budget_enforcement.py`，含"超预算时一次网络请求都不发出"与"连续调用最终触发拦截"两条端到端断言
-- [ ] ~~Data Leakage 测试~~ — ❌ **机制不存在**：输出侧无密钥扫描（见 §10.5）
+- [x] Data Leakage 测试 — ✅ 2026-08-29 补齐：`backend/tests/test_llm_failover.py` 的 `TestDetectSecretLeak` / `TestSecretLeakDiscard`，覆盖已知密钥值 + 通用 pattern 命中丢弃、干净输出不误报
 - [ ] 降级链路测试：LLM 超时/异常时，断言规则引擎结果正确填充
 
 ---
@@ -432,11 +446,11 @@
 
 | 上一版声称 | 实测 |
 | --- | --- |
-| `backend/app/http_client.py` 是统一 HTTP 出口，校验域名白名单 | **文件不存在**；真实出口是 `backend/app/utils/fetcher.py`，不校验域名 |
-| 表外域名被拒绝并记 `PermissionError` | 全仓 **0 处** `PermissionError`；也没有 `ALLOWED_DOMAINS` / `allowed_domains` |
+| `backend/app/http_client.py` 是统一 HTTP 出口，校验域名白名单 | **文件仍不存在**；真实出口是 `backend/app/utils/fetcher.py`，2026-08-29 起已接入 `domain_allowlist` 出站校验 |
+| 表外域名被拒绝并记 `PermissionError` | `PermissionError` / `ALLOWED_DOMAINS`（大写常量）仍 **0 处**；但 `allowed_domains`（函数）已存在 —— 域名白名单 2026-08-29 实现于 `app/utils/domain_allowlist.py`，异常是 `DomainNotAllowedError` 而非 `PermissionError` |
 | `agents/base.py` 定义 `allowed_tools` 并校验工具名 | 文件存在，但**没有 `allowed_tools`**，不校验 |
 | `LLM_DAILY_BUDGET_USD` 超限自动停用 LLM 并告警 | 当时确实**只被读来做展示**，全仓 0 处在累计花费 —— 已于 **2026-08-24 补齐实现**（见 §11.3 与 §10.4）。注意实现用的原因常量是 `budget_exceeded`；老文档那个 `llm_budget_exhausted` flag **至今仍不存在**，别照它写查询 |
-| LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 全仓 **0 处**，输出侧无扫描 |
+| LLM 输出扫描密钥关键词，命中记 `AgentError(kind="output_leakage_suspected")` | `output_leakage_suspected` 这个字段名**仍 0 处**（实现用的是 `leak_detected`，见 §10.5）；但「输出侧无扫描」已不再成立 —— 2026-08-29 补上 `detect_secret_leak`，命中记 `airdrop_llm_secret_leak_detected_total` 并丢弃 |
 | `output_schema` 限定数值范围与枚举集 | **没有叫这个名字的东西**；实际靠 pydantic 模型 |
 | `/projects/{id}/debug` 端点禁止返回 `system_prompt` | **端点不存在**（46 条 OpenAPI 路径里 0 条含 `debug`），`system_prompt` 字段名也不存在 |
 | 每周跑 `evaluation/llm/template_validation.py` 检测模型漂移 | 脚本存在，但**没有任何定时任务在跑它** |

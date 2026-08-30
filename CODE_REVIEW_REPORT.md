@@ -1,200 +1,238 @@
-# 代码评审报告 — 2026-08-21
+# 代码评审报告 — feat/security-and-observability
 
-> 评审方式：对本轮改动做对抗性自审 —— 不读注释推断行为，而是**构造攻击输入实跑**。
-> 四次尝试派独立 subagent 评审均异常退出（无结果返回），因此本报告是我自己
-> 用探针脚本逐项打靶的结果，并明确标注哪些结论有实测支撑、哪些没有。
-> 上一版报告（08-20 那轮的独立评审）内容仍然有效，本文件覆盖的是 08-21 的改动。
-
-## 结论
-
-**可以交付，但有 1 个必须让所有者知道的待改进项**（推断规则准确率），
-以及 1 个环境层面的不一致（Python 版本）需要所有者决定。
-
-本轮**发现并修复了 1 个此前一直坏着的质量闸门**：`check_terminology.py --all`
-实跑失败（3 文件 5 处），而且这个脚本自己零测试覆盖，所以没人知道它坏了。
-详见下文「已修复」一节。
-
-其余没有发现新的安全漏洞或数据污染面。最危险的一类代码（会改写文档正文的
-编码修复工具）经过 8 组对抗测试，未能绕过其校验。
+> 评审者：独立代码评审 agent（全新上下文，仅依据仓库 + git 历史）
+> 评审日期：2026-08-30
+> 评审范围：分支 `feat/security-and-observability` 相对 `master` 的全部提交
+> （真实清单见下，共 11 个提交，含一个收尾 docs 提交）
 
 ---
 
-## 已修复（本轮发现即改）：术语闸门坏了且零测试覆盖
+## 1. 结论
 
-- **文件**：`scripts/check_terminology.py`
-- **问题**：它是防止「评分决策引擎」术语回退的**唯一**机械闸门（CLAUDE.md §1），
-  但实跑 `--all` 直接失败。更关键的是**它自己一行测试都没有** ——
-  坏了也没有任何信号。
-- **根因不在文档**：5 处命中里 3 处是**不该改的** —— `CLAUDE.md` 那行正在定义
-  禁用词清单本身，`SESSION_MEMORY_2026-07-26.md` 那行引用历史 git commit
-  message（改它就是篡改记录）。闸门缺少表达"这里必须写出禁用词"的手段。
-- **影响**：闸门长期红着 → 团队会习惯性忽略它 → 真正的术语回退就混进来了。
-  另外它此前只挂 pre-commit，`git commit --no-verify` 一句就绕过，CI 不管。
-- **已做**：加行级豁免（`terminology-ok`，逐行显式、可 grep 审计、**不做整文件
-  豁免**）；修掉 1 处真实回退（`docs/DEPLOYMENT_REPORT_FINAL.md:115`）；
-  补 **27 个测试**并把 `--all` 结果固化成测试（让 CI 也守这道门）。
-  现在退出码 0，且负向验证确认它还能拦（见下文第 8 条）。
+**有条件通过**。
+
+一句话理由：四个采集器、可观测性指标、LLM 输出泄漏过滤这几块主体实现扎实、门控正确、都有测试钉住，但"域名白名单"这道安全锁没有真正盖住采集器这条最主要的对外出口，文档却把它写成了"已实现 fail-closed"——交付前需要把"文档说的"和"代码做的"对齐（补上校验，或把文档改回诚实态）。
 
 ---
 
-## 待改进（P1）：上下文推断规则的准确率是小样本假象
+## 2. 评审范围
 
-- **文件**：`scripts/repair_utf8_docs.py`（`repair_by_context`）
-- **问题**：四条推断规则最初只在 5 个干净文档上量准确率，全部 100%。
-  我扩到全仓 **140 个既有文档**复测，数字掉下来了：
+- **日期**：2026-08-30
+- **分支**：`feat/security-and-observability`（相对 `master`）
+- **提交区间**（按 `git log master..feat/security-and-observability`，实际 11 个）：
+  1. `62b8f06` docs: 收尾三连之 CHANGELOG + 当日 session memory
+  2. `0d30ec6` feat: 落地档4-1 四个 P2 内容源采集器（Discord/Reddit/Medium/Mirror）
+  3. `a6745c0` test: 钉住权重校准门槛常量 200/30
+  4. `73ba0f9` feat: 业务面板三信号指标
+  5. `0e25c3a` feat: 入站 HTTP 请求耗时 histogram
+  6. `96f1d59` feat: 数据质量指标（完整性/新鲜度）Prometheus gauge
+  7. `47fd24c` feat: Agent 粒度指标
+  8. `4a2e2cd` chore: 删除 pre-commit mypy hook + 根死配置
+  9. `9933f83` feat: 出站 HTTP 域名白名单 + 工具白名单"刻意不实现"澄清
+  10. `56d5c1a` feat: LLM 输出泄漏过滤
 
-  | 规则 | 5 文档样本 | 140 文档样本 |
-  |---|---|---|
-  | 括号 + 后紧跟表格竖线 | — | **518/518 = 100%** |
-  | 括号 + 之后无括号 | 312/312 | 3469/3484 = 99.57% |
-  | 句末句号（行尾空白） | 210/210 | 2360/2375 = 99.37% |
-  | 箭头（前缀 e286 全填 `→`） | 72/72 | 912/989 = **92.21%** |
+  （注：任务简报里列的 9 个提交与仓库实际吻合，只是少了最顶上的收尾 docs 提交
+  `62b8f06`，不影响评审结论。）
 
-  真实反例：括号内部本身含逗号（`（**真实域名，含 localhost …）`）、
-  行尾恰好是右书名号 `」`、缩进架构图里的 `↓` 被填成 `→`。
-
-- **影响**：**本次的实际输出没有受影响**，因为还有一道更硬的检验挡着 ——
-  在有底本的两个文件上，规则推断与底本对齐**独立**推断同一批位置，
-  实测 105 处可核对、**冲突 0**。也就是说这批规则这次没写错字。
-  但规则本身不够稳，如果以后有人在没有底本的文件上单独依赖它，就会写错字。
-- **建议**：按上表收紧（箭头只在"非缩进行且左右紧邻非空白"时填），
-  或干脆退回人工选择题。已如实记入 `docs/ENCODING_REPAIR.md` §6「还没做的事」，
-  **没有假装它已解决**。
-
-## 需所有者决定（P1）：Python 版本口径不一致
-
-- **文件**：`docker/Dockerfile`、`.github/workflows/ci.yml`、`backend/pyproject.toml`
-- **问题**：镜像与 CI 用 **3.12**，mypy 配置也写 `python_version = "3.12"`，
-  但本地 venv 是 **3.11.9**，`pyproject.toml` 只声明 `requires-python = ">=3.11"`。
-- **影响**：**本地跑通 2524 个测试的解释器，和生产镜像里跑的不是同一个。**
-  3.11 → 3.12 有实际行为差异（如 `datetime.utcnow` 弃用告警、
-  `asyncio` 细节），本地全绿不能证明镜像里也绿。
-- **建议**：两条路 —— 统一到 3.12（要重建本地 venv 并重跑全套，约 35 分钟），
-  或把镜像降到 3.11 与本地对齐。**我没擅自改**，因为两种选择的代价不同，
-  该由所有者定。
+- **评审者身份**：独立代码评审 agent，看不到主会话上下文，只凭仓库代码、git 历史、
+  规约文档（AGENTS.md / CLAUDE.md / CONVENTIONS.md / docs/）做判断。
 
 ---
 
-## 已核实无问题的点（附验证方式）
+## 3. 阻断问题 blocker（必须修才能交付）
 
-这部分同样重要 —— 让所有者知道哪些地方确实被查过了。
+### Blocker 1：「域名白名单」没有真正盖住采集器，但安全文档宣称已 fail-closed
 
-### 1. 编码修复工具无法被绕过（8 组对抗测试）
+**改了什么：**
+新增 `backend/app/utils/domain_allowlist.py`，宣称是"集中的出站域名白名单，
+消费方在发出请求前调 `assert_url_allowed()`，表外域名 fail-closed 拒绝"。
+它被接进了**两处出口**：
+- `utils/fetcher.py::fetch()`（通用 fetcher）
+- `llm/client.py::_try_single()`（LLM 客户端）
 
-对 `apply_choices()` 构造了 7 种恶意答案，全部被拒且**文本未被改动**：
+但**没有任何采集器走这道校验**。四个新采集器（`discord.py` / `medium.py` /
+`mirror.py` / `reddit.py`）以及全部旧采集器，全部是直接
+`httpx.AsyncClient(...)` 发请求，从来没有调用 `assert_url_allowed()`。
+也就是说，真正天天在往外部 API 发请求的代码路径，反而没有经过这把锁。
 
-| 攻击 | 结果 |
+**风险是什么：**
+- 给所有读者（尤其不看代码的 owner）造成一种"对外网络已经被锁死"的虚假安全感。
+  `SECURITY.md §10.2` 写“✅ 2026-08-29 起这张表成了运行时约束”、
+  `§10.3` 网络级一行写“✅ 已实现（出站前校验，表外抛 DomainNotAllowedError）”。
+  这句话只在 2 条路径上为真，在主采集路径上为假。
+- 就当前而言，**真实的可被远程利用的 SSRF 风险其实很低**：采集器的目标 URL 全是
+  写死的常量（`DISCORD_API_BASE`、`OAUTH_ENDPOINT`、`ARWEAVE_GRAPHQL_URL` 等），
+  没有一处 URL 来自用户输入，所以攻击者改不了目标地址。当前真正拦住的只是
+  "开发者未来改一行 URL 打错域名"这一层。
+- 但"统一出口"并不存在。将来任何一个采集器的 URL 变成可配置（比如把
+  `medium_tags` 里的 tag 做成可注入、或新增一个源读外部配置的 base_url），
+  就会**静默绕过**这道所有人以为存在的锁——而且没有任何日志或报错提醒。
+
+**建议怎么改（二选一，目标都是"文档说的 = 代码做的"）：**
+1. （更彻底的修法）把校验补到采集器这一层：抽一个很小的统一出站 helper
+   （比如给每个 collector 加一个 `_request()`、或在 `DataCollector` 基类加一个
+   发请求前先 `assert_url_allowed(url)` 的封装），让所有采集器也必经白名单。
+   因为采集器域名全部是已知常量，接入成本低、改动面小。
+2. （更诚实的修法）如果暂时不想改采集器代码，就把 `SECURITY.md §10.3` 网络级那行
+   从 "✅ 已实现" 改回 "⚠️ 部分实现：仅 fetcher / LLM 两条路径强制，各采集器靠
+   写死 URL + 测试约束，不在运行时强制"。同时把 `domain_allowlist.py` 顶部那段
+   "集中的出口"的描述也改成不夸大。
+
+> 补充说明：`SECURITY.md §10.2` 里那句"采集器各自的 `_http_client()` 仍是独立连接"
+> 本身也不准确——仓库里只有 `twitter.py` 有 `_http_client()`，其余采集器连这个
+> helper 都没有。这进一步说明文档描述和实际代码早就脱节了。
+
+---
+
+## 4. 建议 suggestion（不阻断，但值得改）
+
+### Suggestion 1：泄漏过滤 / 日志脱敏的"已知密钥值"清单有漏洞
+
+**问题：**
+`redact.py::_SECRET_ATTRS` 用来收集"已知密钥的真实值"，但里面有一个**幽灵条目**
+`"llm_api_keys"`——`settings` 上根本没有这个属性（LLM 的编号 Key `LLM_API_KEY_1..5`
+是在 `config.py` 的 `llm_providers` 属性里用 `os.environ.get` 现读的，不是一个字段），
+所以它永远取到 None。同时本批新增的两个真密钥 **`discord_bot_token`、
+`reddit_client_secret`**（以及更早的 `twitter_api_secret`）也没进这个清单。
+
+**后果：**
+这些密钥的"真实值"一旦流入日志或 LLM 输出，靠"值匹配"的脱敏 / 泄漏检测**抓不到**，
+只能靠两件事兜底：① 字段名规则（只有字段名长得像 `token`/`secret` 才被替换）；
+② 通用 pattern（只认 `sk-`、`ghp_`、`AKIA`、JWT、`Bearer` 这几种形状）。
+一个自定义大模型代理的 Key（不是 `sk-` 开头）就会两头都漏。
+
+**建议：**
+把 `settings.llm_providers` 里每个 `api_key`、以及 `discord_bot_token`、
+`reddit_client_secret`、`twitter_api_secret` 都并入 secret 集合，同时删掉幽灵
+`llm_api_keys` 条目。配套补一条测试：构造"自定义 LLM Key 出现在文本里"应当被
+`detect_secret_leak` / `redact` 命中。
+
+### Suggestion 2：OBSERVABILITY.md §6 还留着一句与 §3.2 自相矛盾的旧话
+
+**问题：**
+`OBSERVABILITY.md §3.2` 新增了"业务面板三指标已实现"，但 §6 末尾仍然写着
+"**没有业务面板。**……依赖的三个指标都不存在（见 §3.3），面板本身也不存在。"
+其中"三个指标都不存在"已经和 §3.2 打架了。parity 测试只核对"指标名"，不核对
+这段陈述，所以 CI 不会红，这句话会在文档里一直错下去。
+
+**建议：**
+把 §6 那句改成只陈述事实——"业务面板的 Grafana 看板 JSON 目前还没有；但三个
+底层指标（评分/热度/反馈）已于 2026-08-29 实现于 §3.2"。
+
+### Suggestion 3：白名单测试漏了本批 5 个新域名
+
+`test_domain_allowlist.py::test_collector_domains_present` 只断言了 9 个旧域名
+（defillama/github/coingecko/.../galxe），**没有**断言本批加入 `_KNOWN_DOMAINS` 的
+`discord.com`、`www.reddit.com`、`oauth.reddit.com`、`medium.com`、`arweave.net`
+五个域名确实在清单里（它们实际在，只是没被测试钉住）。将来有人误删其中一个，测试
+不会报。建议把这 5 个也加进同一断言。
+
+### Suggestion 4：两个小脏点——`discord_guild_id` 死配置 + Reddit 把上游响应体塞进异常
+
+- `config.py` 里声明了 `discord_guild_id`，`.env.example` 也有，但整个仓库**没有任何
+  代码读它**（`discord.py` 只用到 bot_token + channel_id）。属于"能填但填了不生效"
+  的配置，与仓库自己反复反对的假配置是同一类，建议删掉或真正用起来。
+- `reddit.py::_fetch_access_token` 在拿不到 access_token 时
+  `raise ValueError(f"Reddit OAuth 无 access_token：{data}")`，把整个 OAuth 响应体
+  拼进异常信息，随后又被 `collect()` 写进 `error_message`、`health_check` 直接返回。
+  虽然 Reddit 的 OAuth 响应里不含 secret，但"把上游原文塞进日志/接口"是坏习惯，
+  建议只取 `data.get("error")` 之类的错误码。
+
+### Suggestion 5：四个采集器的评分函数整段复制了四份
+
+`_score()` + `MAX_DISCOVERY_SCORE = 0.28` + `type_map` 在 discord/medium/mirror/reddit
+四个文件里一模一样地复制了四份。现在值都一致（我已核对：funding 0.13 → 上限正好
+0.28，恒 < 0.3），但将来要调评分口径，很容易漏改其中一个导致四源口径漂移。建议把这
+段提进 `content_signals.py` 共用一个 `score_by_signal()`。
+
+### Suggestion 6（工程整洁结论，非问题，记一笔）：「删 mypy hook + 根死配置」是干净的
+
+任务简报里写"pre-commit mypy hook 改成 pass_filenames:false + 指向 backend 配置"，
+**实际做的是直接把 pre-commit 的 mypy hook 整段删了**（不是改，是删）。评审确认这
+次是干净的：
+- CI 仍用 `mypy app --config-file pyproject.toml`（strict=true）把关类型检查，所以
+  类型纪律没有消失，只是从"提交前"挪到了"CI"。
+- 根 `pyproject.toml` 删掉的 `[tool.mypy]` / `[tool.pytest.ini_options]` /
+  `[tool.coverage]` 确实是死配置（权威在 `backend/pyproject.toml`）。
+- 我核实过：仓库里没有任何自定义 pytest marker（只有 `asyncio`/`parametrize`/
+  `skipif` 这些内置的），所以删掉根配置里的 `markers` 清单、`backend` 那侧又开着
+  `--strict-markers`，**不会**报"unknown marker"。
+
+唯一代价：开发者本地提交前不再跑类型检查，类型错误要等 CI 才暴露。属于可接受，
+不算问题。
+
+---
+
+## 5. 测试与验证评估
+
+**改动有没有对应测试：**
+- 每个新采集器都有 respx（mock 网络）测试，且覆盖了主要分支：
+  `test_discord / test_medium / test_mirror / test_reddit` 都测了「开关/Key 门控、
+  正常命中信号、空结果→partial、HTTP 错误→error」；Mirror 额外测了 GraphQL error，
+  Reddit 额外测了 OAuth 401。**不是只有 happy path**，这是本次做得好的地方。
+- 白名单：`test_domain_allowlist.py` 测了 fail-closed（表外域名、非 http、空串都拒）、
+  LLM provider 域名动态放行、`fetch()` 入口拒绝表外域名。
+- 泄漏过滤：`test_llm_failover.py` 的 `TestDetectSecretLeak` / `TestSecretLeakDiscard`
+  测了已知密钥值 + 各通用 pattern 命中丢弃、干净输出不误报、丢弃不重试下一个组合。
+- 指标：`test_metrics.py`（api）用 `metric_sample_value` / `_histogram_sum` **真读
+  Prometheus 样本值**，钉住了 agent/业务面板/HTTP 耗时这些指标确实递增或 observe，
+  而不是只查"注册表里有没有这个名字"。这一点尤其难得（避免了"只注册不调用"的幽灵指标）。
+- 校准门槛：`test_calibration.py::test_gate_constants_not_lowered` 钉住 200/30 常量。
+
+**文档/门禁 parity（否则 CI 会红）：**
+- 四个新源都登记进了 `DATA_SOURCE_STRATEGY.md`（§2 状态表、§3 采集器落点表、§5.4
+  分数上限、§8.4 限流 0.5rps/burst2、cron 表）、`OPERATIONS.md`（门控表 + cron 表 +
+  幽灵指标清单）、`SECURITY.md`（域名白名单表 + ghost 符号清单）。
+- 限流数值与代码一致：`rate_limiter.py::DEFAULTS` 里 discord/reddit/medium/mirror 都是
+  `0.5 req/s, burst 2, 无日限额`，与 DATA_SOURCE_STRATEGY §8.4 逐字对得上。
+- `is_enabled()` 门控正确：medium/mirror 无 Key 默认开（`MEDIUM_ENABLED=true` /
+  `MIRROR_ENABLED=true`），discord 需 `enabled+bot_token+channel_id`、reddit 需
+  `enabled+client_id+secret+username`，默认都关。
+- `discovery_score` 上限 0.28 恒 < 0.3：四个源的 `_score()` 最高是 funding 分支
+  `0.15+0.13=0.28`，且被 `min(MAX_DISCOVERY_SCORE=0.28, ...)` 夹住，永不越过分析阈值
+  `DISCOVERY_SCORE_ANALYSIS_THRESHOLD=0.3`。这个设计意图成立，测试也断言了 `< 0.3`。
+- secrets 边界：四个采集器的 `raw_data` 都不含 token/密钥；Discord token、Reddit
+  client_secret 都只放进 HTTP header，不落日志、不进 raw_data。符合 AGENTS.md /
+  SECURITY.md 的要求。
+- Discord 只读单个配置频道（有合规注释 + 只读 `channels/{channel_id}/messages`）；
+  Reddit 用 OAuth 关键词搜索（3 个词 × 25 条，每小时间隔），不是全站枚举，ToS 层面
+  没有明显越界。
+
+**我没亲跑、但主 agent 声称会过的检查，值得警惕的点：**
+- 本评审是纯静态审查，**没有实际执行 pytest / mypy / pre-commit**，上述"测试覆盖"
+  是基于代码与测试文件的静态判断，不是运行结果。
+- 即便 CI 全绿，下面这几处也**不会变红**、需要人工改：① `SECURITY.md` 宣称的
+  fail-closed 白名单实际没盖住采集器（Blocker 1）；② OBSERVABILITY §6 那句自相矛盾
+  的"三个指标不存在"（Suggestion 2）；③ 白名单测试未覆盖本批 5 个新域名
+  （Suggestion 3）；④ 泄漏过滤的秘密值清单缺口（Suggestion 1，能用测试钉，但目前
+  没测）。
+
+---
+
+## 附：评审核对清单（供 owner 快速看结论）
+
+| 评审重点 | 结论 |
 |---|---|
-| 候选集外的汉字 | 拒绝 |
-| 多字符答案 | 拒绝 |
-| 空串 | 忽略 |
-| ASCII 字符 | 拒绝 |
-| 换行符 | 拒绝 |
-| 占位符本身 | 拒绝 |
-| 合法候选 | **接受**（对照组，证明校验不是一律拒绝） |
-
-另外两组：指向越界下标、指向非占位符位置的答案，均被拒绝。
-
-### 2. `--apply` 不会在半成品状态误写原文件
-
-读代码确认分支后实跑：三个文件都仍有待定处，输出全部落在 `.md.partial`，
-原文件字节数未变。
-
-### 3. 校验器真能拦住"改写正文"
-
-在 `6823d18` 的干净底本上人工制造 305 处损坏，再喂进四种"修复结果"实跑：
-
-| 输入 | 退出码 | 判定 |
-|---|---|---|
-| 正确修复（就是原文） | 0 | **通过** |
-| 替换一个字符（`运维` → `运堆`） | 1 | 拦下 |
-| 插入改写标记（`## ` → `## 【改写】`） | 1 | 拦下 |
-| 删掉 300 字 | 1 | 拦下 |
-
-第一行是对照组，证明校验不是"一律拒绝"那种假严格。
-另外验证了它对半成品占位符（U+FFFD）的放行**不会被滥用** ——
-把占位符换成候选集外的字仍然 `[FAIL]`（实测报出
-`应为 b'\xe8\xa1'，实为 b'\xe9\x8c'`）。
-
-### 4. 二型损坏检测的误报已归零
-
-判据"半角 `?` 紧贴中文"天生容易误报。实测确认三个误报源全部被排除：
-mermaid 判定节点（`docs/GIT_STRATEGY.md` 2 处）、行内代码示例、
-以及 `check_encoding.py` **自己的文档字符串**（4 处 —— 描述判据的文字和符合判据
-的损坏长得一样）。加入围栏代码块 + 行内代码排除后，全仓只剩真正损坏的
-`docs/API_SPEC.md`。有一条测试专门断言"检查脚本必须过自己的检查"。
-
-### 5. 没有第三种编码损坏
-
-按同样思路扫了全仓非 md 文本（`.py/.ts/.tsx/.yml/.json/.txt/.ps1/.css`）：
-**0 处**。二型只影响文档。
-
-### 6. 依赖锁定完整
-
-逐包比对 pin 值与本机实际安装版本：
-`requirements.txt` **13/13 一致**、`requirements-dev.txt` **7/7 一致**，
-合计 **20/20** —— 也就是说锁的是真正跑过 2524 个测试的那批版本，不是凭记忆写的。
-
-干净 venv 只装 `requirements.txt` → 41 包装成、应用启动、`/health` 200、
-`/metrics` 200（10806 字节）、`_OTEL_AVAILABLE False`（证明缺 OTel 能降级）。
-再装 dev 依赖 → 22 测试通过。生产镜像 `COPY backend/requirements.txt` 单文件，
-**不会误装 pytest/ruff/mypy**。
-
-### 7. 全套门禁
-
-`pytest` 2524 passed / 4 skipped / 87.86% cov / exit 0（新增 41 个测试后重跑中）；
-`ruff check` 全绿；`ruff format --check` 246 文件已格式化；
-`mypy app` 115 文件无问题；`check_terminology.py --all` 退出码 0（**修复后**）；
-`check_encoding.py` 483 文件、4 个已登记损坏按预期警告；
-前端 `tsc --noEmit` 与 `eslint` 均无输出（通过）。
-
-### 8. 术语闸门修复后确实还能拦（负向验证）
-
-修完不能只看"变绿了"。实跑三组：
-- 新写一行含禁用术语、**无豁免标记** → 退出码 1，被拦
-- 豁免标记只作用于本行 → 第二行无标记的照样被拦（`:2:`）
-- 「评分决策引擎」「规则引擎」「旁路机会引擎」等正确写法 → 全部放行
-
-审计当前豁免：全仓 5 处 `terminology-ok` 标记里，**真正起豁免作用的只有 2 处**
-（另 3 处是文档/代码里提到这个标记名，所在行不含禁用词）。
-两处真豁免分别是 CLAUDE.md 定义禁用词清单本身、会话记忆引用历史 commit
-message —— 都属"必须写出禁用词才能表达意思"。
+| 域名白名单是否 fail-closed、是否覆盖所有出口 | ⚠️ 只覆盖 fetcher + LLM，**采集器全部绕过**（Blocker 1） |
+| LLM 泄漏过滤是否覆盖所有输出路径、打码是否漏 | ✅ 覆盖两个 LLM 调用点（base + ai_brief），但"已知密钥值"清单有缺口（Suggestion 1） |
+| 工具白名单校验是否在执行前发生 | ✅ 刻意不实现，理由成立（Agent 无工具调用点），文档已澄清 |
+| pre-commit mypy 删除 + 根死配置清理 | ✅ 干净，无漏配、无自定义 marker 受牵连 |
+| 指标命名 / 标签基数 / record_* 是否真被调用 | ✅ 命名合规，词表闭合，埋点都在真实路径（orchestrator_simple 是实际分析路径） |
+| 四采集器 discovery_score / is_enabled / 限流 / secrets / ToS / 异常处理 | ✅ 全部正确，0.28<0.3、门控对、限流对表、不落密钥、异常转 error 态 |
+| 测试覆盖与文档/门禁 parity | ✅ 主体覆盖良好；4 个新源全部登记；三处"测试测不到"的边角见上 |
 
 ---
 
-## 我无法验证的部分（诚实清单）
+## 6. 处理记录（2026-08-30，主 agent 响应）
 
-1. **OTel 追踪的正向路径**：7 个 `opentelemetry-*` 包本机装不上（PyPI 不可达），
-   所以"装了包时能正常上报 span"**没有验证过**。
-   我只验证了降级路径，并补了 18 个测试锁住它
-   （`backend/tests/test_tracing_degraded.py`）——
-   其中最关键的一条是"运维在生产打开了 `OTEL_ENABLED` 但镜像没装 OTel 包"，
-   此时必须记 warning 继续跑、不能让应用启动失败。
-   `app/tracing.py` 覆盖率因此从 **44% 升到 58%**（实测数字）；
-   剩下 42% 就是需要真装 OTel 才能走到的分支。
-   另外把两处 `# pragma: no cover - deps always installed` 注释改掉了 ——
-   那句话是错的（依赖并非总是安装），现在指向 `requirements-otel.txt`。
-2. **Docker 实际构建**：本轮没跑 `docker compose build`。上一轮（08-20）跑过并
-   验证容器 `Up (healthy)`，但那之后改了 `Dockerfile` 的 COPY 行与 requirements
-   拆分，**新镜像未实测**。
-3. **PostgreSQL 并发路径**：`test_pg_concurrent_rescore.py` 因本机无 PG 而 skip。
-4. **前端 `next build` 的收尾阶段**：`Compiled successfully` 已达到，
-   但结束时报 `spawn EPERM`（沙箱禁止 Node 捕获子进程输出），
-   所以完整产物生成未确认。`tsc` 与 `eslint` 单独跑均通过。
-5. **二型损坏的 70 处原文**：只能确认"这里丢了字"，无法确认丢的是什么 ——
-   底本之后文档被大幅改写（10065 → 26694 字符），无法整体对照。
+| 项 | 处理 |
+|---|---|
+| Blocker 1 域名白名单覆盖不全 | ✅ **已修**（owner 决策「诚实口径」）：SECURITY §10.2/§10.3 与 `domain_allowlist.py` docstring 改为如实描述「运行时强制只 cover fetcher + LLM 两条路径；采集器靠写死 URL + 静态白名单 + CI 门禁兜底」，删掉「统一出口」「采集器各自 _http_client()」等不准确措辞 |
+| Suggestion 1 密钥值清单缺口 | ✅ **已修**：`redact.py` 删除幽灵 `llm_api_keys`，补 `discord_bot_token`/`reddit_client_secret`/`twitter_api_secret` + `llm_providers` 各 api_key；新增测试钉住 |
+| Suggestion 2 OBSERVABILITY §6 自相矛盾 | ✅ **已修**：改为「指标已实现，缺的是看板 JSON」 |
+| Suggestion 3 白名单测试漏 5 域名 | ✅ **已修**：`test_collector_domains_present` 补 5 个新域名 |
+| Suggestion 4 死配置 + 异常塞上游原文 | ✅ **已修**：删 `discord_guild_id`（config + .env.example）；Reddit OAuth 异常只留 error 码 |
+| Suggestion 5 `_score` 复制四份 | ⏸️ **不修（非阻断）**：四份值一致、各有测试钉住；将来改评分口径再抽公共函数，现在抽反而让四个源更耦合 |
+| Suggestion 6 删 mypy hook 已干净 | ✅ 确认，无动作 |
 
----
-
-## 一个自我更正记录
-
-本报告中的准确率表格推翻了我自己在 CHANGELOG 初稿里写的
-「每条规则都在干净底本上量过准确率、只留 100% 的」。那句话在 5 个文档的样本下
-成立，在 140 个文档下不成立。原判断与更正**都保留**在 CHANGELOG、
-`docs/PHASES.md`、`docs/ENCODING_REPAIR.md` 里，没有抹掉痕迹 ——
-接手的人需要知道哪些结论被推翻过。
-
----
-
-_评审日期：2026-08-21 · 编码专题见 `docs/ENCODING_REPAIR.md` ·
-交接见 `HANDOFF.md` · 上一轮独立评审结论见 git 历史中的本文件早期版本_
+**全量测试**：修复后 `mypy` 0 错误、`ruff` 全绿；评审针对的测试集 221 passed，全量后端套件复跑见 session memory。

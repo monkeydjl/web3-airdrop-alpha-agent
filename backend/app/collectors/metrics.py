@@ -24,6 +24,7 @@ from typing import Any
 import structlog
 
 from app.db import DbConnection, get_connection
+from app.metrics import record_data_quality
 
 logger = structlog.get_logger(__name__)
 
@@ -281,6 +282,15 @@ class CollectionMetrics:
 
         for source_id in source_ids:
             snapshot = self.get_source_metrics(source_id, window_hours)
+
+            # 数据质量 gauge 与告警共用同一次 snapshot 计算（OBSERVABILITY §9）。
+            record_data_quality(
+                source_id=source_id,
+                freshness_seconds=(
+                    snapshot.last_sync_minutes_ago * 60.0 if snapshot.last_sync_minutes_ago is not None else None
+                ),
+                completeness_ratio=snapshot.coverage_rate,
+            )
 
             if snapshot.success_rate < thresholds["success_rate"] and snapshot.total_runs > 0:
                 alert = {

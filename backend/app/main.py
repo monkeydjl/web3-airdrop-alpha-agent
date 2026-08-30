@@ -299,7 +299,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         """记录请求日志（结构化）并附加免责声明响应头。"""
         import time
 
-        from app.metrics import HTTP_REQUESTS
+        from app.metrics import HTTP_DURATION, HTTP_REQUESTS
 
         start = time.time()
         response = await call_next(request)
@@ -311,6 +311,8 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         # HTTP 请求计数（按状态码分档：2xx/3xx/4xx/5xx）
         status_class = f"{response.status_code // 100}xx"
         HTTP_REQUESTS.labels(method=request.method, status_class=status_class).inc()
+        # HTTP 请求耗时 histogram（§9）：duration 是毫秒，指标单位是秒
+        HTTP_DURATION.observe(duration / 1000.0)
 
         logger.info(
             "api.request.completed",

@@ -156,6 +156,10 @@ export function sourceZh(source?: string | null): string {
     twitter_keyword: 'Twitter 关键词',
     galxe: 'Galxe',
     layer3: 'Layer3',
+    discord: 'Discord',
+    reddit: 'Reddit',
+    medium: 'Medium',
+    mirror: 'Mirror',
     seed: '种子数据',
     import: '文件导入',
   };

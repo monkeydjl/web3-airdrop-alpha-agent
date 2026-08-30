@@ -281,6 +281,34 @@ class Settings(BaseSettings):
     dune_enabled: bool = False
     dune_api_key: str = ""
 
+    # Discord / Reddit / Medium / Mirror（P2，社区与内容源）
+    # 门控规则与其它源一致（§4.1 三条件）：开关 ∧ Key ∧ data_sources.enabled。
+    # Medium（RSS）/ Mirror（Arweave 公开读）无需 Key，默认开启；
+    # Discord（bot token）/ Reddit（OAuth）需 Key，默认关闭。
+    discord_enabled: bool = False
+    discord_bot_token: str = ""
+    discord_channel_id: str = ""
+    discord_timeout: int = 30
+    discord_retry: int = 3
+    discord_cron: str = "0 */3 * * *"
+    reddit_enabled: bool = False
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_username: str = ""
+    reddit_user_agent: str = "web3-airdrop-alpha/1.0"
+    reddit_timeout: int = 30
+    reddit_retry: int = 3
+    reddit_cron: str = "30 * * * *"
+    medium_enabled: bool = True
+    medium_timeout: int = 30
+    medium_retry: int = 3
+    medium_tags: str = "airdrop,web3,crypto"
+    medium_cron: str = "0 */6 * * *"
+    mirror_enabled: bool = True
+    mirror_timeout: int = 30
+    mirror_retry: int = 3
+    mirror_cron: str = "30 */6 * * *"
+
     # ── Feature Flags ─────────────────────────────
     enable_llm_enhancement: bool = False
     enable_feedback_system: bool = True  # default on for sample collection

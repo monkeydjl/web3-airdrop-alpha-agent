@@ -33,8 +33,14 @@ from app.utils.fetcher import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_state():
-    """Reset cache, circuit breaker, and semaphore before each test."""
+def _reset_state(monkeypatch):
+    """Reset cache, circuit breaker, and semaphore before each test.
+
+    本文件用 `https://example.com` 作占位 URL 测缓存/熔断/信号量的内部行为，
+    不关心域名白名单（那层由 `test_domain_allowlist.py` 单独覆盖）——把
+    `assert_url_allowed` 变 no-op，让测试专注 fetcher 自身逻辑。
+    """
+    monkeypatch.setattr(fetcher, "assert_url_allowed", lambda url: None)
     clear_cache()
     reset_circuit_breaker()
     fetcher._reset_semaphore()

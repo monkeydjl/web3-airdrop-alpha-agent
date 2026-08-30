@@ -164,6 +164,10 @@ def _real_cron() -> dict[str, str]:
         "etherscan": settings.etherscan_cron,
         "galxe": settings.galxe_cron,
         "layer3": settings.layer3_cron,
+        "discord": settings.discord_cron,
+        "reddit": settings.reddit_cron,
+        "medium": settings.medium_cron,
+        "mirror": settings.mirror_cron,
     }
     assert all(mapping.values()), f"有采集源的 cron 是空值：{mapping}"
     return mapping
@@ -372,12 +376,12 @@ class TestDistortionListIsHonest:
         existing = [p for p in stale if (REPO_ROOT / p).exists()]
         assert not existing, f"§12.1/§12.5 说这些路径不存在，但它们现在存在了：{existing}"
 
-    def test_p2_sources_have_no_collector(self):
-        """Discord / Medium / Mirror / Reddit 在 §2 与 §12.9 里标着零代码。"""
+    def test_p2_sources_have_collectors(self):
+        """Discord / Medium / Mirror / Reddit 在 §2 里应是 ✅ 且已注册。"""
         registered = set(_real_collectors())
         p2 = {"discord", "medium", "mirror", "reddit"}
-        landed = sorted(p2 & registered)
-        assert not landed, f"§12.9 说这些 P2 源没有代码，但它们已注册进 registry：{landed}"
+        missing = sorted(p2 - registered)
+        assert not missing, f"§12.9 已改写为「P2 源已实现」，但这些源没注册进 registry：{missing}"
 
     def test_collection_eval_dir_still_absent(self):
         assert not (REPO_ROOT / "evaluation" / "collection").exists(), (

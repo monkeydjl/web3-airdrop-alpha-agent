@@ -10,7 +10,24 @@ from prometheus_client.parser import text_string_to_metric_families
 
 from app import metrics as metrics_module
 from app.main import create_app
-from app.metrics import record_opportunity_shadow_assessment
+from app.metrics import (
+    AGENT_DURATION,
+    AGENT_RESULTS,
+    AGENT_RUNS,
+    metric_sample_value,
+    record_agent_run,
+    record_opportunity_shadow_assessment,
+)
+
+
+def _histogram_sum(metric) -> float:
+    """读取 histogram 的 `_sum` 样本 —— `metric_sample_value` 对 histogram 返回
+    的是 `_count`（观测次数）而非观测值之和，验证"观察到了什么值"要用这个。"""
+    for family in metric.collect():
+        for sample in family.samples:
+            if sample.name.endswith("_sum"):
+                return float(sample.value)
+    return 0.0
 
 
 @pytest.fixture
@@ -127,6 +144,15 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
+    def test_http_request_duration_histogram_observed(self, client):
+        """入站 API 请求耗时 histogram 在每次请求后被 observe（§9）。"""
+        from app.metrics import HTTP_DURATION, metric_sample_value
+
+        before = metric_sample_value(HTTP_DURATION)
+        client.get("/health")
+        after = metric_sample_value(HTTP_DURATION)
+        assert after > before
+
     def test_metrics_disabled_returns_404(self, monkeypatch, client):
         from app import metrics as metrics_module
 
@@ -172,3 +198,84 @@ class TestMetricsEndpoint:
                 if len(parts) == 2:
                     return int(float(parts[1]))
         return 0
+
+
+class TestBusinessPanelMetrics:
+    """业务面板三信号（§9「业务面板」）：评分 / 赛道热度 / 反馈。"""
+
+    def test_record_project_score_observes(self) -> None:
+        from app.metrics import PROJECT_SCORE, record_project_score
+
+        before = _histogram_sum(PROJECT_SCORE)
+        record_project_score(75.0)
+        after = _histogram_sum(PROJECT_SCORE)
+        assert after == before + 75.0
+
+    def test_record_narrative_heat_score_observes(self) -> None:
+        from app.metrics import NARRATIVE_HEAT_SCORE, record_narrative_heat_score
+
+        before = _histogram_sum(NARRATIVE_HEAT_SCORE)
+        record_narrative_heat_score(0.85)
+        after = _histogram_sum(NARRATIVE_HEAT_SCORE)
+        assert after == before + 0.85
+
+    def test_project_score_clamped_to_range(self) -> None:
+        from app.metrics import PROJECT_SCORE, record_project_score
+
+        before = _histogram_sum(PROJECT_SCORE)
+        record_project_score(250.0)  # 越界 → 钳到 100
+        record_project_score(-30.0)  # 越界 → 钳到 0
+        after = _histogram_sum(PROJECT_SCORE)
+        # 100 + 0 = 100
+        assert after == before + 100.0
+
+    def test_feedback_signal_vocabulary_is_closed(self) -> None:
+        from app.metrics import FEEDBACK_SIGNALS, record_feedback
+
+        assert {"useful", "useless", "wrong_label", "correct_outcome"} == FEEDBACK_SIGNALS
+        with pytest.raises(ValueError):
+            record_feedback(signal="not_a_signal")
+
+    def test_record_feedback_increments_by_signal(self) -> None:
+        from app.metrics import FEEDBACK_TOTAL, metric_sample_value, record_feedback
+
+        before = metric_sample_value(FEEDBACK_TOTAL, signal="useful")
+        record_feedback(signal="useful")
+        after = metric_sample_value(FEEDBACK_TOTAL, signal="useful")
+        assert after == before + 1
+
+
+class TestAgentMetrics:
+    """Agent 粒度指标（§9「Agent 粒度指标」）—— 闭合词表 + 真实递增。"""
+
+    def test_agent_result_vocabulary_is_closed(self) -> None:
+        """result 词表必须是闭合三态，非法值要抛错而非静默写脏标签。"""
+        assert {"success", "error", "skipped"} == AGENT_RESULTS
+        with pytest.raises(ValueError):
+            record_agent_run(agent="narrative", result="timeout", duration_seconds=0.1)
+
+    def test_record_agent_run_increments_success(self) -> None:
+        before = metric_sample_value(AGENT_RUNS, agent="narrative", result="success")
+        record_agent_run(agent="narrative", result="success", duration_seconds=0.25)
+        after = metric_sample_value(AGENT_RUNS, agent="narrative", result="success")
+        assert after == before + 1
+
+    def test_record_agent_run_observes_duration(self) -> None:
+        before = metric_sample_value(AGENT_DURATION, agent="team")
+        record_agent_run(agent="team", result="success", duration_seconds=0.75)
+        after = metric_sample_value(AGENT_DURATION, agent="team")
+        # metric_sample_value 对 histogram 返回 `_count`（观测次数），
+        # 这里断言"发生了一次 observe"即可（值是否钳 ≥0 由 record_agent_run 保证）。
+        assert after == before + 1
+
+    def test_error_and_skipped_are_distinct_labels(self) -> None:
+        record_agent_run(agent="risk", result="error", duration_seconds=0.1)
+        record_agent_run(agent="risk", result="skipped", duration_seconds=0.1)
+        assert metric_sample_value(AGENT_RUNS, agent="risk", result="error") >= 1
+        assert metric_sample_value(AGENT_RUNS, agent="risk", result="skipped") >= 1
+
+    def test_agent_metrics_exposed(self, client) -> None:
+        record_agent_run(agent="scorer", result="success", duration_seconds=0.1)
+        content = client.get("/metrics").text
+        assert "airdrop_agent_runs_total" in content
+        assert "airdrop_agent_duration_seconds" in content

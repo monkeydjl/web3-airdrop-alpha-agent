@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
 from app.db import get_connection, insert_returning_id
+from app.metrics import record_feedback
 from app.services.user_scope import DEFAULT_USER, owned_project_ids, owned_project_ids_where
 
 logger = structlog.get_logger(__name__)
@@ -154,6 +155,8 @@ def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
             )
             conn.commit()
 
+        record_feedback(signal=request.signal)
+
         logger.info(
             "feedback.submitted",
             project_id=request.project_id,
@@ -233,6 +236,9 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
                 [(item.project_id, request.user_id, item.signal, item.note, item.outcome) for item in request.items],
             )
             conn.commit()
+
+        for item in request.items:
+            record_feedback(signal=item.signal)
 
         logger.info(
             "feedback.batch_submitted",
