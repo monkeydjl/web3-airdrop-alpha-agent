@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-08-31 随决策推送更新）
+### 2.1 写操作的鉴权分布（实测，2026-08-31 随收益台账更新）
 
-全仓共 **26 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **30 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 8 |
 | 无鉴权（公开） | 2 |
-| 匿名 token 可调 | 16 |
+| 匿名 token 可调 | 20 |
 <!-- write-auth-split:end -->
 
 管理员专用的 8 个：`/run`、`/import/projects`、`/quarantine`、
@@ -200,6 +200,12 @@
 | PATCH | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 更新 plan 状态机（匿名 token，详见 §39） |
 | PATCH | `/api/v1/participation/tasks/{task_id}` | v1 | F2（2026-08-31） | 更新任务状态机（匿名 token，详见 §39） |
 | DELETE | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 删除参与 plan（匿名 token，详见 §39） |
+| POST | `/api/v1/projects/{id}/roi/entries` | v1 | F3（2026-08-31） | 记一笔投入（匿名 token，详见 §40） |
+| POST | `/api/v1/projects/{id}/roi/outcomes` | v1 | F3（2026-08-31） | 记一笔产出（匿名 token，详见 §40） |
+| GET | `/api/v1/projects/{id}/roi` | v1 | F3（2026-08-31） | 该项目的投入产出明细与小计（详见 §40） |
+| GET | `/api/v1/roi/summary` | v1 | F3（2026-08-31） | 我的收益台账总览（详见 §40） |
+| DELETE | `/api/v1/roi/entries/{entry_id}` | v1 | F3（2026-08-31） | 删除一条投入记录（匿名 token，详见 §40） |
+| DELETE | `/api/v1/roi/outcomes/{outcome_id}` | v1 | F3（2026-08-31） | 删除一条产出记录（匿名 token，详见 §40） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -1939,3 +1945,69 @@ plan/task 两级状态机，按 token 身份（`get_current_user`）隔离 —�
 ### 39e. DELETE /api/v1/participation/{plan_id}
 
 删除 plan 并级联删任务。
+
+## 40. roi（收益台账，2026-08-31 新增，匿名 token 可写）
+
+结构化记录「投入了什么 / 拿回了什么」，给权重校准提供**真值** —— 反馈只有
+主观四档信号，校准学得到「用户觉得对不对」，学不到「最后有没有领到钱」。
+设计详见 [ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §4。
+
+- `roi_entries` = 投入，kind ∈ `gas / infra / time / other`
+- `roi_outcomes` = 产出，event ∈ `token_launched / airdrop_received /
+  airdrop_missed / campaign_ended`
+
+**诚实边界**（§4.2，调用方别误读）：
+
+- `amount_usd` 以人工录入为准，MVP 不做链上自动取价 —— 代币价格源是另一个工程。
+- `tx_hash` 只是凭证存档，**不自动验证**，它不提供确权语义。
+- 汇总**不给时间定价**：`hours` 原样返回，不折算成美元。折算要引入一个凭空
+  捏造的时薪，会让 ROI 看起来精确但不可信。
+- `roi_ratio` 在成本为 0 时是 `null` 而不是 `0` 或无穷大 —— 零投入下的
+  「ROI」没有定义，`0` 会被读成「没赚没赔」，`inf` 会污染下游聚合。
+
+身份：user_id 一律来自 token，**请求体自报被忽略**；归属不匹配一律 404。
+
+### 40a. POST /api/v1/projects/{id}/roi/entries
+
+```json
+{ "kind": "gas", "amount_usd": 12.5, "hours": 3, "note": "测试网交互" }
+```
+
+`amount_usd` 与 `hours` **至少要填一个**，两者都空返回 422 `MISSING_AMOUNT`；
+项目不存在 404。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "entry_id": 1, "project_id": "proj-1" } }
+```
+
+### 40b. POST /api/v1/projects/{id}/roi/outcomes
+
+```json
+{ "event": "airdrop_received", "amount_usd": 480, "tokens": 120, "tx_hash": "0x…", "source": "manual" }
+```
+
+`source` ∈ `manual / backtest`：人工录入映射为校准的 **live 桶**，
+回测导出是 **backtest 桶**，两类样本分开统计、不混算（§4.3）。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "outcome_id": 1, "project_id": "proj-1" } }
+```
+
+### 40c. GET /api/v1/projects/{id}/roi
+
+该项目的 `entries` / `outcomes` 明细，加 `subtotal`（`cost_usd`、`hours`、
+`returned_usd`、`tokens`、`net_usd`、`roi_ratio`）。
+
+### 40d. GET /api/v1/roi/summary
+
+跨项目汇总：`totals`（同上六项 + `project_count`）与按项目拆开的 `items`。
+
+### 40e. DELETE /api/v1/roi/entries/{entry_id}
+
+删除一条投入记录。
+
+### 40f. DELETE /api/v1/roi/outcomes/{outcome_id}
+
+删除一条产出记录。

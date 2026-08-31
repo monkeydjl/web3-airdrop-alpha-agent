@@ -307,6 +307,47 @@ CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan ON participation_tasks(p
 
 
 -- ============================================
+-- 2.9d roi_entries / roi_outcomes 表
+--      （收益台账，ACTION_LOOP_DESIGN §4.2，F3）
+-- ============================================
+-- entries = 投入，outcomes = 产出，按 (user_id, project_id) 聚合出 ROI。
+-- 金钱投入用 amount_usd，时间投入用 hours，两者可只填其一 —— 早期参与的
+-- 绝大成本是时间，没有 hours 这个维度台账会系统性低估投入。
+-- source 区分 manual（人工录入）与 backtest（历史回测导出）：校准时两类
+-- 样本分开统计、分开算门槛（§4.3），不混算。
+-- 诚实边界：amount_usd 以人工录入为准，MVP 不做链上自动取价；
+-- tx_hash 只是凭证存档，不自动验证 —— 它不提供确权语义。
+-- PostgreSQL 版差异：id SERIAL、REAL → DOUBLE PRECISION、
+-- 时间列 TIMESTAMPTZ（见 alembic 0007）。
+CREATE TABLE IF NOT EXISTS roi_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,                   -- gas/infra/time/other
+    amount_usd  REAL,                            -- 金钱投入（人工录入）
+    hours       REAL,                            -- 时间投入（人工录入）
+    note        TEXT,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project ON roi_entries(user_id, project_id);
+
+CREATE TABLE IF NOT EXISTS roi_outcomes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    event       TEXT NOT NULL,                   -- token_launched/airdrop_received/airdrop_missed/campaign_ended
+    amount_usd  REAL,                            -- 领到时的估值，人工录入
+    tokens      REAL,
+    tx_hash     TEXT,                            -- 凭证存档，不自动验证
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual/backtest
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project ON roi_outcomes(user_id, project_id);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (

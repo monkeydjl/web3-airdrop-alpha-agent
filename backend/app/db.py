@@ -526,6 +526,40 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
                 ON participation_tasks(plan_id, status);
 
+            -- 收益台账（ACTION_LOOP_DESIGN.md §4，F3）
+            -- entries = 投入，outcomes = 产出，按 (user_id, project_id) 聚合出 ROI。
+            -- 诚实边界：amount_usd 以人工录入为准，MVP 不做链上自动取价；
+            -- tx_hash 只是凭证存档，不自动验证。
+            -- source 区分 live（真实操作留痕）与 backtest（历史回测导出），
+            -- 校准时两类样本分开统计（§4.3），不混算。
+            --
+            CREATE TABLE IF NOT EXISTS roi_entries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                amount_usd  REAL,
+                hours       REAL,
+                note        TEXT,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project
+                ON roi_entries(user_id, project_id);
+
+            CREATE TABLE IF NOT EXISTS roi_outcomes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                amount_usd  REAL,
+                tokens      REAL,
+                tx_hash     TEXT,
+                source      TEXT NOT NULL DEFAULT 'manual',
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
+                ON roi_outcomes(user_id, project_id);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1025,6 +1059,36 @@ def _postgres_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
                 ON participation_tasks(plan_id, status);
+
+            -- 收益台账（ACTION_LOOP_DESIGN.md §4，F3）
+            -- 同 SQLite 侧口径：投入/产出分表，source 区分 live 与 backtest，
+            -- 校准时分开统计。金额人工录入，不做链上取价。
+            CREATE TABLE IF NOT EXISTS roi_entries (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                amount_usd  DOUBLE PRECISION,
+                hours       DOUBLE PRECISION,
+                note        TEXT,
+                recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project
+                ON roi_entries(user_id, project_id);
+
+            CREATE TABLE IF NOT EXISTS roi_outcomes (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                amount_usd  DOUBLE PRECISION,
+                tokens      DOUBLE PRECISION,
+                tx_hash     TEXT,
+                source      TEXT NOT NULL DEFAULT 'manual',
+                recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
+                ON roi_outcomes(user_id, project_id);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
