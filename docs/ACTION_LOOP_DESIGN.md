@@ -435,6 +435,21 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 修复要改评分结构（引入 veto 或对 `airdrop_signal` 设下限门），会牵动
 `WEIGHT_CALIBRATION` 协议，因此**不在 M2 范围内做**。
 
+> **2026-09-01 补充**：已立项为 **[ADR-015](adr/ADR-015-eligibility-gate-before-scoring.md)
+> 机会资格前置门**（Proposed，待 owner 拍板）。
+>
+> ADR 阶段又跑了一次带子分的完整探查，结论比这里记的更严重：
+> **19 个样本全部判 FARM，fpr = 100%**（不只是已发币那两例）。按 ADR-006 §4
+> 的目标函数 `recall − 2×fpr` 代入 = `1.00 − 2×1.00 = −1.00` —— 现模型在
+> 自己的校准目标函数下是负分。
+>
+> 另在探查中查清 `narrative_timing` 全样本恒 60 的根因：**回测数据集的
+> sector 写法（`zk-rollup`/`l2`）与 `SECTOR_PROFILE` 键名（`ZK`/`L2`）
+> 完全不匹配，19 个样本全部落到 `DEFAULT_PROFILE`**。这是数据集保真度问题
+> 而非引擎缺陷，但顺带暴露一个生产隐患：该查表大小写敏感且未命中时**静默**
+> 走默认档，真实采集数据写法不同就会让 0.20 权重白扔。详见 ADR-015
+> §「本 ADR 不解决什么」第 3 条。
+
 已用 `@pytest.mark.xfail(strict=True)` 在
 `tests/test_backtest.py::test_known_engine_gap_already_launched_still_farm`
 钉住：修好后该条会变 XPASS 并报错，逼人回来删标记 —— 缺陷修复不能静默发生。
