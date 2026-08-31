@@ -62,22 +62,37 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **309 个不同事件名**、
-**64 个命名空间**（2026-08-31 随决策推送 `notify.*` 8 个事件重测）；
-段数分布：2 段 211 个、3 段 52 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **317 个不同事件名**、
+**65 个命名空间**（2026-08-31 随收益台账 `roi.*` 4 个事件重测）；
+段数分布：2 段 251 个、3 段 60 个、4 段 5 个、1 段 1 个。
+
+> 这几个数字**没有门禁保护**（`test_observability_doc_parity` 只校验「文档提到的
+> 事件名必须真实存在」，不校验总数）。改动日志事件后请用与该测试同源的正则
+> 重算，别凭印象改：
+> ```powershell
+> cd backend
+> & ".\venv\Scripts\python.exe" -c "import re,pathlib,collections; pat=re.compile(r'logger\.(?:debug|info|warning|warn|error|exception|critical)\(\s*\""([a-z0-9_.]+)\""'); e=set(); [e.update(pat.findall(p.read_text(encoding='utf-8'))) for p in pathlib.Path('app').rglob('*.py')]; print(len(e), len({x.split('.')[0] for x in e}))"
+> ```
 
 事件最多的命名空间：
 
 | 命名空间 | 事件数 | 例 |
 | --- | --- | --- |
-| `unified_scheduler` | 23 | `unified_scheduler.started` |
+| `unified_scheduler` | 28 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
+| `collector` | 20 | `collector.noise_quarantined` |
 | `orchestrator` | 20 | `orchestrator.pipeline_start` |
-| `collector` | 18 | `collector.noise_quarantined` |
-| `pipeline` | 12 | `pipeline.completed` |
+| `llm` | 17 | `llm.budget.exceeded` |
+| `pipeline` | 13 | `pipeline.completed` |
 | `collection_scheduler` | 12 | `collection_scheduler.metrics_alert_failed` |
 | `archive` | 10 | `archive.raw_projects.archived` |
-| `app` | 10 | `app.startup`、`app.shutdown` |
+
+收益台账（F3）的四个事件：`roi.entry_recorded`、`roi.entry_deleted`、
+`roi.outcome_recorded`、`roi.outcome_deleted`。
+
+> `roi.outcome_recorded` 的字段名是 `outcome_event`，**不是 `event`** ——
+> `event` 是 structlog `logger.info(event, *args, **kw)` 的位置参数名，
+> 当关键字传会 `TypeError`，且只在运行时炸、静态扫描扫不出来。
 
 **别按老文档写查询**：它列的 `run.start`、`agent.run.start`、`db.write.error`、
 `fetcher.fetch.start` 等 14 个事件名**全部不存在**。
