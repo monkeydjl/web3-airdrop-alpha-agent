@@ -290,6 +290,23 @@ class TestReportOutput:
         if any(r.confidence == "medium" for r in results):
             assert "[medium]" in text
 
+    def test_json_mode_restores_log_config(self, bt: Any) -> None:
+        """`--json` 跑完必须把 structlog 全局配置还原。
+
+        这条守的是一个已经踩过的坑：`_logs_to_stderr` 早期版本不还原，
+        结果本文件跑完就把全局 logger 钉死在 pytest 的临时 stderr 捕获
+        对象上；用例结束后该对象关闭，后面 test_calibration.py 的 14 个
+        用例集体炸 `ValueError: I/O operation on closed file`。
+
+        单跑 test_backtest.py 或单跑 test_calibration.py 都是绿的 ——
+        这种只在特定文件顺序下暴露的污染，必须在这里钉死。
+        """
+        import structlog
+
+        before = structlog.get_config()["logger_factory"]
+        bt.main(["--json"])
+        assert structlog.get_config()["logger_factory"] is before, "--json 跑完没还原 logger_factory，会污染后续测试"
+
     def test_json_mode_is_parseable(self, bt: Any, capsys: pytest.CaptureFixture[str]) -> None:
         """--json 输出必须是干净可解析的 JSON。
 

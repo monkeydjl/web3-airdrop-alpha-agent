@@ -34,6 +34,8 @@ import argparse
 import asyncio
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -420,8 +422,11 @@ def export_samples(results: list[CaseResult], user_id: str) -> int:
     return written
 
 
-def _redirect_logs_to_stderr() -> None:
-    """`--json` 模式下把 structlog 输出改到 stderr。
+@contextmanager
+def _logs_to_stderr() -> Iterator[None]:
+    """`--json` 模式下把 structlog 输出临时改到 stderr，**退出时必须还原**。
+
+    ## 为什么要改
 
     app.utils.redact 的 configure 默认写 stdout（跑服务时是对的），但那会让
     `run_backtest.py --json | jq` 直接崩掉 —— 15 个项目的评分日志和 JSON
@@ -430,10 +435,27 @@ def _redirect_logs_to_stderr() -> None:
     只覆盖 logger_factory，**不动 processors 链**：脱敏 processor 必须原样
     保留（SECURITY.md §3.3），换整条链等于新开一条渲染路径、多一处可能漏
     脱敏的地方。
+
+    ## 为什么必须还原（踩过的坑）
+
+    `structlog.configure()` 改的是**进程级全局配置**，而且 `sys.stderr`
+    在这里是被捕获求值的。之前这里是个不还原的普通函数，结果全量套件里
+    `tests/test_backtest.py` 跑完就把全局 logger 钉死在 pytest 那个临时
+    stderr 捕获对象上；用例结束后该对象关闭，后面 `test_calibration.py`
+    的 14 个用例集体炸 `ValueError: I/O operation on closed file`。
+
+    单跑 test_backtest.py 和单跑 test_calibration.py 都是绿的 —— 这种
+    只在特定文件顺序下出现的失败，必须用上下文管理器从根上掐掉，
+    不能靠"测试里记得复位"。
     """
     import structlog
 
+    saved = structlog.get_config()
     structlog.configure(logger_factory=structlog.WriteLoggerFactory(file=sys.stderr))
+    try:
+        yield
+    finally:
+        structlog.configure(**saved)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -448,20 +470,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user-id", default="backtest", help="导出样本时使用的 user_id")
     args = parser.parse_args(argv)
 
-    if args.json:
-        _redirect_logs_to_stderr()
+    # 非 --json 时用 nullcontext：文本模式下日志走 stdout 没问题，
+    # 没必要动全局配置（动了就多一次还原风险）。
+    log_ctx = _logs_to_stderr() if args.json else nullcontext()
+    with log_ctx:
+        dataset = load_dataset(args.dataset)
+        results = asyncio.run(run_cases(dataset))
+        summary = summarize(results)
 
-    dataset = load_dataset(args.dataset)
-    results = asyncio.run(run_cases(dataset))
-    summary = summarize(results)
-
-    # 导出放在输出**之前**：这样 --json 时导出结果能并进同一个 JSON 对象。
-    # 之前是先打 JSON、再单独 print 一行导出提示，那行会跟在 JSON 后面
-    # 把 stdout 变成「JSON + 中文句子」，`--json | jq` 照样崩。
-    export_result: dict[str, int] | None = None
-    if args.export_samples:
-        written = export_samples(results, args.user_id)
-        export_result = {"written": written, "skipped": len(results) - written}
+        # 导出也放在 with 内：它会写库并产日志，跑到 with 外面就又把日志
+        # 打回 stdout 了。
+        #
+        # 导出排在输出**之前**：这样 --json 时导出结果能并进同一个 JSON 对象。
+        # 之前是先打 JSON、再单独 print 一行导出提示，那行会跟在 JSON 后面
+        # 把 stdout 变成「JSON + 中文句子」，`--json | jq` 照样崩。
+        export_result: dict[str, int] | None = None
+        if args.export_samples:
+            written = export_samples(results, args.user_id)
+            export_result = {"written": written, "skipped": len(results) - written}
 
     if args.json:
         print(
