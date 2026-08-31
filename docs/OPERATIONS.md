@@ -221,10 +221,11 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **6 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **7 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
-  `0006_participation`（2026-08-31，参与流水）。
+  `0006_participation`（2026-08-31，参与流水）、
+  `0007_roi`（2026-08-31，收益台账）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -234,6 +235,9 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   （拒绝所有 LLM 调用并报 `ledger_unavailable`），不是静默放行。
   回滚掉 `0005` / `0006` 会丢掉推送历史与参与流水 —— 参与流水是用户操作
   数据（不可再生成），回滚前务必确认（notify_log 只是运行时日志，可放弃）。
+  回滚掉 `0007` 会丢掉收益台账（`roi_entries` / `roi_outcomes`）——
+  **这是全库最不可再生成的数据**：投入金额与工时是用户一条条手敲的，
+  链上查不回来、也没有第二份来源。回滚前必须先备份（§6）。
 
 ### 3.6 Opportunity Shadow 灰度
 
@@ -288,6 +292,45 @@ cd backend
 
 采纳需要评审并**新建 model/profile 版本**，再走 expand-and-contract 发布与回滚计划，
 **绝不原地改已有版本**。
+
+### 3.9 历史回测（F3 / ACTION_LOOP_DESIGN §4）
+
+把 T0 前的公开信息灌进评分引擎，看它当年会不会抓到后来真发了币的项目。
+
+```powershell
+cd backend
+$env:PYTHONPATH="."
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py                    # 人读报告
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py --json             # 机器可读（stdout 只有 JSON）
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py --export-samples   # 结论写入 roi_outcomes
+```
+
+安全性：走规则引擎（`enable_llm=False`，ADR-001）保证可复现，
+`save_to_db=False` **不写 projects 表** —— 已发币项目混进去会让 Dashboard
+显示一堆过期机会。`--export-samples` 幂等，重复跑不会重复写。
+
+**读报告时必须注意两件事**：
+
+1. 数据集当前 **15/50 条**（标 `pending_expansion=true`，报告会自动打警告）。
+   样本量不足时命中率置信区间很宽，**不足以支撑权重调整**。
+2. 正负样本严重失衡（14 正 / 1 负）。`fpr` 分母只有 1 条，
+   那个百分数**统计上不可读**，报告会在它后面标「分母仅 N 条，不可读」。
+   补全数据集时要专门补「强融资强技术但最终没发币」的负样本，
+   否则回测只能验召回、测不出误报。
+
+**回测样本不解锁校准门禁**：导出的样本 `source='backtest'`，
+`check_gate()` 只数 `live` 桶（真实反馈 + 人工录入）。两桶计数都在
+`GateResult.total_by_source` 里照实暴露，但灌多少历史数据都不会让门禁通过 ——
+否则扩充数据集就能绕过「有效样本 ≥200 / FARM ≥30」的协议约束。
+
+### 3.10 收益台账（F3）
+
+`/api/v1/roi/*` 六个端点，前端在 `/portfolio` 页。数据是**人工录入**的，
+诚实边界写在 `API_SPEC §40`：`amount_usd` 不做链上取价、`tx_hash` 只存档
+不验证、汇总不给时间定价（不引入凭空捏造的时薪）。
+
+零成本时 `roi_ratio` 返回 `null`，前端渲染「—」。不返回 `0`（会被读成
+"没赚没赔"）也不返回 `inf`（污染下游聚合）。
 
 ---
 
