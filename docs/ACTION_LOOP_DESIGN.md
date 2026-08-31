@@ -398,14 +398,27 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 ### M2 = F3
 
 #### T3.1 roi 两表 + API + portfolio 接线
-- **现状**：❌。**产出物**：`roi_entries` / `roi_outcomes`（DDL ×2 + alembic）、5 端点、
-  portfolio 页 ROI 列与表单。
-- **验收**：隔离与聚合测试；`/roi/summary` 数值与手工核算一致。
+- **现状**：✅ 已完成（`09c7c6c` 后端 / `ade9544` 前端）。**产出物**：`roi_entries` /
+  `roi_outcomes`（db.py 双方言 DDL + alembic `0007_roi.py` + DATABASE_DDL §2.9d）、
+  **6 端点**（设计写 5，实施时拆出 summary 与 by-project 两个读端点）、
+  `RoiLedger.tsx` 挂 `/portfolio`。
+- **验收**：✅ `tests/api/test_roi.py` 21 passed（含跨 token 隔离正反断言、请求体自报
+  user_id 被忽略、summary 与手工核算逐项比对）；write-auth-split 双向门禁 44 passed
+  （写端点 26→30、匿名 16→20 与 API_SPEC §2.1 对齐）。
+- **实施记录**：`amount_usd` / `hours` 至少给一个（否则 422 `MISSING_AMOUNT`）；
+  零成本时 `roi_ratio` 返回 `null` 而非 `0`（会被读成"没赚没赔"）或 `inf`（污染下游聚合）。
 
 #### T3.2 校准 source 分桶 + 回测执行器 + 数据集
-- **现状**：🟡（校准闭环在，无 source 概念）。**产出物**：样本 `source` 列、
-  `scripts/run_backtest.py`、`airdrops_2024_2025.json`（≥50 条）。
-- **验收**：回测报告确定性（golden 断言）；门槛 200/30 测试未动；live/backtest 分桶统计正确。
+- **现状**：✅ 代码完成（`b641c91`），**数据集 15/50 条**。**产出物**：`CalibrationSample.source`
+  + `count_by_source()` + `GateResult.total_by_source`、`scripts/run_backtest.py`、
+  `backend/data/backtest/airdrops_2024_2025.json`。
+- **验收**：✅ `tests/test_backtest.py` 21 passed —— golden 断言（知名空投不得判 IGNORE、
+  召回率 ≥0.7）、门槛 200/30 未动、分桶统计正确，并含关键断言
+  **「灌 500 条 backtest 样本门禁仍不通过」**。
+- **偏差（须补全）**：数据集只有 15 条（设计要求 ≥50），标 `pending_expansion=true` /
+  `target_size=50`，报告会自动打警告。当前 14 正 / 1 负样本，`fpr` 分母仅 1 条、
+  统计上不可读 —— **补全到 50 条时必须专门补「强融资强技术但最终没发币」的负样本**，
+  否则回测只能验召回、测不出误报。
 
 ### M3 = F4
 
