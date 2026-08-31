@@ -184,6 +184,93 @@ class TestBacktestGolden:
         assert summary["negative_sample_shortage"] is expected
 
 
+class TestExportIdempotency:
+    """导出必须幂等（同一结论重复跑不重复写）。
+
+    回测是会被反复执行的：换数据集、调权重后都要再跑一遍。不去重的话每跑
+    一次 backtest 桶就多一份相同结论，分桶计数随执行次数虚增。门禁只数
+    live 桶所以不会污染权重切换，但统计会失真到没法用。
+    """
+
+    def test_repeat_export_writes_nothing_new(self, bt: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import app.db as db_module
+        from app.config import settings
+
+        # 与 test_admin_only_rules.py 同款写法：patch settings.db_path 到 tmp_path，
+        # 绝不让测试碰生产库。
+        monkeypatch.setattr(settings, "db_path", str(tmp_path / "export_probe.db"))
+        db_module.init_db()
+
+        # 造一个 projects 行让导出有落点：export_samples 只写已存在于 projects
+        # 表的项目（回测项目本身不入库）。
+        with db_module.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, source, score, label) VALUES (?, ?, ?, ?, ?)",
+                ("p-eigen", "EigenLayer", "test", 84, "FARM"),
+            )
+            conn.commit()
+
+        results = [
+            bt.CaseResult(
+                name="EigenLayer",
+                sector="restaking",
+                airdropped=True,
+                magnitude="large",
+                confidence="high",
+                score=84,
+                label="FARM",
+                sub_scores={},
+                reason=[],
+            )
+        ]
+
+        assert bt.export_samples(results, "backtest") == 1
+        # 第二次同样输入必须一条都不写
+        assert bt.export_samples(results, "backtest") == 0
+
+        with db_module.get_connection() as conn:
+            n = conn.execute("SELECT COUNT(*) AS n FROM roi_outcomes").fetchone()["n"]
+        assert n == 1, f"重复导出产生了 {n} 行"
+
+    def test_exported_rows_are_backtest_source(self, bt: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """导出的行必须落在 backtest 桶。
+
+        写成 live 会让回测结论混进门禁统计 —— 那正是 §4.3 要防的事。
+        """
+        import app.db as db_module
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "db_path", str(tmp_path / "source_probe.db"))
+        db_module.init_db()
+        with db_module.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, source, score, label) VALUES (?, ?, ?, ?, ?)",
+                ("p-x", "Celestia", "test", 81, "FARM"),
+            )
+            conn.commit()
+
+        results = [
+            bt.CaseResult(
+                name="Celestia",
+                sector="DA",
+                airdropped=True,
+                magnitude="large",
+                confidence="high",
+                score=81,
+                label="FARM",
+                sub_scores={},
+                reason=[],
+            )
+        ]
+        bt.export_samples(results, "backtest")
+
+        with db_module.get_connection() as conn:
+            rows = conn.execute("SELECT source, event FROM roi_outcomes").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["source"] == "backtest"
+        assert rows[0]["event"] == "airdrop_received"
+
+
 class TestReportOutput:
     def test_report_warns_on_pending_dataset(
         self, bt: Any, dataset: dict[str, Any], run_output: tuple[list[Any], dict[str, Any]]

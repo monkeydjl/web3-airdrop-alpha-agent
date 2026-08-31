@@ -380,12 +380,32 @@ def export_samples(results: list[CaseResult], user_id: str) -> int:
     from app.db import get_connection
 
     written = 0
+    skipped_existing = 0
     with get_connection() as conn:
         for r in results:
             row = conn.execute("SELECT id FROM projects WHERE name = ?", (r.name,)).fetchone()
             if row is None:
                 continue
             event = "airdrop_received" if r.airdropped else "airdrop_missed"
+            # 幂等：同一 (user_id, project_id, event) 的 backtest 结论只留一条。
+            #
+            # 回测是可重复执行的（换数据集、调权重后都会再跑），不去重的话每跑
+            # 一次就多一份相同结论，backtest 桶计数会随执行次数虚增。门禁只数
+            # live 桶所以不会污染权重切换，但分桶统计会失真到没法看。
+            #
+            # 用 SELECT 而非 UNIQUE 约束：表已经建好且落了迁移，为脚本的便利
+            # 去改线上 schema 不划算；这里是单进程离线脚本，没有并发写入。
+            dup = conn.execute(
+                """
+                SELECT 1 FROM roi_outcomes
+                WHERE user_id = ? AND project_id = ? AND event = ? AND source = 'backtest'
+                LIMIT 1
+                """,
+                (user_id, row["id"], event),
+            ).fetchone()
+            if dup is not None:
+                skipped_existing += 1
+                continue
             conn.execute(
                 """
                 INSERT INTO roi_outcomes (user_id, project_id, event, source)
@@ -395,6 +415,8 @@ def export_samples(results: list[CaseResult], user_id: str) -> int:
             )
             written += 1
         conn.commit()
+    if skipped_existing:
+        print(f"（{skipped_existing} 条结论已存在，未重复写入）", file=sys.stderr)
     return written
 
 
@@ -433,11 +455,20 @@ def main(argv: list[str] | None = None) -> int:
     results = asyncio.run(run_cases(dataset))
     summary = summarize(results)
 
+    # 导出放在输出**之前**：这样 --json 时导出结果能并进同一个 JSON 对象。
+    # 之前是先打 JSON、再单独 print 一行导出提示，那行会跟在 JSON 后面
+    # 把 stdout 变成「JSON + 中文句子」，`--json | jq` 照样崩。
+    export_result: dict[str, int] | None = None
+    if args.export_samples:
+        written = export_samples(results, args.user_id)
+        export_result = {"written": written, "skipped": len(results) - written}
+
     if args.json:
         print(
             json.dumps(
                 {
                     "summary": summary,
+                    "export": export_result,
                     "cases": [
                         {
                             "name": r.name,
@@ -460,11 +491,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         print(format_report(dataset, results, summary))
-
-    if args.export_samples:
-        written = export_samples(results, args.user_id)
-        skipped = len(results) - written
-        print(f"\n已导出 {written} 条 source=backtest 样本；跳过 {skipped} 条（projects 表无对应项目）。")
+        if export_result is not None:
+            print(
+                f"\n已导出 {export_result['written']} 条 source=backtest 样本；"
+                f"跳过 {export_result['skipped']} 条（projects 表无对应项目）。"
+            )
 
     return 0
 
