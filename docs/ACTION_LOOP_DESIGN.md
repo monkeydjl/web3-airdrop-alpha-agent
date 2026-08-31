@@ -415,10 +415,31 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 - **验收**：✅ `tests/test_backtest.py` 21 passed —— golden 断言（知名空投不得判 IGNORE、
   召回率 ≥0.7）、门槛 200/30 未动、分桶统计正确，并含关键断言
   **「灌 500 条 backtest 样本门禁仍不通过」**。
-- **偏差（须补全）**：数据集只有 15 条（设计要求 ≥50），标 `pending_expansion=true` /
-  `target_size=50`，报告会自动打警告。当前 14 正 / 1 负样本，`fpr` 分母仅 1 条、
-  统计上不可读 —— **补全到 50 条时必须专门补「强融资强技术但最终没发币」的负样本**，
-  否则回测只能验召回、测不出误报。
+- **偏差（须补全）**：数据集 **19 条**（15 正 / 4 负 + 原有 1 负 = 5 负），仍未达设计
+  要求 ≥50，标 `pending_expansion=true` / `target_size=50`，报告会自动打警告。
+  负样本已补到 5 条、覆盖三类（迟迟不发币 / 明确不做代币激励 / 已发币无追加分配），
+  `fpr` 分母够了、选择偏差警告已熄灭。
+
+#### 🔴 回测发现的引擎缺陷（M2 未修，需单独立项）
+
+**已发币项目仍被判 FARM。** Chainlink 68 分、Worldcoin 69 分，越过 FARM 阈值 65。
+
+`airdrop_signal` 这一维**已经正确压到 20 分**（`no_token_yet=false` 信号生效了），
+但加权求和模型下压不住其余七维：`execution` 100、`competition` 100、
+`transparency` 100、`team_reputation` 85~95 把总分抬了起来。
+
+根因是模型结构，不是权重取值：对本系统而言「**已发币 = 没有空投机会**」
+应当是**否决条件**（veto），而不是可被其他维度补偿的一项打分。一个各方面都
+优秀的成熟项目，在"还能不能 farm"这个问题上应当直接出局。
+
+修复要改评分结构（引入 veto 或对 `airdrop_signal` 设下限门），会牵动
+`WEIGHT_CALIBRATION` 协议，因此**不在 M2 范围内做**。
+
+已用 `@pytest.mark.xfail(strict=True)` 在
+`tests/test_backtest.py::test_known_engine_gap_already_launched_still_farm`
+钉住：修好后该条会变 XPASS 并报错，逼人回来删标记 —— 缺陷修复不能静默发生。
+配套的 `test_already_launched_projects_get_low_airdrop_signal` 断言子分侧
+（≤30）持续有效，保证信号本身不退化。
 
 ### M3 = F4
 

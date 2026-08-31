@@ -7,7 +7,9 @@
     "字段 confidence 表示该条记录的可信度：high = 事件与主要信号广为人知且当年公开可查；medium = 事件确定但部分信号（融资额、TVL 量级）为近似值。",
     "funding_total_usd / tvl_usd 是**量级近似**，不是精确账面数字。回测用它们做分档判断（tier1/tier2、TVL 有无），不做精确金额计算。任何需要精确融资数字的结论都不能建立在本数据集上。",
     "outcome 只记录「是否有面向早期参与者的空投」与量级档位，不记录个人实际收益 —— 后者取决于参与深度，不是项目属性。",
-    "目标规模 ≥50 条（设计稿 §4.4）。当前 15 条为高置信度起始集，标记 pending_expansion=true；补全前回测结论只能当方向性参考，不能用于权重切换。"
+    "目标规模 ≥50 条（设计稿 §4.4）。当前 19 条（15 正 / 4 负）仍标记 pending_expansion=true；补全前回测结论只能当方向性参考，不能用于权重切换。",
+    "负样本分三类，刻意不只收一种：① 强融资强技术但迟迟不发币（Aztec、Monad）；② 明确不做代币激励（Farcaster）；③ 有代币但分发不面向链上早期参与者（Worldcoin），以及早已发币的蓝筹（Chainlink）。只收第①类会让回测测不出「已发币」信号是否生效。",
+    "**时间敏感样本**：标 `airdropped: false` 且仍在测试网的项目（如 Monad）随时可能发币。这类条目在 outcome.note 里显式标注 —— 翻转后若不更新，回测会把一次正确判断算成误报。定期复核负样本的有效性是维护这个数据集的一部分。"
   ],
   "pending_expansion": true,
   "target_size": 50,
@@ -514,6 +516,154 @@
         "funding_lead_investors": ["Sequoia China", "Generative Ventures"]
       },
       "outcome": { "airdropped": true, "magnitude": "small", "note": "测试网参与者获得分配，量级偏小" }
+    },
+    {
+      "name": "Farcaster",
+      "sector": "social",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "去中心化社交协议，a16z 领投的大额融资公开可查；创始团队公开表态不做代币激励。作为「高热度高融资但明确不发币」的负样本",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1200,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 180000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": ["Paradigm", "a16z"]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "截至数据整理时无面向用户的代币分配；协议本身采用付费注册而非激励模型 —— 强融资 + 高活跃 + 无空投"
+      }
+    },
+    {
+      "name": "Worldcoin",
+      "sector": "identity",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "有代币且有分发，但分发绑定生物识别注册、不是面向早期链上参与者的空投。作为「有代币但不属于可 farm 机会」的边界负样本",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1000,
+        "github_recent_push_days": 3,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 250000000,
+        "funding_rounds": 4,
+        "funding_tier": "tier1",
+        "funding_lead_investors": ["a16z", "Khosla Ventures"]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "代币分发需线下生物识别验证，链上参与拿不到 —— 本系统的 outcome 只记「面向早期参与者的空投」，这类不算"
+      }
+    },
+    {
+      "name": "Chainlink",
+      "sector": "oracle",
+      "t0": null,
+      "confidence": "high",
+      "provenance": "早已发币且长期无面向参与者的追加空投。作为「蓝筹但零空投机会」的负样本 —— 这类项目正是 noise denylist 要挡掉的",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 6000,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "unknown",
+        "funding_total_usd": 32000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "2017 年即发币，此后无面向早期参与者的空投。引擎若把这类判成 FARM，说明「已发币」信号没起作用"
+      }
+    },
+    {
+      "name": "Monad",
+      "sector": "L1",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "T0 前长期测试网 + 大额融资公开；截至数据整理时未发币。作为「高预期但尚未兑现」的负样本 —— 注意这条随时间可能翻转成正样本",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 500,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": false,
+        "source_count": 3,
+        "roadmap_delivery": "unclear",
+        "sybil_friction": "medium",
+        "funding_total_usd": 244000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": ["Paradigm"]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "截至数据整理时仍在测试网、无代币分配。**这条是时间敏感样本**：若后续发币需改成正样本，否则回测会把一次正确判断算成误报"
+      }
     }
   ]
 }

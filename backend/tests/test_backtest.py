@@ -108,14 +108,28 @@ class TestDataset:
         if len(dataset["projects"]) < dataset["target_size"]:
             assert dataset.get("pending_expansion") is True
 
-    def test_has_negative_sample(self, dataset: dict[str, Any]) -> None:
-        """至少要有一个「看起来很强但没发币」的负样本。
+    def test_has_enough_negative_samples(self, dataset: dict[str, Any]) -> None:
+        """负样本要够 MIN_NEGATIVE_SAMPLES(5) 条，否则误报率读不出来。
 
-        全正样本的数据集只能验证召回，测不出误报 —— 那样的回测会给出
-        虚高的安全感。
+        全正样本的数据集只能验证召回，测不出误报 —— 那样的回测会给出虚高的
+        安全感。负样本只有 1~2 条也差不多：一个误报就能把 fpr 顶到 50%~100%。
         """
         negatives = [c for c in dataset["projects"] if not (c.get("outcome") or {}).get("airdropped")]
-        assert negatives, "数据集缺负样本，无法评估误报"
+        assert len(negatives) >= 5, f"负样本仅 {len(negatives)} 条，不足以评估误报"
+
+    def test_negative_samples_cover_multiple_kinds(self, dataset: dict[str, Any]) -> None:
+        """负样本不能只有一种类型。
+
+        「强融资强技术但迟迟不发币」只是其中一类。如果全是这类，就测不出
+        「已发币项目应当被排除」这条信号是否生效 —— 而后者正是本次回测
+        暴露出引擎缺陷的地方（见 test_known_engine_gap_already_launched_still_farm）。
+        所以要求负样本里同时有「尚未发币」和「已发币」两种。
+        """
+        negatives = [c for c in dataset["projects"] if not (c.get("outcome") or {}).get("airdropped")]
+        no_token = [c for c in negatives if (c.get("signals") or {}).get("no_token_yet")]
+        launched = [c for c in negatives if not (c.get("signals") or {}).get("no_token_yet")]
+        assert no_token, "负样本缺「尚未发币」类型"
+        assert launched, "负样本缺「已发币但无追加空投」类型 —— 测不出已发币信号是否生效"
 
 
 # ── 回测结论的 golden 断言 ────────────────────
@@ -176,12 +190,56 @@ class TestBacktestGolden:
     def test_negative_shortage_is_flagged(self, run_output: tuple[list[Any], dict[str, Any]]) -> None:
         """负样本不足时汇总必须自己举手。
 
-        当前 14 正 / 1 负，fpr 分母是 1，那个百分数毫无意义。报告靠这个
-        标记打警告；标记丢了，误报率就会被当成真数字去调权重。
+        标记的判据是 not_airdropped_count < MIN_NEGATIVE_SAMPLES(5)。负样本
+        补到 5 条后这个标记应当熄灭 —— 但断言写成跟着实际计数走，而不是
+        硬编码 True/False，这样增删样本时不用回来改测试。
         """
         _, summary = run_output
         expected = summary["not_airdropped_count"] < 5
         assert summary["negative_sample_shortage"] is expected
+
+    def test_already_launched_projects_get_low_airdrop_signal(
+        self, run_output: tuple[list[Any], dict[str, Any]]
+    ) -> None:
+        """已发币项目的 airdrop_signal 必须被压低。
+
+        这一维是「还有没有空投机会」的直接表达。已发币（no_token_yet=false）
+        且无追加分配的项目，这个分数高就说明信号根本没接上。
+
+        只断言**子分**、不断言最终标签 —— 因为当前引擎确实会把这类项目
+        判成 FARM，见 test_known_engine_gap_already_launched_still_farm。
+        """
+        results, _ = run_output
+        launched = {"Chainlink", "Worldcoin"}
+        checked = 0
+        for r in results:
+            if r.name in launched and r.sub_scores:
+                signal = float(r.sub_scores.get("airdrop_signal", 100.0))
+                assert signal <= 30.0, f"{r.name} 已发币但 airdrop_signal={signal}，信号未生效"
+                checked += 1
+        assert checked == len(launched), f"只检到 {checked} 个已发币样本，数据集是否被改动？"
+
+    @pytest.mark.xfail(
+        reason=(
+            "已知引擎缺陷（M2 回测发现，未修）：加权求和模型下 airdrop_signal 压到 20 "
+            "也压不住其余七维。Chainlink 68 / Worldcoin 69 越过 FARM 阈值 65 —— "
+            "execution/competition/transparency 各 100、team 85~95 把总分抬了起来。"
+            "对本系统而言「已发币 = 无空投机会」应是否决条件，而不是可被其他维度"
+            "补偿的一项打分。修它要改评分结构并牵动权重校准协议，超出 M2 范围。"
+        ),
+        strict=True,
+    )
+    def test_known_engine_gap_already_launched_still_farm(self, run_output: tuple[list[Any], dict[str, Any]]) -> None:
+        """已发币项目不该被判 FARM —— 当前会，所以标 xfail(strict)。
+
+        用 strict=True 是刻意的：哪天引擎改好了，这条会变成 XPASS 并报错，
+        逼人回来删掉 xfail 标记。缺陷修复不该静默发生，否则没人知道这个坑
+        已经填了，xfail 标记会一直挂着骗人。
+        """
+        results, _ = run_output
+        launched = {"Chainlink", "Worldcoin"}
+        farmed = [r.name for r in results if r.name in launched and r.label == "FARM"]
+        assert not farmed, f"已发币项目被判 FARM: {farmed}"
 
 
 class TestExportIdempotency:
@@ -278,8 +336,24 @@ class TestReportOutput:
         results, summary = run_output
         text = bt.format_report(dataset, results, summary)
         assert "pending_expansion" in text
-        assert "选择偏差" in text
         assert "source=backtest" in text
+
+    def test_selection_bias_warning_tracks_actual_shortage(
+        self, bt: Any, dataset: dict[str, Any], run_output: tuple[list[Any], dict[str, Any]]
+    ) -> None:
+        """选择偏差警告要跟着实际负样本数走，不是常亮也不是常灭。
+
+        负样本补到 5 条后这段警告应当熄灭（fpr 分母够了、数字可读了）；
+        如果哪天负样本又被删回 1~2 条，它必须重新出现。断言绑在
+        negative_sample_shortage 上而不是硬编码，样本增删时不用改测试。
+        """
+        results, summary = run_output
+        text = bt.format_report(dataset, results, summary)
+        if summary["negative_sample_shortage"]:
+            assert "选择偏差" in text
+            assert "不可读" in text
+        else:
+            assert "选择偏差" not in text, "负样本已够，不该再打选择偏差警告"
 
     def test_report_marks_medium_confidence(
         self, bt: Any, dataset: dict[str, Any], run_output: tuple[list[Any], dict[str, Any]]
