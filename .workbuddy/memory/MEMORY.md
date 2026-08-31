@@ -1,7 +1,7 @@
 # 项目记忆：Web3 Airdrop Alpha Agent System
 
 > 更新：2026-08-31 · 当前分支 `feat/action-loop-m2`（栈式分支未 push）·
-> M1 基线套件 **3129 passed / 0 failed / 88.93%**；M2 新增 42 测试全绿
+> **M2 收尾套件 3178 passed / 0 failed / 9 skipped / 1 xfailed / 88.89%（exit 0）**
 > 逐日会话记忆在项目根 `SESSION_MEMORY_YYYY-MM-DD.md`（本项目惯例，本文件只存长期事实）
 
 ## 一、项目定位与红线
@@ -40,8 +40,11 @@
 - 评分：规则引擎默认（LLM 默认关，ADR-001）；Agent：Collector + Narrative/Team/Risk/Tokenomics + Scorer
 - 采集器 14 个（`backend/app/collectors/`）：DefiLlama、GitHub、CoinGecko、Etherscan、CryptoRank、RootData、Medium、Mirror、Reddit、Discord 等
 - 前端：Next.js **16.3.0** + React 19，`npm audit` 0 vulnerabilities
-- 迁移：Alembic（0004 baseline → 0005 notify_log → 0006 participation）
-- 门禁：全量 **3129 passed / 9 skipped / 88.93%**（本机约 45–47 min，必须后台跑 + 日志写文件）、mypy strict 131 文件 0 错、ruff 264 文件全过
+- 迁移：Alembic 7 个版本（0004 baseline → 0005 notify_log → 0006 participation → **0007 roi**）
+- 门禁（全部按 CI 口径，见第七节第 16 条）：全量 **3178 passed / 9 skipped / 1 xfailed / 88.89%**
+  （本机约 **50 min**，必须后台跑 + 日志写文件；**两个 pytest 并跑会互相中断**）、
+  `cd backend && mypy app` **132 文件 0 错**、`cd backend && ruff check .` 全过、
+  前端四件套（build 12 路由 / tsc / `npm run lint` / 20 单测）全绿
 
 ## 五、关键文档
 
@@ -127,7 +130,8 @@
 13. **排查跨文件测试污染的方法**：`pytest --collect-only -q` 拿到完整序号表，按进度行号 ×72 反推失败区间落在哪个文件，再用「疑似污染源 + 受害文件」两文件组合复现。**位置吻合不等于根因** —— 本次先误判为文档 parity 连带失败，用改动前文档实测只有 2 个失败（不是 14），推断才被否掉。
 14. **ruff 没启 E402**：写 `# noqa: E402` 会被 RUF100 判为多余 noqa 而报错。
 15. **新增 alembic 迁移要同步 `OPERATIONS.md §3.5`**：那里有「Alembic 迁移目前有 **N 个版本**」+ 逐个文件名清单，`test_operations_doc_parity::TestMigrationCountIsCurrent` 两条断言会核对数量与文件名。清单是回滚操作的依据，写错会让人 downgrade 到错误版本。
-16. **新增采集源要同步五处文档**：`DATA_SOURCE_STRATEGY.md`（§2/§3/§5.2/§6.1/§8.4/§11/§12.9）、`OPERATIONS.md`（§4.3 门控 + §7.1 cron）、`SECURITY.md`（§10.2 域名白名单）、`.env.example`、测试真相函数。`test_operations_doc_parity` 的 `needs_key` 正则要覆盖 `bot_token|client_id|client_secret`。
+16. **lint 必须按 CI 口径全目录跑，不能只跑改动文件**：CI 是 `cd backend && ruff check . / ruff format --check . / mypy app`（工作目录 `backend`，mypy 用 `backend/pyproject.toml` 的 overrides）。用 `git diff --name-only <base>` 挑文件跑在**栈式分支上会漏下层分支的债** —— 本次 0005/0006 的 E402+F401 是 M1 分支引入的，以 `feat/action-loop-m1` 为 base 的 diff 里没有它们，连漏几轮。另：从 `backend/` 跑时 ruff 仍向上找到**根** `pyproject.toml`，per-file-ignores 里 `backend/` 前缀按**配置文件所在目录**解析，豁免正常生效（别误判成路径错配）。仓库根的 `evaluation/` `scripts/` 有 22 个既有 ruff 错，CI 扫不到，不要顺手"修"。
+17. **新增采集源要同步五处文档**：`DATA_SOURCE_STRATEGY.md`（§2/§3/§5.2/§6.1/§8.4/§11/§12.9）、`OPERATIONS.md`（§4.3 门控 + §7.1 cron）、`SECURITY.md`（§10.2 域名白名单）、`.env.example`、测试真相函数。`test_operations_doc_parity` 的 `needs_key` 正则要覆盖 `bot_token|client_id|client_secret`。
 
 ## 八、当前分支与下一步
 
