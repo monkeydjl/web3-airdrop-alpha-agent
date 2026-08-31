@@ -1,5 +1,6 @@
 'use client';
 
+import { RoiLedger } from '@/components/RoiLedger';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -275,11 +276,14 @@ export default function PortfolioPage() {
             <span className="hidden sm:inline">新建记录</span>
           </button>
         </TopBar>
-        <div className="app-content py-20">
+        <div className="app-content space-y-5 py-10">
           <EmptyState
             title="还没有参与记录"
             description="在项目详情页点击「我的投入」添加第一条交互记录，这里会自动汇总校准矩阵和收益分析。"
           />
+          {/* 台账独立于 interactions：没有参与记录时也要能录第一笔投入，
+              否则空态会把台账入口一起藏掉。 */}
+          <RoiLedger projectNames={projectNames} />
         </div>
       </>
     );
@@ -543,6 +547,9 @@ export default function PortfolioPage() {
             </table>
           </div>
         </section>
+
+        {/* 5. 收益台账（F3）—— 与上方 interactions 是两套数据，见组件注释 */}
+        <RoiLedger projectNames={projectNames} />
       </div>
     </>
   );
