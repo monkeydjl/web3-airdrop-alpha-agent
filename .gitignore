@@ -89,8 +89,17 @@ Desktop.ini
 data/*.db
 data/*.sqlite
 data/*.sqlite3
-backend/data/
+# 注意这里不能写 `backend/data/`（带尾斜杠）：那样 git 会整个目录不再进入，
+# 后面的 `!` 例外全部失效。用 `backend/data/*` 逐项排除，才能对子目录开白名单。
+backend/data/*
 !data/.gitkeep
+# 回测数据集是源码级资产，不是运行时数据：它是 run_backtest.py 的必要输入，
+# 缺了脚本直接报错。不加这条例外的话，clone 下来的仓库跑不了回测。
+# 用白名单而不是 git add -f —— 强推进去的文件仍是 ignored 状态，
+# 后续改动不会出现在 git status 里，改了也不知道。
+!backend/data/backtest/
+backend/data/backtest/*
+!backend/data/backtest/*.json
 
 # ── Logs ─────────────────────────────────────
 logs/

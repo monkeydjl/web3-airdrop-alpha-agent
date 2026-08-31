@@ -57,31 +57,58 @@ WEIGHT_KEYS: list[str] = [
 ]
 
 
+# 样本来源分桶（ACTION_LOOP_DESIGN §4.3）。
+# live = 真实使用留痕（feedback + 人工录入的 roi_outcomes）；
+# backtest = 历史回测导出。**两类分开统计、分开算门槛，绝不混算** ——
+# 回测样本是历史分布，live 是当前分布；混起来凑数等于用几年前的项目
+# 结构给今天的判断背书，门槛数字会好看但结论不成立。
+SampleSource = Literal["live", "backtest"]
+SOURCE_LIVE: SampleSource = "live"
+SOURCE_BACKTEST: SampleSource = "backtest"
+
+# roi_outcomes.event → 真实标签（§4.3）。
+# 只有"领到了"和"确认没领到"构成监督信号；token_launched / campaign_ended
+# 只是时间线事件，**不能**当正负样本 —— 发了币不代表你领到了。
+_OUTCOME_EVENT_LABELS: dict[str, str] = {
+    "airdrop_received": "FARM",
+    "airdrop_missed": "IGNORE",
+}
+
+
 @dataclass
 class CalibrationSample:
     """单个校准样本：项目子分 + 真实标签。
 
     子分从 projects.sub_scores（JSON）读取，固定不变；
-    真实标签从 feedback.correct_label 或 outcome 映射推断。
+    真实标签来自 feedback.correct_label / outcome 映射，或
+    roi_outcomes 的实际到账结果（§4.3）。
     """
 
     project_id: str
     subscores: dict[str, float]
     true_label: Literal["FARM", "WATCH", "IGNORE"]
     current_label: str
-    signal: str  # feedback.signal
+    signal: str  # feedback.signal，或 roi_outcomes 派生时的事件名
     outcome: str | None  # feedback.outcome
+    source: SampleSource = SOURCE_LIVE
 
 
 @dataclass
 class GateResult:
-    """门禁检查结果。"""
+    """门禁检查结果。
+
+    ``*_by_source`` 是分桶明细：门禁只看 live 桶（回测样本不能替代真实
+    反馈去解锁权重切换），但两个桶的计数都要暴露出来 —— 否则"回测跑了
+    50 条"这件事在报告里完全看不见，读的人会以为回测没生效。
+    """
 
     passed: bool
     reason: str
     total_samples: int
     strong_samples: int
     farm_samples: int
+    total_by_source: dict[str, int] = field(default_factory=dict)
+    farm_by_source: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -186,14 +213,113 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
                 current_label=row["label"] or LABEL_IGNORE,
                 signal=signal,
                 outcome=outcome,
+                source=SOURCE_LIVE,
             ),
         )
 
-    logger.info("calibration.samples_extracted", count=len(samples))
+    # 台账派生样本（§4.3）。feedback 已覆盖的项目不再重复计入 —— 同一项目
+    # 两条样本会让它在目标函数里获得双倍权重。
+    samples.extend(extract_roi_samples(conn, exclude_project_ids=seen))
+
+    by_source: dict[str, int] = {}
+    for s in samples:
+        by_source[s.source] = by_source.get(s.source, 0) + 1
+    logger.info("calibration.samples_extracted", count=len(samples), by_source=by_source)
     return samples
 
 
+def extract_roi_samples(
+    conn: DbConnection,
+    *,
+    exclude_project_ids: set[str] | None = None,
+) -> list[CalibrationSample]:
+    """从 roi_outcomes 派生校准样本（ACTION_LOOP_DESIGN §4.3）。
+
+    这是 F3 的核心价值：把「最后到底有没有领到钱」变成监督信号。
+    反馈只有主观四档，学不到实际回报。
+
+    - ``airdrop_received`` → FARM 正样本
+    - ``airdrop_missed``   → IGNORE 负样本
+    - 其它事件（token_launched / campaign_ended）**不产生样本** ——
+      它们只是时间线，发了币不代表你领到了。
+
+    ``roi_outcomes.source`` 直接映射到样本桶：``manual`` → live，
+    ``backtest`` → backtest。同一项目同时有到账与未领记录时按「到账优先」
+    （领到过就是领到过），避免同项目产出两条互相矛盾的样本。
+    """
+    excluded = exclude_project_ids or set()
+    rows = conn.execute(
+        """
+        SELECT o.project_id, o.event, o.source, p.sub_scores, p.label
+        FROM roi_outcomes o
+        JOIN projects p ON o.project_id = p.id
+        WHERE o.event IN ('airdrop_received', 'airdrop_missed')
+        ORDER BY o.project_id, o.id DESC
+        """,
+    ).fetchall()
+
+    # project_id → 已选中的样本。received 覆盖 missed，同类保留最新一条。
+    chosen: dict[str, CalibrationSample] = {}
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id in excluded:
+            continue
+
+        subscores = _parse_subscores(row["sub_scores"])
+        if subscores is None:
+            continue
+
+        event = row["event"]
+        label_name = _OUTCOME_EVENT_LABELS.get(event)
+        if label_name is None:  # pragma: no cover - SQL 已过滤
+            continue
+        true_label: ScoreLabel = LABEL_FARM if label_name == "FARM" else LABEL_IGNORE
+
+        existing = chosen.get(project_id)
+        if existing is not None and existing.true_label == LABEL_FARM:
+            # 已经有"领到了"的样本，不让"未领到"把它盖掉
+            continue
+
+        chosen[project_id] = CalibrationSample(
+            project_id=project_id,
+            subscores=subscores,
+            true_label=true_label,
+            current_label=row["label"] or LABEL_IGNORE,
+            signal=event,
+            outcome=event,
+            source=SOURCE_BACKTEST if row["source"] == "backtest" else SOURCE_LIVE,
+        )
+
+    return list(chosen.values())
+
+
+def _parse_subscores(raw: object) -> dict[str, float] | None:
+    """解析 projects.sub_scores，缺维度或解析失败返回 None。"""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(str(raw))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or not all(k in parsed for k in WEIGHT_KEYS):
+        return None
+    try:
+        return {k: float(parsed[k]) for k in WEIGHT_KEYS}
+    except (TypeError, ValueError):
+        return None
+
+
 # ── 门禁检查 ────────────────────────────────────
+
+
+def count_by_source(samples: list[CalibrationSample]) -> dict[str, int]:
+    """按来源桶计数（缺席的桶显式给 0，方便报告与断言）。"""
+    # 显式标注 dict[str, int]：字面量会被推成 dict[Literal["live","backtest"], int]，
+    # 而返回类型是 dict[str, int]（调用方会用任意字符串键去查）。
+    out: dict[str, int] = {SOURCE_LIVE: 0, SOURCE_BACKTEST: 0}
+    for s in samples:
+        out[s.source] = out.get(s.source, 0) + 1
+    return out
 
 
 def check_gate(samples: list[CalibrationSample]) -> GateResult:
@@ -201,36 +327,53 @@ def check_gate(samples: list[CalibrationSample]) -> GateResult:
 
     - 最小有效样本 ≥ 200
     - 其中 FARM 相关 ≥ 30
-    """
-    total = len(samples)
-    strong = sum(1 for s in samples if s.signal == "wrong_label" or s.outcome is not None)
-    farm = sum(1 for s in samples if s.true_label == LABEL_FARM)
 
-    if total < MIN_VALID_SAMPLES:
+    **门禁只数 live 桶**（ACTION_LOOP_DESIGN §4.3）：回测样本能验证引擎在
+    历史项目上的表现，但不能替代真实反馈去解锁权重切换 —— 否则灌 200 条
+    历史数据就能让门禁通过，而门槛本来是为了确保"当前分布下确实学到了东西"。
+    门槛数值 200/30 不变（owner 拍板，有测试钉死）。
+
+    两个桶的计数都会写进 ``GateResult``：回测跑了多少条必须在报告里看得见。
+    """
+    by_source = count_by_source(samples)
+    live = [s for s in samples if s.source == SOURCE_LIVE]
+
+    total = len(live)
+    strong = sum(1 for s in live if s.signal == "wrong_label" or s.outcome is not None)
+    farm = sum(1 for s in live if s.true_label == LABEL_FARM)
+    farm_by_source: dict[str, int] = {SOURCE_LIVE: 0, SOURCE_BACKTEST: 0}
+    for s in samples:
+        if s.true_label == LABEL_FARM:
+            farm_by_source[s.source] = farm_by_source.get(s.source, 0) + 1
+
+    def _result(passed: bool, reason: str) -> GateResult:
         return GateResult(
-            passed=False,
-            reason=f"GATE_NOT_MET: 有效样本 {total} < {MIN_VALID_SAMPLES}",
+            passed=passed,
+            reason=reason,
             total_samples=total,
             strong_samples=strong,
             farm_samples=farm,
+            total_by_source=by_source,
+            farm_by_source=farm_by_source,
+        )
+
+    backtest_note = (
+        f"（另有 {by_source[SOURCE_BACKTEST]} 条回测样本，不计入门禁）" if by_source[SOURCE_BACKTEST] else ""
+    )
+
+    if total < MIN_VALID_SAMPLES:
+        return _result(
+            False,
+            f"GATE_NOT_MET: live 有效样本 {total} < {MIN_VALID_SAMPLES}{backtest_note}",
         )
 
     if farm < MIN_FARM_SAMPLES:
-        return GateResult(
-            passed=False,
-            reason=f"GATE_NOT_MET: FARM 相关样本 {farm} < {MIN_FARM_SAMPLES}",
-            total_samples=total,
-            strong_samples=strong,
-            farm_samples=farm,
+        return _result(
+            False,
+            f"GATE_NOT_MET: live FARM 相关样本 {farm} < {MIN_FARM_SAMPLES}{backtest_note}",
         )
 
-    return GateResult(
-        passed=True,
-        reason=f"GATE_MET: {total} samples ({farm} FARM)",
-        total_samples=total,
-        strong_samples=strong,
-        farm_samples=farm,
-    )
+    return _result(True, f"GATE_MET: {total} live samples ({farm} FARM){backtest_note}")
 
 
 # ── 目标函数 ────────────────────────────────────
@@ -525,9 +668,13 @@ def format_report(report: CalibrationReport) -> str:
         "",
         f"门禁状态: {'✅ PASS' if report.gate.passed else '❌ FAIL'}",
         f"  原因: {report.gate.reason}",
-        f"  有效样本: {report.gate.total_samples}",
+        f"  有效样本(live): {report.gate.total_samples}",
         f"  强监督样本: {report.gate.strong_samples}",
-        f"  FARM 相关: {report.gate.farm_samples}",
+        f"  FARM 相关(live): {report.gate.farm_samples}",
+        # 分桶必须显示：否则"回测跑了 N 条"在报告里完全看不见
+        f"  样本分桶: live={report.gate.total_by_source.get(SOURCE_LIVE, 0)} "
+        f"backtest={report.gate.total_by_source.get(SOURCE_BACKTEST, 0)}"
+        "（门禁只数 live）",
         "",
         f"Baseline J: {report.baseline_j:.4f}",
     ]
