@@ -109,11 +109,7 @@ def _exec_script(bind: object, script: str) -> None:
     from sqlalchemy import text
 
     for raw in script.split(";"):
-        lines = [
-            line
-            for line in raw.splitlines()
-            if not line.strip().startswith("--") and line.strip()
-        ]
+        lines = [line for line in raw.splitlines() if not line.strip().startswith("--") and line.strip()]
         if lines:
             newline = chr(10)
             bind.execute(text(newline.join(lines)))

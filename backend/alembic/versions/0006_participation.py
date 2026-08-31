@@ -27,6 +27,7 @@ Reference:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from alembic import op
 
@@ -95,8 +96,6 @@ CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
 """
 
 
-from typing import Any
-
 def _exec_script(bind: Any, script: str) -> None:
     """按分号拆分逐条执行 —— sqlite3 驱动一次只接受一条语句。
 
@@ -106,20 +105,17 @@ def _exec_script(bind: Any, script: str) -> None:
     from sqlalchemy import text
 
     for raw in script.split(";"):
-        lines = [
-            line
-            for line in raw.splitlines()
-            if not line.strip().startswith("--") and line.strip()
-        ]
+        lines = [line for line in raw.splitlines() if not line.strip().startswith("--") and line.strip()]
         if lines:
             newline = chr(10)
             bind.execute(text(newline.join(lines)))
 
 
 def upgrade() -> None:
-    """创建参与流水两张表。"""
-    from sqlalchemy import text
+    """创建参与流水两张表。
 
+    `text` 不在这里 import —— DDL 全部经 `_exec_script` 执行，它自己拿 `text`。
+    """
     bind = op.get_bind()
     is_pg = bind.dialect.name == "postgresql"
     _exec_script(bind, (_PG_SQL if is_pg else _SQLITE_SQL).strip())

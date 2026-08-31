@@ -1,273 +1,174 @@
 # 项目记忆：Web3 Airdrop Alpha Agent System
 
-> 更新：2026-08-13 · V2 落地启动：数据源开关/设计工程入库/CI 转绿/V2 任务清单/A1 Alembic 进行中 · master 与 origin 同步 · CI 全绿
+> 更新：2026-08-31 · 当前分支 `feat/action-loop-m2`（栈式分支未 push）·
+> M1 基线套件 **3129 passed / 0 failed / 88.93%**；M2 新增 42 测试全绿
+> 逐日会话记忆在项目根 `SESSION_MEMORY_YYYY-MM-DD.md`（本项目惯例，本文件只存长期事实）
 
-## 开发环境端口约定
-- 前端：**3002**（`frontend-next`；旧 `frontend/` 非主入口）
-- 后端 API：**8002**（本地 / Docker / CI 统一）
-- 测试 PostgreSQL：**5433**（容器内 5432；`docker-compose.postgres.yml`）
-- 原因：用户多项目并行，避开常见 3000/8000/5432。
-- 相关：`config.port`、`Dockerfile`、`docker-compose.yml`、`nginx.conf`、`Start.bat`、`Makefile`、`next.config.js`。
+## 一、项目定位与红线
 
-## 测试 PostgreSQL + 双后端
-- 启动：`docker compose -f docker-compose.postgres.yml up -d`（主机 **5433**）
-- 连接：`postgresql://airdrop:airdrop_test@127.0.0.1:5433/airdrop_test`
-- 应用切换：设置 `DATABASE_URL=...` 后 `get_connection()` / `init_db()` 走 PG；未设置仍 SQLite
-- 验收：`python backend/scripts/verify_postgres.py`（CRUD + relative time + gauges + mark/save）
-- `/health` 含 `db` / `db_backend`
-- 依赖：`psycopg[binary]>=3.2`
-- 注意：`.env` 里 `POSTGRES_PASSWORD` 若与 compose 默认不一致，需 `down -v` 后重建卷
-
-## 协作约定
-- 用户偏好：先文档后代码；有明确实现指令再写 production 代码。
-- 真相源：`docs/` 设计文档 + 根目录进度文件（`W1_STATUS` / `W2_PROGRESS` / `W3_PROGRESS` / `W4_PROGRESS`）。
-- 记忆与进度冲突时，以进度文件与代码为准。
-- **禁止读/改 `.env`**（OpenCode leak protection）；见项目根 `opencode.json` permission deny + `AGENTS.md`。
-- Agent 会话记忆：`.workbuddy/memory/MEMORY.md`（本文件）+ 按日 `YYYY-MM-DD.md`。
-
-## 项目定位（v2.0）
-- **自动扫描全网**的 Web3 早期项目发现与评分平台（ADR-012 / `SYSTEM_DIRECTION_CHANGE.md`）。
-- 系统主动采集 → 去重归一化 → 多 Agent 分析 → FARM / WATCH / IGNORE；用户是评分消费者 + 反馈提供者。
+- 自动扫描全网的 Web3 早期项目发现与评分平台（ADR-012 / `SYSTEM_DIRECTION_CHANGE.md`）。
+- 链路：系统主动采集 → 去重归一化 → 多 Agent 分析 → **FARM / WATCH / IGNORE**；用户是评分消费者 + 反馈提供者。
 - 手动输入 / CSV / seed 仅作采集盲区补充。
-- **不做**：交易执行、自动 farming、资金/KYC 托管；输出仅供决策参考。
+- **永不做**：交易执行、自动链上交互（只提醒不代签）、自动 farming、资金/KYC 托管。输出仅供决策参考。
+- 设计稿四子系统见 `docs/ACTION_LOOP_DESIGN.md`（标「设计稿」，未全部实现）。
 
-## 技术栈（当前实现）
-- 后端：Python 3.11+ / FastAPI / SQLite(WAL) / pydantic-settings / 自研 Orchestrator
-- 评分：规则引擎默认（ADR-001 LLM 默认关）；Agent：Collector + Narrative/Team/Risk/Tokenomics + Scorer
-- 采集：`backend/app/collectors/`（DefiLlama 已联调；GitHub/CoinGecko 等需 API key）
-- 前端：Next.js 16 App Router + React 19（`frontend-next/`）；旧 `frontend/index.html` 保留但非主路径
-- 调度：APScheduler 进程内 + `POST /run` / collections trigger
-- 测试：后端全量 **2,155 passed / 1 skipped / 87% coverage**（2026-08-06 经济分支合并后）；ruff 干净；compileall 通过
-- 前端：Next.js **16.3.0** + React 19；`npm audit` **0 vulnerabilities**；Turbopack build pass；typecheck pass
+## 二、开发环境
 
-## 关键文档
-- 索引：`docs/00_index.md`、`QUICK_REFERENCE.md`、`docs/PROJECT_BOOTSTRAP_OVERVIEW.md`
-- **实现现状（优先）**：`docs/IMPLEMENTATION_STATUS.md`
+| 项 | 值 |
+|---|---|
+| 前端 | **3002**（`frontend-next`；旧 `frontend/` 非主入口） |
+| 后端 API | **8002**（本地 / Docker / CI 统一） |
+| 测试 PostgreSQL | **5433**（容器内 5432，`docker-compose.postgres.yml`） |
+
+- 端口刻意避开 3000/8000/5432（用户多项目并行）。
+- 双后端：设 `DATABASE_URL` → PG，未设 → SQLite(WAL)。`/health` 返回 `db` / `db_backend`。
+- 启动：`Start.bat`。DB 备份目录 `backend/data/*.bak-*`。
+- 后端工具链用 `backend\venv\Scripts\python.exe`（系统 PATH 的 python 无 pytest；ruff 本地 0.16.1 / CI 0.16.2）。
+
+## 三、协作约定（owner 已拍板，不要来回问）
+
+1. **先文档后代码**；有明确实现指令才写 production 代码。
+2. **禁止读/改 `.env`**（OpenCode leak protection，`opencode.json` + `AGENTS.md`）。只能判断"键是否设置"，不能取值；需要 owner 自己改 `.env`。
+3. 真相源：`docs/` 设计文档 + 代码。冲突时 **`IMPLEMENTATION_STATUS` + 代码 > 旧 Roadmap 阶段表述 > 本记忆文件**。
+4. 权重校准门槛 **有效样本 ≥200 / FARM ≥30**，不调低（测试钉死）。
+5. 域名白名单走「诚实口径」（文档不宣称未实现的 fail-closed）。
+6. **Git 只本地 commit，绝不主动 push**，除非 owner 明确要求。
+
+## 四、技术栈与当前状态（2026-08-31）
+
+- 后端：Python 3.11+ / FastAPI / SQLite+PG / pydantic-settings / 自研 Orchestrator / APScheduler
+- 评分：规则引擎默认（LLM 默认关，ADR-001）；Agent：Collector + Narrative/Team/Risk/Tokenomics + Scorer
+- 采集器 14 个（`backend/app/collectors/`）：DefiLlama、GitHub、CoinGecko、Etherscan、CryptoRank、RootData、Medium、Mirror、Reddit、Discord 等
+- 前端：Next.js **16.3.0** + React 19，`npm audit` 0 vulnerabilities
+- 迁移：Alembic（0004 baseline → 0005 notify_log → 0006 participation）
+- 门禁：全量 **3129 passed / 9 skipped / 88.93%**（本机约 45–47 min，必须后台跑 + 日志写文件）、mypy strict 131 文件 0 错、ruff 264 文件全过
+
+## 五、关键文档
+
+- 索引：`docs/00_index.md`、`QUICK_REFERENCE.md`
+- **实现现状（优先读）**：`docs/IMPLEMENTATION_STATUS.md`
 - 产品/架构：`docs/01_product.md`、`docs/02_architecture.md`、`docs/ENGINEERING_ROADMAP.md`
-- 方向/数据源：`docs/SYSTEM_DIRECTION_CHANGE.md`、`docs/DATA_SOURCE_STRATEGY.md`、`docs/COLLECTION_ANALYSIS_HANDOFF.md`
-- 评分校准：`docs/WEIGHT_CALIBRATION.md`（ADR-006 操作协议）
-- 规范：`docs/API_SPEC.md`、`docs/DATA_SCORING_DICT.md`、`docs/DATABASE_DDL.md`、`docs/FRONTEND_SPEC.md`、`docs/SECURITY.md`、`docs/OBSERVABILITY.md`、`docs/OPERATIONS.md`、`docs/DATA_QUALITY.md`、`docs/GLOSSARY.md`
-- 编码：`CONVENTIONS.md`；ADR：`docs/adr/`（至 ADR-013，Next 主前端）
-- 进度：`W1_STATUS.md`、`W2_PROGRESS.md`、`W3_PROGRESS.md`、`W4_PROGRESS.md`
+- 方向/数据源：`docs/SYSTEM_DIRECTION_CHANGE.md`、`docs/DATA_SOURCE_STRATEGY.md`
+- 执行闭环（V3 设计稿）：`docs/ACTION_LOOP_DESIGN.md`
+- 规范：`API_SPEC.md`、`DATABASE_DDL.md`、`SECURITY.md`、`OBSERVABILITY.md`、`OPERATIONS.md`、`DATA_QUALITY.md`、`GLOSSARY.md`
+- 校准：`docs/WEIGHT_CALIBRATION.md`（ADR-006）；任务清单：`docs/V2_TASKS.md`
+- 编码：`CONVENTIONS.md`；ADR：`docs/adr/`（至 ADR-014）
 
-## 设计补强（2026-07-13）
-- 已补：实现现状表、采集→分析交接、权重校准协议、ADR-013。
-- 读文档冲突时：`IMPLEMENTATION_STATUS` + 代码 > 旧 Roadmap 阶段表述。
+## 六、核心链路
 
-## 里程碑状态（截至 2026-07-17）
-| 阶段 | 状态 | 要点 |
-| --- | --- | --- |
-| Bootstrap | ✅ | P0/P1/P2 51/51 |
-| W1 基础设施 | ✅ | config/models/db/main、目录与工程骨架 |
-| W2 Agent 核心 | ✅ | 7 Agent + Orchestrator + Golden/单测 |
-| W3 Dashboard | ✅ | 单页 Dashboard + Insights + 反馈 UI；后迁 Next |
-| W4 MVP 收尾 | ✅ | CI、seed、DefiLlama 联调、持久化优化、Start.bat、Next 主前端 |
-| 后 W4 增强 | 🟡 | 噪声清洗、评分 v1.1–v1.4、融资质量+手动编辑、交互记录、AI 解读、可参与任务、Opportunity Shadow 灰度与观测 |
+### 采集 → 分析 → 评分
+- 共享噪声 denylist `collectors/noise.py`；命中即 quarantine，分析入口跳过并 mark processed。
+- 二阶内容源（CryptoRank/Medium/Mirror/Reddit/Discord）`discovery_score` 压在 **0.28**，只贡献 `project_signals`，**永不触发 LLM 分析**。
+- 死数据清理：`python backend/scripts/purge_noise_projects.py`（支持 `--dry-run`）。
+- `pipeline_run.execute_analysis_pipeline` 是 /run、分析 cron、采集 auto-run 的共用入口。
 
-## 已验证能力（本地）
-- `Start.bat`：后端 8002 + `frontend-next` 3002
-- DefiLlama 触发采集成功（约 100 条，秒级写入）
-- `/run` 批量评分；项目列表总量曾达 ~201（含 seed/历史/采集）
-- Next rewrite `/api/v1/*` → 后端；`page_size` 上限 500（修复按钮无响应）
-- Dashboard：按 score 排序、默认隐藏 IGNORE、空态 CTA、采集进度 toast；`purge_noise_projects.py` 清理库内蓝筹
-- **手动融资**：详情页 FundingPanel → PATCH funding → tier1/quality 写入 meta → 重评 reason 含 funding（2026-07-14 冒烟 OK）
-
-## Handoff 代码（2026-07-13）
-- `pipeline_run.execute_analysis_pipeline`：/run、分析 cron、采集 auto-run 共用。
-- 仅 `score is not None` 的项 mark `raw_projects.processed`（带 `raw_ids`）。
-- `AnalysisScheduler`：`SCHEDULER_ENABLED` + `CRON_EXPRESSION`。
-- `COLLECTION_AUTO_RUN_ENABLED`（默认 false）；trigger 响应可含 `auto_run`。
-
-## 采集源（密钥在根目录 .env）
-- config 会读 **仓库根** `.env` 与 `backend/.env`。
-- 已实现并验收：DefiLlama、GitHub、CoinGecko、Etherscan、**CryptoRank**（`collectors/cryptorank.py`）。
-- CryptoRank：`api_key` query；rank 50–800；**score ≤0.28**（信号源，默认不进分析）；cron `CRYPTORANK_CRON`。
-- **噪声清洗**：GitHub 关键词/语言/denylist + relevance 降权；Etherscan 过滤 USDT/USDC/WETH 等 + score≤0.28；CryptoRank 排除 currency/meme 与死盘。
-- **共享 denylist**：`collectors/noise.py`；DefiLlama 采集过滤 + **分析入口** `collect_from_repository` 跳过并 mark processed（旧队列不反复评分）。
-- **脏数据清理**：`python backend/scripts/purge_noise_projects.py` 删除 projects 噪声并 mark raw；支持 `--dry-run`。
-- **空投信号映射**：DefiLlama 写 `no_token_yet`；`CollectorAgent._infer_airdrop_flags` 从 raw 推断；否则 airdrop_signal 恒为 20。
-- **评分 v1.3/v1.4**：八维 + 可验证任务/多源/履约/合约/女巫；**融资质量** `funding_quality`/`funding_tier`（RootData 采集器 `rootdata`）；`confidence` 为证据完整度。
-- **RootData**：`ROOTDATA_ENABLED` + `ROOTDATA_API_KEY`（https://www.rootdata.com/api）；API `POST /open/ser_inv|get_item|get_fac`。
-  - **限制**：免费档轮次/融资详情常不全；**不要指望 RootData 单独喂饱融资维度**。
-  - **主路径（2026-07-14）**：用户在详情页**手动编辑融资** → `meta.signals` → 重评。
-- 验收：`python backend/scripts/verify_collectors.py`；全链路 `python backend/scripts/e2e_collect_score.py`；`purge_noise_projects.py`
-
-## 融资信号链路（v1.4 · 2026-07-14 完成 UI）
-
+### 融资信号（v1.4）
 ```
-采集/手动/CSV
-    ↓
-funding.extract_funding_from_raw / compute_funding_quality
-    ↓
-RawProject.funding_* + recent_funding
-    ↓
-repository.save → merge_meta → projects.meta.signals (JSON)
-    ↓
-scorer / team / tokenomics 读 funding_quality / funding_tier
+采集/手动/CSV → funding.extract_funding_from_raw / compute_funding_quality
+  → RawProject.funding_* → repository.save → projects.meta.signals (JSON)
+  → scorer / team / tokenomics 读 funding_quality / funding_tier
 ```
+- API：`GET|PATCH /api/v1/projects/{id}/funding?rescore=true`；前端 `FundingPanel`。
+- 详情「重新评分」= **PATCH funding 空 body + rescore**（保留 meta.signals，勿精简成 POST /run）。
+- RootData 免费档融资数据不全，**不指望它单独喂饱融资维度**；主路径是手动编辑。
 
-### API
-- `GET  /api/v1/projects/{id}/funding`
-- `PATCH /api/v1/projects/{id}/funding?rescore=true`  body: total/rounds/date/investors/leads/recent/note
-- `GET  /api/v1/projects/{id}` → `funding` + `signals` + `funding_note`
+### F1 决策推送（M1 已交付）
+- `app/notify/`（evaluator 纯评估 / senders 双通道 Telegram+Discord / service 编排）；`notify_log` 表（alembic 0005）。
+- 调度 job `notify_digest`（默认 09:00 UTC）；`/api/v1/notify/*` 三端点，整前缀管理员锁。
+- `NOTIFY_ENABLED` 默认 false —— **关开关 ≠ 停审计**，评估照常留痕只是不发送。
+- **未落库不得有任何后台写**：`save_to_db=False`（试算）时钩子不跑（`if save_to_db:`）。
 
-### 前端
-- `FundingPanel`（详情页）：保存并重评
-- 详情「重新评分」→ **PATCH funding 空 body + rescore**（保留 meta.signals；勿精简 POST `/run`）
+### F2 参与流水（M1 已交付）
+- `participation_plans/tasks`（alembic 0006）；plan 与 task 各四态，状态机闭表，非法迁移 422。
+- **user_id 只来自 token，请求体自报一律忽略**（与 P1-1 同款身份伪造教训）。
+- 前端 `ParticipationTasks` 接服务端（乐观更新 + 失败回滚），本机 `aa-task-done:*` 勾选一次性迁移后清除。
 
-### 关键代码
-- `backend/app/services/funding.py`
-- `backend/app/services/project_signals.py`
-- `backend/app/routers/v1/funding.py`
-- `frontend-next/components/FundingPanel.tsx`
+### F3 收益台账与回测（M2 已交付，数据集待补全）
+- `roi_entries`（投入：amount_usd / hours）+ `roi_outcomes`（产出事件）；alembic **0007**。
+- 6 端点 `/api/v1/roi/*`；前端 `RoiLedger.tsx` 挂 `/portfolio`（**空态分支也挂**，否则没记录时入口消失）。
+- **诚实边界**：`amount_usd` 人工录入不做链上取价、`tx_hash` 只存档不验证、汇总不给时间定价；
+  零成本时 `roi_ratio` 返回 **`null`**（不是 `0`——会被读成"没赚没赔"，也不是 `inf`——污染下游聚合）。
+- **校准 source 分桶（§4.3，核心约束）**：`CalibrationSample.source` = `live` | `backtest`，
+  `check_gate()` **只数 live 桶**但两桶计数都通过 `total_by_source` 暴露。
+  否则灌 200 条历史数据就能解锁权重切换。默认 `live`（默认成 backtest 会让历史反馈整批出局）。
+- 回测：`PYTHONPATH=. python scripts/run_backtest.py [--json] [--export-samples]`。
+  走规则引擎（`enable_llm=False`）+ 确定性 id `backtest-<n>-<slug>` + `save_to_db=False`。
+  **结果载体是 `response.states`（`PipelineState` 列表），不是 `results`**；名字取 `state.project.name`。
+- 数据集 `backend/data/backtest/airdrops_2024_2025.json`：**19/50 条**（14 正 / 5 负），
+  标 `pending_expansion=true`。负样本覆盖三类（迟迟不发币 / 明确不做代币激励 /
+  已发币无追加分配），补样本时注意 Monad 这类**时间敏感负样本**会翻转。
+- **🔴 回测暴露的引擎缺陷（未修）**：已发币项目仍判 FARM（Chainlink 68 / Worldcoin 69
+  越过阈值 65）。airdrop signal 已压到 20，但加权求和压不住其余七维
+  （execution/competition/transparency 各 100）。**「已发币 = 无空投机会」应是否决
+  条件而非可补偿打分** —— 修它要改评分结构 + 动权重校准协议，已用
+  `xfail(strict=True)` 钉在 `test_known_engine_gap_already_launched_still_farm`。
+  运维含义：**不能只靠评分兜底，`collectors/noise.py` denylist 仍是第一道防线**。
 
-### 冒烟（2026-07-14）
-- $25M + Paradigm → `tier1` / quality `0.9`；reason 含 `tier-1 / high-quality funding`
-- 单测：`pytest tests/test_funding.py tests/test_rootdata_funding_score.py` → 5 passed
+### Opportunity v2.0 Shadow
+- 默认开启（`OPPORTUNITY_SHADOW_ENABLED=true`、sample_rate=1.0）；确定性 SHA-256 分桶，扩量是单调超集。
+- Shadow 非权威，不覆盖 `score-v1.4`；任何 Shadow 失败不得影响主 Pipeline。
+- 指标低基数，禁止 project ID / URL / 错误文本作 label。
+- **遗留**：`opportunity_economic_snapshots` 仍 0 行，7 个 `economic_*` 模块已合但未触发写入。
 
-## 运维脚本（在 backend/ 下，PYTHONPATH=.）
-- `scripts/rescore_all.py` — 用当前规则重算全部 projects（**从 meta.signals 恢复融资等字段**）
-- `scripts/feedback_snapshot.py` — 反馈样本计数（`make feedback-stats`）
-- `scripts/calibrate_weights.py` — 权重校准门禁报告（`make calibrate`）；&lt;200 样本不改权重
-- `scripts/quarantine_cli.py` — 隔离 list/add/release（`make quarantine-list`）
-- `scripts/e2e_collect_score.py` / `verify_collectors.py` / `purge_noise_projects.py`
-- 注意：golden 测试勿写进生产 DB；若污染可 `DELETE FROM projects WHERE source='seed'`
+## 七、全仓硬约定（改代码前必读，这些都是被测试钉死的）
 
-## 反馈 / 隔离 / 鉴权 / 前端能力
-- `ENABLE_FEEDBACK_SYSTEM` 默认 true；项目详情页可提交 useful/useless/wrong_label
-- Quarantine：`raw_projects.quarantined`；API `GET/POST /api/v1/quarantine`、`POST .../release`
-- 噪声命中自动 quarantine；分析队列 `COALESCE(quarantined,0)=0`
-- API 鉴权：`API_KEY` 非空时中间件校验；`/health` `/docs` 仍公开
-- Next：**16.3.0** + React 19；`npm audit` **0 vulnerabilities**（2026-08-06 修复 16 CVE）
-- 前端：暗色主题、Dashboard 图表/筛选/表格、详情 Agent 面板+反馈、Insights、**/ops 运维台**
-- **AI 解读**：`POST /api/v1/projects/{id}/ai-brief` + `AiBriefPanel`
-- **交互记录**：表 `interactions`；API `/api/v1/interactions`；详情「我的交互记录」
-- **可参与任务**：`GET .../participation-tasks` + `ParticipationTasks`（localStorage 勾选）
-- **融资编辑**：`FundingPanel` + PATCH funding（2026-07-14）
+1. **日志事件名必须是调用点字面量**：OBSERVABILITY parity 用正则扫 `logger.xxx("...")`，经变量传入 helper 扫不出来。
+2. **`fetcher.fetch()` 会 `.json()` 且缓存一切**：204 空体会炸。POST 场景用 `fetcher.post()`（不缓存、不解析、4xx 除 429 立即失败）。
+3. **pipeline 响应是逐键精确断言的主契约**（`test_pipeline_run`），钩子往 result 加键就红。可见性走 notify_log + API，不走响应。
+4. **schema 不用 SQL 级外键**（无 `references`），级联删除在路由里显式先删子表。
+5. **写端点必须显式登记归属**：新匿名可写端点进 `test_admin_only_rules.py` 的 `ANON_WRITABLE`（逐条带理由），并同步 `API_SPEC §2.1` write-auth-split 计数与逐项清单（当前 admin 8 / public 2 / anon 20 / 共 30）。
+6. **`.env.example` parity 两个反向坑**：① 带 env-external 标记的键不许同时是 Settings 字段；② 注释里出现「env-external」字样就会被当标记，措辞要避开。
+7. **alembic 多语句迁移必须拆分执行**（sqlite3 驱动一次一条）→ 用 `_exec_script` 按分号拆；可回滚性测试改为在 `_REVISION_TABLES` 登记一行。
+8. **新增调度 job 要同步三处**：`_JOB_OWNER` + `_expected_jobs` + switches，否则 `/scheduler/jobs` missing_jobs 天天红灯；job id 由测试从 `scheduler.py` 源码抽取核对。
+9. **`/api/v1/` 文档标题不能带查询串**（`?status=` 会被路由对账当路径），参数说明放正文。
+10. **`.gitignore` 目录规则带尾斜杠会杀死所有 `!` 例外**：`backend/data/` 让 git 整个目录不再进入，里面写多少白名单都无效。要给子目录开例外必须写成 `backend/data/*` 逐项排除。**不要用 `git add -f`** —— 强推进去的文件仍是 ignored 状态，后续改动不出现在 `git status` 里。
+11. **structlog 三个坑**：① `event` 是 `logger.info(event, ...)` 的位置参数名，当关键字传会 `TypeError` 且只在运行时炸（静态扫不出）；② 默认写 **stdout**，脚本要输出可管道 JSON 时必须把 `logger_factory` 指到 stderr，且**只换 factory 不换 processors 链**（脱敏 processor 必须原样保留，SECURITY §3.3）；③ **`structlog.configure()` 改的是进程级全局配置，在测试里调用必须还原**，用 `@contextmanager` + `finally: structlog.configure(**saved)`。不还原会把全局 logger 钉在 pytest 的临时 stderr 捕获对象上，用例结束该对象关闭 → 后续文件集体炸 `ValueError: I/O operation on closed file`。**单跑各文件全绿、只在特定顺序下暴露**。
+12. **`OBSERVABILITY.md §2.2` 的事件/命名空间总数要同步**：新增日志事件后，`test_documented_event_counts_match_reality` 会比对实测值（当前 317 事件 / 65 命名空间）。文档里附了与门禁同源的重算命令，别凭印象改。另注意：**文档的事件登记门禁是单向的**（只查「文档提到的必须存在」，不查「代码里的都登记了」），所以漏登记新事件不会红灯，得手工核对。
+13. **排查跨文件测试污染的方法**：`pytest --collect-only -q` 拿到完整序号表，按进度行号 ×72 反推失败区间落在哪个文件，再用「疑似污染源 + 受害文件」两文件组合复现。**位置吻合不等于根因** —— 本次先误判为文档 parity 连带失败，用改动前文档实测只有 2 个失败（不是 14），推断才被否掉。
+14. **ruff 没启 E402**：写 `# noqa: E402` 会被 RUF100 判为多余 noqa 而报错。
+15. **新增 alembic 迁移要同步 `OPERATIONS.md §3.5`**：那里有「Alembic 迁移目前有 **N 个版本**」+ 逐个文件名清单，`test_operations_doc_parity::TestMigrationCountIsCurrent` 两条断言会核对数量与文件名。清单是回滚操作的依据，写错会让人 downgrade 到错误版本。
+16. **新增采集源要同步五处文档**：`DATA_SOURCE_STRATEGY.md`（§2/§3/§5.2/§6.1/§8.4/§11/§12.9）、`OPERATIONS.md`（§4.3 门控 + §7.1 cron）、`SECURITY.md`（§10.2 域名白名单）、`.env.example`、测试真相函数。`test_operations_doc_parity` 的 `needs_key` 正则要覆盖 `bot_token|client_id|client_secret`。
 
-## 已知债务 / 下一步
-1. ~~**P0**：系统审查 commit~~ ✅ 2026-08-06 完成（8 个语义提交：016693c → eff1bea）
-2. ~~**P0**：pytest 基线复跑~~ ✅ 1919 passed / ruff clean / compileall pass
-3. ~~**P0 红线**：`backfill_meta_signals.py --apply`~~ ✅ 602/702 已回填；备份 `airdrop.db.bak-20260806-044608`；100 条无原始记录（seed/测试）保持 NULL
-4. ~~**P1**：Next.js + PostCSS 安全漏洞~~ ✅ next 16.3.0 + postcss ^8.5.26（16 CVE 修复，npm audit 0）
-5. ~~**P2**：Opportunity Shadow 默认开启~~ ✅ `db26bca` shadow_enabled=true, sample_rate=1.0，渐进式转正第一阶段完成
-6. ~~**经济分支合并**~~ ✅ `bd9013e` + `2e73500`：13 commits 合并，9 冲突解决，2 verifier 修复，2,155 passed
-7. ~~**CI/CD 修复**~~ ✅ `1088c67`：mypy 启用（非 strict）、前端 CI、security/docs 分支对齐、secret baseline
-8. ~~**文档对齐**~~ ✅ `e2e3985`：IMPLEMENTATION_STATUS.md v1.2
-9. ~~**前端打磨**~~ ✅ `ae3d9ba`：有融资筛选 + tier 徽章 + CSV 导出 + 客户端路由 + 共享 tierZh
-10. ~~**CI 强化 mypy**~~ ✅ `38472fa`：287→0 errors（29 文件修复），`pyproject.toml` 新增 `[tool.mypy]`，CI 阻断模式
-11. ~~**GitHub 仓库完善**~~ ✅ 公开仓库 + 10 topics + 分支保护（5 CI 必过）+ Actions 权限 + 安全扫描
-12. ~~**跑数据 + Shadow 验证**~~ ✅ 5 源采集成功，100 项目评分，Shadow 300 条快照全部 INSUFFICIENT_EVIDENCE（经济数据表为空）
-13. **Shadow 经济数据接入**：`opportunity_economic_snapshots` 表 0 行，7 个 `economic_*` 模块已合并但未触发写入
-14. **反馈积累**：0/200，需要日常使用系统并提交反馈
-15. **Shadow 转正**：等 Shadow 产出有意义 action 分布后，做 dual_run_compare 对比
-16. P3：观测栈日常化 / LLM 集成 / PG 切换
+## 八、当前分支与下一步
 
-## ✅ 2026-07-26 系统审查（已提交 · 已回填）
-**8 个语义 commit 已提交到 master（2026-08-06）；meta.signals 回填 602/702 已完成。**
+栈式分支（**合并必须按序，后面的 PR 才干净**）：
+```
+fix/p1-audit-hardening → docs/action-loop-design → feat/action-loop-m1 → feat/action-loop-m2
+  (5 commits, P1 修复)     (1 commit, V3 设计稿)      (8 commits, M1)       (9 commits, M2)
+```
+四个均**未 push**。M2 的九个提交：`09c7c6c` T3.1 后端 / `ade9544` T3.1-3 前端 /
+`b641c91` T3.2 回测+分桶 / `205b80c` 设计文档回填 / `565af55` 导出幂等 + json 污染 /
+`7d2a28e` OPERATIONS 迁移清单 + F3 运维小节 / `98588e3` 日志重定向改上下文管理器（修 14 个跨文件污染）/
+`660096b` 补 4 条负样本 + 引擎缺陷记录 / `ccfe9cb` OBSERVABILITY 登记 + 统计数字门禁。
 
-提交序列：
-1. `016693c` docs: ADR-014 + 4 份审计报告
-2. `fbd3250` fix(collectors): 跨源字段合并 + 管道持久化
-3. `a0fc3d1` fix(scoring): ADR-014 引擎规范 + opportunity shadow 加固
-4. `351b457` fix(security): 认证/限流/日志脱敏/CORS
-5. `960d95b` fix(frontend): Next.js 仪表盘对齐后端审计修复
-6. `c43a4f1` chore(deploy): CHANGELOG + 依赖 + docker-compose + nginx
-7. `01e450e` fix(security): Next.js 16.3.0 + PostCSS 8.5.26 安全补丁
-8. `eff1bea` chore: .gitignore 排除 backend/data/ 和 db 备份
+1. **PR 栈式合并**，push 后依次开 PR。
+2. **补全回测数据集到 50 条**（当前 19 条，重点补负样本）。
+3. **修 🔴 引擎缺陷**（已发币仍判 FARM）：改评分结构 + 动权重校准协议，需单独立项。
+4. **M3 = F4 领取监控**（§5）：`watched_wallets` + Alchemy webhook 地址匹配。
 
-回填结果（`backfill_meta_signals.py --apply`）：
-- 602/702 项目已回填 22 个信号字段（`explicit_airdrop_mention`、`tvl_usd`、`funding_tier` 等）
-- 100 个无原始记录项目（seed/测试）保持 meta=NULL
-- 备份：`backend/data/airdrop.db.bak-20260806-044608`
-- **rescore 安全红线已解除**：现在可以安全执行 `/rescore` 或 `dual_run_compare.py`
+### 本仓 git ref 不落盘（必知）
+`git commit` / `git branch` 退出码 0、reflog 也写了，但 `.git/refs/heads/` 下的
+ref 会被环境反复删掉，导致分支还指向旧 commit 甚至"消失"。
+**每次 commit 后跑 `sh .git/sync-head-ref.sh`**（幂等，自动从 reflog 取新 sha）。
+底层是 `.git/pack-ref-helper.sh` 写 `packed-refs` —— 该文件**必须按 ref 名字典序排序**，
+追加到末尾会让 git 二分查找静默忽略新行。
 
-## Opportunity v2.0 Shadow
-- 版本：`opportunity-v2.0`；默认画像：`low-cost-curated-multiwallet-v1`。
-- **默认开启（2026-08-06 `db26bca`）**：`OPPORTUNITY_SHADOW_ENABLED=true`、`OPPORTUNITY_SHADOW_SAMPLE_RATE=1.0`（全量采样）。
-- 自动 Shadow 仅处理成功持久化且 legacy score 非空的项目；显式 Opportunity API 评估不采样。
-- 采样按非空 project ID 做 SHA-256 确定性分桶：前 8 字节按无符号大端整数解释，`mod 10_000`，阈值为 `floor(rate * 10_000)`；扩量形成单调超集。
-- 汇总字段：`eligible` / `sampled` / `attempted` / `saved` / `failed` / `skipped`。
-- Shadow 非权威，现有 `score-v1.4` 分数和标签保持主输出且不会被覆盖；构造、上下文进入/退出、单项目评估和指标失败均不得影响主 Pipeline。
-- 稀疏 legacy 输入返回 `INSUFFICIENT_EVIDENCE/WATCH`；证据与评估快照只追加，结果可通过匿名 cohort interaction 关联。
-- 低基数指标：`airdrop_opportunity_shadow_projects_total{result}`、`airdrop_opportunity_shadow_assessments_total{status,public_label,model_version,profile_version}`、duration histogram、enabled/sample-rate gauges；禁止 project ID、assessment ID、URL、错误文本作为 label。
-- `/health` 暴露 `opportunity_model_version`、`opportunity_shadow_enabled`、`opportunity_shadow_sample_rate`，不聚合 Shadow 表。
-- 验收：SQLite Shadow verifier PASS；PostgreSQL `verify_postgres.py` OK、Shadow PASS、4 workers × 2 rounds 并发初始化 PASS（必须顺序运行）。
+### owner 手工项（agent 不能代做）
+- `.env` 里 `ALCHEMY_API_KEY` 改名 `ALCHEMY_WEBHOOK_SIGNING_KEY`（值不变）——旧键名让人误填 Data API key，导致合法回调永远 401。
+- 启用推送：`NOTIFY_ENABLED=true` + `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`（注意 alertmanager 也读它）或 `DISCORD_NOTIFY_WEBHOOK_URL`。
+- Discord / Reddit 采集 Key：`DISCORD_BOT_TOKEN`+`DISCORD_CHANNEL_ID`、`REDDIT_CLIENT_ID`+`REDDIT_CLIENT_SECRET`+`REDDIT_USERNAME`（填进 `.env` 即启用，代码零改动）。
+- `alembic upgrade head`。
 
-## CI / Docker 收尾（2026-07-17）
-- CI push/PR 同时支持 `master` 与 `main`；保留 `feat/**`、`fix/**`、`docs/**` push 规则。
-- CI Docker smoke 与禁用的 release demo 使用最多 30 次、每秒一次的 `/health` 轮询；超时输出日志，CI 临时容器始终清理。
-- 工作流镜像使用仓库根 context 与 `docker/Dockerfile`；已移除被 `.dockerignore` 排除的 `COPY data/`。
-- 容器入口为 `/app/backend` 下的 Uvicorn：`app.main:app --host 0.0.0.0 --port 8002`。
-- 本地 Docker build 与 health smoke 已通过；响应确认 SQLite backend 和两个 Shadow rollout 字段。
-- 设计、实施计划和实现已本地合并到 `master`；计划 49 个步骤已归档完成。当前未配置 Git remote，因此未 push / 未建 PR。
+## 九、遗留债务
 
-## 历史设计阶段备忘（2026-07-08，已过时阶段标签）
-- 曾经历纯文档推进（Roadmap v1.2/v1.3、ADR 拆分、OBSERVABILITY/SECURITY/DATA_QUALITY 等）。
-- 第五轮复核后文档体系达可实现标准；**现已进入实现并完成 W1–W4**，勿再按“未写代码”理解项目。
+### 公网部署前必须处理（08-31 审核遗留，owner 默认先交付 M1）
+1. **P1-5 前端代理注入管理员密钥** —— 最急：推送上线后会把「面板越权」升级成「主动外呼越权」。
+2. **P1-4 同步 IO 阻塞事件循环**。
+3. 反代限流 `TRUSTED_PROXY_COUNT`；compose 默认密码。
+4. 「诚实口径」的另一半：14 个采集器接运行时 `assert_url_allowed`。
 
-## Opportunity Outcome Calibration（2026-07-20 已合并 master）
-- 离线只读校准：ackend/app/opportunity/calibration/
-- CLI：python scripts/calibrate_opportunity.py --as-of <UTC> --output-dir reports/opportunity-calibration
-- Verifier：python scripts/verify_opportunity_calibration.py --as-of 2026-10-15T00:00:00Z
-- 样本：assessment×cohort；90/180 天成熟窗口；建议永不自动应用
-- 最终基线：1,751 passed / 1 skipped / 85.48% coverage
-- SQLite Shadow + calibration verifiers PASS；Docker Desktop 不可用，live PostgreSQL 未跑
-- 设计：docs/superpowers/specs/2026-07-17-opportunity-outcome-calibration-design.md
-- 计划：docs/superpowers/plans/2026-07-17-opportunity-outcome-calibration.md
-
-## Opportunity Economic Data Acquisition（2026-07-26 完成，尚未合并）
-- 分支：`feature/opportunity-economic-data-acquisition`
-- worktree：`.worktrees/opportunity-economic-data-acquisition`
-- 冻结基线：`80f6643`；当前 HEAD：`d9794fe507a342adb1a886631c30857fa870f3c4`
-- 提交序列：2 个文档提交 + 9 个实现提交，共 11 个；已 autosquash，无 fixup、无 Task 10 提交。
-- 已实现：经济快照冻结模型与 canonical hash、SQLite/PostgreSQL 双后端仓储、provider normalizer、指标与 writer、evidence insert-if-absent、双身份链接与 post-link replay、时间序列 resolver、持久化采集接线、安全 workflow projection、无网络 verifier。
-- 最终选择 **方案 A**：相同 `snapshot_id` 且仅 `collected_at` 漂移时视为 duplicate，返回已有不可变行并保留原时间戳；其他字段不同仍报 content conflict。
-- 冻结边界：workflow 不暴露 `raw_snapshot_ref`；既有 evidence API 合同保持不变。
-- Task 10 全量验收：Tasks 1–9 focused PASS；后端 `2,039 passed, 1 skipped`；coverage 87%；离线 verifier 26/26、`RESULT: PASS`；compileall、Ruff、静态边界证明、`git diff --check 80f6643..HEAD` 全部 PASS。
-- 最终复审：Critical 0、Important 0、Minor 5、Ready to merge = Yes。初审两项 Important 经聚焦复核均驳回：同步 DB 临界段无 `await`，不存在所述 asyncio 交错；`raw_snapshot_ref` 限制只适用于 workflow，修改 evidence API 会越过冻结合同。
-- 交付策略：按用户选择保留本地 feature 分支和 worktree；不 merge、不 push、不删除 worktree。
-- 协作约束：主代理负责架构、调度与验收；实现代码交给 Grok Agent；Git 仅本地 commit，绝不主动 push。
-
-## 2026-08-13 会话记忆（V2 落地启动 + Alembic A1）
-
-### 本次会话已完成
-1. 数据源开关那批改动单独提交（语义化 commit）。
-2. `airdrop-alpha-console` 设计工程纳入版本管理并推送到 `origin/master`。
-3. CI 查状态并修到转绿：Lint & Format ✓、Full Backend Test Suite ✓、Type Check (mypy) ✓、Frontend Lint & Build ✓、Docker Build ✓（`gh run view 31675805195` 全绿）。
-4. V2 未实现项拆解为可执行任务清单 → `docs/V2_TASKS.md`（A1 Alembic 为关键路径第一环）。
-
-### CI 修复明细（均已解决）
-- ruff lint 12 错 + ruff format 37 文件
-- mypy `app.openapi` method-assign
-- 前端 `globals.css` UTF-8 BOM
-- `verify_opportunity_economic` mock 缺 `_get_conn()`（17.1.26）
-- `review_regressions` 未关 sqlite 连接（用户选「修脚本关闭连接」）
-- `deploy.sh` 丢失 +x 位
-- ruff 本地 0.16.1 vs CI 0.16.2（本地用 backend venv）
-
-### A1 Alembic（进行中，未写任何 alembic 代码）
-- 任务来源：`docs/V2_TASKS.md` 的 A1 项
-- 验收标准：`alembic upgrade head` 在空库建出与现状一致的 schema；`alembic downgrade base` 可回滚；CI 加迁移冒烟步骤
-- 子任务：a1-1 摸清 schema（✅ 已读完 sqlite + postgres 两套 DDL 全量）→ a1-2 装 alembic + init 脚手架 → a1-3 baseline 迁移复刻 16 表+索引 → a1-4 接 env.py → a1-5 验证 upgrade/downgrade → a1-6 CI 冒烟
-
-### Schema 现状（db.py · A1 baseline 必须完整复刻）
-- 双后端 DDL：`_sqlite_ddl()`（L238-493）、`_postgres_ddl()`（L496-751）
-- 16 张表：projects, logs, data_sources, raw_projects, project_signals, collection_logs, raw_projects_archive, project_signals_archive, feedback, events, interactions, opportunity_evidence, opportunity_assessments, opportunity_economic_snapshots
-- `init_db()`（L768）后续 `_add_column_if_not_exists` 补列：projects 的 discovery_source/discovered_at/auto_discovered/signal_count/sub_scores；raw_projects 的 quarantined/quarantine_reason；interactions 的 12 个钱包/经济列；opportunity_evidence.supersedes_evidence_id
-- 40+ 索引，含部分索引（`idx_raw_projects_unprocessed ... WHERE processed=0`、`idx_feedback_outcome ... WHERE outcome IS NOT NULL`）与 CHECK 约束（`opportunity_economic_snapshots.dedup_key CHECK(length(trim(dedup_key))>0)`）——baseline 迁移必须保留
-- baseline 建议直接复用 `db.py` 的 DDL 字符串以保证「与现状一致」
-- 关键辅助：`get_connection()`（L156）、`is_postgres()`（L33）、`_add_column_if_not_exists`（L228）
-
-### 关键约定（本次会话确认）
-- 后端 pytest 用 `backend\venv\Scripts\python.exe`（系统 PATH 的 python 无 pytest）；ruff 本地用同一 venv（0.16.1，CI 0.16.2）
-- PowerShell 语法：`npm run build` 而非 `npm build`；单引号包裹路径；`;` 分隔命令而非 `&&`
-- A1 需支持双后端：SQLite 默认 + PostgreSQL 当 `DATABASE_URL` 设置时
-- 仓库分支 `master`，与 `origin/master` 同步，工作区干净（仅 `backend/.pytest_tmp/` 报 Permission denied，无害）
-
-### V2 半成品模块（`docs/V2_TASKS.md` 标注🟡，非 A1 阻塞）
-- `backend/app/utils/fetcher.py`（195 行）、`backend/app/auth.py`（48 行）、`backend/app/collectors/scheduler.py`（185 行）
-- 不存在：`app/cache.py`、`app/backtest.py`、`app/seed.py`、`middleware/`、alembic 目录
-
-### 下一步
-完成 a1-2：在 `backend\venv` 安装 alembic 并 `alembic init` 生成脚手架；随后 a1-3 写 baseline 迁移复刻 16 表 + 全部索引（含部分索引与 CHECK 约束）。
+### 小债
+- README 的 WATCH 阈值写 40–64，真值 **≥50**（`scorer.py:50`）。
+- `_score()` 四份复制（值一致、各有测试钉住，owner 拍板延后）。
+- 反馈样本 0/200，需日常使用积累。
+- Shadow 转正：等产出有意义 action 分布后做 `dual_run_compare`。
