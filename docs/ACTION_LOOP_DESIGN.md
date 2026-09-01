@@ -420,7 +420,10 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
   负样本已补到 5 条、覆盖三类（迟迟不发币 / 明确不做代币激励 / 已发币无追加分配），
   `fpr` 分母够了、选择偏差警告已熄灭。
 
-#### 🔴 回测发现的引擎缺陷（M2 未修，需单独立项）
+#### ✅ 回测发现的引擎缺陷（已由 ADR-015 修复，2026-09-01）
+
+> **状态**：已修复。修复方案与实测结果见本节末「修复结果」。以下保留原始
+> 缺陷记录，因为它解释了为什么修复必须动模型结构而不是权重取值。
 
 **已发币项目仍被判 FARM。** Chainlink 68 分、Worldcoin 69 分，越过 FARM 阈值 65。
 
@@ -436,7 +439,7 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 `WEIGHT_CALIBRATION` 协议，因此**不在 M2 范围内做**。
 
 > **2026-09-01 补充**：已立项为 **[ADR-015](adr/ADR-015-eligibility-gate-before-scoring.md)
-> 机会资格前置门**（Proposed，待 owner 拍板）。
+> 机会资格前置门**（Accepted，已实现）。
 >
 > ADR 阶段又跑了一次带子分的完整探查，结论比这里记的更严重：
 > **19 个样本全部判 FARM，fpr = 100%**（不只是已发币那两例）。按 ADR-006 §4
@@ -450,11 +453,41 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 > 走默认档，真实采集数据写法不同就会让 0.20 权重白扔。详见 ADR-015
 > §「本 ADR 不解决什么」第 3 条。
 
-已用 `@pytest.mark.xfail(strict=True)` 在
+曾用 `@pytest.mark.xfail(strict=True)` 在
 `tests/test_backtest.py::test_known_engine_gap_already_launched_still_farm`
 钉住：修好后该条会变 XPASS 并报错，逼人回来删标记 —— 缺陷修复不能静默发生。
+**该机制按设计生效了**：ADR-015 落地后这条立刻 XPASS 报错，于是删除 xfail
+并改写为正向断言 `test_already_launched_projects_are_vetoed_from_farm`
+（断言两个已发币样本 label ≠ FARM 且 `veto == "already_launched"`）。
 配套的 `test_already_launched_projects_get_low_airdrop_signal` 断言子分侧
 （≤30）持续有效，保证信号本身不退化。
+
+#### 修复结果（2026-09-01 实测）
+
+资格门插在 `_score_to_label()` 之后、`_apply_confidence_degradation()` 之前，
+**只改 label 不改 score**。同批修正了数据集 sector 写法。
+
+| 指标 | 修复前 | 修复后 |
+| --- | --- | --- |
+| recall(FARM) | 1.000 | 0.929 |
+| fpr(FARM) | 1.000 | 0.400 |
+| 目标函数 `recall − 2×fpr` | **−1.00** | **+0.129** |
+| label 分布 | `{FARM: 19}` | `{FARM: 15, WATCH: 2, IGNORE: 2}` |
+| veto 分布 | — | `{already_launched: 2, no_participation_path: 2}` |
+
+Chainlink / Worldcoin 的 `score` **仍是 68 / 69**（否决不改分），label 降为
+IGNORE 并带 `veto=already_launched`；日志 `scorer.veto_applied` 记
+`original_label` / `final_label`，靠它能区分「分数低」与「被规则否决」。
+
+sector 归一化后 `narrative_timing` 不再恒 60（Manta 93.5 / Linea 90.2 /
+Taiko 90.2 / Chainlink 84.0），0.15 权重恢复作用。
+
+**仍未闭合**：`veto_false_negatives = 1` —— Jupiter 实际发过大额空投，却被
+`no_participation_path` 误否决（它的参与路径是历史交易行为，三个信号字段都
+表达不了）。降级只到 WATCH 所以机会仍可见，recall 的全部损失来自这一条。
+处置方式待 owner 拍板，见 ADR-015 §「实施结果」。
+`competition` 大面积 100 与 Farcaster 需要的 `explicit_no_airdrop` 字段
+仍未处理，两者都在 ADR-015 §「本 ADR 不解决什么」里划为独立立项。
 
 ### M3 = F4
 

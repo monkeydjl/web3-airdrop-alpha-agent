@@ -9,14 +9,16 @@
     "outcome 只记录「是否有面向早期参与者的空投」与量级档位，不记录个人实际收益 —— 后者取决于参与深度，不是项目属性。",
     "目标规模 ≥50 条（设计稿 §4.4）。当前 19 条（15 正 / 4 负）仍标记 pending_expansion=true；补全前回测结论只能当方向性参考，不能用于权重切换。",
     "负样本分三类，刻意不只收一种：① 强融资强技术但迟迟不发币（Aztec、Monad）；② 明确不做代币激励（Farcaster）；③ 有代币但分发不面向链上早期参与者（Worldcoin），以及早已发币的蓝筹（Chainlink）。只收第①类会让回测测不出「已发币」信号是否生效。",
-    "**时间敏感样本**：标 `airdropped: false` 且仍在测试网的项目（如 Monad）随时可能发币。这类条目在 outcome.note 里显式标注 —— 翻转后若不更新，回测会把一次正确判断算成误报。定期复核负样本的有效性是维护这个数据集的一部分。"
+    "**时间敏感样本**：标 `airdropped: false` 且仍在测试网的项目（如 Monad）随时可能发币。这类条目在 outcome.note 里显式标注 —— 翻转后若不更新，回测会把一次正确判断算成误报。定期复核负样本的有效性是维护这个数据集的一部分。",
+    "**sector 口径（2026-09-01 修正）**：sector 值必须是引擎 `NarrativeAgent.SECTOR_PROFILE` 认得的键，否则查表静默落到 `DEFAULT_PROFILE`，narrative_timing 恒为 60，那一维的 0.15 权重变成常数。初版数据集用的是自由写法（`zk-rollup`、`l2`、`perp-dex` …），19 条**一条都没命中**。本次按业务含义归一：restaking→Restaking、zk-rollup→ZK、privacy-rollup→Privacy、l2/modular-l2→L2、dex-aggregator/perp-dex→DEX、interoperability→Bridge、modular-da/modular-execution/oracle/L1→Infrastructure。这是**数据集保真度修正**，不是为了抬高评分。",
+    "`social`（Farcaster）与 `identity`（Worldcoin）在 `SECTOR_PROFILE` 里没有对应键，**刻意保留原值并接受默认档** —— 硬塞进 DAO/Infrastructure 会是编造赛道热度。它们在 `test_backtest.py` 的 sector 完整性断言里登记为已批准的 fallback，新增未登记写法会红灯。"
   ],
   "pending_expansion": true,
   "target_size": 50,
   "projects": [
     {
       "name": "EigenLayer",
-      "sector": "restaking",
+      "sector": "Restaking",
       "t0": "2024-04-29",
       "confidence": "high",
       "provenance": "T0 前长期运行 restaking 主网 + points 计划；a16z 领投广为人知",
@@ -53,7 +55,7 @@
     },
     {
       "name": "Celestia",
-      "sector": "modular-da",
+      "sector": "Infrastructure",
       "t0": "2023-10-31",
       "confidence": "high",
       "provenance": "T0 前公开激励测试网 + 模块化叙事核心项目；Bain/Polychain 融资公开",
@@ -86,7 +88,7 @@
     },
     {
       "name": "Starknet",
-      "sector": "zk-rollup",
+      "sector": "ZK",
       "t0": "2024-02-14",
       "confidence": "high",
       "provenance": "T0 前主网已上线并长期无代币；Paradigm 等大额融资公开",
@@ -119,7 +121,7 @@
     },
     {
       "name": "zkSync Era",
-      "sector": "zk-rollup",
+      "sector": "ZK",
       "t0": "2024-06-11",
       "confidence": "high",
       "provenance": "T0 前主网运行超一年、无代币；Matter Labs 融资公开",
@@ -152,7 +154,7 @@
     },
     {
       "name": "LayerZero",
-      "sector": "interoperability",
+      "sector": "Bridge",
       "t0": "2024-05-02",
       "confidence": "high",
       "provenance": "T0 前跨链消息层广泛集成、长期无代币；a16z/Sequoia 融资公开",
@@ -185,7 +187,7 @@
     },
     {
       "name": "Jupiter",
-      "sector": "dex-aggregator",
+      "sector": "DEX",
       "t0": "2024-01-31",
       "confidence": "high",
       "provenance": "T0 前 Solana 主力聚合器、交易量公开可查；未走传统 VC 大额融资",
@@ -218,7 +220,7 @@
     },
     {
       "name": "Wormhole",
-      "sector": "interoperability",
+      "sector": "Bridge",
       "t0": "2024-04-03",
       "confidence": "high",
       "provenance": "T0 前跨链桥长期运行；2023 年 2.25 亿美元融资公开",
@@ -251,7 +253,7 @@
     },
     {
       "name": "Blast",
-      "sector": "l2",
+      "sector": "L2",
       "t0": "2024-06-26",
       "confidence": "high",
       "provenance": "T0 前 points + gold 双积分机制公开、Paradigm 领投公开",
@@ -284,7 +286,7 @@
     },
     {
       "name": "Hyperliquid",
-      "sector": "perp-dex",
+      "sector": "DEX",
       "t0": "2024-11-29",
       "confidence": "high",
       "provenance": "T0 前 points 计划公开、永续 DEX 交易量公开可查；无传统 VC 轮次",
@@ -317,7 +319,7 @@
     },
     {
       "name": "Scroll",
-      "sector": "zk-rollup",
+      "sector": "ZK",
       "t0": "2024-10-22",
       "confidence": "high",
       "provenance": "T0 前主网 + Sessions 积分公开；Polychain 领投公开",
@@ -350,7 +352,7 @@
     },
     {
       "name": "Linea",
-      "sector": "zk-rollup",
+      "sector": "ZK",
       "t0": "2025-09-10",
       "confidence": "medium",
       "provenance": "T0 前 Voyage/Surge 活动与 LXP 积分公开；ConsenSys 自有产品无独立轮次",
@@ -383,7 +385,7 @@
     },
     {
       "name": "Manta Network",
-      "sector": "modular-l2",
+      "sector": "L2",
       "t0": "2024-01-18",
       "confidence": "medium",
       "provenance": "T0 前 New Paradigm 活动公开；融资额为量级近似",
@@ -416,7 +418,7 @@
     },
     {
       "name": "Aztec",
-      "sector": "privacy-rollup",
+      "sector": "Privacy",
       "t0": null,
       "confidence": "medium",
       "provenance": "长期测试网、无公开发币日；a16z 领投公开。作为「强项目但迟迟不发币」的负样本",
@@ -453,7 +455,7 @@
     },
     {
       "name": "Fuel Network",
-      "sector": "modular-execution",
+      "sector": "Infrastructure",
       "t0": "2025-01-15",
       "confidence": "medium",
       "provenance": "T0 前长期测试网与积分活动；Blockchain Capital 领投公开",
@@ -486,7 +488,7 @@
     },
     {
       "name": "Taiko",
-      "sector": "zk-rollup",
+      "sector": "ZK",
       "t0": "2024-07-11",
       "confidence": "medium",
       "provenance": "T0 前多轮激励测试网公开；Sequoia China 参投公开",
@@ -593,7 +595,7 @@
     },
     {
       "name": "Chainlink",
-      "sector": "oracle",
+      "sector": "Infrastructure",
       "t0": null,
       "confidence": "high",
       "provenance": "早已发币且长期无面向参与者的追加空投。作为「蓝筹但零空投机会」的负样本 —— 这类项目正是 noise denylist 要挡掉的",
@@ -630,7 +632,7 @@
     },
     {
       "name": "Monad",
-      "sector": "L1",
+      "sector": "Infrastructure",
       "t0": null,
       "confidence": "medium",
       "provenance": "T0 前长期测试网 + 大额融资公开；截至数据整理时未发币。作为「高预期但尚未兑现」的负样本 —— 注意这条随时间可能翻转成正样本",

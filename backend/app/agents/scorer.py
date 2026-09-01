@@ -15,6 +15,7 @@ import structlog
 
 from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState
+from app.agents.eligibility import apply_eligibility_gate
 from app.config import settings
 from app.models import ScoreResult
 
@@ -105,14 +106,30 @@ class ScorerAgent(BaseAgent):
             # Calculate weighted total score
             total_score = self._calculate_total_score(subscores)
 
-            # Determine label from score
+            # Map the weighted score first, then apply deterministic eligibility vetoes.
+            # The veto never changes total_score: score means project quality, label
+            # means whether a currently actionable airdrop path exists (ADR-015).
             label = self._score_to_label(total_score)
+            eligibility = apply_eligibility_gate(state.project, label)
+            label = eligibility.label
+
+            if eligibility.veto:
+                logger.info(
+                    "scorer.veto_applied",
+                    project_id=state.project.id,
+                    veto=eligibility.veto,
+                    original_label=self._score_to_label(total_score),
+                    final_label=label,
+                )
 
             # Apply confidence degradation if needed
             label = self._apply_confidence_degradation(label, confidence)
 
-            # Generate reasons
+            # Generate reasons. A veto explanation deliberately comes first so a
+            # downgraded label is never presented as an unexplained score anomaly.
             reasons = self._generate_reasons(state, subscores, confidence, label)
+            if eligibility.reason:
+                reasons = [eligibility.reason, *reasons][:6]
 
             # Create result
             result = ScoreResult(
@@ -122,12 +139,14 @@ class ScorerAgent(BaseAgent):
                 reason=reasons,
                 sub_scores=subscores,
                 weight_version=WEIGHT_VERSION,
+                veto=eligibility.veto,
             )
 
             # Update state
             state.score = result.score
             state.label = result.label
             state.confidence = result.confidence
+            state.veto = result.veto
             state.reason = result.reason
             # 供 Repository 持久化到 projects.weight_version / raw_signals
             state.sub_scores = result.sub_scores

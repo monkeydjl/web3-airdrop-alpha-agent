@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS projects (
     recommendation  TEXT DEFAULT 'IGNORE',      -- 参与建议（同 label）
     confidence      REAL DEFAULT 0.0,           -- 数据完整度 0-1（v1.5 新增）
     weight_version  TEXT DEFAULT 'v1',          -- 评分权重版本（ADR-006）
+    veto            TEXT,                       -- ADR-015 资格否决原因；仅影响 label，不改 score
     
     reason          TEXT,                       -- 决策理由 JSON 数组
     narrative_json  TEXT,                       -- NarrativeResult JSON
@@ -502,10 +503,21 @@ CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status)
 -- 2.17 projects 表扩展字段（v2.0 起，ADR-012）
 -- ============================================
 -- 注：使用 ALTER TABLE 新增字段，已有记录自动填充 DEFAULT 值，不破坏既有数据
+--
+-- ⚠️ 给 projects / raw_projects / interactions 加列时，只写上面 §2.1 的建表
+--    定义是不够的：建表语句是 CREATE TABLE IF NOT EXISTS，既有库表已存在会
+--    整条跳过，列永远补不上。必须同时在 db.py::init_db 里登记
+--    _add_column_if_not_exists(...)。漏登记的表现是升级后写入报
+--    "table projects has no column named <col>"，进而让 pipeline run 变
+--    status="failed"（评分成功但落库失败）。CI 是全新 checkout 看不到这个坑，
+--    由 tests/test_db_init.py::test_existing_database_reaches_full_column_parity_after_init
+--    兜住。详见 OPERATIONS.md §3.5「给既有库加列的两处登记」。
 ALTER TABLE projects ADD COLUMN discovery_source TEXT DEFAULT 'manual';      -- 首次发现的来源
 ALTER TABLE projects ADD COLUMN discovered_at TIMESTAMP;                    -- 首次发现时间
 ALTER TABLE projects ADD COLUMN auto_discovered INTEGER DEFAULT 0;          -- 0=手动，1=自动发现
 ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;             -- 关联信号数
+ALTER TABLE projects ADD COLUMN sub_scores TEXT;                            -- 子分快照（离线重加权）
+ALTER TABLE projects ADD COLUMN veto TEXT;                                  -- ADR-015 资格否决原因
 
 CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
 CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);

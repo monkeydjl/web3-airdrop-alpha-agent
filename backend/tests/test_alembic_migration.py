@@ -66,8 +66,9 @@ _REVISION_TABLES: dict[str, set[str]] = {
     "0005": {"notify_log"},
     "0006": {"participation_plans", "participation_tasks"},
     "0007": {"roi_entries", "roi_outcomes"},
+    "0008": set(),
 }
-_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
+_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]
 
 
 def _tables_removed_after(revision: str) -> set[str]:
@@ -178,7 +179,7 @@ def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:
 def test_alembic_version_recorded(tmp_path: Path) -> None:
     """upgrade head 后 alembic_version 表记录最新版本。
 
-    版本号随最新迁移走（当前 0007 收益台账），升级迁移时同步改这里 ——
+    版本号随最新迁移走（当前 0008 资格门），升级迁移时同步改这里 ——
     这里钉住的是「head 就是最后一个 revision」，不是某个固定数字。
     """
     db_path = tmp_path / "migrate.db"
@@ -186,7 +187,7 @@ def test_alembic_version_recorded(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     ver = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     conn.close()
-    assert ver is not None and ver[0] == "0007"
+    assert ver is not None and ver[0] == "0008"
 
 
 def test_alembic_0003_is_reversible(tmp_path: Path) -> None:

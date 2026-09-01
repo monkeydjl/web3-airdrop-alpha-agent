@@ -1,8 +1,8 @@
 # ADR-015: 机会资格前置门（否决条件与打分分离）
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-09-01
-- **Deciders**: 架构 / 产品 / 数据（**待 owner 拍板**）
+- **Deciders**: 架构 / 产品 / 数据（owner 已拍板；实现与实测结果见 §「实施结果」）
 - **技术栈**：Python / 规则引擎
 - **影响面**：评分算法、权重校准协议、API 响应契约、前端标签展示
 
@@ -203,23 +203,100 @@ false positive 来自另外三类原因，见 §「本 ADR 不解决什么」。
    按 sector 分组统计自然每组都 ≤3 个。
 
 ### 需配套的工作
-- [ ] `backend/app/agents/eligibility.py`（新建）：否决条件判定，与
-      `airdrop_signal.py` 复用同一布尔表达式（提取共享 helper，避免第三份漂移）
-- [ ] `backend/app/agents/scorer.py`：插入资格门调用，`ScoreResult` 加 `veto`
-- [ ] `backend/app/models.py`：`ScoreResult.veto` 字段
-- [ ] `backend/app/repository.py` + `db.py` 双方言 + alembic 0008 + `DATABASE_DDL.md`：
+- [x] `backend/app/agents/eligibility.py`（新建）：否决条件判定，与
+      `airdrop_signal.py` 复用同一布尔表达式（共享
+      `is_already_launched_without_airdrop_path()`，`airdrop_signal.py` 的内联
+      表达式已替换为该调用）
+- [x] `backend/app/agents/scorer.py`：插入资格门调用，`ScoreResult` 加 `veto`
+- [x] `backend/app/models.py`：`ScoreResult.veto` + `ProjectRecord.veto` 字段
+- [x] `backend/app/repository.py` + `db.py` 双方言 + alembic 0008 + `DATABASE_DDL.md`：
       `projects.veto` 持久化（**三处同落**）
-- [ ] `backend/scripts/run_backtest.py`：报告加 `veto` / `veto_distribution` /
+- [x] `db.py::init_db` 的 `_add_column_if_not_exists(db, "projects", "veto", "TEXT")`：
+      **既有库的升级路径**。「三处同落」漏了这一处 —— 详见下面「实施中新发现的坑」
+- [x] `backend/scripts/run_backtest.py`：报告加 `veto` / `veto_distribution` /
       `veto_false_negatives`
-- [ ] `backend/tests/test_eligibility.py`（新建）：两条否决条件的正反断言 +
+- [x] `backend/tests/agents/test_eligibility.py`（新建）：两条否决条件的正反断言 +
       「否决不改 score」断言 + 与 `airdrop_signal` 封顶条件的一致性断言
-- [ ] `backend/tests/test_backtest.py`：删除 `xfail(strict=True)` 的
+- [x] `backend/tests/test_backtest.py`：删除 `xfail(strict=True)` 的
       `test_known_engine_gap_already_launched_still_farm`，改为正向断言
+      `test_already_launched_projects_are_vetoed_from_farm`
       （strict xfail 修好后会 XPASS 报错，这是设计意图）
-- [ ] `docs/OBSERVABILITY.md §2.2`：登记 `scorer.veto_applied`，更新事件计数
-- [ ] `docs/WEIGHT_CALIBRATION.md`：补 §「资格门不参与校准」与 `veto_changelog`
-- [ ] `docs/adr/README.md`：ADR-015 索引
-- [ ] `docs/ACTION_LOOP_DESIGN.md §6`：把「🔴 引擎缺陷」标记指向本 ADR
+- [x] `docs/OBSERVABILITY.md §2.2`：登记 `scorer.veto_applied`，更新事件计数
+- [x] `docs/WEIGHT_CALIBRATION.md`：补 §4.1.1「资格门不参与拟合」
+- [x] `docs/adr/README.md`：ADR-015 索引
+- [x] `docs/ACTION_LOOP_DESIGN.md §6`：把「🔴 引擎缺陷」标记指向本 ADR
+
+---
+
+## 实施结果（2026-09-01 实测）
+
+资格门与数据集 sector 归一化（§「不解决什么」第 3 条）在同一批改动中落地。
+回测实测：
+
+| 指标 | 决策前 | 决策后 |
+| --- | --- | --- |
+| recall(FARM) | 1.000 | 0.929 |
+| fpr(FARM) | 1.000 | 0.400 |
+| 目标函数 `recall − 2×fpr` | **−1.00** | **+0.129** |
+| label 分布 | `{FARM: 19}` | `{FARM: 15, WATCH: 2, IGNORE: 2}` |
+| veto 分布 | — | `{already_launched: 2, no_participation_path: 2}` |
+| `veto_false_negatives` | — | **1** |
+
+目标函数从负分转正 —— 模型第一次在自己的评价标准下具备区分能力。
+Chainlink / Worldcoin 的 `score` 保持 68 / 69 **未变**，仅 label 降为
+IGNORE 并带 `veto=already_launched`，验证了「否决改 label 不改分」。
+
+sector 归一化后 `narrative_timing` 不再恒 60（实测 Manta 93.5 / Linea 90.2 /
+Taiko 90.2 / Chainlink 84.0 / Farcaster 60.0），该维度的 0.15 权重恢复作用。
+`social`（Farcaster）与 `identity`（Worldcoin）**刻意保留原写法**并接受
+`DEFAULT_PROFILE` —— 硬塞进 DAO/Infrastructure 属于编造赛道热度。这两个
+fallback 在 `test_sectors_hit_engine_profile_or_are_declared_fallbacks`
+中显式登记，其余任何未登记写法都会红灯而非静默走默认档。
+
+### 实施中新发现的坑：「三处同落」不够，是四处
+
+原先的约定是新列要落「`db.py` 建表 DDL 双方言 + alembic migration +
+`DATABASE_DDL.md`」。本次按此执行后，golden 回归集 **12 failed**：
+
+```
+repository.project.save_failed error='table projects has no column named veto'
+→ RunResponse(status='failed')
+```
+
+根因：建表语句是 `CREATE TABLE IF NOT EXISTS`，**既有库表已存在就整条跳过**，
+列永远补不上。既有库的升级路径是 `init_db` 里的
+`_add_column_if_not_exists(...)`，这一处不在原约定里。
+
+失效方式特别隐蔽的两点：
+
+1. **CI 看不见**。CI 是全新 checkout，表由完整 DDL 现建，门禁全绿。只有已跑过
+   的开发 / 生产库升级时才炸。
+2. **报错点离根因很远**。表现是「升级后所有分析任务突然全挂」
+   （`status="failed"`），而评分本身是成功的 —— 只是落不了库。
+
+alembic migration **不能替代**这一处：`0008` 为了兼容滚动 baseline 做了列存在性
+判断，且不是所有部署路径都跑 `alembic upgrade`。
+
+已加回归测试 `tests/test_db_init.py::test_existing_database_reaches_full_column_parity_after_init`：
+按**冻结的历史列形态**建表 → 跑 `init_db` → 要求列集合追平当前 DDL。快照冻结，
+所以以后任何新列漏登记都会红灯，与具体是哪一列无关（已反向验证：临时注掉
+`veto` 那行，测试报 `{'projects': ['veto']}`）。
+约定同步写入 `OPERATIONS.md §3.5` 与 `DATABASE_DDL.md §2.17`。
+
+### 已知遗留：`veto_false_negatives = 1`（Jupiter）
+
+```
+✗  70 WATCH    Jupiter    空投(large)  veto=no_participation_path
+```
+
+Jupiter 实际发过大额空投，被 `no_participation_path` 误否决。它的参与路径
+是「历史交易行为」，而该规则依赖的三个字段（`has_testnet` /
+`has_points_program` / `has_task_portal`）都表达不了这一点。
+
+**这正是 §「负面 / 限制」第 2 条预警的失效模式**，且预设的缓解生效了 ——
+只降到 WATCH 而非 IGNORE，机会仍在前端可见，recall 的 0.071 损失全部来自
+这一条。处置方式（补「链上交易量/使用量」参与路径信号 vs 收窄规则适用
+条件）属于业务约束调整，**待 owner 决策，不单方面放宽规则**。
 
 ### 迁移成本
 - **历史数据不重算**。`projects.veto` 对既有行为 NULL，语义是「未经资格门评估」。

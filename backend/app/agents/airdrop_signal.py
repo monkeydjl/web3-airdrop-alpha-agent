@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.agents.eligibility import is_already_launched_without_airdrop_path
+
 if TYPE_CHECKING:
     from app.agents.base import RawProject
 
@@ -68,7 +70,8 @@ def airdrop_signal_subscore(project: RawProject) -> float:
     elif sources >= 2 and (has_points or no_token or task_portal):
         bonus += 3.0
 
-    # listed tokens without airdrop story stay capped
-    if not no_token and not has_points and not explicit and not task_portal:
+    # listed tokens without airdrop story stay capped. This predicate is shared
+    # with ADR-015's eligibility veto so the two policy paths cannot drift.
+    if is_already_launched_without_airdrop_path(project):
         return min(35.0, base + bonus)
     return min(100.0, base + bonus)

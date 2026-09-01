@@ -24,13 +24,13 @@
 | [ADR-012](ADR-012-system-direction-auto-scan.md) | 系统方向反转为自动扫描全网发现平台 | Accepted | 2026-07-09 | 手动输入→自动扫描；双调度器；4 张采集表；LLM 分级使用 | 数据源、调度、数据库、API、安全、成本 |
 | [ADR-013](ADR-013-nextjs-primary-frontend.md) | 主前端演进为 Next.js（App Router） | Accepted | 2026-07-13 | `frontend-next` 为主路径；ADR-003 HTML 保留为原型 | 前端、部署、CORS/代理 |
 | [ADR-014](ADR-014-engine-spec-conformance.md) | 评分决策引擎回归规范 + 旁路机会引擎区间算法修正 | Accepted | 2026-07-26 | 按规范修正实现而非改规范迁就实现；跨源合并不再丢信号，低置信降档与 TOO_EXPENSIVE 由死规则变为可达 | 评分算法、旁路决策、Golden、DB 写入列 |
-| [ADR-015](ADR-015-eligibility-gate-before-scoring.md) | 机会资格前置门（否决条件与打分分离） | **Proposed** | 2026-09-01 | 回测实测 fpr=100%（19/19 全判 FARM）；「已发币=无机会」改为不可补偿的否决而非可补偿打分，否决只改 label 不改 score | 评分算法、权重校准协议、API 契约、前端标签 |
+| [ADR-015](ADR-015-eligibility-gate-before-scoring.md) | 机会资格前置门（否决条件与打分分离） | Accepted | 2026-09-01 | 回测实测 fpr=100%（19/19 全判 FARM）；「已发币=无机会」改为不可补偿的否决而非可补偿打分，否决只改 label 不改 score。实测目标函数 −1.00 → +0.129 | 评分算法、权重校准协议、API 契约、前端标签 |
 
 ## 按主题快速导航
 
 | 主题 | 相关 ADR |
 | --- | --- |
-| 评分算法 | [ADR-006](ADR-006-weights-freeze.md) 权重冻结与校准、竞争度缓存；[ADR-014](ADR-014-engine-spec-conformance.md) 实现回归规范；[ADR-015](ADR-015-eligibility-gate-before-scoring.md) 资格门前置（Proposed） |
+| 评分算法 | [ADR-006](ADR-006-weights-freeze.md) 权重冻结与校准、竞争度缓存；[ADR-014](ADR-014-engine-spec-conformance.md) 实现回归规范；[ADR-015](ADR-015-eligibility-gate-before-scoring.md) 资格门前置（否决与打分分离） |
 | 旁路决策引擎 | [ADR-014](ADR-014-engine-spec-conformance.md) 联合概率区间算法与 TOO_EXPENSIVE 可达性 |
 | 数据层 | [ADR-004](ADR-004-sqlite-to-postgres.md) SQLite→PG |
 | 调度与执行 | [ADR-005](ADR-005-apscheduler-inprocess.md) APScheduler、多项目并发 |

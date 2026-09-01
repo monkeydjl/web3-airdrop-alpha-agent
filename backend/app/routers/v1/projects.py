@@ -343,6 +343,10 @@ def get_project(
                     "funding_note": meta.get("funding_note"),
                     "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
                     "weight_version": weight_version or "v1.2",
+                    # 资格门否决原因（ADR-015）。不暴露的话这列就是死数据：
+                    # score 不因否决改变，只看 score/label 无法区分「分数低」与
+                    # 「被规则否决」。NULL 语义是「未经资格门评估」，不填默认值。
+                    "veto": project.get("veto"),
                     "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
                     "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
                 }

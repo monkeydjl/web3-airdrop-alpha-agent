@@ -117,6 +117,28 @@ class TestDataset:
         negatives = [c for c in dataset["projects"] if not (c.get("outcome") or {}).get("airdropped")]
         assert len(negatives) >= 5, f"负样本仅 {len(negatives)} 条，不足以评估误报"
 
+    def test_sectors_hit_engine_profile_or_are_declared_fallbacks(self, dataset: dict[str, Any]) -> None:
+        """sector 必须被引擎查表命中，例外必须显式登记。
+
+        `NarrativeAgent` 用 `SECTOR_PROFILE.get(sector, DEFAULT_PROFILE)` 精确匹配、
+        且未命中时**静默**走默认档。初版数据集写的是 `zk-rollup` / `l2` / `perp-dex`
+        这类自由写法，19 条一条都没命中，于是 narrative_timing 全样本恒 60 ——
+        0.15 权重退化成常数，回测在这一维完全没有信息。
+
+        `social` / `identity` 在 SECTOR_PROFILE 里确实没有对应赛道，硬塞进
+        DAO 或 Infrastructure 等于编造热度，所以保留原值并在这里登记为已批准
+        的 fallback。新增未登记写法会红灯，逼人显式决定而不是继续静默默认。
+        """
+        from app.agents.narrative import SECTOR_PROFILE
+
+        approved_fallbacks = {"social", "identity"}
+        unmatched = {
+            case["sector"]
+            for case in dataset["projects"]
+            if case.get("sector") not in SECTOR_PROFILE and case.get("sector") not in approved_fallbacks
+        }
+        assert not unmatched, f"sector 未命中 SECTOR_PROFILE 且未登记为 fallback: {sorted(unmatched)}"
+
     def test_negative_samples_cover_multiple_kinds(self, dataset: dict[str, Any]) -> None:
         """负样本不能只有一种类型。
 
@@ -219,27 +241,14 @@ class TestBacktestGolden:
                 checked += 1
         assert checked == len(launched), f"只检到 {checked} 个已发币样本，数据集是否被改动？"
 
-    @pytest.mark.xfail(
-        reason=(
-            "已知引擎缺陷（M2 回测发现，未修）：加权求和模型下 airdrop_signal 压到 20 "
-            "也压不住其余七维。Chainlink 68 / Worldcoin 69 越过 FARM 阈值 65 —— "
-            "execution/competition/transparency 各 100、team 85~95 把总分抬了起来。"
-            "对本系统而言「已发币 = 无空投机会」应是否决条件，而不是可被其他维度"
-            "补偿的一项打分。修它要改评分结构并牵动权重校准协议，超出 M2 范围。"
-        ),
-        strict=True,
-    )
-    def test_known_engine_gap_already_launched_still_farm(self, run_output: tuple[list[Any], dict[str, Any]]) -> None:
-        """已发币项目不该被判 FARM —— 当前会，所以标 xfail(strict)。
-
-        用 strict=True 是刻意的：哪天引擎改好了，这条会变成 XPASS 并报错，
-        逼人回来删掉 xfail 标记。缺陷修复不该静默发生，否则没人知道这个坑
-        已经填了，xfail 标记会一直挂着骗人。
-        """
+    def test_already_launched_projects_are_vetoed_from_farm(self, run_output: tuple[list[Any], dict[str, Any]]) -> None:
+        """ADR-015：已发币且无后续路径的项目不得保留 FARM 标签。"""
         results, _ = run_output
         launched = {"Chainlink", "Worldcoin"}
-        farmed = [r.name for r in results if r.name in launched and r.label == "FARM"]
-        assert not farmed, f"已发币项目被判 FARM: {farmed}"
+        vetoed = [r for r in results if r.name in launched]
+        assert len(vetoed) == len(launched), "已发币回测样本被改动，资格门失去覆盖"
+        assert all(r.label != "FARM" for r in vetoed), f"已发币项目仍被判 FARM: {vetoed}"
+        assert all(r.veto == "already_launched" for r in vetoed), f"资格否决未落到样本: {vetoed}"
 
 
 class TestExportIdempotency:

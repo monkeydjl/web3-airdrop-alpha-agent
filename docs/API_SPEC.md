@@ -1088,8 +1088,16 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 **API 响应字段**（`GET /projects/{id}` → `data.project`，见 §6）：
 `id, name, url, sector, stage, score, label, confidence, reason[], sub_scores,
-weight_version, narrative, team, risk, tokenomics, funding, funding_note,
+weight_version, veto, narrative, team, risk, tokenomics, funding, funding_note,
 signals, source, created_at, updated_at`
+
+> `veto`（2026-09-01 新增，ADR-015）：资格门否决原因，取值
+> `"already_launched"` / `"no_participation_path"` / `null`。
+> **`score` 不因否决改变** —— 被否决的项目分数照样可以很高，所以只看
+> `score` 与 `label` 无法区分「模型给了低分」和「被业务规则否决」。
+> `null` 语义是「未经资格门评估」（该行在资格门上线前写入），不是
+> 「通过了资格门」；重算需显式跑 `POST /run`。
+> 人类可读的说明同时出现在 `reason[0]`，前端零改动即可显示。
 
 **数据库列名**（`projects` 表，供直查 SQL 用）：
 `narrative_json, team_json, risk_json, tokenomics_json` —— 带 `_json` 后缀的是

@@ -221,11 +221,12 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **7 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **8 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
-  `0007_roi`（2026-08-31，收益台账）。
+  `0007_roi`（2026-08-31，收益台账）、
+  `0008_eligibility_veto`（2026-09-01，资格门否决记录）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -238,6 +239,27 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   回滚掉 `0007` 会丢掉收益台账（`roi_entries` / `roi_outcomes`）——
   **这是全库最不可再生成的数据**：投入金额与工时是用户一条条手敲的，
   链上查不回来、也没有第二份来源。回滚前必须先备份（§6）。
+  回滚掉 `0008` 只丢 `projects.veto`（资格门否决原因，重跑 `POST /run` 可重算）。
+
+#### 给既有库加列的两处登记（漏一处就线上炸）
+
+`projects` / `raw_projects` / `interactions` 这几张表的**新增列**必须同时落在两处：
+
+1. `db.py` 的建表 DDL（新库靠它）；
+2. `db.py::init_db` 里的 `_add_column_if_not_exists(...)`（**既有库靠它**）。
+
+只改 DDL 不改第 2 处的失效方式很隐蔽：建表语句是 `CREATE TABLE IF NOT EXISTS`，
+既有库表已存在就整条跳过，列永远补不上。CI 是全新 checkout、表由 DDL 现建，
+**门禁全绿**；但任何已跑过的开发 / 生产库一升级就在写入时报
+`table projects has no column named <col>`。
+
+后果不止是一次报错：`repository.save` 失败会让整个 pipeline run 变
+`status="failed"`（评分本身是成功的，只是落不了库），
+表现为「升级后所有分析任务突然全挂」。
+
+ADR-015 的 `veto` 列就踩了这个坑，由 golden 回归集捕获（12 failed）。
+`alembic` 迁移**不能替代**第 2 处 —— 迁移在滚动 baseline 下做了存在性判断，
+且不是所有部署路径都跑 `alembic upgrade`。
 
 ### 3.6 Opportunity Shadow 灰度
 

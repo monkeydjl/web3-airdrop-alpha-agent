@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import warnings
 from datetime import UTC, date, datetime
@@ -265,3 +266,105 @@ def test_postgres_init_db_emits_opportunity_economic_snapshots_ddl_parity() -> N
         assert f"CREATE INDEX IF NOT EXISTS {index_name}" in all_sql
         assert _compact_sql(columns_sql) in _compact_sql(all_sql)
     assert sqls == [event[1] for event in events if event[0] == "execute"]
+
+
+# 冻结的历史列形态，取自真实旧开发库（2026-09-01 采样）。
+# **不要为了让新列通过而更新这里** —— 那正好绕掉这个测试要防的东西。
+# 新列应该加到 init_db 的 _add_column_if_not_exists 登记里。
+_LEGACY_TABLE_SNAPSHOTS: dict[str, tuple[str, ...]] = {
+    "projects": (
+        "id",
+        "name",
+        "url",
+        "sector",
+        "stage",
+        "score",
+        "label",
+        "recommendation",
+        "confidence",
+        "weight_version",
+        "reason",
+        "narrative_json",
+        "team_json",
+        "risk_json",
+        "tokenomics_json",
+        "raw_signals",
+        "meta",
+        "source",
+        "raw_signals_hash",
+        "fetched_at",
+        "created_at",
+        "updated_at",
+    ),
+    "raw_projects": (
+        "raw_id",
+        "source_id",
+        "dedup_key",
+        "raw_data",
+        "discovered_at",
+        "processed",
+        "processed_at",
+        "project_id",
+        "discovery_score",
+    ),
+}
+
+
+def _ddl_columns(ddl: str, table: str) -> list[str]:
+    """Column names declared in a CREATE TABLE block, in declaration order."""
+    match = re.search(
+        r"CREATE TABLE IF NOT EXISTS " + table + r"\s*\((.*?)\n\s*\);",
+        ddl,
+        re.S,
+    )
+    assert match is not None, f"{table} 的建表语句没找到，DDL 结构可能变了"
+    names: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        if stripped.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN", "CHECK", "CONSTRAINT")):
+            continue
+        names.append(stripped.split()[0])
+    return names
+
+
+def test_existing_database_reaches_full_column_parity_after_init() -> None:
+    """既有库必须能被 init_db 补齐到与建表 DDL 完全一致的列集合。
+
+    建表语句是 CREATE TABLE IF NOT EXISTS —— 表已存在就整条跳过，光改 DDL
+    补不上列。既有库靠 init_db 里的 _add_column_if_not_exists 升级，漏登记
+    一列就会在写入时报 "table X has no column named Y"，进而让整个 pipeline
+    run 变 status="failed"（评分成功但落库失败）。
+
+    这个失效模式在 CI 里看不见：CI 是全新 checkout，表由完整 DDL 现建。
+    只有已跑过的开发 / 生产库升级时才炸。ADR-015 的 projects.veto 踩过一次。
+
+    做法：按**冻结的历史列形态**建表（下面的快照取自真实旧库），跑 init_db，
+    然后要求列集合追平当前 DDL。快照是冻结的，所以任何新加到 DDL 的列都必须
+    由补列路径补上来 —— 漏登记会自动红灯，与具体是哪一列无关。
+    """
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = DbConnection(raw, kind="sqlite")
+    try:
+        for table, legacy_columns in _LEGACY_TABLE_SNAPSHOTS.items():
+            body = ", ".join(f"{column} TEXT" for column in legacy_columns)
+            raw.execute(f"CREATE TABLE {table} ({body})")
+
+        init_db(conn)
+
+        ddl = _sqlite_ddl()
+        missing: dict[str, list[str]] = {}
+        for table in _LEGACY_TABLE_SNAPSHOTS:
+            actual = {row["name"] for row in raw.execute(f"PRAGMA table_info({table})")}
+            expected = _ddl_columns(ddl, table)
+            gap = [column for column in expected if column not in actual]
+            if gap:
+                missing[table] = gap
+
+        assert not missing, (
+            f"以下列只在建表 DDL 里、没有对应的 _add_column_if_not_exists 登记，既有库升级后会写入失败：{missing}"
+        )
+    finally:
+        conn.close()

@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **317 个不同事件名**、
-**65 个命名空间**（2026-08-31 随收益台账 `roi.*` 4 个事件重测）；
-段数分布：2 段 251 个、3 段 60 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **318 个不同事件名**、
+**65 个命名空间**（2026-09-01 随资格门 `scorer.veto_applied` 重测）；
+段数分布：2 段 252 个、3 段 60 个、4 段 5 个、1 段 1 个。
 
 > 这几个数字**没有门禁保护**（`test_observability_doc_parity` 只校验「文档提到的
 > 事件名必须真实存在」，不校验总数）。改动日志事件后请用与该测试同源的正则
@@ -89,6 +89,10 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 收益台账（F3）的四个事件：`roi.entry_recorded`、`roi.entry_deleted`、
 `roi.outcome_recorded`、`roi.outcome_deleted`。
+
+资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
+`original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——
+分数本身不因否决改变，只看 `score` 无法区分两者。
 
 > `roi.outcome_recorded` 的字段名是 `outcome_event`，**不是 `event`** ——
 > `event` 是 structlog `logger.info(event, *args, **kw)` 的位置参数名，

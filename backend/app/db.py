@@ -250,6 +250,7 @@ def _sqlite_ddl() -> str:
                 recommendation  TEXT,
                 confidence      REAL,
                 weight_version  TEXT,
+                veto            TEXT,
                 reason          TEXT,
                 narrative_json  TEXT,
                 team_json       TEXT,
@@ -785,6 +786,7 @@ def _postgres_ddl() -> str:
                 recommendation  TEXT,
                 confidence      DOUBLE PRECISION,
                 weight_version  TEXT,
+                veto            TEXT,
                 reason          TEXT,
                 narrative_json  TEXT,
                 team_json       TEXT,
@@ -1317,6 +1319,10 @@ def init_db(conn: Any = None) -> None:
         # 不复用 raw_signals：那一列存的是采集到的**输入**信号（scripts/seed.py 与
         # raw_signals_hash 均按此语义写入），子分是**输出**，两者形状不兼容。
         _add_column_if_not_exists(db, "projects", "sub_scores", "TEXT")
+        # 资格门否决原因（ADR-015）。CREATE TABLE IF NOT EXISTS 不会给既有库补列，
+        # 漏登记这行会让所有已存在的开发/生产库在 save 时报
+        # "table projects has no column named veto"（评分成功但落库失败 → run 变 failed）。
+        _add_column_if_not_exists(db, "projects", "veto", "TEXT")
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
 

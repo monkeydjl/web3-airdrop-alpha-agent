@@ -79,6 +79,7 @@ class CaseResult:
     label: str | None
     sub_scores: dict[str, float] = field(default_factory=dict)
     reason: list[str] = field(default_factory=list)
+    veto: str | None = None
 
     @property
     def hit(self) -> bool:
@@ -203,6 +204,7 @@ async def run_cases(dataset: dict[str, Any]) -> list[CaseResult]:
                 label=_attr(scored, "label"),
                 sub_scores=_attr(scored, "sub_scores") or {},
                 reason=_attr(scored, "reason") or [],
+                veto=_attr(scored, "veto"),
             )
         )
     return out
@@ -266,6 +268,8 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
         "score_max": max(scores) if scores else None,
         "score_avg": round(sum(scores) / len(scores), 2) if scores else None,
         "label_distribution": _label_distribution(results),
+        "veto_distribution": _veto_distribution(results),
+        "veto_false_negatives": sum(1 for r in misses if r.veto is not None),
         "miss_attribution": attribution,
     }
 
@@ -275,6 +279,15 @@ def _label_distribution(results: list[CaseResult]) -> dict[str, int]:
     for r in results:
         key = r.label or "UNSCORED"
         dist[key] = dist.get(key, 0) + 1
+    return dist
+
+
+def _veto_distribution(results: list[CaseResult]) -> dict[str, int]:
+    """Count eligibility vetoes separately from score labels."""
+    dist: dict[str, int] = {}
+    for r in results:
+        if r.veto:
+            dist[r.veto] = dist.get(r.veto, 0) + 1
     return dist
 
 
@@ -328,6 +341,8 @@ def format_report(dataset: dict[str, Any], results: list[CaseResult], summary: d
             "── 分数分布 ──",
             f"  min / avg / max: {summary['score_min']} / {summary['score_avg']} / {summary['score_max']}",
             f"  标签分布: {summary['label_distribution']}",
+            f"  资格否决: {summary['veto_distribution'] or '无'}",
+            f"  否决误漏: {summary['veto_false_negatives']}  ← 被否决但实际有空投，需单独审查",
             "",
             "── 逐条明细 ──",
         ]
@@ -336,9 +351,10 @@ def format_report(dataset: dict[str, Any], results: list[CaseResult], summary: d
     for r in sorted(results, key=lambda x: x.score or 0, reverse=True):
         mark = "✓" if r.hit else ("✗" if r.miss else ("!" if r.false_positive else "·"))
         actual = f"空投({r.magnitude})" if r.airdropped else "无空投"
+        veto = f" veto={r.veto}" if r.veto else ""
         conf = "" if r.confidence == "high" else f" [{r.confidence}]"
         lines.append(
-            f"  {mark} {r.score if r.score is not None else '--':>3} {r.label or 'UNSCORED':<8} {r.name:<18} {actual}{conf}"
+            f"  {mark} {r.score if r.score is not None else '--':>3} {r.label or 'UNSCORED':<8} {r.name:<18} {actual}{veto}{conf}"
         )
 
     if summary["miss_attribution"]:
@@ -504,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
                             "airdropped": r.airdropped,
                             "magnitude": r.magnitude,
                             "confidence": r.confidence,
+                            "veto": r.veto,
                             "hit": r.hit,
                             "miss": r.miss,
                             "false_positive": r.false_positive,

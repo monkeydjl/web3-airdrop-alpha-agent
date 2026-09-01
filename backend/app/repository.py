@@ -111,8 +111,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -135,7 +135,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 RETURNING *
                 """
             elif sqlite3.sqlite_version_info >= (3, 24, 0):
@@ -149,8 +150,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -173,7 +174,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -185,8 +187,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -220,6 +222,9 @@ class ProjectRepository:
                     # 而不是用空壳覆盖掉可用的历史快照。
                     getattr(state, "weight_version", None) or None,
                     _sub_scores_json(state),
+                    # Unlike score snapshots, a successful scoring pass may have no
+                    # veto and must clear a stale previous veto.
+                    getattr(state, "veto", None),
                 ),
             )
             if postgres_upsert or sqlite_supports_returning:
@@ -241,6 +246,7 @@ class ProjectRepository:
                     "sector": project.sector,
                     "source": project.source,
                     "confidence": state.confidence,
+                    "veto": getattr(state, "veto", None),
                     "reason": state.reason,
                     "narrative": state.narrative.model_dump() if state.narrative else None,
                     "team": state.team.model_dump() if state.team else None,
