@@ -15,7 +15,8 @@
 - 前端 `frontend-next` :3002；API :8002；测试 PG 宿主 :5433。后端用 `backend/venv/Scripts/python.exe`。
 - CI 口径：`cd backend && python -m ruff check . && python -m ruff format --check . && python -m mypy app`；勿只 lint 改动文件。
 - 全量 pytest 约 45 分钟，后台单跑写日志，勿并行两套。本机需加 `--no-cov`（沙箱删不掉 `.coverage`）。
-- 当前基线：**3191 passed / 9 skipped，无 xfail**。前端 build/tsc/lint/20 单测全绿。
+- 断言结构化日志用 `structlog.testing.capture_logs()`，**不是 caplog** —— 日志不走 stdlib logging，caplog 抓不到。
+- 当前基线：**3226 passed / 9 skipped，无 xfail**（45m22s）。前端 build/tsc/lint/20 单测全绿。
 - 前端 build 两坑：① `.next/turbopack` 清理被沙箱批量删除保护拦 → 把 `.next` 改名再 build，改完记得删掉改名目录否则污染 git status；② `NODE_OPTIONS` 含 `--use-system-ca` 会让 worker 报 `ERR_WORKER_INVALID_EXEC_ARGV` → 用 `NODE_OPTIONS="" npm run build`。
 - 新日志事件用调用点字面量并同步 `OBSERVABILITY.md` 实测总数；新增 migration 同步 `OPERATIONS.md` 清单 + `test_alembic_migration.py` 登记；SQLite 多语句 migration 用 `_exec_script` 拆分。
 
@@ -24,18 +25,19 @@
 - M2/F3：ROI 台账（0007）、6 API、Portfolio `RoiLedger`；回测按 `live|backtest` 分桶，校准只计 live；数据集 19/50（14 正 / 5 负）。
 - 回测：`PYTHONPATH=. python scripts/run_backtest.py [--json] [--export-samples]`；读 `response.states` 而非 `results`。
 
-## ADR-015 资格门（Accepted，已实现）
-- 语义：`score` 答「项目好不好」，`veto` 答「现在还有没有可参与路径」。**否决只改 label，绝不改 score** —— 68 分改成 34 会被读成「模型认为项目差」，也让回测无法区分低分与规则否决。
-- 落点 `scorer.py`：`_score_to_label` → `apply_eligibility_gate` → `_apply_confidence_degradation`，复用已有「只改 label」钩子，不重构加权求和。
-- 两条规则：`already_launched`（已发币且无 points/明确空投/portal）FARM→IGNORE；`no_participation_path`（无 testnet/points/portal）FARM→WATCH（只到 WATCH，采集字段缺失可能误判）。非 FARM 原样返回。
-- `is_already_launched_without_airdrop_path()` 由 `airdrop_signal.py` 已上市封顶与资格门**共用**，禁止写第三份判定。
-- veto 不参与权重拟合（搜索空间只含八权重 + 两阈值，重加权时 veto 保持原值）。`veto_false_negatives` 必须独立于 FPR 监控 —— 误否决是把真机会永久挡掉。
-- 实测：recall 1.000→0.929、fpr 1.000→0.400，目标函数 `recall−2×fpr` **−1.00 → +0.129**。Chainlink/Worldcoin score 仍 68/69。
-- **待 owner 拍板**：`veto_false_negatives=1`，Jupiter 被 `no_participation_path` 误否决（参与路径是历史交易行为，三个信号字段表达不了）。放宽规则属业务调整，不单方面改。
-- 回测 sector 已归一化到 `SECTOR_PROFILE` 键；`social`/`identity` 保留原值并在测试登记为已批准 fallback。**生产路径 sector normalize + 未命中 warning 仍未做**（独立立项）：查表大小写敏感且静默走默认档，会让 0.15 权重白扔。
+## 评分引擎两条硬语义
+- **ADR-015 资格门**（Accepted）：`score` 答「项目好不好」，`veto` 答「现在还有没有可参与路径」。**否决只改 label 不改 score** —— 68 改 34 会被读成「模型认为项目差」，也让回测分不清低分与规则否决。落点 `scorer.py`：`_score_to_label` → `apply_eligibility_gate` → `_apply_confidence_degradation`。两条规则 `already_launched`（FARM→IGNORE）、`no_participation_path`（FARM→WATCH，只到 WATCH 因采集字段可能缺）。非 FARM 原样返回。
+  - `is_already_launched_without_airdrop_path()` 由 `airdrop_signal.py` 封顶逻辑与资格门**共用**，禁止写第三份。
+  - veto 不参与权重拟合；`veto_false_negatives` 独立于 FPR 监控（误否决是永久挡掉真机会）。
+  - 实测 recall 1.000→0.929、fpr 1.000→0.400，目标函数 **−1.00 → +0.129**。
+  - **待 owner 拍板**：`veto_false_negatives=1`，Jupiter 被 `no_participation_path` 误否决（参与路径是历史交易行为，三字段表达不了）。放宽规则属业务调整，不单方面改。
+- **sector 查表**（已修）：`narrative.py::resolve_sector_profile()` 三级查找，未命中返回 `(DEFAULT_PROFILE, None)` 并打 `narrative.sector_profile_missing`。原实现静默走默认档 → `narrative_timing` 恒 60，0.15 权重白扔。
+  - **归一只能做在查表侧**：`normalize_sector()` 的产出进 `generate_deterministic_id()`，sector 是项目 ID 组成部分，扩 `SECTOR_ALIAS` 会让既有项目 ID 漂移。反向测试 `test_lookup_alias_is_not_wired_into_normalize_sector` 拦住「顺手统一两张表」。
+  - 没档位的新赛道（如 `RWA`）保持未命中 + 告警；硬塞进现有档等于编造赛道热度。
+  - 校准前必须确认没有维度方差≈0（`WEIGHT_CALIBRATION.md §4.1.2`），常数维度会让优化器在错误输入上拟合。
 
 ## 其他约定
-- Repository 三条写入路径（PG / SQLite UPSERT / legacy fallback）须同步。`weight_version`/`sub_scores` 用 COALESCE 保旧值，但 `veto` 必须 `EXCLUDED.veto` 直接覆盖 —— 一次成功评分若无否决要能清除过期 veto。
+- Repository 三条写入路径（PG / SQLite UPSERT / legacy）须同步。`weight_version`/`sub_scores` 用 COALESCE 保旧值，但 `veto` 必须 `EXCLUDED.veto` 覆盖 —— 成功评分若无否决要能清除过期 veto。
 - `pipeline_run` 响应有逐键精确契约，勿随意加字段。写端点有 auth/document parity；文档路径标题不带 query。
-- `.gitignore` 目录规则不可用 `git add -f` 强推；`.workbuddy/memory/` 日志可能被忽略但仍要维护。
-- 生产遗留：P1-5 前端代理管理员密钥、P1-4 同步 IO、反代限流与采集器运行时 URL 白名单。M3/F4 为 watched wallets + Alchemy webhook。
+- `.gitignore` 目录规则不可用 `git add -f` 强推。
+- 生产遗留：P1-5 前端代理管理员密钥、P1-4 同步 IO、反代限流与采集器运行时 URL 白名单。M3/F4 = watched wallets + Alchemy webhook。

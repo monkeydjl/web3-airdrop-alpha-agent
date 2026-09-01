@@ -192,9 +192,26 @@ false positive 来自另外三类原因，见 §「本 ADR 不解决什么」。
 
    但它顺带暴露一个**生产路径隐患**：`SECTOR_PROFILE` 是大小写敏感的精确
    匹配，且未命中时**静默**走默认档（无 warning）。真实采集数据只要 sector
-   写法与查表键不同（`"zk-rollup"` vs `"ZK"`），这一维的 0.20 权重就全部
-   浪费在常数 60 上，而且没有任何信号提示。**建议单独立项**：sector 归一化
-   （查表前 normalize）+ 未命中时打 warning 日志。
+   写法与查表键不同（`"zk-rollup"` vs `"ZK"`），这一维的 0.15 权重就全部
+   浪费在常数 60 上，而且没有任何信号提示。
+
+   > **已修（2026-09-01，本 ADR 之后的独立改动）**。实测确认这不是理论隐患：
+   > DefiLlama 的真实 category 大面积未命中 —— `Dexes` / `Rollup` /
+   > `Liquid Restaking` / `RWA` 全部落默认档。
+   >
+   > 修法是 `narrative.py::resolve_sector_profile()`：三级查找（精确 → 别名表
+   > → 大小写无关），未命中时返回 `(DEFAULT_PROFILE, None)`，让调用方能**区分
+   > 「命中」与「走了默认档」**并打 `narrative.sector_profile_missing` WARNING。
+   >
+   > **归一刻意只做在查表侧，没有去扩 `utils.normalize.SECTOR_ALIAS`**：那个
+   > 函数的产出进 `create_dedup_key()` → `generate_deterministic_id()`，sector
+   > 是项目确定性 ID 的组成部分。把 `"Dexes"` 归一成 `"DEX"` 会让同一项目算出
+   > 不同 UUID，既有行全部变孤儿、跨源去重失效。
+   > `test_sector_profile_lookup.py::test_lookup_alias_is_not_wired_into_normalize_sector`
+   > 是刻意的**反向**约束，防止后人顺手「统一」这两张表。
+   >
+   > 没有档位的新赛道（如 `RWA`）仍走默认档并告警 —— 硬塞进现有档位等于编造
+   > 赛道热度，正确处置是去 `SECTOR_PROFILE` 补一档真实值。
 
 4. **`competition` 大面积 100**：`COMPETITION_MAP` 在 sector_count ≤3 给满分，
    而回测的 sector 计数来自数据集自带字段而非真实竞品统计。是回测输入的

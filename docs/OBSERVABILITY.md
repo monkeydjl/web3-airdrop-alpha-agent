@@ -62,9 +62,10 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **318 个不同事件名**、
-**65 个命名空间**（2026-09-01 随资格门 `scorer.veto_applied` 重测）；
-段数分布：2 段 252 个、3 段 60 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **319 个不同事件名**、
+**65 个命名空间**（2026-09-01 随 `scorer.veto_applied` 与
+`narrative.sector_profile_missing` 重测）；
+段数分布：2 段 253 个、3 段 60 个、4 段 5 个、1 段 1 个。
 
 > 这几个数字**没有门禁保护**（`test_observability_doc_parity` 只校验「文档提到的
 > 事件名必须真实存在」，不校验总数）。改动日志事件后请用与该测试同源的正则
@@ -93,6 +94,17 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
 `original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——
 分数本身不因否决改变，只看 `score` 无法区分两者。
+
+`narrative.sector_profile_missing`（WARNING，字段 `sector` / `known_sectors` /
+`impact`）：项目的 sector 没命中 `SECTOR_PROFILE`，`narrative_timing` 退化为
+默认档常数 60.0，**该维的 0.15 权重实际未参与区分**。
+
+> 这条务必配告警，因为它是**静默失效**：分数照样算得出来、看上去完全正常，
+> 只是八维模型实际只剩七维在区分项目。查表已做写法归一（`Dexes`→`DEX`、
+> `Rollup`→`L2` 等，见 `narrative.py::_SECTOR_LOOKUP_ALIAS`），所以这条一旦
+> 出现，说明遇到了**真正没有档位的新赛道**（如 `RWA`），处置是去
+> `SECTOR_PROFILE` 补一档真实热度值 —— 而不是把它硬塞进现有档位，那等于编造
+> 赛道热度。持续出现同一个 sector 意味着这批项目的该维得分一直是常数。
 
 > `roi.outcome_recorded` 的字段名是 `outcome_event`，**不是 `event`** ——
 > `event` 是 structlog `logger.info(event, *args, **kw)` 的位置参数名，
