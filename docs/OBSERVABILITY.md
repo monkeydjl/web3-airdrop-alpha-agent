@@ -62,14 +62,14 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **319 个不同事件名**、
-**65 个命名空间**（2026-09-01 随 `scorer.veto_applied` 与
-`narrative.sector_profile_missing` 重测）；
-段数分布：2 段 253 个、3 段 60 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **328 个不同事件名**、
+**66 个命名空间**（2026-09-02 随 F4 领取监控的 8 个 `claim_watch.*` 重测）；
+段数分布：2 段 261 个、3 段 61 个、4 段 5 个、1 段 1 个。
 
-> 这几个数字**没有门禁保护**（`test_observability_doc_parity` 只校验「文档提到的
-> 事件名必须真实存在」，不校验总数）。改动日志事件后请用与该测试同源的正则
-> 重算，别凭印象改：
+> **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
+> 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
+> 会逐一比对总数与命名空间数，加 F4 的 8 个事件时它当场就红了）。改动日志
+> 事件后必须用与该测试同源的正则重算，别凭印象改：
 > ```powershell
 > cd backend
 > & ".\venv\Scripts\python.exe" -c "import re,pathlib,collections; pat=re.compile(r'logger\.(?:debug|info|warning|warn|error|exception|critical)\(\s*\""([a-z0-9_.]+)\""'); e=set(); [e.update(pat.findall(p.read_text(encoding='utf-8'))) for p in pathlib.Path('app').rglob('*.py')]; print(len(e), len({x.split('.')[0] for x in e}))"
@@ -90,6 +90,26 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 收益台账（F3）的四个事件：`roi.entry_recorded`、`roi.entry_deleted`、
 `roi.outcome_recorded`、`roi.outcome_deleted`。
+
+领取监控（F4，ACTION_LOOP_DESIGN §5）落六个 `claim_watch.*` 事件：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| `claim_watch.candidate_detected` | INFO | 命中自有地址，产出 airdrop_candidate 事件 |
+| `claim_watch.skipped_internal_transfer` | INFO | from 与 to 都是自有地址，判为挪仓不报 |
+| `claim_watch.skipped_no_tx_hash` | INFO | payload 缺 `transactionHash`，不可追溯故不报 |
+| `claim_watch.wallet_registered` | INFO | 登记一个自有地址 |
+| `claim_watch.wallet_updated` | INFO | 改 label / chain / active |
+| `claim_watch.wallet_deleted` | INFO | 删除登记 |
+
+外加 `claim_watch.evaluate_failed` / `claim_watch.record_failed` /
+`webhook.alchemy.claim_watch_failed`（均 ERROR）—— 领取监控的失败**不会**
+让 webhook 返回非 200（那会触发 Alchemy 重投风暴），所以这三条是唯一能
+发现它坏了的途径，务必配告警。
+
+> **字段里的地址一律只记前 10 位**（`address_prefix`）。日志会落文件、可能
+> 被采集到集中式系统，与推送内容同一口径（§5.4.1）—— 完整地址进了日志，
+> `/watched-wallets` 那条管理员锁就白设了。
 
 资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
 `original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——

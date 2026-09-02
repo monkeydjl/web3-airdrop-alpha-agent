@@ -499,6 +499,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         quarantine,
         roi,
         run,
+        watched_wallets,
         watchlist,
         webhook,
     )
@@ -535,6 +536,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(notifications.router, prefix="/api/v1", tags=["v1"])
     app.include_router(notify.router, prefix="/api/v1", tags=["v1"])
     app.include_router(roi.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(watched_wallets.router, prefix="/api/v1", tags=["v1"])
     app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
 
     # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation

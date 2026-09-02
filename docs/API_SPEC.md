@@ -67,23 +67,26 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-08-31 随收益台账更新）
+### 2.1 写操作的鉴权分布（实测，2026-09-02 随领取监控更新）
 
-全仓共 **30 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **33 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 8 |
+| 管理员专用 | 11 |
 | 无鉴权（公开） | 2 |
 | 匿名 token 可调 | 20 |
 <!-- write-auth-split:end -->
 
-管理员专用的 8 个：`/run`、`/import/projects`、`/quarantine`、
+管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
 `/quarantine/release`、`/notify/test`（2026-08-31，决策推送测试发送），
-加上 2026-08-24 新收紧的三个 ——
+2026-08-24 新收紧的三个 ——
 `POST /collections/{source_id}/trigger`、`PATCH /collections/{source_id}`、
-`PATCH /projects/{project_id}/funding`。
+`PATCH /projects/{project_id}/funding`，
+以及 2026-09-02 领取监控的三个写端点 ——
+`POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
+`DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41）。
 
 公开的 2 个：`POST /auth/anonymous`（匿名入口本身）、
 `POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）。
@@ -206,6 +209,10 @@
 | GET | `/api/v1/roi/summary` | v1 | F3（2026-08-31） | 我的收益台账总览（详见 §40） |
 | DELETE | `/api/v1/roi/entries/{entry_id}` | v1 | F3（2026-08-31） | 删除一条投入记录（匿名 token，详见 §40） |
 | DELETE | `/api/v1/roi/outcomes/{outcome_id}` | v1 | F3（2026-08-31） | 删除一条产出记录（匿名 token，详见 §40） |
+| GET | `/api/v1/watched-wallets` | v1 | F4（2026-09-02） | 自有地址清单（**管理员专用，读也锁**，详见 §41） |
+| POST | `/api/v1/watched-wallets` | v1 | F4（2026-09-02） | 登记自有地址（管理员专用，详见 §41） |
+| PATCH | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 改备注/链/启用（管理员专用，详见 §41） |
+| DELETE | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 删除登记地址（管理员专用，详见 §41） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -2019,3 +2026,66 @@ plan/task 两级状态机，按 token 身份（`get_current_user`）隔离 —�
 ### 40f. DELETE /api/v1/roi/outcomes/{outcome_id}
 
 删除一条产出记录。
+
+## 41. watched-wallets（领取监控自有地址，2026-09-02 新增，**整前缀管理员锁**）
+
+F4 领取监控（[ACTION_LOOP_DESIGN §5](ACTION_LOOP_DESIGN.md#5-f4-领取监控claim-watch)）
+的自有地址清单。webhook 收到链上事件后拿它做匹配，命中就产出 `airdrop_candidate`
+事件（站内通知 + F1 推送）。
+
+**整个前缀在 `auth.ADMIN_ONLY_PREFIXES` 里，`GET` 也锁。** 与本文档其它
+"读开放写受限"的端点不同：一份「这个人有哪些钱包」的清单，配合公开的链上
+数据就能还原出完整持仓与交易史 —— 泄露风险主要在**读侧**，只锁写没有意义。
+
+三条实施约束：
+
+| 约束 | 原因 |
+| --- | --- |
+| 地址小写归一（写入侧 + 匹配侧都做） | 只做一侧则 UNIQUE 形同虚设（`0xAbC` 与 `0xabc` 各占一行），而 Alchemy payload 返回 EIP-55 混合大小写 |
+| 只校验形状 `^0x[0-9a-fA-F]{40}$`，不做 checksum | EIP-55 校验会拒绝全小写地址，而那是区块浏览器与链上工具的常见输出 |
+| 地址不可改 | 改地址等于换钱包，而历史命中按地址关联，原地改会让既有通知指向从未监控过的地址 |
+
+`chain` 是闭表：`ethereum` / `arbitrum` / `optimism` / `base` / `polygon`。
+收成闭表是因为它会进通知文案，拼写不一致（`ethereum` / `Ethereum` / `eth`）
+会让同一条链看起来像三条。
+
+### 41a. GET /api/v1/watched-wallets
+
+列出全部（含 `active=false`），按 `created_at DESC`。
+
+响应 `data`：`wallets[]`（`id` / `address` / `label` / `chain` / `active` / `created_at`）、
+`total`、`active_count`。`active` 一律是 bool —— SQLite 存 INTEGER、PG 存 BOOLEAN，
+转换统一在读取侧做。
+
+### 41b. POST /api/v1/watched-wallets
+
+登记一个地址。请求体 `address` / `label` / `chain`（默认 `ethereum`）。
+
+| 状态 | code | 触发条件 |
+| --- | --- | --- |
+| 409 | `ADDRESS_EXISTS` | 地址已登记（比较**不区分大小写**） |
+| 422 | `INVALID_ADDRESS` | 形状不合法 |
+| 422 | `UNSUPPORTED_CHAIN` | chain 不在闭表内 |
+
+### 41c. PATCH /api/v1/watched-wallets/{wallet_id}
+
+改 `label` / `chain` / `active`，三者至少给一个（否则 422 `NOTHING_TO_UPDATE`）。
+请求体里的 `address` 被忽略。
+
+`active=false` 与删除的区别：前者保留登记但停止匹配（临时静音）。Alchemy 控制台
+侧的地址清单在 MVP 是手工维护的，所以 `active=false` 时 webhook 仍会收到事件，
+只是不再产生 `airdrop_candidate`。
+
+### 41d. DELETE /api/v1/watched-wallets/{wallet_id}
+
+硬删。不存在返回 404。命中记录存在 `notify_log` 里，不依赖本表存活。
+
+### 41e. 对 POST /api/v1/webhook/alchemy 的影响
+
+响应 `data` 增加 `claim_matched`（bool）：本次事件是否命中自有地址并新入库了
+一条 `airdrop_candidate`。重投的同一事件返回 `false`（去重，`event_key` =
+`claim:{address}:{tx_hash}:{asset}`）。
+
+匹配失败**不影响** webhook 的既有职责与状态码：webhook 一律返回 200
+（非 200 会让 Alchemy 反复重投），领取监控的异常被吞掉并记
+`webhook.alchemy.claim_watch_failed`。

@@ -561,6 +561,22 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
                 ON roi_outcomes(user_id, project_id);
 
+            -- 领取监控的自有地址（ACTION_LOOP_DESIGN.md §5，F4）
+            -- address 一律**小写存储**：归一必须写入侧与匹配侧同时做，否则
+            -- UNIQUE 形同虚设（0xAbC 与 0xabc 各占一行），而 Alchemy payload
+            -- 实际返回 EIP-55 混合大小写。同 competition 分组的教训。
+            -- active=0 表示保留登记但停止匹配（临时静音），与删除区分。
+            CREATE TABLE IF NOT EXISTS watched_wallets (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                address    TEXT NOT NULL UNIQUE,
+                label      TEXT NOT NULL,
+                chain      TEXT NOT NULL DEFAULT 'ethereum',
+                active     INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
+                ON watched_wallets(active, address);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1091,6 +1107,21 @@ def _postgres_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
                 ON roi_outcomes(user_id, project_id);
+
+            -- 领取监控的自有地址（ACTION_LOOP_DESIGN.md §5，F4）
+            -- 同 SQLite 侧口径：address 小写归一 + UNIQUE，active 为软开关。
+            -- 这里用 BOOLEAN 而非 INTEGER —— PG 有原生布尔，读出来就是 True/False，
+            -- 路由层不必再做 1/0 转换（SQLite 侧读出的是 int，转换在读取侧统一做）。
+            CREATE TABLE IF NOT EXISTS watched_wallets (
+                id         SERIAL PRIMARY KEY,
+                address    TEXT NOT NULL UNIQUE,
+                label      TEXT NOT NULL,
+                chain      TEXT NOT NULL DEFAULT 'ethereum',
+                active     BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
+                ON watched_wallets(active, address);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (

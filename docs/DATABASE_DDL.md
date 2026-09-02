@@ -349,6 +349,25 @@ CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project ON roi_outcomes(user_id
 
 
 -- ============================================
+-- 2.9e watched_wallets 表（F4 领取监控，ACTION_LOOP_DESIGN §5.3）
+-- ============================================
+-- address 一律小写存储。归一必须写入侧与匹配侧同时做，否则 UNIQUE 形同虚设
+-- （0xAbC 与 0xabc 各占一行），而 Alchemy payload 实际返回 EIP-55 混合大小写。
+-- active=0 是软开关（临时静音），与删除区分：控制台侧地址清单 MVP 手工维护，
+-- 所以 active=0 时 webhook 仍收到事件，只是不再产生 airdrop_candidate。
+CREATE TABLE IF NOT EXISTS watched_wallets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    address    TEXT NOT NULL UNIQUE,              -- 小写归一，形状校验 ^0x[0-9a-f]{40}$
+    label      TEXT NOT NULL,                     -- 自定义备注，通知里回显它
+    chain      TEXT NOT NULL DEFAULT 'ethereum',
+    active     INTEGER NOT NULL DEFAULT 1,        -- PG: BOOLEAN DEFAULT TRUE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_watched_wallets_active ON watched_wallets(active, address);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (

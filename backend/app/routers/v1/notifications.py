@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import get_current_user
 from app.db import get_connection
+from app.services.claim_watch import claim_notification_items
 
 router = APIRouter(tags=["notifications"])
 
@@ -212,8 +213,20 @@ def _collect_items(conn: Any, window_start: str) -> list[dict[str, Any]]:
             }
         )
 
-    # 排序：新机会 > 评分变化 > 采集告警；同类型按时间倒序
-    type_rank = {"new_project": 0, "score": 1, "collector": 2}
+    # ── 4. 疑似空投到账（F4 领取监控，ACTION_LOOP_DESIGN §5）──────
+    #
+    # 直接读 notify_log 里已入库的 airdrop_candidate，不重新匹配链上事件：
+    # 后者要求保存原始 payload，而且两条判定路径一旦漂移，站内看到的和推送
+    # 出去的内容就会不一致。title/body 在入库时已完成地址截断（§5.4.1），
+    # 这里原样透出 —— 本端点对匿名 token 开放，回显完整地址等于绕过
+    # /watched-wallets 那条管理员锁。
+    items.extend(claim_notification_items(conn, window_start))
+
+    # 排序：疑似到账 > 新机会 > 评分变化 > 采集告警；同类型按时间倒序。
+    #
+    # 领取提示排最前是因为它是这四类里**唯一有时效性**的：空投领取普遍有
+    # 窗口期，过期归零。新机会和评分变化晚看一天没有实质损失。
+    type_rank = {"airdrop_candidate": 0, "new_project": 1, "score": 2, "collector": 3}
     ranked: list[dict[str, Any]] = []
     items_sorted_type = sorted(items, key=lambda x: type_rank.get(str(x.get("type")), 9))
     for _, group in groupby(items_sorted_type, key=lambda x: str(x.get("type"))):

@@ -221,12 +221,13 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **8 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **9 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
   `0007_roi`（2026-08-31，收益台账）、
-  `0008_eligibility_veto`（2026-09-01，资格门否决记录）。
+  `0008_eligibility_veto`（2026-09-01，资格门否决记录）、
+  `0009_watched_wallets`（2026-09-02，领取监控自有地址）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -240,6 +241,12 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   **这是全库最不可再生成的数据**：投入金额与工时是用户一条条手敲的，
   链上查不回来、也没有第二份来源。回滚前必须先备份（§6）。
   回滚掉 `0008` 只丢 `projects.veto`（资格门否决原因，重跑 `POST /run` 可重算）。
+  回滚掉 `0009` 丢掉 `watched_wallets`（自有地址清单）—— 人工录入但**可重建**：
+  地址在用户自己的钱包里、label 是自定义备注，比 `0007` 低一档，仍建议先导出。
+  注意 Alchemy 控制台侧的地址清单**不受回滚影响**（MVP 手工维护），回滚后
+  webhook 仍会收到那些地址的事件，只是本地匹配不到、不再产生领取候选通知
+  （事件类型 airdrop_candidate —— 刻意不加反引号：§10.6 的指标门禁按反引号包裹的
+  下划线标识符抓指标名，包起来会被当成幽灵指标）。
 
 #### 给既有库加列的两处登记（漏一处就线上炸）
 
@@ -317,7 +324,7 @@ cd backend
 
 ### 3.9 历史回测（F3 / ACTION_LOOP_DESIGN §4）
 
-把 T0 前的公开信息灌进评分引擎，看它当年会不会抓到后来真发了币的项目。
+把 T0 前的公开信息灌进评分决策引擎，看它当年会不会抓到后来真发了币的项目。
 
 ```powershell
 cd backend
@@ -645,9 +652,15 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/archive`
 - `/api/v1/scheduler`
 - `/api/v1/notify`
+- `/api/v1/watched-wallets`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。
+
+> `/api/v1/watched-wallets`（F4 领取监控，§3.10）的锁法与其它项**不同源**：
+> 别的前缀锁的是"会改状态或花钱"的写操作，它锁的是**读**。一份「这个人有哪些
+> 钱包」的清单配合公开链上数据就能还原完整持仓与交易史，所以 `GET` 也一起锁 ——
+> 只锁写在这里没意义。
 
 另有一层**按方法**的规则（`ADMIN_ONLY_METHOD_RULES`），用于"同一路径读开放、
 写受限"的两处 —— 前缀匹配表达不了它们：

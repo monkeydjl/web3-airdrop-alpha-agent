@@ -574,7 +574,14 @@ NOTIFY_FAILURES = Counter(
     ["channel"],
 )
 
-NOTIFY_EVENT_TYPES: frozenset[str] = frozenset({"daily_digest", "score_crossing", "new_farm", "watchlist_signal"})
+# 闭合词表：`notify.service.insert_event` 会拒绝表外的 event_type，
+# 否则 Prometheus 里会出现没人定义过的标签值。新增事件类型必须先登记这里。
+#
+# airdrop_candidate 与其它四种不同源：那四种由 evaluator 从项目库定期推导，
+# 这一种由 Alchemy webhook 的链上事件即时触发（F4，ACTION_LOOP_DESIGN §5）。
+NOTIFY_EVENT_TYPES: frozenset[str] = frozenset(
+    {"daily_digest", "score_crossing", "new_farm", "watchlist_signal", "airdrop_candidate"}
+)
 
 NOTIFY_EVENTS_EVALUATED = Counter(
     "airdrop_notify_event_evaluated_total",

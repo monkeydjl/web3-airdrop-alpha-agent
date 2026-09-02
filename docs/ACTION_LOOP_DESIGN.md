@@ -341,11 +341,12 @@ CREATE TABLE IF NOT EXISTS roi_outcomes (         -- 产出
 
 ```sql
 CREATE TABLE IF NOT EXISTS watched_wallets (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,      -- PG: SERIAL
-    address  TEXT NOT NULL UNIQUE,                   -- 小写归一
-    label    TEXT NOT NULL,
-    chain    TEXT NOT NULL DEFAULT 'ethereum',
-    active   INTEGER NOT NULL DEFAULT 1
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,      -- PG: SERIAL
+    address    TEXT NOT NULL UNIQUE,                   -- 小写归一
+    label      TEXT NOT NULL,
+    chain      TEXT NOT NULL DEFAULT 'ethereum',
+    active     INTEGER NOT NULL DEFAULT 1,             -- PG: BOOLEAN DEFAULT TRUE
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
@@ -353,10 +354,68 @@ CREATE TABLE IF NOT EXISTS watched_wallets (
 - 命中且 `category=erc20`、`asset ≠ ETH` → `airdrop_candidate` 事件 → 站内通知 + F1 推送。
   启发式只做提示，不承诺语义。
 
+#### 5.3.1 地址归一与校验（实施补充）
+
+`address` 一律**小写存储**。归一必须在**写入侧和匹配侧同时做**，否则
+`UNIQUE` 约束形同虚设（`0xAbC` 与 `0xabc` 会各占一行），而 webhook payload
+里的地址大小写完全取决于上游 —— Alchemy 实际会返回 EIP-55 校验和格式的混合
+大小写。**这与 `competition` 分组的教训是同一类**：同一实体的多种写法必须在
+唯一入口归一，否则各处静默失配。
+
+格式校验只做**形状**（`^0x[0-9a-fA-F]{40}$`），不做校验和验证：EIP-55 checksum
+校验会拒绝全小写地址，而全小写是链上工具与区块浏览器的常见输出形式，拒了会让
+用户以为自己地址填错了。形状不合法返回 422 `INVALID_ADDRESS`。
+
+#### 5.3.2 事件去重口径（实施补充）
+
+`event_key` = `claim:{address}:{tx_hash}:{asset}`。
+
+三段都必须在：
+
+- **只用 address**：同一钱包第二次收到空投就被去重吃掉，用户永远只收到第一次。
+- **只用 tx_hash**：一笔交易向多个自有地址转账时只提示一个（批量领取常见）。
+- **不含 asset**：同一交易内多种代币转账（部分空投合约会一次发多种）只提示一种。
+
+缺 `tx_hash` 时**不发事件**而非用时间戳兜底：没有交易哈希意味着这条 payload
+不可追溯，用户收到提示也无从核对，而用时间戳会让同一事件在 Alchemy 重投时
+重复推送（webhook 本身承诺 at-least-once）。
+
+#### 5.3.3 API 契约（实施补充）
+
+整前缀 `/api/v1/watched-wallets` 管理员锁（见 §5.4）。envelope 统一 `{ok, data}`。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/watched-wallets` | 列出全部（含 inactive），按 `created_at DESC` |
+| `POST` | `/api/v1/watched-wallets` | 登记地址。重复地址 409 `ADDRESS_EXISTS` |
+| `PATCH` | `/api/v1/watched-wallets/{id}` | 改 `label` / `chain` / `active`；地址不可改 |
+| `DELETE` | `/api/v1/watched-wallets/{id}` | 硬删。不存在返回 404 |
+
+**地址刻意不可改**：改地址等于换成另一个钱包，而历史命中记录是按地址关联的，
+原地改会让既有通知指向一个从未监控过的地址。要换地址就删了重建。
+
+`active=false` 与删除的区别：前者保留登记但停止匹配（临时静音），后者彻底移除。
+Alchemy 控制台侧的地址清单是手工维护的（§5.2 非目标），所以本地 `active=false`
+时 webhook 仍会收到事件，只是不再产生 `airdrop_candidate`。
+
 ### 5.4 安全
 
 - `/api/v1/watched-wallets` **整前缀管理员锁**（钱包地址是资金隐私，匿名角色不可见不可写）。
 - 通知内容只含 `label + 地址前 10 位`，不回显完整地址。
+
+#### 5.4.1 为什么脱敏做在通知构造侧（实施补充）
+
+`0x` + 8 位十六进制（共 10 字符）足够用户认出是哪个钱包，但不足以让看到通知的
+第三方去链上反查该地址的全部持仓与交易史。
+
+关键在于**推送目的地不受本系统控制**：Telegram / Discord 的消息会落在第三方
+服务器上、可能被转发、群组里可能有其他人。而 `/api/v1/watched-wallets` 那条
+管理员锁只护得住 API 出口，护不住已经推出去的消息内容。所以截断必须做在**事件
+构造时**（`title` / `body` 生成的那一步），不能只做在 API 响应层 —— 事件一旦
+带着完整地址进了 `notify_log`，后续任何一个 sender 都会把它原样发出去。
+
+站内通知同理截断：`/notifications` 对匿名 token 开放（普通使用者要能看自己的
+提醒），如果这里回显完整地址，等于绕过了 `watched-wallets` 的管理员锁。
 
 ### 5.5 工作量
 
@@ -503,8 +562,24 @@ ADR-015 §「本 ADR 不解决什么」里划为独立立项。
 ### M3 = F4
 
 #### T4.1 watched_wallets + webhook 匹配 + 通知
-- **现状**：🟡（webhook 在，无匹配）。**产出物**：表 + 匹配逻辑 + admin 前缀锁 + F1 事件接入。
-- **验收**：命中地址触发通知、未命中不触发；匿名访问 watched-wallets 得 403。
+- **现状**：✅ 已完成（2026-09-02）。**产出物**：`watched_wallets` 表（db.py 双方言
+  DDL + alembic `0009_watched_wallets` + DATABASE_DDL §2.9e）、`services/claim_watch.py`
+  （匹配与事件构造）、4 个端点整前缀 admin 锁、F1 事件接入（`airdrop_candidate`
+  已登记进 `metrics.NOTIFY_EVENT_TYPES`）、站内通知接入 `notifications.py` 派生视图。
+- **验收**：✅ `tests/api/test_watched_wallets.py` **26 passed**。命中/未命中/去重/
+  停用/内部转账/缺 tx_hash 六类判定，地址大小写归一的写入侧与匹配侧双向断言，
+  完整地址不出现在 notify_log 与站内通知的双重脱敏断言，四个方法匿名全 403。
+- **实施记录**：
+  - 站内通知**读 notify_log 而非重新匹配链上事件** —— 后者要求保存原始 payload，
+    且两条判定路径一旦漂移，站内看到的和推送出去的就会不一致。
+  - 领取提示在通知列表**排最前**：它是四类通知里唯一有时效性的（领取有窗口期，
+    过期归零），新机会与评分变化晚看一天没有实质损失。
+  - 顺带修了一处既有日志泄露：`webhook.alchemy.processed` 原先记完整 `address`。
+    该字段多数是别人的合约，但**自有地址收到代币时也会走到这条日志** —— 一旦命中
+    就等于把自有钱包地址写进日志文件，绕过管理员锁。改为 `address_prefix` 前 10 位。
+  - `OBSERVABILITY.md` 里"事件总数没有门禁保护"那句是**过时信息**，实测
+    `test_documented_event_counts_match_reality` 会逐一比对总数与命名空间数
+    （加这 8 个 `claim_watch.*` 时当场就红了）。已就地修正。
 
 ---
 
