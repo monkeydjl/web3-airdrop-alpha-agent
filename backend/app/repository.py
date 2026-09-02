@@ -453,6 +453,31 @@ class ProjectRepository:
             )
         return result
 
+    def canonical_sector_counts(self) -> dict[str, int]:
+        """全库 sector 计数，**按规范键折叠**（competition 分组口径）。
+
+        为什么不能复用 `global_sector_counts()`：那条路径最终走
+        `WHERE sector = ?` 精确匹配，传规范键 `"DEX"` 查不到库里存成
+        `"Dexes"` / `"dex"` / `"Derivatives"` 的行。同一逻辑赛道被拆成多组、
+        每组计数偏小，`COMPETITION_MAP` 就给出虚高的竞争度分 —— 把「赛道很挤」
+        错报成「几乎没有竞品」。
+
+        做法是一次 `GROUP BY sector` 拿到全部原始写法的分布，再在 Python 侧按
+        `canonical_sector_key()` 折叠。**这比 ADR-010 担心的 N 次 COUNT 更省**
+        （一条聚合查询 vs 每个 sector 一条），所以不额外过缓存：缓存是按单个
+        sector 键设计的，装不下"折叠后的整张分布"，硬塞会让写时失效
+        （`invalidate_sector_cache(project.sector)` 传的是原始写法）失准。
+        """
+        from app.agents.narrative import canonical_sector_key
+
+        folded: dict[str, int] = {}
+        for raw_sector, count in self.aggregate_counts("sector").items():
+            key = canonical_sector_key(raw_sector)
+            if not key:
+                continue
+            folded[key] = folded.get(key, 0) + count
+        return folded
+
     def invalidate_sector_cache(self, sector: str | None = None) -> None:
         """写时失效：写入项目后使对应 sector 缓存项失效（ADR-010）。"""
         from app.cache import get_sector_count_cache

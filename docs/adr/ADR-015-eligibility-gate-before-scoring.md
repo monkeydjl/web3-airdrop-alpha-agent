@@ -160,7 +160,8 @@ false positive 来自另外三类原因，见 §「本 ADR 不解决什么」。
   缺失而为 False，会把有机会的项目误降为 WATCH。**缓解**：该条只降到 WATCH
   不降到 IGNORE，且 WATCH 仍在前端可见
 - 不解决 `narrative_timing` 恒 60 与 `competition` 大面积 100 这两个
-  **无区分度维度**的问题（见下）
+  **无区分度维度**的问题（见下；两者后续均已独立立项修复，见「不解决什么」
+  第 3、4 条的实施补注）
 
 ### 本 ADR 不解决什么（明确划界，避免以为修完了）
 
@@ -213,11 +214,41 @@ false positive 来自另外三类原因，见 §「本 ADR 不解决什么」。
    > 没有档位的新赛道（如 `RWA`）仍走默认档并告警 —— 硬塞进现有档位等于编造
    > 赛道热度，正确处置是去 `SECTOR_PROFILE` 补一档真实值。
 
-4. **`competition` 大面积 100**：`COMPETITION_MAP` 在 sector_count ≤3 给满分，
-   而回测的 sector 计数来自数据集自带字段而非真实竞品统计。是回测输入的
-   保真度问题，也可能暴露 `COMPETITION_MAP` 分段过于宽松。
+4. **`competition` 大面积 100** —— ✅ **分组口径部分已修（2026-09-02）**：
+   `COMPETITION_MAP` 在 sector_count ≤3 给满分，而回测的 sector 计数来自数据集
+   自带字段而非真实竞品统计。当时判断是回测输入的保真度问题。
    注意它与第 3 条同源 —— sector 写法五花八门（14 个不同值 / 19 个样本），
    按 sector 分组统计自然每组都 ≤3 个。
+
+   > **实际是生产缺陷，与第 3 条完全同源。**
+   > `_calculate_sector_counts()` 原来按 sector 的**原始写法**分组，而真实采集
+   > 里同一逻辑赛道有多种写法（DefiLlama 给 `"Dexes"`、CryptoRank 给 `"DEX"`、
+   > github 推断给 `"dex"`、衍生品所写 `"Derivatives"`）。12 个 DEX 项目裂成
+   > 4 组（4/3/2/3），每组都落进「几乎没有竞品」档，competition 从应有的 55
+   > 变成 75~100。方向是**系统性偏乐观**：赛道越挤、写法越杂，虚高越严重。
+   >
+   > 修复：新增 `narrative.canonical_sector_key()`，与 `resolve_sector_profile()`
+   > 共用同一张别名表，用于分组；`_calculate_sector_counts()` 与
+   > `scorer._calc_competition()` **两侧都改成按规范键**。口径必须一致 —— 一边
+   > 规范键计数、一边原始写法查会全部 miss 然后静默退到中性 50 分，比虚高更难
+   > 发现，因为 50 分看起来完全正常。
+   >
+   > 与查档位的差异：`canonical_sector_key()` 对未知写法返回 **trim 后的原值而
+   > 不是 `None`** —— 分组场景下「不认识的赛道」仍是合法的独立分组，塌成同一个
+   > `None` 桶会把 `RWA` 和 `SocialFi` 算成同赛道竞品，凭空制造竞争度。
+   > 而查档位需要「没命中」信号才能打告警，所以那边返回 `None`。
+   >
+   > 全库计数换用新增的 `repository.canonical_sector_counts()`：库里存的是原始
+   > 写法，`WHERE sector = ?` 拿规范键 `"DEX"` 查不到存成 `"Dexes"` 的行。改为
+   > 一次 `GROUP BY sector` 再在 Python 侧折叠 —— 这比 ADR-010 担心的 N 次
+   > COUNT 更省，故不过 `SectorCountCache`（理由见 ADR-010 补注）。
+   >
+   > 实测（`['Dexes']*4 + ['DEX']*3 + ['dex']*2 + ['Derivatives']*3 +
+   > ['Rollup']*5 + ['L2']*6 + ['Layer 2']*2`）：修复前 7 组、competition
+   > 75/100/100/100/75/75/100；修复后 `{'DEX': 12, 'L2': 13}`、全部 55.0。
+   >
+   > **仍未解决的另一半**：`COMPETITION_MAP` 的分段是否过于宽松（≤3 就给满分）
+   > 属于权重校准范畴，需要真实竞品分布数据支撑，不在本次修复内。
 
 ### 需配套的工作
 - [x] `backend/app/agents/eligibility.py`（新建）：否决条件判定，与

@@ -16,6 +16,7 @@ import structlog
 from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState
 from app.agents.eligibility import apply_eligibility_gate
+from app.agents.narrative import canonical_sector_key
 from app.config import settings
 from app.models import ScoreResult
 
@@ -432,10 +433,22 @@ class ScorerAgent(BaseAgent):
         - n > 15: 40
 
         Fallback: 50 (neutral) if sector missing or not in counts.
+
+        查 counts 用**规范键**（`canonical_sector_key`），与
+        `_calculate_sector_counts()` 的分组口径必须一致 —— 一边按规范键计数、
+        一边按原始写法查，会全部 miss 然后静默退到中性 50 分。
         """
-        sector = state.project.sector
-        if not sector or sector not in self.sector_counts:
+        sector = canonical_sector_key(state.project.sector)
+        if not sector:
             return 50.0
+
+        if sector not in self.sector_counts:
+            # 兼容调用方直接以原始写法构造 sector_counts 的老路径（含既有测试）。
+            raw = state.project.sector
+            if raw and raw in self.sector_counts:
+                sector = raw
+            else:
+                return 50.0
 
         count = self.sector_counts[sector]
 

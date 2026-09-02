@@ -486,8 +486,14 @@ Taiko 90.2 / Chainlink 84.0），0.15 权重恢复作用。
 `no_participation_path` 误否决（它的参与路径是历史交易行为，三个信号字段都
 表达不了）。降级只到 WATCH 所以机会仍可见，recall 的全部损失来自这一条。
 处置方式待 owner 拍板，见 ADR-015 §「实施结果」。
-`competition` 大面积 100 与 Farcaster 需要的 `explicit_no_airdrop` 字段
-仍未处理，两者都在 ADR-015 §「本 ADR 不解决什么」里划为独立立项。
+`competition` 大面积 100 的**分组口径部分已修**（2026-09-02）：原来按 sector
+原始写法分组，同一赛道的多种写法（`Dexes` / `DEX` / `dex` / `Derivatives`）
+被拆成多组、每组计数偏小，`n <= 3` 满分档命中率虚高，方向是系统性偏乐观。
+改为按 `canonical_sector_key()` 规范键分组（计数侧与查表侧同口径），实测
+12 个 DEX 项目从「7 组 / 75~100 分」收敛为「1 组 / 55 分」。
+`COMPETITION_MAP` 分段是否过宽属权重校准范畴，仍未处理。
+Farcaster 需要的 `explicit_no_airdrop` 字段也仍未处理 —— 两者都在
+ADR-015 §「本 ADR 不解决什么」里划为独立立项。
 
 ### M3 = F4
 

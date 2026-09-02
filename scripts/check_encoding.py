@@ -162,6 +162,10 @@ SKIP_DIRS = {
     "htmlcov",
     ".pytest_cache",
     ".pytest_tmp",
+    # backend/tests/conftest.py 将 tmp_path 重定向到仓库内的
+    # data/pytest_tmp（为绕过沙箱目录锁）。编码门禁若扫进去，会把测试
+    # 故意创建的坏编码样本当作仓库文件，并让全量 pytest 受执行顺序污染。
+    "pytest_tmp",
     ".next",
     "__pycache__",
     ".ruff_cache",

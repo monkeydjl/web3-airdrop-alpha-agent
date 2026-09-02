@@ -203,6 +203,42 @@ _SECTOR_LOOKUP_ALIAS: dict[str, str] = {
 }
 
 
+def canonical_sector_key(sector: str | None) -> str | None:
+    """把 sector 的各种写法折成规范键，未知写法原样返回。
+
+    与 `resolve_sector_profile()` 共用同一张别名表，但用途不同：这个函数用于
+    **按赛道分组**（competition 子分的 sector_count），而不是查热度档位。
+
+    与查档位一样，**不改写 `project.sector`** —— 那个值参与
+    `generate_deterministic_id()`，改了会让既有项目 ID 漂移。
+
+    未知写法返回 trim 后的原值而不是 None：分组场景下「不认识的赛道」仍然是
+    一个合法的独立分组，不能塌成同一个 None 桶 —— 那会把 RWA 和 SocialFi 算成
+    同一个赛道的竞品。
+    """
+    if not sector:
+        return sector
+
+    stripped = sector.strip()
+    if not stripped:
+        return stripped
+
+    if stripped in SECTOR_PROFILE:
+        return stripped
+
+    key = stripped.lower()
+
+    canonical = _SECTOR_LOOKUP_ALIAS.get(key)
+    if canonical is not None:
+        return canonical
+
+    for profile_key in SECTOR_PROFILE:
+        if profile_key.lower() == key:
+            return profile_key
+
+    return stripped
+
+
 def resolve_sector_profile(sector: str) -> tuple[dict[str, Any], str | None]:
     """查 SECTOR_PROFILE，返回 (profile, 命中的规范键)。
 
