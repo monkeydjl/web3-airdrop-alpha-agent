@@ -475,7 +475,7 @@ def _logs_to_stderr() -> Iterator[None]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="历史回测：把 T0 前数据灌进评分引擎")
+    parser = argparse.ArgumentParser(description="历史回测：把 T0 前数据灌进评分决策引擎")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET, help="数据集路径")
     parser.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     parser.add_argument(

@@ -8,6 +8,91 @@
 
 ## [Unreleased]
 
+### Added — M3/F4 领取监控（2026-09-02，按 ACTION_LOOP_DESIGN §5 实施）
+
+补上了执行闭环的最后一环。此前 M1 推送、F2 参与流水、F3 ROI 都已交付，评分决策
+引擎也修到 recall 1.000，但**空投真开领的时候没人提醒** —— 前面所有 FARM 决策的
+价值在最后一步漏掉。
+
+- **`watched_wallets` 表**（迁移 `0009`，四处同落：db.py 双方言 DDL + alembic +
+  DATABASE_DDL §2.9e）。`address` 小写归一 + UNIQUE，`active` 为软开关
+  （临时静音，与删除区分）。
+- **4 个端点整前缀管理员锁**（`GET` 也锁）：`/api/v1/watched-wallets` 的
+  CRUD。与本仓其它"读开放写受限"的端点不同 —— 一份「这个人有哪些钱包」的清单，
+  配合公开链上数据就能还原完整持仓与交易史，**泄露风险主要在读侧**。
+- **webhook 地址匹配**（`services/claim_watch.py`）：签名校验通过后匹配
+  `event.data.to` ∈ active 自有地址，且 `category=erc20`、`asset≠ETH` →
+  产出 `airdrop_candidate` 事件 → 站内通知 + F1 推送（复用既有
+  `dispatch_pending`，不另开发送路径）。
+
+三个刻意的设计取舍：
+
+- **地址归一在写入侧与匹配侧同时做**。只做一侧不会报错：漏写入侧则 UNIQUE 形同
+  虚设（`0xAbC` 与 `0xabc` 各占一行），漏匹配侧则永远匹配不上、静默什么都不发生。
+  Alchemy payload 实际返回 EIP-55 混合大小写。**与 `competition` 分组是同一类
+  教训**：同一实体的多种写法必须在唯一入口归一。
+- **`event_key` = `claim:{address}:{tx_hash}:{asset}`，三段都必须在**。只用
+  address 则同一钱包第二次收到空投被去重吃掉；只用 tx_hash 则一笔交易转给多个
+  自有地址时只提示一个（批量领取常见）；不含 asset 则同一交易内多种代币只提示一种。
+  缺 `tx_hash` 时**不发事件**而非用时间戳兜底 —— 不可追溯的提示对用户没用，
+  且时间戳会让 Alchemy 重投（at-least-once）时重复推送。
+- **脱敏做在事件构造侧，不是 API 响应层**。通知只含 `label` + 地址前 10 位：
+  推送目的地（Telegram/Discord）不受本系统控制，管理员锁护不住已经发出去的消息。
+  事件一旦带完整地址进了 `notify_log`，任何 sender 都会原样发出去。
+
+### Fixed — 一处既有日志泄露与一处过时文档（2026-09-02）
+
+- **`webhook.alchemy.processed` 原先记完整钱包地址**。该字段多数是别人的合约
+  （discovery 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于
+  把自有钱包地址写进日志文件，绕过 `/watched-wallets` 的管理员锁。改为
+  `address_prefix` 前 10 位：分不清来源时按更严的口径处理。
+- **`OBSERVABILITY.md` 写着"事件总数没有门禁保护"，实测不对**。
+  `test_documented_event_counts_match_reality` 会逐一比对总数与命名空间数，
+  加 F4 的 8 个 `claim_watch.*` 时它当场就红了。已就地修正并更新数字
+  （319 → 328 个事件、65 → 66 个命名空间）。
+- **`test_alembic_version_recorded` 的 head 版本号改为从 `_REVISION_ORDER[-1]`
+  推导**，不再硬编码。原先写死数字，每加一个迁移都要改两处，漏改的表现是这条
+  测试红 —— 一个信息量为零的红灯只会训练人把它当噪音顺手改掉。现在漏登记
+  `_REVISION_TABLES` 才会红，而那正是真正需要人确认的地方。
+- **`PATCH /watched-wallets/{id}` 用固定 SQL + `COALESCE(?, col)`** 而非按字段拼
+  SET 子句（拼接版本触发 ruff S608）。这里的片段确实都是字面量、注入不了，但把
+  安全建立在"凑巧没有用户输入流进拼接串"上是脆的：下一个人加字段时很自然会写成
+  `updates.append(f"{col} = ?")`，那一步就真开口子了。
+
+### Fixed — 术语门禁在 CI 上只覆盖了 backend 子树（2026-09-02）
+
+**这道闸门此前在 CI 上基本锁错了地方。** 症状是本机 `--all` 报 4 处术语回退，
+同样的内容在 CI 上一路绿灯。
+
+根因在两处叠加，单看任何一处都像是对的：
+
+1. `git ls-files` 返回的路径**相对 cwd**，且**只列 cwd 子树**。CI 里 pytest 的
+   `working-directory` 是 `backend/`（ci.yml §31），于是 `iter_tracked_files()`
+   只枚举到 314 个 backend 文件。
+2. `test_repo_wide_terminology_is_clean` 里有一句 `if path.is_file():` 跳过。
+   从 backend/ 跑时它拿到 `app/db.py`，拼成 `REPO_ROOT/app/db.py` 并不存在，
+   于是**每个文件都被静默跳过** —— 这条测试实际扫了零个文件，却因为 `files`
+   列表非空而通过。
+
+合计 **223 个待检文件从未被扫过**，其中包括 `docs/` 的全部 69 个文档、仓库根的
+`CHANGELOG.md`、`frontend-next/` 的 35 个源文件 —— 而术语约定主要就是给文档用的。
+
+修复：
+
+- `iter_tracked_files()` 加 `--full-name` **且** `cwd=REPO_ROOT`。两个都要：
+  只加 `--full-name` 仍然只列 cwd 子树；只改 `cwd` 则调用方拿到的相对路径与
+  自己的 cwd 不一致。
+- 那句 `if path.is_file()` 改为收集到 `missing` 列表后**断言为空**。路径不存在
+  是环境异常，必须报错而不是跳过 —— 静默跳过正是这次失效能潜伏这么久的原因。
+- 补 2 条回归（`test_tracked_paths_are_repo_root_relative_regardless_of_cwd`、
+  `test_scan_covers_docs_and_repo_root_files`），都用 `monkeypatch.chdir` 刻意
+  从 `backend/` 下跑。反向验证：把脚本改回旧写法，这 3 条精确变红。
+- 顺带修好被这个缺陷放过去的 4 处术语回退（`CHANGELOG.md`、`docs/OPERATIONS.md`、
+  `backend/scripts/run_backtest.py`、`.workbuddy/memory/MEMORY.md`）。
+
+教训与 `competition` 分组、地址归一同源：**「跳过异常输入」和「处理异常输入」
+长得很像，但前者会把 bug 变成沉默。** 断言不该建立在"列表非空"这种间接信号上。
+
 ### Added — M1 执行闭环：决策推送 + 参与流水（2026-08-31，按 ACTION_LOOP_DESIGN 实施）
 
 - **F1 决策推送**：pipeline 收尾钩子评估跨线（65 上穿 FARM / 50 下穿）、新 FARM、
