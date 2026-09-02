@@ -28,6 +28,24 @@ os.environ["HOST"] = "127.0.0.1"
 # the host. Tests that don't use tmp_path will fall through to this default.
 os.environ.setdefault("DB_PATH", str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"))
 
+# ── 把 fetcher 磁盘缓存隔离到测试专用目录 ─────────────────────────
+# `settings.fetcher_cache_dir` 默认是相对路径 `"cache"`，即 `backend/cache/` ——
+# 那是**生产会用的真实缓存目录**。测试直接往里写有两个后果：
+#
+# 1. 残留文件跨运行存活，让后续测试**缓存命中而不发请求**。实测症状是
+#    `call_count == 0`、mock 的 request 从未被调用，断言以「请求没发出」失败，
+#    而报错信息完全看不出是缓存导致的 —— 极难定位。
+# 2. 本机沙箱的 safe-delete 让 `unlink()` 抛 OSError，`clear_cache()` 清不掉这些
+#    残留，于是污染永久存在，且只在特定执行顺序下暴露（单跑该文件时看不到）。
+#
+# 用固定的测试专用目录而不是 per-test 目录：fetcher 的缓存是模块级单例，
+# 在 import 期就绑定了目录，无法按测试切换。隔离到这里至少保证污染不会
+# 落到生产缓存目录，也不会跨 checkout 泄漏。
+os.environ.setdefault(
+    "FETCHER_CACHE_DIR",
+    str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "pytest_cache_dir"),
+)
+
 # ── Override tmp_path to avoid sandbox-locked dirs ──────────────────
 # DSH sandbox locks directories created by pytest's internal TempPathFactory.
 # We override tmp_path and tmp_path_factory to use workspace-writable dirs
@@ -68,3 +86,50 @@ def tmp_path(request):
 
     with contextlib.suppress(Exception):
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ── fetcher 磁盘缓存必须每个测试前清空 ──────────────────────────
+# fetcher 的缓存目录是**模块级单例**（import 期绑定），所有测试共享同一个目录。
+# 只把目录换个位置（见上面的 FETCHER_CACHE_DIR）不解决问题：只要有测试写入过，
+# 残留就会让**后续测试缓存命中而不发请求**，mock 的 request 从未被调用，
+# 断言以「请求没发出」失败。
+#
+# 这个失效模式的隐蔽之处：
+# - 单跑一个文件看不到（没有前序测试留下残留）；
+# - 只在特定执行顺序下暴露，表现为「加上某个不相关的目录一起跑就红」；
+# - 报错信息（`call_count == 0`）完全指不到缓存上。
+#
+# 清理**不能用 unlink**：本机沙箱的 safe-delete 依赖回收站，回收站不可用时
+# `unlink()` 直接抛 OSError，清理静默失败、污染永久留存。改为把文件**截断成
+# 空内容** —— 空文件会让 `json.load()` 抛 JSONDecodeError，走 fetcher 的
+# "corrupt cache → 视为 miss 回源" 分支，效果等价于删除且不依赖删除权限。
+@pytest.fixture(autouse=True)
+def _isolate_fetcher_disk_cache():
+    import contextlib
+
+    def _purge() -> None:
+        try:
+            from app.config import settings
+        except Exception:
+            return
+        cache_dir = pathlib.Path(settings.fetcher_cache_dir)
+        if not cache_dir.is_absolute():
+            cache_dir = pathlib.Path.cwd() / cache_dir
+        if not cache_dir.exists():
+            return
+        for f in cache_dir.glob("*.json"):
+            # 先试删；删不掉（沙箱 safe-delete 抛 OSError）就退化为截断成空文件。
+            try:
+                f.unlink()
+            except OSError:
+                with contextlib.suppress(OSError):
+                    f.write_bytes(b"")
+
+    _purge()
+    # 内存层也要清，否则同进程内的上一个测试留下的条目照样命中
+    with contextlib.suppress(Exception):
+        from app.utils.fetcher import clear_cache
+
+        clear_cache()
+    yield
+    _purge()

@@ -169,13 +169,26 @@ class HTTPCache:
             try:
                 mtime = disk_path.stat().st_mtime
                 if now - mtime >= ttl:
-                    disk_path.unlink(missing_ok=True)
+                    # 过期即删。删不掉也必须返回 None（视为 miss）——
+                    # 不能让它落进下面的 except 被当成"文件损坏"，
+                    # 那条路径的语义是不一样的。
+                    with contextlib.suppress(OSError):
+                        disk_path.unlink(missing_ok=True)
                     return None
                 with open(disk_path, encoding="utf-8") as f:
                     return json.load(f)
             except (json.JSONDecodeError, OSError):
-                # Corrupt cache file — remove and fall through
-                disk_path.unlink(missing_ok=True)
+                # Corrupt cache file — remove and fall through.
+                #
+                # 删除失败**绝不能**让异常冒泡：这里已经在 except 块里，
+                # 再抛出去就没人接了 —— 会一路穿出 `fetch()`，把「缓存文件读坏」
+                # 这种可降级的小事变成整个请求失败。缓存的语义是"有则加速、
+                # 无则回源"，任何一层出问题都该退回去发真实请求。
+                #
+                # 真实触发场景不止"文件被占用"：本机沙箱的 safe-delete 依赖
+                # 回收站，回收站不可用时 `unlink()` 直接抛 OSError。
+                with contextlib.suppress(OSError):
+                    disk_path.unlink(missing_ok=True)
 
         return None
 

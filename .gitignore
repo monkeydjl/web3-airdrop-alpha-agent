@@ -117,6 +117,9 @@ data/pytest_tmp/
 backend/.pytest_tmp/
 # fetcher 磁盘缓存（§10.1）
 backend/cache/
+# 测试专用的 fetcher 缓存目录（conftest 用 FETCHER_CACHE_DIR 隔离到这里，
+# 避免测试写进 backend/cache/ 那个生产目录后残留污染后续用例）
+data/pytest_cache_dir/
 backups/
 !backups/.gitkeep
 
