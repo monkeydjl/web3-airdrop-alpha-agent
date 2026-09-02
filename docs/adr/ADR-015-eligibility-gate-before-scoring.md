@@ -290,6 +290,12 @@ false positive 来自另外三类原因，见 §「本 ADR 不解决什么」。
 | veto 分布 | — | `{already_launched: 2, no_participation_path: 2}` |
 | `veto_false_negatives` | — | **1** |
 
+> **后续放宽（2026-09-02，见下方「已知遗留」小节的结论）**：把
+> `explicit_airdrop_mention` 也算作一条参与路径后，recall **0.929 → 1.000**、
+> fpr **0.400 保持不变**、目标函数 **+0.129 → +0.200**、
+> `veto_false_negatives` **1 → 0**，label 分布变为
+> `{FARM: 16, WATCH: 1, IGNORE: 2}`。零代价闭合。
+
 目标函数从负分转正 —— 模型第一次在自己的评价标准下具备区分能力。
 Chainlink / Worldcoin 的 `score` 保持 68 / 69 **未变**，仅 label 降为
 IGNORE 并带 `veto=already_launched`，验证了「否决改 label 不改分」。
@@ -331,10 +337,11 @@ alembic migration **不能替代**这一处：`0008` 为了兼容滚动 baseline
 `veto` 那行，测试报 `{'projects': ['veto']}`）。
 约定同步写入 `OPERATIONS.md §3.5` 与 `DATABASE_DDL.md §2.17`。
 
-### 已知遗留：`veto_false_negatives = 1`（Jupiter）
+### ✅ 已闭合（2026-09-02）：`veto_false_negatives = 1`（Jupiter）
 
 ```
-✗  70 WATCH    Jupiter    空投(large)  veto=no_participation_path
+决策后：✗  70 WATCH    Jupiter    空投(large)  veto=no_participation_path
+放宽后：✓  70 FARM     Jupiter    空投(large)
 ```
 
 Jupiter 实际发过大额空投，被 `no_participation_path` 误否决。它的参与路径
@@ -343,8 +350,45 @@ Jupiter 实际发过大额空投，被 `no_participation_path` 误否决。它�
 
 **这正是 §「负面 / 限制」第 2 条预警的失效模式**，且预设的缓解生效了 ——
 只降到 WATCH 而非 IGNORE，机会仍在前端可见，recall 的 0.071 损失全部来自
-这一条。处置方式（补「链上交易量/使用量」参与路径信号 vs 收窄规则适用
-条件）属于业务约束调整，**待 owner 决策，不单方面放宽规则**。
+这一条。
+
+#### 结论：承认 `explicit_airdrop_mention` 为第四条参与路径
+
+owner 拍板放宽。`has_participation_path()` 增加
+`explicit_airdrop_mention` 一项：官方已明说要空投，但参与方式可能是
+**历史行为型**（按过往交易量/持仓快照发放），这类根本不存在「去哪点一下」
+的入口，三条可操作路径全为 False 却确实有参与价值。
+
+**放宽前先验证影响面**，而不是只看 Jupiter 转绿。数据集中三路径全无的样本
+共 4 个，逐条核对：
+
+| 项目 | explicit_airdrop_mention | 实际结果 | 放宽后 |
+| --- | --- | --- | --- |
+| Jupiter | **True** | 空投(large) | FARM ✅ 修正 |
+| Farcaster | False | 无空投 | 仍 WATCH ✅ 不受影响 |
+| Worldcoin | False | 无空投 | 仍 IGNORE（already_launched）|
+| Chainlink | False | 无空投 | 仍 IGNORE（already_launched）|
+
+只有 Jupiter 命中该信号，也只有它真的空投了 —— 在这份数据上
+`explicit_airdrop_mention` 是完美区分信号，放宽**不引入任何新误报**：
+
+| 指标 | 放宽前 | 放宽后 |
+| --- | --- | --- |
+| recall(FARM) | 0.929 | **1.000** |
+| fpr(FARM) | 0.400 | **0.400**（不变）|
+| 目标函数 `recall − 2×fpr` | +0.129 | **+0.200** |
+| `veto_false_negatives` | 1 | **0** |
+
+**顺序约束（不可调换）**：`is_already_launched_without_airdrop_path()` 必须
+仍排在参与路径判定之前。否则「币已发完、只剩历史空投公告」的项目会被这条
+放宽重新救成 FARM —— 那是已经错过的机会，不是可参与的机会。
+测试 `test_explicit_mention_does_not_override_the_already_launched_veto`
+钉住该顺序；`test_explicit_airdrop_mention_alone_is_a_participation_path`
+钉住放宽本身（撤掉放宽两条均红）。
+
+**样本量限制**：19 条样本里只有 1 条命中该信号，统计意义有限。数据集补到
+50 条后需复核 —— 若出现「官方提过空投但最终没发」的样本，该信号的区分度会
+下降，届时应考虑要求它与其他证据联合成立而非单独放行。
 
 ### 迁移成本
 - **历史数据不重算**。`projects.veto` 对既有行为 NULL，语义是「未经资格门评估」。

@@ -482,10 +482,15 @@ IGNORE 并带 `veto=already_launched`；日志 `scorer.veto_applied` 记
 sector 归一化后 `narrative_timing` 不再恒 60（Manta 93.5 / Linea 90.2 /
 Taiko 90.2 / Chainlink 84.0），0.15 权重恢复作用。
 
-**仍未闭合**：`veto_false_negatives = 1` —— Jupiter 实际发过大额空投，却被
-`no_participation_path` 误否决（它的参与路径是历史交易行为，三个信号字段都
-表达不了）。降级只到 WATCH 所以机会仍可见，recall 的全部损失来自这一条。
-处置方式待 owner 拍板，见 ADR-015 §「实施结果」。
+**✅ 已闭合（2026-09-02）**：`veto_false_negatives = 1` —— Jupiter 实际发过大额
+空投，却被 `no_participation_path` 误否决（它的参与路径是历史交易行为，三个
+信号字段都表达不了）。owner 拍板放宽：`has_participation_path()` 增加
+`explicit_airdrop_mention` 作为第四条路径（历史行为型空投没有「去哪点一下」
+的入口）。实测 recall **0.929 → 1.000**、fpr **0.400 不变**、目标函数
+**+0.129 → +0.200**、`veto_false_negatives` **1 → 0**。
+放宽前逐条核对了三路径全无的 4 个样本：只有 Jupiter 命中该信号且只有它真空投，
+Farcaster/Worldcoin/Chainlink 不受影响，**零新增误报**。
+已发币否决仍排在参与路径判定之前（顺序有测试钉住），详见 ADR-015 §「已闭合」。
 `competition` 大面积 100 的**分组口径部分已修**（2026-09-02）：原来按 sector
 原始写法分组，同一赛道的多种写法（`Dexes` / `DEX` / `dex` / `Derivatives`）
 被拆成多组、每组计数偏小，`n <= 3` 满分档命中率虚高，方向是系统性偏乐观。

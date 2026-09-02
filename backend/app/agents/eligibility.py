@@ -43,8 +43,29 @@ def is_already_launched_without_airdrop_path(project: RawProject) -> bool:
 
 
 def has_participation_path(project: RawProject) -> bool:
-    """Whether current signals show at least one actionable participation route."""
-    return bool(project.has_testnet or project.has_points_program or getattr(project, "has_task_portal", False))
+    """Whether current signals show at least one actionable participation route.
+
+    三条"可操作"路径（testnet / points / task portal）之外，额外承认
+    `explicit_airdrop_mention`：官方已明说要空投，但参与方式可能是
+    **历史行为型**（按过往交易量/持仓快照发放），这类根本不存在"去哪点一下"
+    的入口，三条路径全为 False 却确实有参与价值。
+
+    实测依据（`airdrops_2024_2025.json`）：三路径全无的 4 个样本中，只有
+    Jupiter 的 `explicit_airdrop_mention` 为真，也只有它真的空投了
+    （按历史交易用户分多轮发放）。另外三个（Farcaster / Worldcoin /
+    Chainlink）explicit 均为 False，所以这条放宽**不会**把它们放进来。
+
+    为什么不是无条件放行：`explicit_airdrop_mention` 只说明"有空投这件事"，
+    不说明"现在还赶得上"。已发币且无后续路径的项目仍由
+    `is_already_launched_without_airdrop_path()` 先一步拦成 IGNORE ——
+    那条规则在 `apply_eligibility_gate` 里排在本条之前，顺序不能调换。
+    """
+    return bool(
+        project.has_testnet
+        or project.has_points_program
+        or getattr(project, "has_task_portal", False)
+        or getattr(project, "explicit_airdrop_mention", False)
+    )
 
 
 def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDecision:
