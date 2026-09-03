@@ -2,7 +2,7 @@
 
 多智能体驱动的 Web3 早期项目识别与空投参与决策系统。
 
-[![Tests](https://img.shields.io/badge/tests-2%2C452%20passed%2C%204%20skipped-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-CI%20green-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -19,9 +19,9 @@
 - **Opportunity Shadow 旁路模型** — `opportunity-v2.0` 非权威评估，追加不可变经济快照，不影响主分数
 - **LLM 增强**（可选） — OpenAI 接口增强评分叙述，按发现分数阈值触发，日预算可控
 - **权重自动校准** — 基于反馈数据自动调整八维权重，支持 A/B 对比和灰度发布
-- **Bearer 鉴权 + 匿名 Token** — API Key 保护 + 72h TTL 匿名 token，生产默认强制鉴权
-- **Prometheus 指标 + Grafana Dashboard** — 73 条运行时指标，告警规则覆盖服务可用性和 pipeline 失败率
-- **Docker 一键部署** — SQLite 单容器或 PostgreSQL + Nginx 全栈编排
+- **Bearer 鉴权 + 匿名 Token** — 生产默认强制鉴权；管理员用 `X-API-Key`，普通读请求由前端服务端注入 72h TTL 匿名 token
+- **Prometheus 指标 + Grafana Dashboard** — 运行时指标覆盖服务可用性与 pipeline 失败率；生产公网不暴露 `/metrics`
+- **Docker 一键部署** — 开发用 SQLite / PostgreSQL；生产全栈必须使用 `docker-compose.prod.yml`
 
 ### 评分模型
 
@@ -38,7 +38,7 @@
 | 执行力 | 5% | 开发活跃度 |
 | 透明度 | 5% | 文档 + 路线图 |
 
-**三档分类**：FARM (>= 65) / WATCH (40-64) / IGNORE (< 40)
+**三档分类**：FARM (>= 65) / WATCH (50-64) / IGNORE (< 50)
 
 Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curbed-multiwallet-v1`，评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
 
@@ -61,8 +61,8 @@ cd Web3-Airdrop-Alpha-Agent-System
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env，至少设置：
-#   APP_ENV=production
+# 编辑 .env：本地可保持 APP_ENV=development。
+# 若启用 API 鉴权，再设置：
 #   API_KEY=<python -c "import secrets; print(secrets.token_urlsafe(32))">
 #   AUTH_TOKEN_SECRET=<python -c "import secrets; print(secrets.token_urlsafe(48))">
 
@@ -80,23 +80,39 @@ npm run dev
 ### 方式 2: Docker 部署
 
 ```bash
-# SQLite 模式（最简）
+# SQLite 模式（最简，开发测试）
 docker compose up -d --build
 
-# PostgreSQL 模式（生产推荐）
+# PostgreSQL 模式（数据量大时推荐）
 docker compose --profile postgres up -d --build
 # 在 .env 中设置 DB_BACKEND=postgres
 
-# 生产全栈（Nginx + Next.js 前端 + PostgreSQL）—— 注意是 -f 换文件，不是加 profile
+# 生产全栈（Nginx + Next.js 前端 + PostgreSQL + 监控栈）
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-> ⚠️ **`docker compose --profile production up` 起不出前端。** 那个 profile 属于
-> `docker-compose.yml`，而该文件只有 `backend` / `postgres` / `nginx` 三个服务，
-> 挂的是根目录 `nginx.conf`（整站反代到后端的纯 API 入口）—— 起来只有裸 API、
-> 没有 UI，且 API 请求绕过前端代理拿不到凭据。
-> 前端只存在于 `docker-compose.prod.yml`，必须用 `-f` 指定它。
-> 下面那张端口表描述的也是这份文件的拓扑。
+> ⚠️ **生产部署必须用 `docker-compose.prod.yml`**，不是 `docker-compose.yml --profile production`。
+>
+> 区别：
+> - `docker-compose.yml` 的 `--profile production` 只有 `backend` + `postgres` + `nginx`，
+>   **没有 Next.js 前端服务**，挂的是根目录 `nginx.conf`（整站直连后端的纯 API 入口）。
+>   起来后只有裸 API、没有 UI，且浏览器 API 请求会绕过前端代理拿不到凭据 → 全站 401。
+> - `docker-compose.prod.yml` 才包含完整的 `frontend` 服务与生产 nginx 配置
+>   （`docker/nginx/nginx-http.conf`），将 `/api/` 先转发给 Next.js，
+>   由 `frontend-next/proxy.ts` 在服务端按请求路径分档注入凭据：
+>   - 管理员端点（`/run`、`/settings/*`、`/watched-wallets` 等）注入 `X-API-Key`
+>   - 其余只读端点（`/projects`、`/public-config` 等）注入匿名 Bearer token
+>
+> 生产环境还需在 `.env` 里设置以下必填项（详见 `docs/GO_LIVE_CHECKLIST.md`）：
+> ```bash
+> APP_ENV=production
+> API_KEY=<至少 32 字符随机字符串>
+> AUTH_TOKEN_SECRET=<至少 48 字符随机字符串>
+> BACKEND_API_KEY=<与 API_KEY 同值>
+> POSTGRES_PASSWORD=<强密码>
+> CORS_ORIGINS=<实际前端域名>
+> TRUSTED_PROXY_COUNT=1  # 按实际反代层数设置，见 GO_LIVE_CHECKLIST §1b
+> ```
 
 #### Docker 端口映射
 
@@ -127,14 +143,17 @@ Stop.bat    :: 停止所有服务
 | 前端 | http://localhost:3002 | Next.js 16 + React 19 |
 | API 文档 | http://localhost:8002/docs | Swagger UI |
 | API 参照 | http://localhost:8002/redoc | ReDoc |
-| 健康检查 | http://localhost:8002/health | 健康探针 |
-| 指标 | http://localhost:8002/metrics | Prometheus 格式 |
+| 健康检查 | http://localhost:8002/health | 本地后端健康探针 |
+| 指标 | http://localhost:8002/metrics | 本地 Prometheus 格式指标 |
 
----
+> 生产全栈的公网入口是 `http://<host>:18080`（TLS 由上游反代终止时）。
+> 后端 API、PostgreSQL 和 `/metrics` 均不应直接暴露到公网：生产 nginx 对公网
+> `/metrics` 返回 403，Prometheus 通过 Docker `backend` 网络直连 `airdrop-web:8002/metrics`。
+> 查看生产指标请登录 Grafana，而不是公开 exporter。
 
 ## API 概览
 
-38 个 API 路径，主要端点：
+主要端点：
 
 ### 核心操作
 
@@ -166,10 +185,12 @@ curl -X POST -H "X-API-Key: $API_KEY" \
 | 鉴权 | `POST /api/v1/auth/anonymous` | 匿名 Token 签发 |
 | 观察列表 | `GET/POST /api/v1/watchlist` | 关注项目标记 |
 | 隔离 | `GET /api/v1/quarantine` | 数据质量隔离管理 |
+| 公开配置 | `GET /api/v1/public-config` | 匿名可读的权重与标签阈值 |
+| 领取监控 | `GET/POST /api/v1/watched-wallets` | 自有地址到账监控（管理员锁） |
 | 导入导出 | `GET /api/v1/export/*`, `POST /api/v1/import/*` | Excel/CSV 批量操作 |
 | 校准 | `GET /api/v1/calibration/status` | 权重校准状态 |
 | LLM | `GET /api/v1/llm/status` | LLM 增强状态 |
-| 监控 | `GET /health`, `GET /metrics` | 健康检查 + Prometheus 指标 |
+| 监控 | `GET /health`, `GET /metrics` | 健康检查 + Prometheus 指标（公网不暴露） |
 | Webhook | `POST /api/v1/webhook/alchemy` | Alchemy 事件回调 |
 
 完整 API 文档见 [docs/API_SPEC.md](docs/API_SPEC.md) 或运行时 `/docs`。
@@ -281,7 +302,7 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── metrics.py          # Prometheus 指标
 │   │   └── main.py             # FastAPI 入口
 │   ├── alembic/                # 数据库迁移
-│   ├── tests/                  # 测试套件 (2456 tests)
+│   ├── tests/                  # 测试套件
 │   ├── scripts/                # 运维 + 校准脚本
 │   ├── Dockerfile
 │   └── pyproject.toml
@@ -323,22 +344,20 @@ Web3-Airdrop-Alpha-Agent-System/
 
 | 变量 | 必填 | 默认 | 说明 |
 |------|------|------|------|
-| `APP_ENV` | 是 | development | `production` 时启用安全校验 |
-| `API_KEY` | 是 | - | API 鉴权密钥, >= 32 字符 |
-| `AUTH_TOKEN_SECRET` | 是 | - | 匿名 Token 签名密钥, >= 32 字符 |
+| `APP_ENV` | 生产是 | development | 生产全栈 compose 会强制覆盖为 `production`，从而启用安全校验 |
+| `API_KEY` | 生产是 | - | 后端管理员 API Key，至少 32 字符；空值会关闭后端鉴权 |
+| `AUTH_TOKEN_SECRET` | 生产是 | - | 匿名 Bearer token 的签名密钥；生产为空会拒绝启动 |
+| `BACKEND_API_KEY` | 生产前端是 | - | 必须与 `API_KEY` 同值；仅在 Next.js 服务端用于管理员端点，**不能**使用 `NEXT_PUBLIC_` 前缀 |
+| `API_PROXY_TARGET` | 生产前端是 | `http://web:8002` | Next.js 构建期 rewrite 与运行期匿名 token 换取均使用此内网地址 |
+| `CORS_ORIGINS` | 生产是 | localhost | 填实际前端域名；production 中包含 localhost / 127.0.0.1 会拒绝启动 |
+| `TRUSTED_PROXY_COUNT` | 反代时是 | 0 | 本仓生产拓扑 nginx → web 填 `1`；每多一层受控反代加 `1` |
 | `DB_BACKEND` | 否 | sqlite | `sqlite` 或 `postgres` |
-| `DB_PATH` | 否 | data/app.db | SQLite 文件路径 |
-| `POSTGRES_*` | postgres 时 | - | PostgreSQL 连接配置 |
+| `DB_PATH` | SQLite 时 | data/airdrop.db | SQLite 文件路径 |
+| `POSTGRES_PASSWORD` | PostgreSQL 时 | - | 强密码（至少 16 字符，不能用 `airdrop` / `postgres` 等占位符） |
 | `OPENAI_API_KEY` | 否 | - | LLM 增强（不设则走规则引擎） |
-| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限，**超出后拒绝调用并降级回规则引擎**；`0` = 不限额 |
-| `LLM_FALLBACK_PRICE_PER_1M_USD` | 否 | 10.0 | 价格表里没有的模型按此单价估算（美元/1M token），故意偏高 |
-| `CRON_EXPRESSION` | 否 | 0 8 * * * | 每日分析触发时间 |
-| `MAX_CONCURRENT_PROJECTS` | 否 | 10 | 并行评分上限 |
-| `RATE_LIMIT_ENABLED` | 否 | true | API 限流开关 |
-| `RATE_LIMIT_REQUESTS` | 否 | 100 | 每窗口（60s）最大请求数 |
-| `METRICS_ENABLED` | 否 | true | Prometheus 指标端点 |
-| `OPPORTUNITY_SHADOW_ENABLED` | 否 | true | Opportunity 旁路评估 |
-| `SEED_FALLBACK_ENABLED` | 否 | true | 外部源全挂时降级兜底 |
+| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限，超出后拒绝调用并降级回规则引擎；`0` = 不限额 |
+| `RATE_LIMIT_REQUESTS` | 否 | 100 | 每 60 秒单 IP 最大请求数 |
+| `SEED_FALLBACK_ENABLED` | 否 | true | 采集全挂时使用内置种子；生产建议设为 `false`，避免仪表盘混入兜底数据 |
 
 完整变量列表见 `.env.example`。
 
@@ -363,7 +382,14 @@ pytest tests/golden/          # 金标准回归测试
 pytest --cov=app --cov-report=html
 ```
 
-测试基线：**2452 passed, 4 skipped, 0 failed**，覆盖率 87.66%（2026-08-20 实测，`cd backend && pytest -q`，耗时 32 分 40 秒）
+测试基线以 CI 最新一次后端全量结果为准。本地建议：
+
+```bash
+cd backend
+venv/Scripts/python.exe -m pytest --no-cov -p no:cacheprovider
+```
+
+近期 CI 已验证过 3292 passed / 5 skipped。
 
 ---
 
@@ -371,9 +397,15 @@ pytest --cov=app --cov-report=html
 
 ### Prometheus 指标
 
+本地开发可直接查看：
+
 ```bash
 curl http://localhost:8002/metrics
 ```
+
+生产全栈中 `/metrics` **不通过 nginx 向公网转发**（公网请求返回 403），避免暴露
+项目数量、pipeline 成败、LLM 花费与采集源错误率等运行信息。Prometheus 已在 Docker
+`backend` 网络内直连 `airdrop-web:8002/metrics`；外部监控请使用 Grafana 登录入口。
 
 关键指标：
 
@@ -406,33 +438,41 @@ curl http://localhost:8002/metrics
 ### Docker 命令
 
 ```bash
-# 构建镜像
-docker build -t airdrop-alpha:latest -f backend/Dockerfile .
+docker build -t airdrop-alpha:latest -f docker/Dockerfile .
 
-# 启动（SQLite）
+# SQLite 基础部署
 docker compose up -d --build
 
-# 启动（PostgreSQL）
+# 仅启用基础 compose 的 PostgreSQL
 docker compose --profile postgres up -d --build
 
-# 查看日志
-docker compose logs -f backend
+# 生产全栈（推荐：Next.js + FastAPI + PostgreSQL + Nginx + 监控）
+docker compose -f docker-compose.prod.yml up -d --build
 
-# 健康检查（Docker 部署通过 Nginx）
+# 查看生产日志
+docker compose -f docker-compose.prod.yml logs -f web
+
+# 生产健康检查
 curl http://localhost:18080/health
 
-# 停止
-docker compose down
+# 停止生产全栈
+docker compose -f docker-compose.prod.yml down
 ```
+
+> 生产命令使用独立的 `docker-compose.prod.yml`，不要改写成
+> `docker compose --profile production`。完整变量要求、限流验证、备份恢复与回滚流程见
+> [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) 和 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 ### 数据库迁移
 
+生产全栈的后端容器名为 `airdrop-web`：
+
 ```bash
 # 应用迁移
-docker exec airdrop-alpha-backend alembic upgrade head
+docker exec airdrop-web alembic upgrade head
 
 # 回滚
-docker exec airdrop-alpha-backend alembic downgrade -1
+docker exec airdrop-web alembic downgrade -1
 ```
 
 详细部署指南见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
