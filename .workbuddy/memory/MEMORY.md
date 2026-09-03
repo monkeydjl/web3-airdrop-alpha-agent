@@ -3,7 +3,8 @@
 > 2026-09-02 · 分支 `feat/action-loop-m2` 已推送，**PR #30** → `master`（远程默认分支是 master 不是 main）。push 仍需 owner 明示。
 
 ## 红线与门禁
-- 只提供 FARM/WATCH/IGNORE 决策参考；绝不交易、代签、自动 farming、托管资金/KYC。先文档后代码；真相源：代码 + `docs/` > 旧路线图 > 本记忆。禁读写 `.env`/`.env.*`（`.env.example` 除外）。commit 后跑 `sh .git/sync-head-ref.sh`。
+- 只提供 FARM/WATCH/IGNORE 决策参考；绝不交易、代签、自动 farming、托管资金/KYC。先文档后代码；真相源：代码 + `docs/` > 旧路线图 > 本记忆。禁读写 `.env`/`.env.*`（`.env.example` 除外）。
+- **commit 后必须 `sh .git/sync-head-ref.sh`，连续多个 commit 更要每次都跑。** 沙箱 git 拦截层会重放提交：每次 `git commit` 产生**两条 reflog**，且分支 ref 落后于实际提交。连续提交时第二次会拿陈旧 ref 当父节点，把前一个 commit 挤出历史（实测 `3fc9167` 父指向 `f2ffe02` 而非 `22dda91`，两个 commit 被压成一个，message 只剩后半件事）。内容不会丢（新提交是并集，`git diff` 可验证树相同），丢的是历史结构。判定：`git log --oneline -3` 看提交是否都在 + `for c in ...; do git rev-parse $c^; done` 看父链。修法就是跑那个脚本（它会打印 `ref 落后，修正:`）。`git reset --hard <正确commit>` 同样会被拨回，reset 后也要跑。
 - 校准门槛固定：live ≥200、FARM ≥30，不可因回测下调。无 SQL 外键，路由显式级联。
 - **DB 新列四处同落**：`db.py` 双方言 DDL + `init_db::_add_column_if_not_exists` + Alembic + `DATABASE_DDL.md`。漏第 2 处：既有表跳过 `CREATE IF NOT EXISTS` → `no column named X` → save 失败、run 报 failed，CI 全新库看不见。回归 `test_existing_database_reaches_full_column_parity_after_init`。另确认 API 有出口。
 - **`except` 块内的清理动作必须再套一层 `contextlib.suppress`**：`HTTPCache.get()` 的 except 里裸 `unlink()` 自己抛的 `OSError` 没人接，一路冒泡穿出 `fetch()`，把「缓存读坏」这种可降级小事变成整个请求失败。缓存语义是有则加速无则回源，任何一层出问题都该退回真实请求。裸 `await Event.wait()` 同理危险：无超时会把一条用例失败放大成整套挂死，且 `--durations` 对挂起用例完全无效（只统计已完成的），定位只能按类/按测试二分看谁 rc=124。
