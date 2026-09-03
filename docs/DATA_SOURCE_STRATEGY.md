@@ -441,10 +441,19 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 
 | 键 | 真实情况 |
 |---|---|
-| `DUNE_API_KEY` | 配置字段存在，但**没有任何 collector 读它**。要接 Dune 得先写 collector。 |
 | `TWITTER_API_KEY` / `TWITTER_API_SECRET` | 采集器不读，只认 `TWITTER_BEARER_TOKEN`。 |
 | `ALCHEMY_API_KEY` | **已改名**（2026-08-30）：现在是 `ALCHEMY_WEBHOOK_SIGNING_KEY`，只被 `POST /webhook/alchemy` 的 HMAC 签名校验读取。填 Alchemy 控制台该 webhook 的 **Signing key**，不是 Data APIs 的 API key —— 填错的话合法回调永远 401。 |
-| `RATE_LIMIT_ENABLED` / `_REQUESTS` / `_WINDOW` | 三个键**无任何代码读取**，HTTP 层限流未实现（见 `OPERATIONS.md §11`）。注意这跟 §8.4 的**采集器**限流是两回事。 |
+
+> `DUNE_API_KEY` 曾长期列在这张表里（配置字段在、collector 不存在）。
+> 2026-09-03 **已彻底删除**该键：`config.py` 的 `dune_enabled` / `dune_api_key`
+> 声明、`redact.py` 的脱敏登记、`.env.example` 模板行、`DATABASE_DDL.md` 的
+> `data_sources` 种子行全部移除。留着一个"配了也不生效"的键，运维会以为需要去
+> 申请这个 Key —— 一张诚实的"无效键清单"只是次优解，把键删掉才是解。
+>
+> `RATE_LIMIT_*` 三个键也曾列在这里并注明"HTTP 层限流未实现"，**该说法已过时**：
+> `app/rate_limit.py` 是真实实现（全局配额 + `/run` 昂贵端点配额 + 429 与
+> `Retry-After`），有 `test_review_regressions.py` 的伪造 `X-Forwarded-For`
+> 绕过测试守着。
 
 ### 8.3 安全实践
 
@@ -632,7 +641,7 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | Key 用量监控告警 | ❌ `api_calls_today` 字段在但恒为 0，无告警消费 |
 | 归档任务真实执行 | ⚠️ 逻辑与调度都在，但从未命中保留期 |
 | Alchemy Webhook 纳入采集调度 | ⚠️ 端点在，但不在 registry / 不参与调度 |
-| `DUNE_API_KEY` 对应的 collector | ❌ Key 字段在，collector 不存在 |
+| Dune collector | ❌ 不存在，且 2026-09-03 起 `DUNE_API_KEY` 配置字段也已删除（见 §8.2） |
 
 ---
 

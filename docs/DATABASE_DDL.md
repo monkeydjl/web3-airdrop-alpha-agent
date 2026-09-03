@@ -932,7 +932,6 @@ INSERT INTO data_sources (source_id, source_type, source_name, enabled, api_limi
     ('galxe',      'api',      'Galxe',          0, NULL),
     ('layer3',     'api',      'Layer3',         0, NULL),
     ('cryptorank', 'api',      'CryptoRank',     0, 100),
-    ('dune',       'api',      'Dune Analytics', 0, NULL),
     ('manual',     'manual',   'Manual Input',   1, NULL);
 ```
 

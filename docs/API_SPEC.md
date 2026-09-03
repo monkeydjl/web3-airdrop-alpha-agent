@@ -213,6 +213,7 @@
 | POST | `/api/v1/watched-wallets` | v1 | F4（2026-09-02） | 登记自有地址（管理员专用，详见 §41） |
 | PATCH | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 改备注/链/启用（管理员专用，详见 §41） |
 | DELETE | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 删除登记地址（管理员专用，详见 §41） |
+| GET | `/api/v1/public-config` | v1 | 上线前置（2026-09-03） | 评分方法论快照：8 维权重 + 标签阈值（**匿名 token 可读**，详见 §42） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
 | POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
@@ -2089,3 +2090,85 @@ F4 领取监控（[ACTION_LOOP_DESIGN §5](ACTION_LOOP_DESIGN.md#5-f4-领取监�
 匹配失败**不影响** webhook 的既有职责与状态码：webhook 一律返回 200
 （非 200 会让 Alchemy 反复重投），领取监控的异常被吞掉并记
 `webhook.alchemy.claim_watch_failed`。
+
+---
+
+## 42. public-config（评分方法论快照，2026-09-03 新增，**匿名 token 可读**）
+
+### 为什么要有这个端点
+
+前端项目详情页要展示「这个分是按什么权重、什么阈值算出来的」。这两组数
+**已经被调过**（v1.1 把 FARM 从 70 下调到 65，权重随校准变动），写死在前端
+文案里的数字不会跟着改，只会静默变成错的。
+
+但不能让它去读 `GET /settings/config` —— 那个端点回显：
+
+| 字段 | 泄露什么 |
+|---|---|
+| `has_api_key`（每个源一项） | 哪些第三方密钥已配置 |
+| `base_url` | 各采集源的实际地址 |
+| `*_cron` | 全部调度表达式（可推算采集时点） |
+| `LLM_DAILY_BUDGET_USD`、`LLM_FALLBACK_PRICE_PER_1M_USD` | LLM 成本与预算 |
+| `DB_BACKEND`、`APP_ENV` | 用的哪种数据库、什么环境 |
+| `llm.providers` | LLM 提供方清单 |
+
+合起来是一份完整的基础设施画像，必须留在 `ADMIN_ONLY_PREFIXES` 后面。
+
+此前前端代理把管理员密钥**无差别注入所有 `/api/*` 请求**，于是项目详情页这种
+面向普通访客的页面也能读到那份画像。拆出本端点是把「展示评分方法论」这个真实
+需求与「读取运行时配置」这个管理动作分开 —— 前端代理才有可能只给管理动作注入
+管理员密钥（见 GO_LIVE_CHECKLIST §1c）。
+
+### 42a. GET /api/v1/public-config
+
+**鉴权**：匿名 token 或管理员密钥皆可。**注意「非管理员」不等于「免鉴权」** ——
+后端中间件在 `settings.api_key` 非空时要求任何请求都带凭据，不带任何头访问会得
+**401**（不是 200）。本端点刻意**不放进** `PUBLIC_PREFIXES`。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "weights": {
+      "WEIGHT_AIRDROP_SIGNAL": 0.18,
+      "WEIGHT_NARRATIVE_TIMING": 0.14,
+      "WEIGHT_EXECUTION": 0.14,
+      "WEIGHT_TEAM_REPUTATION": 0.13,
+      "WEIGHT_RISK": 0.13,
+      "WEIGHT_TOKENOMICS": 0.11,
+      "WEIGHT_COMPETITION": 0.09,
+      "WEIGHT_TRANSPARENCY": 0.08,
+      "weight_version": "v1.3"
+    },
+    "thresholds": {
+      "LABEL_FARM_THRESHOLD": 65.0,
+      "LABEL_WATCH_THRESHOLD": 50.0,
+      "CONFIDENCE_THRESHOLD": 0.5
+    }
+  }
+}
+```
+
+### 42b. 字段是白名单，不是「整块转发」
+
+顶层**只有** `weights` 与 `thresholds` 两块，`thresholds` 里**只有**上面那三项。
+
+`/settings/config` 的同名 `thresholds` 块混着 `LLM_DAILY_BUDGET_USD`、
+`LLM_FALLBACK_PRICE_PER_1M_USD`、`LLM_TEMPERATURE` 等成本与调参项，
+所以这里逐个列出要暴露的键，而不是把那一块整体转发过来 ——
+将来给 `/settings/config` 加字段时，本端点不会跟着漏。
+
+`tests/api/test_public_config.py` 用**精确相等**（而非「包含」）断言顶层键集合
+与 `thresholds` 键集合，并逐项检查响应体不含 `has_api_key` / `base_url` /
+`cron` / `DB_BACKEND` / `APP_ENV` / `BUDGET` / `PRICE` / `providers` 等子串。
+
+### 42c. 阈值真值只有一处
+
+`LABEL_FARM_THRESHOLD` / `LABEL_WATCH_THRESHOLD` 来自
+`app.agents.scorer.LABEL_THRESHOLDS`，本端点**复用** `settings.py` 的
+`_label_threshold()` 查表函数而不是抄第三份 —— 两个端点报不同的 FARM 阈值
+比报错更坏。回归 `test_thresholds_match_settings_config_exactly`。
+
+> 实施记录：第一版抄了一份查表逻辑，凭印象写成 `LABEL_THRESHOLDS.get(label, 0)`，
+> 而它是 `list[tuple[int, str]]` 而非 dict，直接 AttributeError。这恰好印证了
+> 原注释里那句「抄一份就意味着下次再调时有两个地方要改」。

@@ -8,6 +8,54 @@
 
 ## [Unreleased]
 
+### Fixed — 公网上线路径的四条静默阻塞（2026-09-03）
+
+四条缺陷各自都能让公网部署整站不可用或不安全，但**没有一条会在本地开发中暴露**，
+因为它们都只发生在"nginx + 容器 + 生产环境变量"这条本地跑不到的路径上。
+
+- **生产 nginx 把 `/api/` 直连后端，绕过了 Next 的凭据注入**
+  （`docker/nginx/nginx-http.conf`）。浏览器不持有任何后端凭据，凭据由
+  `frontend-next/proxy.ts` 在服务端按路径分档注入。`proxy_pass` 指向 backend
+  时那段代码根本不执行 → `API_KEY` 非空即全站 401、页面空白。改为指向
+  `frontend`。已确认这一跳不影响限流：Next 的 httpxy `setupOutgoing` 原样复制
+  请求头且未启用 `xfwd`，XFF 段数不变，`TRUSTED_PROXY_COUNT` 仍按 nginx 算 1。
+- **前端容器拿不到 `BACKEND_API_KEY`**（`docker-compose.prod.yml`）。
+  `proxy.ts` 在密钥缺失时按"MVP 无鉴权模式"放行且不注入任何凭据 ——
+  于是同样 401，而前端日志里没有任何异常。改用 `${VAR:?}` 让它缺失即启动失败。
+- **生产 compose 不强制 `APP_ENV=production`**。它靠 `env_file` 继承 `.env`，
+  而模板值是 `development` → `config.py` 的生产自检（API_KEY 长度、
+  `AUTH_TOKEN_SECRET`、CORS localhost、PG 弱口令）**全部跳过**，容器照样变绿。
+  改为在 compose 里显式钉死，不信任 `.env`。同时把 `API_KEY` 从裸 `${VAR}` 改成
+  `${VAR:?}`：`environment` 的插值即便展开成空串也会**覆盖** `env_file` 的正确值，
+  裸写法只给一个 warning，后端却变成"API_KEY 为空 = 鉴权中间件短路"。
+- **前端构建期缺 `API_PROXY_TARGET`**（`frontend-next/Dockerfile`）。
+  `next.config.js` 的 rewrites 在 **build 时**读取它并写进产物，不是运行时解析；
+  漏掉则 production 构建得到空 rewrite，`/api` 被 Next 当自身路由处理而 404。
+
+另外三处顺带修掉：
+
+- **`/metrics` 经生产 nginx 公开暴露**。它在后端 `PUBLIC_PREFIXES` 里，
+  **到哪儿就在哪儿免鉴权**，从公网转发过来等于公开项目数、pipeline 成败、
+  LLM 花费与各采集源错误率。而 Prometheus 走 `backend` 网络直连容器，从不经
+  nginx。改为直接 `return 403` —— 刻意**不用** `allow` 网段白名单：Docker
+  userland-proxy 会把外部客户端源地址改写成 `172.17.0.1`，正好落进
+  `172.16.0.0/12`，那种"只放行内网"的规则会对全体外部访客放行。
+  一条看起来收紧了、实际什么都没挡住的规则比没有规则更糟。
+- **`proxy.ts` 换匿名 token 走公网回环**：原先用 `request.nextUrl.origin`
+  （来自浏览器 Host，即公网域名），容器内 fetch 它要走 DNS → 外网 → 回环穿
+  nginx，任一环节不通就 catch 返 null → 请求裸奔后端拿 401。改为直连
+  `API_PROXY_TARGET` 内网地址，开发未配置时回退 origin。
+- **README 与 DEPLOYMENT 的生产命令指向错误的 compose 文件**。
+  `docker compose --profile production up` 作用于 `docker-compose.yml`，
+  而该文件**没有前端服务**，挂的是根 `nginx.conf`（整站反代到后端的纯 API 入口）
+  → 起来只有裸 API、没有 UI。前端只存在于 `docker-compose.prod.yml`，须用 `-f`。
+  README 里那张端口表描述的本来就是后者的拓扑，两处早已不自洽。
+
+通用教训：**"本地能跑"对部署配置几乎没有证明力。** 上面每一条在
+`npm run dev` + `uvicorn` 下都完全正常，因为那条路径上没有 nginx、没有容器边界、
+也没有生产环境变量校验。配置类缺陷要靠"照文档从零走一遍"来发现，
+而不是靠功能测试。
+
 ### Added — M3/F4 领取监控（2026-09-02，按 ACTION_LOOP_DESIGN §5 实施）
 
 补上了执行闭环的最后一环。此前 M1 推送、F2 参与流水、F3 ROI 都已交付，评分决策

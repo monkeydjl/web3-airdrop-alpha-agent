@@ -12,6 +12,7 @@
 from math import isfinite
 from pathlib import Path
 from typing import Any, Self
+from urllib.parse import unquote, urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,61 @@ _ENV_FILES = tuple(str(p) for p in (_ROOT_DIR / ".env", _BACKEND_DIR / ".env") i
 
 # SECURITY.md §4.2：生产环境 API_KEY 长度下限
 MIN_PRODUCTION_API_KEY_LENGTH = 32
+
+# 生产环境 PostgreSQL 密码长度下限。
+# 比 API_KEY 的 32 宽松：DB 端口通常不对外暴露（compose 内网 / VPC），
+# 威胁模型是"攻破一层后的横向移动"而非线速爆破，16 位随机足够。
+# 但**必须有下限** —— 见下面 _WEAK_DB_PASSWORDS 的说明。
+MIN_PRODUCTION_DB_PASSWORD_LENGTH = 16
+
+# 明确拒绝的弱 DB 密码。
+#
+# 为什么要维护这份清单而不只看长度：`airdrop_test` 有 12 位，
+# `change-me-in-production` 有 23 位 —— 后者能过任何长度检查，却是
+# 文档模板里的占位符，属于"看起来配过了但等于没配"。这类值必须点名拒绝。
+#
+# 尤其是 `airdrop_test`：它同时是 `postgres_password` 的字段默认值和
+# docker-compose.yml 的 `:-` 兜底值，而 docker-compose.yml 的
+# `APP_ENV` 默认是 **production**。也就是说 `docker compose up` +
+# `DB_BACKEND=postgres` 会以生产身份带着一个公开在仓库里的密码静默跑起来，
+# 没有任何警告。生产自检此前完全不看 DB 密码，这条路一直是通的。
+_WEAK_DB_PASSWORDS = frozenset(
+    {
+        "airdrop_test",
+        "airdrop",
+        "change-me-in-production",
+        "changeme",
+        "change-me",
+        "postgres",
+        "password",
+        "secret",
+        "test",
+        "root",
+        "admin",
+    }
+)
+
+
+def _extract_db_password(url: str | None) -> str:
+    """从数据库连接串里取出密码，取不到返回空串。
+
+    用 `urlsplit` 而非手写切分：密码里的 `@` 必须是百分号编码的（RFC 3986），
+    手写 `split("@")` 会在 `pass@word` 这种编码后的串上切错位置，把校验建立在
+    一个错的子串上 —— 而它不会报错，只会让强密码被误判成弱密码或反之。
+
+    `unquote` 是必要的：`p%40ss` 的真实密码是 `p@ss`，不解码则长度和字面值
+    都不对。运维用生成器产出的密码经常含需要编码的字符。
+
+    连接串解析失败时返回空串（调用方会当"没有密码"处理并拒绝启动）——
+    对一个连不上的 DB 配置，拒绝启动比放行更对。
+    """
+    if not url:
+        return ""
+    try:
+        return unquote(urlsplit(url).password or "")
+    except ValueError:
+        # urlsplit 对畸形串（如 IPv6 括号不匹配）会抛 ValueError
+        return ""
 
 
 class Settings(BaseSettings):
@@ -293,9 +349,6 @@ class Settings(BaseSettings):
     layer3_api_key: str = ""
     layer3_timeout: int = 30
     layer3_retry: int = 3
-    # Dune Analytics（可选）
-    dune_enabled: bool = False
-    dune_api_key: str = ""
 
     # Discord / Reddit / Medium / Mirror（P2，社区与内容源）
     # 门控规则与其它源一致（§4.1 三条件）：开关 ∧ Key ∧ data_sources.enabled。
@@ -615,6 +668,48 @@ class Settings(BaseSettings):
                     "生产环境 CORS_ORIGINS 不能包含 localhost/127.0.0.1"
                     f"（当前 {', '.join(localhost_origins)}）——请设为实际前端域名"
                 )
+
+            # ── PostgreSQL 密码：只在真用 PG 时校验 ────────────────
+            #
+            # 激活 PG 有两条路径（见 `_resolve_db_backend`）：分项 POSTGRES_*
+            # 组装、或直接给 DATABASE_URL。两条都要覆盖 —— 只查
+            # `postgres_password` 字段会漏掉把弱密码写在连接串里的配法，
+            # 而那在生产上更常见。
+            #
+            # ⚠️ 这里**不能**依赖 `self.database_url` 已经组装好：本自检位于
+            # `model_post_init`，而 pydantic 的 `model_post_init` 执行在
+            # `mode="after"` 验证器**之前**，所以 `_resolve_db_backend` 还没跑，
+            # 分项配置下 `database_url` 此刻仍是 None。
+            # （实测踩过：直接读 database_url 会让分项配的强密码也报"没有密码"。）
+            # 所以下面自己判断生效来源，与 `_resolve_db_backend` 的优先级保持一致：
+            # 显式 DATABASE_URL 优先，否则用分项字段。
+            #
+            # 不校验 SQLite 部署：那时 POSTGRES_* 完全不参与，拿默认值报错
+            # 会让本地 compose 起不来，属于误伤。
+            explicit_url = (self.database_url or "").strip()
+            uses_pg = self.db_backend == "postgres" or explicit_url.startswith(("postgresql://", "postgres://"))
+            if uses_pg:
+                pg_password = (
+                    _extract_db_password(explicit_url) if explicit_url else (self.postgres_password or "").strip()
+                )
+                if not pg_password:
+                    errors.append(
+                        "生产环境使用 PostgreSQL 时必须设置密码"
+                        "（当前连接串里没有密码 = 任何能访问 DB 端口的进程都能连）"
+                    )
+                elif pg_password.lower() in _WEAK_DB_PASSWORDS:
+                    # 点名拒绝而非只看长度：`change-me-in-production` 有 23 位、
+                    # 能过任何长度检查，但它是模板占位符。
+                    errors.append(
+                        f"生产环境 PostgreSQL 密码是已知弱口令/占位符（{pg_password!r}）——"
+                        "它公开写在本仓库的 compose 与文档里，等于没有密码。"
+                        '请用 `python -c "import secrets; print(secrets.token_urlsafe(24))"` 生成'
+                    )
+                elif len(pg_password) < MIN_PRODUCTION_DB_PASSWORD_LENGTH:
+                    errors.append(
+                        f"生产环境 PostgreSQL 密码长度必须 >= {MIN_PRODUCTION_DB_PASSWORD_LENGTH}"
+                        f"（当前 {len(pg_password)}）"
+                    )
 
             if errors:
                 raise ValueError("不安全的生产配置: " + "; ".join(errors))

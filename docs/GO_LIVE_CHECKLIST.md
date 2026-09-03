@@ -46,6 +46,85 @@
 - [ ] 建议 `SEED_FALLBACK_ENABLED=false`：否则采集全挂时会用 8 个内置种子项目
       填充评分结果（标记为 `source='seed'`，但会计入 Dashboard 汇总）
 
+### 1b. 反向代理与限流（漏配不报错，但限流等于失效）
+
+- [ ] `TRUSTED_PROXY_COUNT` 按**实际代理层数**设置 —— 默认 `0` 在反代拓扑下会让
+      **全站共用一个限流桶**
+
+  这一项的失败方式是静默的：默认值 `0` 表示"直连、忽略 `X-Forwarded-For`"，
+  于是限流键取 `request.client.host`。而在 `docker-compose.prod.yml` 拓扑下
+  那个值是 **nginx 容器 IP**，所有外部客户端算作同一个来源 ——
+  `RATE_LIMIT_REQUESTS=100` / 60s 变成整站共享 100 次，要么正常用户互相挤爆、
+  要么 API key 爆破根本挡不住。没有任何日志或告警会提示这件事。
+
+  怎么数层数（数的是**本服务前面**有几层受控代理）：
+
+  | 拓扑 | 取值 |
+  |---|---|
+  | 直连暴露 uvicorn（不建议） | `0` |
+  | 本仓 `docker-compose.prod.yml`（nginx → web） | `1` |
+  | 外层 TLS 终止反代 → nginx → web（Cloudflare / ALB / 另一台 nginx） | `2` |
+  | 每多一层受控代理 | `+1` |
+
+  **只算你自己控制的那几层。** 取值原理：代码取 `X-Forwarded-For` 从右往左第 N 个
+  （`app/rate_limit.py::_client_ip`），因为 nginx 的 `$proxy_add_x_forwarded_for`
+  会把客户端自带的 XFF **前置**再追加真实对端 —— 左侧各段都是客户端可伪造的，
+  只有右起第 N 个是链上不可伪造的位置。数大了会取到伪造段（等于没限流），
+  数小了会取到反代自己的 IP（退回全站一个桶）。
+
+- [ ] 验证方法：部署后从**两个不同外网 IP** 各打 `RATE_LIMIT_REQUESTS + 5` 次
+      `GET /api/v1/projects`。正确配置下两边都应先 200 后 429 且互不影响；
+      若其中一边一开始就 429，说明层数数小了、两边共用了同一个桶。
+
+- [ ] `RATE_LIMIT_ENABLED=true`（默认已是）。这三个键 `RATE_LIMIT_ENABLED` /
+      `_REQUESTS` / `_WINDOW` 是**真实生效**的 —— 部分旧文档曾写"HTTP 层限流未实现"，
+      那是过时信息（`app/rate_limit.py` 是实现本体）。
+
+### 1c. 前端代理鉴权（配错等于把管理员权限发给所有访客）
+
+- [ ] `BACKEND_API_KEY` 已设置，且与后端 `API_KEY` **同值**
+      （前端容器读这个名字，后端读 `API_KEY`，是两个不同的键）
+- [ ] `API_PROXY_TARGET` 指向后端内网地址（本仓生产 compose 固定为 `http://web:8002`；
+      它同时在**前端构建期**决定 Next rewrite、在运行期供匿名 token 换取直连后端）
+- [ ] **不要**设置 `NEXT_PUBLIC_API_KEY` —— `NEXT_PUBLIC_` 前缀会被 Next.js
+      编进浏览器包，等于把密钥公开发布
+
+  这一项曾经是真的越权口子：`proxy.ts` 早期版本对**所有** `/api/*` 请求无差别
+  注入 `X-API-Key`，于是任何匿名访客经前端发出的请求，在后端看来都是管理员。
+  现在改为按前缀分档注入：
+
+  | 请求 | 注入的凭据 | 后端看到的身份 |
+  |---|---|---|
+  | `ADMIN_PREFIXES` 命中（如 `/api/v1/watched-wallets`、`/api/v1/settings/*`） | `X-API-Key` | 管理员 |
+  | `ADMIN_METHOD_RULES` 命中（对特定前缀的写方法） | `X-API-Key` | 管理员 |
+  | 其余（`/api/v1/projects` 等只读） | 服务端换取并缓存的匿名 `Bearer` token | 匿名用户 |
+  | `/api/v1/auth/*` | 不注入（放行） | —— |
+
+  > **`proxy.ts` 的 `ADMIN_PREFIXES` 必须与后端 `app/auth.py` 的
+  > `ADMIN_ONLY_PREFIXES` 逐项一致。** 漏一项就是一个静默越权口子：前端不认为
+  > 它是管理端点、于是只注入匿名 token，而后端认为它是 —— 结果是 403，功能坏掉
+  > 但不危险；反过来多写一项才危险（把不该提权的路径提权了）。加后端前缀时
+  > 请同步这里，`docs/OPERATIONS.md` §5.2 的清单也要一起改。
+
+  匿名档不等于免鉴权：后端中间件在 `API_KEY` 非空时要求**任何**请求都带凭据，
+  不带任何头会拿到 401 而不是 200。所以代理需要在服务端调
+  `POST /api/v1/auth/anonymous` 换 token 并缓存（带 5 分钟提前续期余量、
+  并发去重），而不是"不注入任何头"。
+
+- [ ] 配套后端改动已在位：`GET /api/v1/public-config`（白名单回显 8 维权重 +
+      3 个标签阈值）。它**不能**挂在 `/settings/*` 下 —— 那整个前缀在
+      `ADMIN_ONLY_PREFIXES` 里。项目详情页用它替代了原先的 `/settings/config`
+      （后者的 `thresholds` 块混着 `LLM_DAILY_BUDGET_USD` 等成本项，
+      整块转发会顺带公开预算信息）。契约见 `docs/API_SPEC.md` §42
+- [ ] 验证（部署后从公网执行，`$SITE` 换成实际域名）：
+  ```bash
+  # 匿名可读公开配置 → 期望 200，且响应里只有 weights / thresholds 两个键
+  curl -s -o /dev/null -w '%{http_code}\n' "$SITE/api/v1/public-config"
+
+  # 匿名读管理端点 → 期望 403（不是 200！返回 200 说明代理仍在无差别注入密钥）
+  curl -s -o /dev/null -w '%{http_code}\n' "$SITE/api/v1/settings/config"
+  ```
+
 ### 2. 数据库
 
 - [ ] 选择数据库后端：
@@ -118,9 +197,11 @@
 
 ### 7. 监控与告警
 
-- [ ] `/metrics` 端点可访问
+- [ ] `/metrics` 仅能从**后端内网**访问（公网 nginx 返回 403，这是预期安全行为）
   ```bash
-  curl http://localhost:8002/metrics | head -20
+  # 从 Prometheus 容器或 backend Docker 网络执行；不要从公网域名 curl。
+  # Prometheus 的真实 target 已是 airdrop-web:8002，见 prometheus.yml。
+  curl http://airdrop-web:8002/metrics | head -20
   ```
 - [ ] Prometheus 已配置抓取目标（`configs/observability/prometheus/prometheus.yml`）
 - [ ] Grafana Dashboard 已导入（`configs/observability/grafana/dashboard-system-overview.json`）
@@ -177,7 +258,10 @@
 - [ ] 权重校准：积累 >= 200 条反馈后运行 `python scripts/calibrate_weights.py --search`
 - [ ] Opportunity Shadow：`OPPORTUNITY_SHADOW_ENABLED=true`，`SAMPLE_RATE=1.0`（已默认开启）
 - [ ] Economic Snapshot：`OPPORTUNITY_ECONOMIC_SNAPSHOT_ENABLED=true`（已默认开启）
-- [ ] 前端 Next.js 部署（`frontend-next/` 目录，`docker compose --profile production up -d`）
+- [ ] 前端 Next.js 生产部署（使用独立全栈 compose）：
+      `docker compose -f docker-compose.prod.yml up -d --build`。
+      **不是** `docker compose --profile production up`：后者属于基础 compose，
+      没有 frontend 服务，起出来只有裸 API；完整原因见 DEPLOYMENT.md §2.3。
 
 ### 13. 容器编排优化
 

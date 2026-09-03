@@ -173,7 +173,11 @@ export default function ProjectPage() {
     setError('');
     // 顺带拉一次运行时配置：8 维权重和 FARM/WATCH 阈值以前是写死在本文件里的
     // （见 DIMENSIONS 注释）。这一路失败不影响项目详情本身，所以单独 catch。
-    apiFetch<RuntimeThresholds>('/settings/config', { signal: ac.signal })
+    //
+    // 用 `/public-config` 而非 `/settings/config`：本页面向普通访客，而后者是
+    // 管理员专属（回显哪些密钥已配、采集源地址、cron、LLM 预算）。前端代理
+    // 已改为只给管理动作注入管理员密钥，继续打 /settings/config 会拿到 403。
+    apiFetch<RuntimeThresholds>('/public-config', { signal: ac.signal })
       .then((cfg) => {
         if (!mounted.current || myGeneration !== generation.current) return;
         setRuntimeCfg(cfg ?? null);

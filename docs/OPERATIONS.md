@@ -1188,7 +1188,7 @@ CI 跑 pytest 时加了：
 | 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
 | `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
-| `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
+| `DUNE_API_KEY` | ❌ 已删除（2026-09-03）：配置字段、脱敏登记、模板行、DDL 种子行全部移除。此前是"配了也不生效"的装饰性键，会让人误以为需要去申请 Dune Key |
 | `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
 | `SEED_ON_STARTUP` / `SEED_DATA_PATH` | ⚠️ 两个键**全仓 0 处读取**（启动灌种子靠手动跑 `scripts/seed.py`）。生产环境另有强制关闭，见 §12.13 |
 | 蓝绿 / 金丝雀发布 | ❌ 未实现 |

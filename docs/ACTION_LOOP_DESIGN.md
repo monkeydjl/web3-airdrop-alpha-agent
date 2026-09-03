@@ -605,8 +605,9 @@ ADR-015 §「本 ADR 不解决什么」里划为独立立项。
   不因任何「自动化程度」目标放宽。
 - 多链扩展（Solana 等）：方向对，等 M1–M3 落地后评估。
 - 对外开放 API / 第三方接入：不做。
-- Dune 采集：不接。建议顺手**删掉** `DUNE_API_KEY` 死配置（docs/DATA_SOURCE_STRATEGY.md §8.2
-  已注明它配了也不生效），而不是为了「配了能用」反向加需求。
+- Dune 采集：不接。这里曾建议顺手删掉 `DUNE_API_KEY` 死配置，**2026-09-03 已执行**
+  （config.py 声明、redact.py 脱敏登记、.env.example 模板行、DATABASE_DDL 种子行
+  四处全删）—— 而不是为了「配了能用」反向加需求。
 - 移动端推送（APNs/FCM）：不做，Telegram/Discord 已覆盖随时在线场景。
 
 ## 9. 前置依赖（与 2026-08-30 审核遗留的关系）

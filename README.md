@@ -87,9 +87,16 @@ docker compose up -d --build
 docker compose --profile postgres up -d --build
 # 在 .env 中设置 DB_BACKEND=postgres
 
-# 生产全栈（含 Nginx + 监控栈）
-docker compose --profile production up -d --build
+# 生产全栈（Nginx + Next.js 前端 + PostgreSQL）—— 注意是 -f 换文件，不是加 profile
+docker compose -f docker-compose.prod.yml up -d --build
 ```
+
+> ⚠️ **`docker compose --profile production up` 起不出前端。** 那个 profile 属于
+> `docker-compose.yml`，而该文件只有 `backend` / `postgres` / `nginx` 三个服务，
+> 挂的是根目录 `nginx.conf`（整站反代到后端的纯 API 入口）—— 起来只有裸 API、
+> 没有 UI，且 API 请求绕过前端代理拿不到凭据。
+> 前端只存在于 `docker-compose.prod.yml`，必须用 `-f` 指定它。
+> 下面那张端口表描述的也是这份文件的拓扑。
 
 #### Docker 端口映射
 
