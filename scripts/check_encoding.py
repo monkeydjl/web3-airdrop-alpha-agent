@@ -247,6 +247,21 @@ _CJK = r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]"
 MOJIBAKE_PAT = re.compile(f"(?<={_CJK})\\?|\\?(?={_CJK})")
 # 行内代码 `...`
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
+# Shell / compose 参数扩展 `${VAR:?中文提示}`、`${VAR:-默认值}`。
+#
+# `${VAR:?msg}` 是 POSIX「未设置就报错并退出」的语法（compose 靠它把
+# API_KEY / POSTGRES_PASSWORD 做成硬必填），那个 `?` 是**语法字符**，
+# 紧跟其后的中文是给部署者看的提示 —— 于是它天然长成「半角 ? 紧贴中文」
+# 这个二型损坏的判据形状。
+#
+# 这类文件（.yml / .env / .sh）里没有 markdown 反引号，靠上面两条排除
+# 屏蔽不到，所以必须单独一条。**不能反过来去改 compose 迁就检测器**：
+# 把提示改成英文或删掉冒号问号，会削弱必填门禁或让部署者看不懂报错，
+# 那是让门禁反过来损害被它保护的东西。
+#
+# 只吃到第一个 `}`（`[^{}\n]*`）而不是贪婪匹配：一行里可能有多个扩展，
+# 贪婪会把两个扩展之间的散文一并屏蔽掉，那里真出现损坏就漏检了。
+_SHELL_PARAM_EXPANSION = re.compile(r"\$\{[^{}\n]*\}")
 
 # 三型：字面的 Unicode 替换符 U+FFFD（EF BF BD）。
 # 判据无需上下文 —— 正常写作绝不会输入这个字符，它只可能来自
@@ -274,6 +289,13 @@ def blank_code_blocks(text: str) -> str:
 
     本文件自己被自己误报这件事，恰好说明"描述判据的文字"和"符合判据的损坏"
     长得一样 —— 不排除代码就没法自洽。
+
+    **还必须排除 shell 参数扩展**（`${VAR:?中文提示}`）：那个 `?` 是 POSIX
+    语法字符，后面紧跟给部署者看的中文提示，天然长成二型损坏的形状。
+    这一条是必需的第三项而不是可选优化 —— 2026-09-03 实测
+    `docker-compose.prod.yml` 5 处、`docker-compose.yml` 1 处误报，全部来自
+    `${API_KEY:?请在 .env 里设置…}` 这种把变量做成硬必填的写法。
+    YAML/env/sh 里没有 markdown 反引号，前两条排除**够不到**它。
     """
     out = []
     fenced = False
@@ -284,7 +306,8 @@ def blank_code_blocks(text: str) -> str:
         elif fenced:
             out.append(" " * len(line))
         else:
-            out.append(_INLINE_CODE.sub(lambda m: " " * len(m.group(0)), line))
+            masked = _INLINE_CODE.sub(lambda m: " " * len(m.group(0)), line)
+            out.append(_SHELL_PARAM_EXPANSION.sub(lambda m: " " * len(m.group(0)), masked))
     return "\n".join(out)
 
 

@@ -25,6 +25,7 @@
 | [ADR-013](ADR-013-nextjs-primary-frontend.md) | 主前端演进为 Next.js（App Router） | Accepted | 2026-07-13 | `frontend-next` 为主路径；ADR-003 HTML 保留为原型 | 前端、部署、CORS/代理 |
 | [ADR-014](ADR-014-engine-spec-conformance.md) | 评分决策引擎回归规范 + 旁路机会引擎区间算法修正 | Accepted | 2026-07-26 | 按规范修正实现而非改规范迁就实现；跨源合并不再丢信号，低置信降档与 TOO_EXPENSIVE 由死规则变为可达 | 评分算法、旁路决策、Golden、DB 写入列 |
 | [ADR-015](ADR-015-eligibility-gate-before-scoring.md) | 机会资格前置门（否决条件与打分分离） | Accepted | 2026-09-01 | 回测实测 fpr=100%（19/19 全判 FARM）；「已发币=无机会」改为不可补偿的否决而非可补偿打分，否决只改 label 不改 score。实测目标函数 −1.00 → +0.129 | 评分算法、权重校准协议、API 契约、前端标签 |
+| [ADR-016](ADR-016-llm-provider-round-robin.md) | 多接口多模型自动轮询（编号配置迁移 + 组合级 round-robin） | Accepted | 2026-09-03 | 原实现是固定顺序 failover，第一个接口承担全部流量；改为 provider×model 组合级确定性轮询，新编号格式优先、旧编号进弃用窗口；预算仍是全局单账本 | LLM 配置、调度、成本分布、状态接口 |
 
 ## 按主题快速导航
 
@@ -36,7 +37,7 @@
 | 调度与执行 | [ADR-005](ADR-005-apscheduler-inprocess.md) APScheduler、多项目并发 |
 | Agent 编排 | [ADR-002](ADR-002-self-built-orchestrator.md) 自研 Orchestrator |
 | 前端 | [ADR-003](ADR-003-single-page-html-mvp.md) 单页 HTML 原型 → [ADR-013](ADR-013-nextjs-primary-frontend.md) Next 主路径 |
-| 成本与可用性 | [ADR-001](ADR-001-llm-default-off.md) LLM 默认关闭、可离线运行 |
+| 成本与可用性 | [ADR-001](ADR-001-llm-default-off.md) LLM 默认关闭、可离线运行；[ADR-016](ADR-016-llm-provider-round-robin.md) 多接口轮询与成本分布 |
 | 用户与鉴权 | [ADR-008](ADR-008-user-system.md) 用户系统与多租户隔离 |
 | API 与兼容性 | [ADR-009](ADR-009-api-versioning.md) API 版本管理 |
 | 性能与缓存 | [ADR-010](ADR-010-competition-cache.md) 竞争度缓存 |

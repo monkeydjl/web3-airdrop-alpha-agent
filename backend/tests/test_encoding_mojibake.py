@@ -119,6 +119,39 @@ def test_fullwidth_question_mark_is_fine(checker):
     assert checker.count_mojibake("这样可以吗？当然。\n") == 0
 
 
+def test_shell_required_param_expansion_is_not_corruption(checker):
+    """`${VAR:?中文提示}` 不算损坏 —— 那个 `?` 是 POSIX 语法字符。
+
+    **回归测试**：2026-09-03 实测 `docker-compose.prod.yml` 被误报 5 处、
+    `docker-compose.yml` 1 处，全部来自把变量做成硬必填的写法：
+
+        - API_KEY=${API_KEY:?请在 .env 里设置 API_KEY（至少 32 字符随机字符串）}
+
+    误报的代价不是"多一条红"：它会把人推向**改 compose 去迁就检测器**，
+    而能消掉误报的改法（提示改英文、去掉 `:?`）要么让部署者看不懂报错，
+    要么直接废掉必填门禁 —— 门禁反过来损害它保护的东西。
+
+    YAML / .env / .sh 里没有 markdown 反引号，所以行内代码那条排除
+    **够不到**这里，必须有独立的参数扩展排除。
+    """
+    line = "      - API_KEY=${API_KEY:" + _c("", "请在 .env 里设置（至少 32 字符）") + "}\n"
+    assert checker.count_mojibake(line) == 0, "shell 必填参数扩展被判成编码损坏"
+    # 默认值形式同理（这一行没有半角问号，可以直接写字面量）
+    assert checker.count_mojibake("x: ${PORT:-8000} 端口\n") == 0
+
+
+def test_prose_outside_param_expansion_is_still_checked(checker):
+    """排除参数扩展**不能**顺带豁免同一行里的散文。
+
+    正则刻意用 `[^{}\\n]*` 只吃到第一个 `}`：贪婪匹配会把两个扩展之间的
+    文字一并屏蔽，那段里真有损坏就漏检了 —— 一条"为了消误报"的排除
+    把真实损坏也放过去，比误报更糟。
+    """
+    expansion = "${A:" + _c("", "提示") + "}"
+    text = expansion + " 中间这里坏了" + _c("吗", "") + " " + expansion + "\n"
+    assert checker.count_mojibake(text) >= 1, "参数扩展之外的散文损坏被漏检了"
+
+
 def test_checker_source_is_self_consistent(checker):
     """本仓库的检查脚本自己必须过自己的检查。
 

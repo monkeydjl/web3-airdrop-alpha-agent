@@ -28,8 +28,11 @@ def _mask_key(key: str) -> str:
 
 @router.get(
     "/llm/status",
-    summary="LLM 多接口故障转移状态",
-    description="返回当前 LLM 配置：接口列表、每接口模型列表、故障转移策略、是否已启用。",
+    summary="LLM 多接口轮询与故障转移状态",
+    description=(
+        "返回当前 LLM 配置：接口列表、每接口模型列表、候选组合数、"
+        "选择策略（轮询）与失败策略（provider 感知）、预算与是否已启用。"
+    ),
 )
 def llm_status() -> dict[str, Any]:
     """获取 LLM 多接口/多模型配置状态。
@@ -53,6 +56,10 @@ def llm_status() -> dict[str, Any]:
         )
 
     total_models = sum(p["model_count"] for p in provider_list)
+
+    # 候选组合数 = 轮询一圈要走几步。数值上等于 total_model_count，语义不同：
+    # 前者答「本次调用可能落在哪几个组合上」，后者答「一共配了多少个模型」。
+    candidate_count = total_models
 
     # 当日花费。此前这个接口只回显 daily_budget_usd —— 一个"配置里写了多少"，
     # 而看不到"已经花了多少"。只有上限没有用量，运维无法判断还剩多少余量，
@@ -81,7 +88,17 @@ def llm_status() -> dict[str, Any]:
             "enabled": settings.is_llm_enabled,
             "provider_count": len(provider_list),
             "total_model_count": total_models,
-            "failover_strategy": "provider1+model1 → provider1+model2 → provider2+model1 → ...",
+            "candidate_count": candidate_count,
+            # 选择策略与失败策略是两件事，分开暴露（ADR-016）：
+            # 前者答「每次从哪开始」，后者答「这次遇到失败怎么走」。
+            # 合成一个字符串时运维会把「轮询」读成「失败才切换」。
+            "selection_strategy": "round_robin",
+            "failover_strategy": "provider_aware",
+            "strategy_note": (
+                "每次调用起点在 provider×model 组合上轮换一格；"
+                "连接级失败跳过该接口剩余模型，模型级失败只跳过当前模型。"
+                "轮询是进程内的，多 worker 下不保证全局严格均衡。"
+            ),
             "providers": provider_list,
             "temperature": settings.llm_temperature,
             "max_tokens": settings.llm_max_tokens,

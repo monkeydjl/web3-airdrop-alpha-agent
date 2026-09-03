@@ -1050,9 +1050,8 @@ job 名 `airdrop-alpha`，送 Loki。
   实际连的是 Postgres，跟它自己声明的那行完全相反。这类错误最难发现：
   两行单独看都合理，只有读过 validator 才知道后者压过前者。
 - **2 个键全仓无人读取**：`LLM_API_KEYS` / `LLM_BASE_URLS`。
-  多接口故障转移真正读的是**编号变量**（`LLM_BASEURL_1` / `LLM_API_KEY_1`
-  / `LLM_MODELS_1_1`），走 `os.environ` 不经 Settings。
-  照着填那两个逗号分隔变量，LLM 一个接口都不会注册。
+  多接口真正读的是**编号变量**（当前格式见 §9.5），走 `os.environ`
+  不经 Settings。照着填那两个逗号分隔变量，LLM 一个接口都不会注册。
 - **2 个路径不存在**：`SEED_DATA_PATH=data/seed_projects.json`、
   `FETCHER_CACHE_DIR=data/fetcher_cache`。
 - **`WEIGHT_VERSION=score-v1.4` 混淆了两个版本轴**：`score-v1.4` 是评分
@@ -1090,7 +1089,90 @@ job 名 `airdrop-alpha`，送 Loki。
 模板给 console 便于本地看）、4 个 `POSTGRES_*`（代码默认值是 CI 的测试实例
 `127.0.0.1:5433/airdrop_test`，模板不该把人指向测试库）、
 3 个 `OTEL_*` 与 2 个 `TELEGRAM_*`（分别由 OTel SDK 和 docker compose 直接读，
-不经 Settings）。
+不经 Settings）、7 个 `OPENAI_*_N` 编号 LLM 变量（见 §9.5，接口数量运行时决定，
+不可能声明成固定 Settings 字段）。
+
+### 9.5 LLM 多接口配置与轮询（ADR-016）
+
+#### 配置格式：三档优先级，命中即停
+
+| 优先级 | 变量 | 状态 |
+|---|---|---|
+| 1 | `OPENAI_BASE_URL_N` / `OPENAI_API_KEY_N` / `OPENAI_MODEL_N_M` | 当前标准 |
+| 2 | `LLM_BASEURL_N` / `LLM_API_KEY_N` / `LLM_MODELS_N_M` | 弃用窗口内仍支持 |
+| 3 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | 单接口回退 |
+
+新旧编号**同时存在时取新格式**，并打一条不含密钥的
+llm.legacy_numbered_config_ignored WARNING。**不合并** —— 「2 个新 + 2 个旧
+= 4 个接口，轮询顺序是什么」没有能向运维解释的答案，而更现实的风险是
+「旧配置忘删」静默变成额外的付费接口，账单上才发现。
+
+上限 **10 接口 × 每接口 10 模型**（旧实现是 5×5，第 6 个接口会被静默丢掉）。
+编号**允许空洞**：注释掉中间某个接口不会让它后面的接口失效。
+
+#### 一个接口要真正注册，三样都得有
+
+```
+base_url（必须 http:// 或 https:// 开头）+ api_key + 至少一个模型
+```
+
+缺任一即跳过并打 llm.provider_config_incomplete WARNING（字段只有 `index` /
+`missing` / `base_url_key`，**不含任何密钥值**）。
+
+> `http(s)://` 前缀校验不是洁癖。真实踩到的形态是复制模板时两行粘成一行：
+> `OPENAI_BASE_URL_2=OPENAI_MODEL_2_1=agnes-2.5-flash`。不校验则整个右侧被
+> 当成 base_url，直到**第一次真实调用**才失败，而且报的是「连接错误」——
+> 把排查方向指向网络而不是配置。
+
+`is_llm_enabled` 现在等于「Feature Flag 开 **且** 至少一个有效接口」。
+此前它只查「某个编号 KEY 是否非空」，于是「配了 key 但没配模型」会得到
+`enabled=true` + 零候选组合：状态接口说启用了，而每次调用都静默走规则引擎。
+
+#### 选择与失败是两件事
+
+`GET /api/v1/llm/status` 分开暴露：
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `selection_strategy` | `round_robin` | 每次调用**从哪个组合开始** |
+| `failover_strategy` | `provider_aware` | 这一次调用里**遇到失败怎么走** |
+| `candidate_count` | Σ 每接口模型数 | 轮询一圈几步 |
+
+轮询顺序（6 接口 × 各 2~3 模型的配置下同理）：
+
+```
+请求 1 → provider-1 / model-1
+请求 2 → provider-1 / model-2
+请求 3 → provider-2 / model-1
+...    → 一轮走完回到 provider-1 / model-1
+```
+
+失败处置：连接级（timeout / connect / 5xx / 429）跳过该接口**剩余模型**；
+模型级（400 / 404 / 422 / model not found）只跳当前模型；预算拒绝与输出泄漏
+**立即返回不重试**；全部失败降级规则引擎（ADR-001）。
+
+> 起点旋转而非截断，所以**每次调用仍会试完全部组合**。截断会让 failover
+> 深度随请求序号变化 —— 那是把可用性做成掷骰子。
+
+#### 排查：「为什么这次用的是 model-X」
+
+看 DEBUG 事件 llm.round_robin_selected（字段 `start_index` /
+`candidate_count` / `provider` / `model`）与成功事件 llm.success 的
+`provider` / `model`。**同一个 prompt 在不同请求上由不同模型回答是预期行为**，
+不是 bug。某个模型质量不达标的处置是从配置里摘掉它，不是回退固定顺序。
+
+#### 公平性边界（别按「严格均衡」验收）
+
+- 轮询计数器是**进程内**的，每个 uvicorn worker 各持一个。
+- 多 worker / 多实例下**不保证全局严格均衡**，只保证进程内均衡。
+- 进程重启后从第一个组合重新开始。
+- 以上只影响**流量分布**，不影响故障转移正确性与预算正确性。
+
+预算仍是**全局单账本**（`LLM_DAILY_BUDGET_USD` + `llm_spend_daily` 表），
+不按接口拆分：钱是一笔，拆成 N 份配额只会制造「总预算没超但某接口先被拦」
+这种既难解释又难运维的状态。价格表外的模型（免费接口的模型名大多不在
+`pricing.py` 里）按 `LLM_FALLBACK_PRICE_PER_1M_USD` 保守估算 ——
+**免费接口也必须计入**，否则「换个价格表外的模型名」就等于关掉预算。
 
 ---
 
@@ -1187,7 +1269,7 @@ CI 跑 pytest 时加了：
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
-| `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
+| `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量，当前格式见 §9.5） |
 | `DUNE_API_KEY` | ❌ 已删除（2026-09-03）：配置字段、脱敏登记、模板行、DDL 种子行全部移除。此前是"配了也不生效"的装饰性键，会让人误以为需要去申请 Dune Key |
 | `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
 | `SEED_ON_STARTUP` / `SEED_DATA_PATH` | ⚠️ 两个键**全仓 0 处读取**（启动灌种子靠手动跑 `scripts/seed.py`）。生产环境另有强制关闭，见 §12.13 |

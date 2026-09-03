@@ -1549,7 +1549,7 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 
 ### 33a. GET /api/v1/llm/status
 
-查询 LLM 多接口故障转移配置状态。
+查询 LLM 多接口轮询与故障转移配置状态。
 
 **响应 200**:
 ```json
@@ -1559,7 +1559,10 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
     "enabled": false,
     "provider_count": 1,
     "total_model_count": 2,
-    "failover_strategy": "sequential",
+    "candidate_count": 2,
+    "selection_strategy": "round_robin",
+    "failover_strategy": "provider_aware",
+    "strategy_note": "每次调用起点在 provider×model 组合上轮换一格；连接级失败跳过该接口剩余模型，模型级失败只跳过当前模型。轮询是进程内的，多 worker 下不保证全局严格均衡。",
     "providers": [
       {
         "name": "provider-1",
@@ -1581,6 +1584,22 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
   }
 }
 ```
+
+**调度字段（2026-09-03 新增，ADR-016）**：
+
+| 字段 | 含义 |
+| --- | --- |
+| `selection_strategy` | 每次调用**从哪个组合开始**。当前 `round_robin` |
+| `failover_strategy` | 这一次调用里**遇到失败怎么走**。当前 `provider_aware`：连接级失败跳过该接口剩余模型，模型级失败只跳当前模型 |
+| `candidate_count` | 轮询一圈的候选组合数（Σ 每接口模型数） |
+| `strategy_note` | 人类可读说明，含多 worker 公平性边界 |
+
+选择与失败刻意拆成两个字段。合成一句话时运维会把「轮询」读成
+「失败才切换」—— 那是改造前的行为，而两者对流量分布的含义完全相反。
+
+> `selection_strategy` 是**进程内**轮询：每个 worker 各持一个指针，
+> 多实例下不保证全局严格均衡（详见 `docs/OPERATIONS.md §9.5`）。
+> 别按「严格均分」验收这个字段。
 
 **预算字段（2026-08-24 新增）**：
 

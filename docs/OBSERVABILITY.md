@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **328 个不同事件名**、
-**66 个命名空间**（2026-09-02 随 F4 领取监控的 8 个 `claim_watch.*` 重测）；
-段数分布：2 段 261 个、3 段 61 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **331 个不同事件名**、
+**66 个命名空间**（2026-09-03 随 ADR-016 的 3 个 LLM 轮询/配置事件重测）；
+段数分布：2 段 264 个、3 段 61 个、4 段 5 个、1 段 1 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -83,7 +83,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
 | `collector` | 20 | `collector.noise_quarantined` |
 | `orchestrator` | 20 | `orchestrator.pipeline_start` |
-| `llm` | 17 | `llm.budget.exceeded` |
+| `llm` | 20 | `llm.budget.exceeded` |
 | `pipeline` | 13 | `pipeline.completed` |
 | `collection_scheduler` | 12 | `collection_scheduler.metrics_alert_failed` |
 | `archive` | 10 | `archive.raw_projects.archived` |
@@ -110,6 +110,28 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 > **字段里的地址一律只记前 10 位**（`address_prefix`）。日志会落文件、可能
 > 被采集到集中式系统，与推送内容同一口径（§5.4.1）—— 完整地址进了日志，
 > `/watched-wallets` 那条管理员锁就白设了。
+
+LLM 多接口轮询（ADR-016）落三个事件：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| llm.round_robin_selected | DEBUG | 本次调用的起始组合，字段 `start_index` / `candidate_count` / `provider` / `model` |
+| llm.provider_config_incomplete | WARNING | 某个编号接口是半配置（缺 base_url / api_key / 模型，或 base_url 不是 http(s)://），已跳过 |
+| llm.legacy_numbered_config_ignored | WARNING | 新旧编号变量同时存在，取新格式；旧变量此时完全不起作用 |
+
+> 前者是回答「为什么这次用的是 model-X」的唯一途径 —— 轮询下**同一 prompt
+> 在不同请求上由不同模型回答是预期行为**，只看 llm.success 无法判断
+> 这是轮询正常轮换还是故障转移救回来的。
+>
+> 后两条**务必配告警**，它们都是静默失效：半配置的接口不会报错，只是
+> `provider_count` 比你配的少一个；旧变量残留则会让人改错地方（改了旧变量、
+> 以为生效了）。两条的字段都刻意**不含任何密钥或 base_url 值**。
+
+`llm.attempt_failed`（WARNING）的 `will_retry` 读作「**本次失败之后还有没有
+会被真正尝试的组合**」，不是「候选还没走完」。连接级失败会把该接口的剩余模型
+一并作废，所以剩余候选数不等于剩余尝试数 —— 最后一次失败必然是
+`will_retry=false`，紧接着就是降级。看到 `will_retry=false` 就直接去查
+`llm.all_providers_failed` 与各次 `error_type`，不必再找「重试为什么没生效」。
 
 资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
 `original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——

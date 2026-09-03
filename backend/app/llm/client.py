@@ -1,38 +1,56 @@
-"""LLM client with multi-provider / multi-model failover.
+"""LLM client：多接口多模型**自动轮询** + provider 感知的故障转移（ADR-016）。
 
-故障转移策略：
-1. 接口1连不上（ConnectError / TimeoutException） → 切换接口2
-2. 模型1调用失败（400 / 404 / "model not found"） → 切换模型2
-3. 所有组合都失败 → 返回 None（调用方回退到 rule-based）
+## 两件不同的事
 
-使用方式：
+**选择（轮询）**决定每次调用**从哪个组合开始**：
+
+    请求 1 → provider-1 / model-1
+    请求 2 → provider-1 / model-2
+    请求 3 → provider-2 / model-1
+    ...    → 一轮走完回到 provider-1 / model-1
+
+**故障转移**决定**这一次调用里遇到失败怎么走**：
+
+| 错误 | 行为 |
+| --- | --- |
+| timeout / connect / 5xx / 429 | 整个接口不可用，跳过它的剩余模型 |
+| 400 / 404 / 422 / model not found | 只跳过当前模型，同接口下一个模型继续 |
+| 预算拒绝 / 账本不可用 | 立即返回，**一个字节都不发** |
+| 输出泄漏检测命中 | 立即返回，不重试其它组合（内容问题，换接口大概率同样内容） |
+| 全部组合失败 | 返回 `text=None`，调用方降级规则引擎（ADR-001） |
+
+轮询之前是固定顺序：每次都从第一个组合开始，成功后不记位置。于是配了
+6 个接口也只有第 1 个在承担流量，其余是冷备 —— 免费额度型接口会单点耗尽。
+
+## 使用方式
+
     from app.llm.client import llm_chat
-    text = await llm_chat(messages=[...], temperature=0.3, max_tokens=512)
-    if text is None:
-        # 回退到规则引擎
-        ...
+    result = await llm_chat(messages=[...], temperature=0.3, max_tokens=512)
+    if result.text is None:
+        ...  # 回退到规则引擎
 
-配置（.env，每个接口一组编号变量）：
+## 配置（.env，每个接口一组编号变量）
+
     # 接口 1
-    LLM_BASEURL_1=https://api.openai.com/v1
-    LLM_API_KEY_1=sk-xxx
-    LLM_MODELS_1_1=gpt-4o-mini
-    LLM_MODELS_1_2=gpt-4o
+    OPENAI_BASE_URL_1=https://api.openai.com/v1
+    OPENAI_API_KEY_1=<key>
+    OPENAI_MODEL_1_1=gpt-4o-mini
+    OPENAI_MODEL_1_2=gpt-4o
 
     # 接口 2
-    LLM_BASEURL_2=https://api.deepseek.com/v1
-    LLM_API_KEY_2=sk-yyy
-    LLM_MODELS_2_1=deepseek-chat
-    LLM_MODELS_2_2=deepseek-reasoner
+    OPENAI_BASE_URL_2=https://api.deepseek.com/v1
+    OPENAI_API_KEY_2=<key>
+    OPENAI_MODEL_2_1=deepseek-chat
 
-    # 单接口（向后兼容，未配置编号接口时生效）
-    OPENAI_API_KEY=sk-xxx
-    OPENAI_BASE_URL=https://api.openai.com/v1
-    LLM_MODEL=gpt-4o-mini
+旧编号格式 `LLM_BASEURL_N` / `LLM_API_KEY_N` / `LLM_MODELS_N_M` 在弃用窗口内
+仍支持；新旧同时存在时**新格式优先**并打 warning。都没配则回退单接口
+`OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL`。
+解析与有效性校验在 `app/config.py::llm_providers`。
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -154,16 +172,92 @@ def _is_model_error(exc: Exception) -> bool:
 
 
 def _build_combinations(providers: list[LLMProvider]) -> list[tuple[LLMProvider, str]]:
-    """生成 (provider, model) 尝试组合列表。
+    """生成 (provider, model) 组合的**规范顺序**。
 
-    每个接口有自己专属的模型列表，按顺序遍历：
+    每个接口有自己专属的模型列表，按声明顺序展开：
     provider1+model1 → provider1+model2 → provider2+model1 → provider2+model2
+
+    这只是**候选集合的规范序**，不是某次调用的尝试顺序 ——
+    后者由 `_next_start_index()` 旋转出来（ADR-016 §3）。
     """
     combos: list[tuple[LLMProvider, str]] = []
     for provider in providers:
         for model in provider.models:
             combos.append((provider, model))
     return combos
+
+
+# ── 组合级 round-robin 指针（ADR-016 §3）──────────────────────────
+#
+# 进程内单调计数器。**每个 uvicorn worker 各持一个**，所以多 worker /
+# 多实例下不保证全局严格均衡，只保证进程内均衡；重启后从头开始。
+# 这只影响流量分布，不影响 failover 正确性与预算正确性 —— 预算是全局
+# 单账本（`llm/budget.py`），与选哪个组合无关。
+#
+# 要跨节点严格轮询就得用 Redis/DB 原子计数器，那意味着"选一个模型"先做
+# 一次网络往返：为均衡付出可用性代价，而 LLM 本身只是可选增强层。
+_rr_counter = 0
+_rr_lock: asyncio.Lock | None = None
+
+
+def _get_rr_lock() -> asyncio.Lock:
+    """惰性创建锁。
+
+    模块顶层建锁会让它绑到导入时那个 event loop 上。测试里每个 async 用例
+    是一个新 loop，一个绑错 loop 的锁会在 `await acquire()` 上抛
+    "attached to a different loop" —— 而那与被测逻辑毫无关系。
+    """
+    global _rr_lock
+    if _rr_lock is None:
+        _rr_lock = asyncio.Lock()
+    return _rr_lock
+
+
+async def _next_start_index(total: int) -> int:
+    """取本次调用的起始组合下标，并把指针推进一格。
+
+    **指针在调用开始时推进，与成功/失败无关。** 若只在成功后推进，一个
+    持续失败的组合会被每次调用都当作起点重试 —— 那等于把轮询退化回固定
+    顺序，还额外付出全部失败组合的超时。
+
+    加锁是因为 `llm_chat` 会被并发调用（`LLM_SEMAPHORE_SIZE` 默认 5）。
+    读改写虽然在单个 await 之间不会被打断，但显式加锁让"两个并发调用不会
+    拿到同一个起点"不依赖于对字节码原子性的假设。
+    """
+    global _rr_counter
+    if total <= 0:
+        return 0
+    async with _get_rr_lock():
+        start = _rr_counter % total
+        _rr_counter = (_rr_counter + 1) % total
+    return start
+
+
+def _rotate(
+    combos: list[tuple[LLMProvider, str]],
+    start: int,
+) -> list[tuple[LLMProvider, str]]:
+    """把组合列表旋转到以 `start` 开头。
+
+    旋转而不是截断：**全部组合仍然都会被尝试**，只是顺序轮换。
+    截断会让"轮到最后一个组合时只剩它自己可试"，failover 深度随请求
+    序号变化 —— 那是把可用性做成了掷骰子。
+    """
+    if not combos:
+        return []
+    idx = start % len(combos)
+    return combos[idx:] + combos[:idx]
+
+
+def _reset_round_robin_for_tests() -> None:
+    """把指针复位到 0。**仅供测试使用。**
+
+    轮询是跨调用的进程内状态，用例之间不隔离的话，「第 1 次调用应该命中
+    provider-1」这类断言会取决于同文件里前面跑了几个用例 —— 一个结论
+    取决于执行顺序的断言不是断言。
+    """
+    global _rr_counter
+    _rr_counter = 0
 
 
 @dataclass
@@ -333,10 +427,40 @@ async def llm_chat(
     temp = temperature if temperature is not None else settings.llm_temperature
     tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
-    combinations = _build_combinations(providers)
+    # ── 组合级轮询（ADR-016 §3）─────────────────────────────────
+    # 起点每次调用推进一格，遍历顺序是从该起点开始的**旋转序列**。
+    # 全部组合仍会被试到，failover 深度不随请求序号变化。
+    canonical = _build_combinations(providers)
+    start_index = await _next_start_index(len(canonical))
+    combinations = _rotate(canonical, start_index)
     attempts: list[LLMAttempt] = []
+    if combinations:
+        first_provider, first_model = combinations[0]
+        logger.debug(
+            "llm.round_robin_selected",
+            start_index=start_index,
+            candidate_count=len(combinations),
+            provider=first_provider.name,
+            model=first_model,
+        )
 
-    for provider, model in combinations:
+    # 连接级失败的 provider 名。命中后跳过它的剩余模型 ——
+    # 接口连不上是**接口的问题**，换一个模型名再连同一个地址不会有别的结果，
+    # 只会再付一个连接超时（默认 10s）。owner 的配置是 6 接口 × 2~3 模型，
+    # 一个挂掉的接口不跳过就要空等 20~30s。
+    #
+    # ⚠️ 这里刻意用 set 而不是原来那种「重建 combinations 列表」的写法：
+    # `for x in combinations` 在进入循环时就取好了迭代器，之后把
+    # `combinations` 这个**名字**指向新列表**完全不影响正在进行的迭代** ——
+    # 原实现的 provider 跳过其实是死代码，一直在逐个模型重试挂掉的接口。
+    # 它没被测出来是因为既有用例里每个 provider 只配了 1 个模型，
+    # 「跳过剩余模型」和「没有剩余模型」看起来一样。
+    failed_providers: set[str] = set()
+
+    for combo_index, (provider, model) in enumerate(combinations):
+        if provider.name in failed_providers:
+            continue
+
         attempt = LLMAttempt(
             provider=provider.name,
             model=model,
@@ -436,6 +560,16 @@ async def llm_chat(
             is_conn = _is_connection_error(exc)
             is_model = _is_model_error(exc)
 
+            # will_retry 必须算「本次失败之后**真的还会被尝试**的组合」，
+            # 不能用 `len(attempts) < len(combinations)`：
+            #   1. 跳过的组合不进 attempts，计数与下标脱钩；
+            #   2. 连接失败会让本 provider 剩余模型全部作废，
+            #      拿总数比较只会朝「还有兜底」的方向错报。
+            # 这个字段是排查降级时第一眼看的东西 —— 报 True 却直接返回
+            # None，会把排查引向「重试为什么没生效」这个不存在的问题。
+            skipped = failed_providers | ({provider.name} if is_conn else set())
+            will_retry = any(p.name not in skipped for p, _ in combinations[combo_index + 1 :])
+
             logger.warning(
                 "llm.attempt_failed",
                 provider=provider.name,
@@ -443,16 +577,16 @@ async def llm_chat(
                 error_type="connection" if is_conn else "model" if is_model else "other",
                 error=attempt.error,
                 elapsed_ms=round(attempt.elapsed_ms, 1),
-                will_retry=len(attempts) < len(combinations),
+                will_retry=will_retry,
             )
 
-            # 连接错误：跳过当前 provider 剩余模型，直接切到下一个 provider
+            # 连接错误（timeout / connect / 5xx / 429）：整个接口不可用，
+            # 跳过它的剩余模型，直接进下一个 provider。
             if is_conn:
-                remaining = [c for c in combinations[len(attempts) :] if c[0] != provider]
-                combinations = combinations[: len(attempts)] + remaining
+                failed_providers.add(provider.name)
                 continue
 
-            # 模型错误或其他错误：继续尝试下一个组合
+            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续
             continue
 
     logger.error(
