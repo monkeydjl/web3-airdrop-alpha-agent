@@ -8,6 +8,27 @@
 
 ## [Unreleased]
 
+### Fixed — CI 整套后端测试因传递依赖漂移而收集失败（2026-09-04）
+
+`anyio` 与 `starlette` 是 fastapi 的传递依赖，此前没有写进
+`backend/requirements.txt`。后果是本机 venv 停在旧版、CI 每次全新安装拉最新版，
+**两边跑的不是同一个依赖组合**。当 anyio 4.15.0 把 `anyio.abc.BlockingPortal`
+变成弃用别名、而 starlette 的 testclient 仍用该别名做类型注解时，CI 的
+`-W error::DeprecationWarning` 把它升级成错误：32 个导入 TestClient 的测试文件
+在**收集阶段**全部报错，整套测试 exit code 2、一个用例都没跑
+（run 33883265813）。本机因为装着 anyio 4.14.2，同一条命令全绿，看不到问题。
+
+- 锁定 `anyio==4.14.2`、`starlette==1.3.1`（本机实测通过的组合）。弃用发生在
+  第三方库内部、项目代码改不动；放宽 `-W error` 等于放弃提前发现依赖弃用的能力，
+  所以锁版本是唯一正确的修法。
+- 新增门禁 `backend/tests/test_requirements_pinning.py`（3 条）：断言这两个
+  传递依赖必须显式 `==` 锁定，且 `requirements.txt` 每一行都不得使用区间约束。
+  刻意不断言具体版本号 —— 门禁要约束「必须锁」而非「锁在某个值」，否则每次合法
+  升级都会无意义变红。反向验证：删掉两行后精确红 1 条，其余 2 条仍过。
+- 遗留观察：starlette 已在提示 `Using httpx with starlette.testclient is
+  deprecated; install httpx2 instead`。该警告类型不继承 `DeprecationWarning`
+  故当前不致命，但升级 httpx 时需一并处理。
+
 ### Fixed — 公网上线路径的四条静默阻塞（2026-09-03）
 
 四条缺陷各自都能让公网部署整站不可用或不安全，但**没有一条会在本地开发中暴露**，
