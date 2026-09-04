@@ -44,7 +44,7 @@ interface RoiSummary {
 }
 
 const ENTRY_KINDS = [
-  { value: 'gas', label: 'Gas' },
+  { value: 'gas', label: 'Gas 费' },
   { value: 'infra', label: '基础设施' },
   { value: 'time', label: '时间' },
   { value: 'other', label: '其他' },

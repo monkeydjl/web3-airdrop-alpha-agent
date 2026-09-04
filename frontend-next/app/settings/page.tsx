@@ -618,10 +618,10 @@ export default function SettingsPage() {
                 <div className="set-subhead">
                   通用参数 <span className="set-subhead-note">所有接口共享</span>
                 </div>
-                <SettingRow label="Temperature" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
+                <SettingRow label="采样温度（Temperature）" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_TEMPERATURE ?? llmStatus?.temperature} />
                 </SettingRow>
-                <SettingRow label="Max Tokens" env="LLM_MAX_TOKENS" desc="单次调用上限">
+                <SettingRow label="最大 Token 数（Max Tokens）" env="LLM_MAX_TOKENS" desc="单次调用上限">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens} />
                 </SettingRow>
                 <SettingRow

@@ -273,7 +273,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
               做了什么
               <input
                 className="input mt-1"
-                placeholder="Do not enter wallet addresses or sensitive identifiers"
+                placeholder="请勿输入钱包地址或敏感标识信息"
                 aria-describedby="interaction-free-text-help"
                 value={activities}
                 onChange={(e) => setActivities(e.target.value)}
@@ -283,14 +283,14 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
               备注
               <textarea
                 className="input mt-1 min-h-[72px] resize-y"
-                placeholder="Do not enter wallet addresses or sensitive identifiers"
+                placeholder="请勿输入钱包地址或敏感标识信息"
                 aria-describedby="interaction-free-text-help"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
               />
             </label>
             <p id="interaction-free-text-help" className="col-span-2 text-xs text-ink-faint">
-              Do not enter wallet addresses or sensitive identifiers. Label transaction hashes with tx: or transaction:.
+              请勿输入钱包地址或敏感标识信息。交易哈希请以 tx: 或 transaction: 标注。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

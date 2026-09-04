@@ -86,10 +86,10 @@ const OUTCOME_LABEL: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  planned: 'planned',
-  active: 'active',
-  done: 'done',
-  abandoned: 'abandoned',
+  planned: '计划中',
+  active: '进行中',
+  done: '已完成',
+  abandoned: '已放弃',
 };
 
 /** 命中率：FARM/WATCH 标签下 outcome=airdropped 或 profit 的比例 */
@@ -325,7 +325,7 @@ export default function PortfolioPage() {
           <div className="pf-kpi">
             <span className="pf-kpi-label">总成本</span>
             <span className="pf-kpi-value">{fmtCost(totalCost)}</span>
-            <span className="pf-kpi-caption">硬成本 + Gas</span>
+            <span className="pf-kpi-caption">硬成本 + Gas 费</span>
           </div>
           <div className="pf-kpi">
             <span className="pf-kpi-label">总工时</span>
@@ -428,7 +428,7 @@ export default function PortfolioPage() {
           <section className="pf-card" aria-label="结果分布">
             <div className="pf-card-head">
               <h2 className="pf-card-title">结果分布</h2>
-              <p className="pf-card-caption">by_outcome · {totalInter} 条交互记录</p>
+              <p className="pf-card-caption">按结果统计 · {totalInter} 条交互记录</p>
             </div>
             <div className="pf-card-body pf-bars">
               {outcomes.length === 0 ? (
@@ -449,7 +449,7 @@ export default function PortfolioPage() {
                   </div>
                 ))
               )}
-              <p className="pf-dist-foot">终态：airdropped / not_airdropped / profit / loss · pending 为可变态</p>
+              <p className="pf-dist-foot">终态：空投成功、未空投、上涨、下跌；进行中可继续变化</p>
             </div>
           </section>
 
@@ -457,7 +457,7 @@ export default function PortfolioPage() {
           <section className="pf-card" aria-label="状态分布">
             <div className="pf-card-head">
               <h2 className="pf-card-title">状态分布</h2>
-              <p className="pf-card-caption">by_status · {totalInter} 条交互记录</p>
+              <p className="pf-card-caption">按状态统计 · {totalInter} 条交互记录</p>
             </div>
             <div className="pf-card-body pf-bars">
               {statuses.length === 0 ? (
@@ -465,7 +465,7 @@ export default function PortfolioPage() {
               ) : (
                 statuses.map((s) => (
                   <div className="pf-bar-row" key={s.name}>
-                    <span className="pf-bar-name is-mono">{s.name}</span>
+                    <span className="pf-bar-name">{s.name}</span>
                     <span className="pf-bar-count">{s.count}</span>
                     <span className="pf-bar-track">
                       <span
@@ -476,7 +476,7 @@ export default function PortfolioPage() {
                   </div>
                 ))
               )}
-              <p className="pf-dist-foot">状态机：planned → active → done/abandoned，终态不可变</p>
+              <p className="pf-dist-foot">状态流转：计划中 → 进行中 → 已完成 / 已放弃；终态不可变</p>
             </div>
           </section>
         </div>

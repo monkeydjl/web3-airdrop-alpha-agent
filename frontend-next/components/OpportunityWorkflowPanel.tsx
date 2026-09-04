@@ -598,7 +598,7 @@ function LegacyDecisionBadge({ legacy }: { legacy: OpportunityWorkflowProjection
         <span className="text-[11px] text-ink-faint">{legacy.model_version}</span>
         {legacy.authoritative ? (
           <span className="badge bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm">
-            authoritative
+            权威
           </span>
         ) : null}
       </div>
@@ -632,7 +632,7 @@ function OpportunityAssessmentSummary({
     <div className="rounded-xl border border-dashed border-watch/40 bg-watch-soft/30 px-3 py-3 dark:bg-watch/10">
       <div className="flex flex-wrap items-center gap-2">
         <span className="badge bg-watch-soft text-watch dark:bg-watch/20 dark:text-watch">
-          Opportunity Shadow · 实验性
+          Opportunity 影子模式 · 实验性
         </span>
         <span className="badge bg-surface-3 text-ink-muted">{STATE_ZH[state]}</span>
       </div>
@@ -642,11 +642,11 @@ function OpportunityAssessmentSummary({
         <div className="mt-2 space-y-1.5 text-sm">
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="font-semibold text-ink">{labelZh(opportunity.public_label)}</span>
-            <span className="text-xs text-ink-faint">{opportunity.status}</span>
+            <span className="text-xs text-ink-faint">{STATE_ZH[opportunity.status]}</span>
           </div>
           <p className="text-ink-muted">{opportunity.recommended_action}</p>
           <p className="text-xs text-ink-faint">
-            置信度 overall{' '}
+            总体置信度{' '}
             <span className="tabular-nums">
               {(opportunity.confidence.overall * 100).toFixed(0)}%
             </span>
@@ -1077,7 +1077,7 @@ function ValidationPanel({
                 disabled={busy}
                 required={survival === 'disqualified'}
                 aria-required={survival === 'disqualified'}
-                placeholder="survival=disqualified 时必填；勿填写钱包或密钥"
+                placeholder="存活结果为“被淘汰”时必填；勿填写钱包或密钥"
               />
             </label>
             <label className="text-xs text-ink-muted">

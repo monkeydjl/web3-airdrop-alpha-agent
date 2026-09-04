@@ -57,7 +57,7 @@ function normalizeSectors(
       .map((item) => {
         if (Array.isArray(item)) return { name: String(item[0]), count: Number(item[1]) || 0 };
         const o = item as { sector?: string; count?: number; name?: string };
-        return { name: String(o.sector || o.name || 'Unknown'), count: Number(o.count) || 0 };
+        return { name: String(o.sector || o.name || '未知'), count: Number(o.count) || 0 };
       })
       .filter((s) => s.count > 0)
       .sort((a, b) => b.count - a.count);
@@ -358,7 +358,7 @@ export default function InsightsPage() {
             </div>
             <div className="ins-llm-stat">
               <span className="ins-llm-stat-val">{llmStatus.temperature}</span>
-              <span className="ins-llm-stat-label">Temperature</span>
+              <span className="ins-llm-stat-label">采样温度</span>
             </div>
             <div className="ins-llm-stat">
               <span className="ins-llm-stat-val">${llmStatus.daily_budget_usd}</span>

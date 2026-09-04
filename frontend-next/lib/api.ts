@@ -64,7 +64,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!res.ok || json.ok === false) {
-    const fallback = `Request failed: ${res.status}`;
+    const fallback = `请求失败：${res.status}`;
     if (Array.isArray(json.detail)) {
       throw new Error(
         json.detail.map((d: { msg?: string }) => d.msg).join('; ') || fallback,
