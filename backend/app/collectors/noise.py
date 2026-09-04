@@ -29,6 +29,7 @@ NAME_DENY_SUBSTRINGS = (
     "yearn",
     "lido",
     "coinbase",
+    "crypto.com",  # CDC 的质押/LSDFi 产品线，成熟品牌无空投 alpha
     "binance",
     "okx",
     "bybit",

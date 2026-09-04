@@ -111,11 +111,32 @@ class DefiLlamaCollector(DataCollector):
         return data
 
     def _filter_candidates(self, protocols: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """过滤出高价值未发币协议（排除 CEX/蓝筹噪声）。"""
+        """过滤出高价值未发币协议（排除 CEX/蓝筹噪声与已发币品牌的子条目）。"""
+        # 已上市主条目的名字/slug 集合（小写）。DefiLlama 里 symbol="-" 的
+        # "子条目"（Zircuit Staking / parent#xxx 系列）自己没有 ticker，但
+        # 母品牌可能早已发币 —— 母条目带真实 symbol，会在本函数开头就被
+        # _is_unlisted 过滤掉，子条目却以"未见代币"的身份留下来，成为
+        # 已发币项目混入扫描结果的主通道（2026-09 修复）。
+        listed_names = {
+            (p.get("name") or "").strip().lower()
+            for p in protocols
+            if not self._is_unlisted(p)
+        }
+        listed_slugs = {
+            (p.get("slug") or "").strip().lower()
+            for p in protocols
+            if not self._is_unlisted(p)
+        }
+
         candidates = []
         skipped_noise = 0
+        skipped_facets = 0
         for protocol in protocols:
             if not self._is_unlisted(protocol):
+                continue
+
+            if self._is_facet_of_listed(protocol, listed_names, listed_slugs):
+                skipped_facets += 1
                 continue
 
             tvl = protocol.get("tvl") or 0
@@ -130,7 +151,37 @@ class DefiLlamaCollector(DataCollector):
 
         if skipped_noise:
             self.logger.info("defillama.noise_skipped", count=skipped_noise)
+        if skipped_facets:
+            self.logger.info("defillama.facet_skipped", count=skipped_facets)
         return candidates
+
+    def _is_facet_of_listed(
+        self,
+        protocol: dict[str, Any],
+        listed_names: set[str],
+        listed_slugs: set[str],
+    ) -> bool:
+        """判断 symbol="-" 的条目是否属于已上市品牌的子条目。
+
+        两条判据，都需要全量 protocols 列表才能建立（单条数据里不存在）：
+        1. parent#<slug> 子条目：母项目已上市（slug 命中 listed_slugs）。
+           例：Solv Protocol 的 parent#solv-protocol 子条目。
+        2. 品牌前缀：条目名以某个已上市条目名开头（≥3 字符，避免 "SX" 这类
+           短词误伤）。例："Zircuit Staking" ⊂ "Zircuit"（ZRC 已上市）。
+
+        母项目若同样未上市（pre-TGE），子条目保留 —— 由母条目本身承载 alpha。
+        """
+        name = (protocol.get("name") or "").strip().lower()
+        parent = str(protocol.get("parentProtocol") or "").strip()
+        if parent.startswith("parent#"):
+            parent_slug = parent.split("#", 1)[1].strip().lower()
+            if parent_slug and parent_slug in listed_slugs:
+                return True
+        if name:
+            for listed in listed_names:
+                if len(listed) >= 3 and name.startswith(listed):
+                    return True
+        return False
 
     def _is_noise_protocol(self, protocol: dict[str, Any]) -> bool:
         """Back-compat wrapper for tests."""

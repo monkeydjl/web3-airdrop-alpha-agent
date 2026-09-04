@@ -86,6 +86,22 @@ _FUNDING_TEXT_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# "空投已结束"的负向语境（2026-09 修复）：回顾性报道里 "airdrop" 同样与
+# "snapshot"/"eligible" 共现（"符合条件的用户已领取"），不设此门会让
+# 已发币项目借文本残留通过 is_listed_token_no_airdrop_signals 与
+# eligibility veto。命中即认定该文本描述的是历史空投，非 upcoming 证据。
+_AIRDROP_COMPLETED_RE = re.compile(
+    r"""(
+        airdrop\s+(?:has\s+been\s+|is\s+|was\s+|has\s+)?
+        (?:completed|ended|concluded|closed|distributed|fully\s+claimed)
+        | (?:completed|concluded|ended)\s+airdrop
+        | airdrop\s+claim(?:s|\s+window|\s+period)?\s+(?:is\s+)?(?:closed|over|ended|concluded)
+        | already\s+claimed
+        | (?:空投|快照)\s*(?:已|完成|结束|结束领取|发放完毕)
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 
 class CollectorAgent(BaseAgent):
     """Collector Agent - MVP implementation.
@@ -262,14 +278,23 @@ class CollectorAgent(BaseAgent):
         has_discord = bool(
             raw_data.get("has_discord") or raw_data.get("discord") or "discord.gg" in text or "discord.com" in text
         )
+        # 已结束的空投不是 upcoming 证据：先做负向门控，再匹配正向措辞。
+        # 显式字段（raw_data["explicit_airdrop_mention"]）不受门控影响——
+        # 刻意输入的断言优先于文本推断。
+        completed_airdrop = bool(_AIRDROP_COMPLETED_RE.search(text))
         explicit_airdrop = bool(
             raw_data.get("explicit_airdrop_mention")
-            or "airdrop confirmed" in text
-            or "confirmed airdrop" in text
-            or "official airdrop" in text
-            or "token generation event" in text
-            or "tge soon" in text
-            or ("airdrop" in text and ("snapshot" in text or "eligible" in text))
+            or (
+                not completed_airdrop
+                and (
+                    "airdrop confirmed" in text
+                    or "confirmed airdrop" in text
+                    or "official airdrop" in text
+                    or "token generation event" in text
+                    or "tge soon" in text
+                    or ("airdrop" in text and ("snapshot" in text or "eligible" in text))
+                )
+            )
         )
 
         # Verifiable task / quest / points portal (not just wording)
