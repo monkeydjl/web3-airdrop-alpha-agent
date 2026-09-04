@@ -12,7 +12,7 @@
 - 目录：`backend/alembic/versions/`（真实路径，**不是** `database/migrations/`）
 - 文件：`docs/DATABASE_DDL.md`（目标 schema）
 - 文件：`docs/OPERATIONS.md §3.5`（迁移版本清单，回滚操作的依据）
-- 参考模板：`backend/alembic/versions/0007_roi.py`（最新，含 `_exec_script` 正确写法）
+- 参考模板：`backend/alembic/versions/0009_watched_wallets.py`（最新，含 `_exec_script` 正确写法）
 - 信息：变更内容、是否需数据回填
 
 ## 执行步骤
@@ -27,8 +27,10 @@
 ↔ PG `SERIAL PRIMARY KEY` / `DOUBLE PRECISION` / `TIMESTAMPTZ`。
 
 ### Step 1: 复制最近一个迁移做模板
-- 操作：抄 `0007_roi.py`（不用 `alembic revision` 自动生成 —— 本仓是手写 SQL 常量风格）
-- 设 `revision` / `down_revision`；DDL 写成 `_SQLITE_SQL` / `_PG_SQL` 两个模块级常量
+- 操作：抄 `backend/alembic/versions/0009_watched_wallets.py`（不用 `alembic revision`
+  自动生成 —— 本仓是手写 SQL 常量风格）
+- 设 `revision` / `down_revision`（当前最新是 `"0009"`，新的应为 `"0010"`）；
+  DDL 写成 `_SQLITE_SQL` / `_PG_SQL` 两个模块级常量
 
 ### Step 2: 多语句 DDL 必须按分号拆分执行
 sqlite3 驱动**一次只接受一条语句**，含 `CREATE INDEX` 的脚本直接 `execute` 会静默
@@ -58,16 +60,17 @@ def upgrade() -> None:
 - 操作：对称回滚（`DROP TABLE IF EXISTS`），保证可降级
 - 在 docstring 里**写清回滚丢什么数据**：日志类可丢，用户操作数据（参与流水、
   收益台账）**不可再生成**，必须提醒回滚前导出
-- 在 `tests/test_alembic_migration.py` 的 `_REVISION_TABLES` 登记一行，
+- 在 `backend/tests/test_alembic_migration.py` 的 `_REVISION_TABLES` 登记一行，
   可回滚性测试才会覆盖新版本
 
 ### Step 4: 不要用 SQL 级外键
-**全仓约定：schema 无 `REFERENCES`**（`test_repository` 有断言扫 `_postgres_ddl`）。
-级联删除在路由层显式先删子表 —— 完整性由应用层保证。
+**全仓约定：schema 无 `REFERENCES`**（`backend/tests/test_repository.py` 有断言扫
+`_postgres_ddl`）。级联删除在路由层显式先删子表 —— 完整性由应用层保证。
 
 ### Step 5: 同步 OPERATIONS.md §3.5
 那里有「Alembic 迁移目前有 **N 个版本**」+ 逐个文件名清单，
-`test_operations_doc_parity::TestMigrationCountIsCurrent` 两条断言会核对数量与文件名。
+`backend/tests/test_operations_doc_parity.py::TestMigrationCountIsCurrent`
+两条断言会核对数量与文件名。
 **这份清单是运维 downgrade 的依据，写错会让人回滚到错误版本。**
 
 ## 输出
@@ -85,10 +88,11 @@ def upgrade() -> None:
 - [ ] `OPERATIONS.md §3.5` 版本数与文件名已同步
 - [ ] downgrade docstring 说明数据丢失范围
 - [ ] `cd backend && ruff check . && ruff format --check .` 全过（**全目录，不是只跑改动文件**）
-- [ ] `pytest tests/test_alembic_migration.py` 通过（实跑 upgrade/downgrade，约 85s）
+- [ ] `cd backend && ./venv/Scripts/python.exe -m pytest tests/test_alembic_migration.py -p no:cacheprovider -q`
+      通过（实跑 upgrade/downgrade，约 85s）
 
 ## 参考
-- `backend/alembic/versions/0007_roi.py`（最新模板）
+- `backend/alembic/versions/0009_watched_wallets.py`（最新模板）
 - `docs/DATABASE_DDL.md`、`docs/OPERATIONS.md §3.5`
 - `CONVENTIONS.md §3.3 数据库命名`
 - `skills/deployment-ci-pipeline.md`（本地按 CI 口径复核 lint 的正确命令）

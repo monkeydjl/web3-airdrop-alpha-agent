@@ -9,9 +9,10 @@
 - 是否引入新中间件/组件
 
 ## 输入要求
-- 文件：`docs/ENGINEERING_ROADMAP.md`
-- 文件：`docs/adr/`（既有决策）
-- 文件：`docs/DESIGN_GAP_ANALYSIS.md`（如适用）
+- 文件：`docs/ENGINEERING_ROADMAP.md`（阶段与既定方向）
+- 目录：`docs/adr/`（既有决策）
+- 文件：`docs/decision_log.md`（决策流水，不是 `DESIGN_GAP_ANALYSIS.md` —— 那个文件不存在）
+- 文件：`docs/SYSTEM_DIRECTION_CHANGE.md`（如议题涉及方向调整）
 - 信息：待决策议题、约束（性能/成本/团队）
 
 ## 执行步骤
@@ -29,7 +30,8 @@
 - 验证：引用相关 ADR（如 ADR-004/007/009）做交叉印证
 
 ### Step 4: 落地 ADR
-- 操作：调用 documentation-adr-create 编写 `ADR-0XX`，更新 README 与 CROSS_REFERENCE
+- 操作：调用 documentation-adr-create 编写 `docs/adr/ADR-0XX-<slug>.md`，
+  同步 `docs/adr/README.md` 与 `docs/adr/ADR_CROSS_REFERENCE.md`
 - 验证：状态明确（Proposed/Accepted/Superseded）
 
 ## 输出
@@ -42,9 +44,11 @@
 - [ ] 推荐方案含权衡与回滚
 - [ ] 交叉引用相关 ADR
 - [ ] 落地 ADR 并登记索引
+- [ ] 若决策把某个"尚未实现"变成"已实现"，同步检查
+      `backend/tests/test_security_doc_parity.py` 的反向断言是否需要更新
 
 ## 参考
 - `docs/ENGINEERING_ROADMAP.md`
-- `docs/adr/`
-- `docs/DESIGN_GAP_ANALYSIS.md`
+- `docs/adr/`（含 `README.md` 与 `ADR_CROSS_REFERENCE.md`）
+- `docs/decision_log.md`
 - `skills/documentation-adr-create.md`
