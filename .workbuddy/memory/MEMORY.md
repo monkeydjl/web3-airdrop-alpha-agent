@@ -26,5 +26,7 @@
 - 遗留：ActionQueue、ParticipationTasks、评分理由、证据字段、blocker code 等**动态 API 值仍为英文**，需后端 zh 字段/locale 参数，前端静态替换无法解决。
 
 ## 其他
+- **依赖必须锁到传递依赖层**：`anyio`、`starlette` 未锁曾让 CI 整套后端测试在收集阶段崩（本机装旧版看不到）。判据：collection error + 秒级失败 + 无覆盖率产物 = 环境/依赖问题而非业务代码。门禁 `backend/tests/test_requirements_pinning.py` 钉住，不要放宽 CI 的 `-W error::DeprecationWarning`。
+- **当日记忆日志不进版本控制**：`.git/info/exclude` 忽略 `/.workbuddy/memory/*.md`，不要用 `git add -f` 强推；MEMORY.md 因已 tracked 不受影响。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
-- 遗留：数据集补 50、explicit_no_airdrop、M3/F4 watched wallets + Alchemy、前端代理管理员密钥/同步 IO/反代限流/采集 URL 白名单。
+- 遗留：数据集补 50、explicit_no_airdrop、M3/F4 watched wallets + Alchemy、前端代理管理员密钥/同步 IO/反代限流/采集 URL 白名单、动态 API 内容中文化（任务 #42）。
