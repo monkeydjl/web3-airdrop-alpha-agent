@@ -49,8 +49,16 @@ services:
     environment:
       - PORT=3002
       - HOSTNAME=0.0.0.0
-      # 前端通过 nginx 反代访问 API，无需直连后端
+      # 后端内网地址。Next 的 rewrite 与 proxy.ts 都用它，不能填公网域名 ——
+      # 容器内 fetch 公网域名要出网再绕回来穿 nginx。
       - API_PROXY_TARGET=http://web:8002
+      # 管理员密钥，必须与后端 API_KEY 同值。
+      #
+      # ⚠️ 缺这个键的后果是**静默的**：`proxy.ts:128` 在拿不到密钥时按
+      # "MVP 无鉴权模式"处理，直接放行且不注入任何凭据 —— 于是后端
+      # `API_KEY` 非空时全站 401，而前端日志里什么异常都没有。
+      # 用 `:?` 让它缺失即启动失败，而不是起来了但点不动。
+      - BACKEND_API_KEY=${BACKEND_API_KEY:?请在 .env 里设置 BACKEND_API_KEY（与后端 API_KEY 同值），见 docs/GO_LIVE_CHECKLIST.md §1c}
     restart: unless-stopped
     networks:
       - frontend
@@ -66,10 +74,19 @@ services:
     expose:
       - "8002"
     environment:
+      # ⚠️ 生产 compose 自己钉死 production，绝不信任 .env 里的 APP_ENV。
+      # `.env.example` 的值是 development，若只是 env_file 继承，它会让
+      # config.py 中 API_KEY / JWT / CORS / PG 弱密码的生产启动闸门全部跳过，
+      # 容器照样变绿但运行的并不是生产安全口径。
+      - APP_ENV=production
       - PORT=8002
-      - DATABASE_URL=postgresql://airdrop:${POSTGRES_PASSWORD}@db:5432/airdrop
-      - API_KEY=${API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://airdrop:${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD（生产必须强密码）}@db:5432/airdrop
+      # 用 :? 而非裸 ${API_KEY}：environment 的插值即便展开成空串也会**覆盖**
+      # env_file 里的正确值。裸写法只给 Compose 一个 warning，后端却变成
+      # "API_KEY 为空 = 鉴权中间件短路"，是公网零鉴权的静默事故。
+      - API_KEY=${API_KEY:?请在 .env 里设置 API_KEY（至少 32 字符随机字符串）}
+      # LLM 可选，留空时规则引擎仍完整可用；用 :- 防止 warning。
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - CRON_HOUR=8
       - CRON_MINUTE=0
       # 后端日志落盘（相对 /app/backend 工作目录），promtail 采集宿主 ./logs
@@ -109,7 +126,11 @@ services:
     environment:
       - POSTGRES_DB=airdrop
       - POSTGRES_USER=airdrop
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      # 同 grafana：裸 `${VAR}` 未设置时是空串 + 一行 warning，不阻止启动。
+      # PG 收到空密码会拒绝初始化数据目录，于是容器反复重启 —— 吵闹但至少
+      # 不会带着弱密码跑起来。改 `:?` 是为了让失败发生在 compose 解析阶段，
+      # 报错直接指出缺哪个变量，而不是让人去翻 PG 容器日志。
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD（生成：python -c "import secrets; print(secrets.token_urlsafe(24))"）}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backups/pg:/backups
@@ -175,7 +196,11 @@ services:
     ports:
       - "13000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      # `:?` 而非裸 `${GRAFANA_PASSWORD}`：裸写法在未设置时展开成**空串**，
+      # compose 只打一行 warning 就继续启动，而 Grafana 收到空密码会回落到
+      # 内置默认 `admin/admin` —— 一个挂在 13000 端口的匿名可登录监控面板，
+      # 里面有全部业务指标。缺失必须是启动失败，不是静默降级。
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?请在 .env 里设置 GRAFANA_PASSWORD（否则 Grafana 会回落到默认 admin/admin）}
       # Grafana 13 移除了经典面板文件的预置支持（GitHub #123607），
       # 禁用 v2 dashboard 特性开关以恢复文件预置加载（community workaround）
       - GF_FEATURE_TOGGLES_kubernetesDashboards=false

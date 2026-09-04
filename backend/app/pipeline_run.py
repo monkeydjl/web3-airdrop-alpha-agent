@@ -365,6 +365,22 @@ async def _run_pipeline(
         errors=response.errors,
     )
     PIPELINE_RUNS.labels(trigger=trigger, status="completed").inc()
+
+    # 决策推送评估钩子（F1，ACTION_LOOP_DESIGN §2）：评分落库后评估跨线 /
+    # 新 FARM / 观察列表信号。**纯副作用，不往 result 里加任何键** ——
+    # 响应形状是被测试钉住的主契约（test_pipeline_run 逐键精确断言），
+    # 推送的可见性走 notify_log 与 /api/v1/notify/*，不走这里。
+    # 只在真正落库后评估：save_to_db=False（试算/dry-run）没有写入任何
+    # 新事实，评估只是空转；而且「未落库不得有任何后台写」是被测试钉住的
+    # 不变量（与 opportunity shadow 同一判据）。
+    if save_to_db:
+        try:
+            from app.notify.service import evaluate_after_run
+
+            await evaluate_after_run(trigger=trigger)
+        except Exception as e:
+            logger.warning("pipeline.notify_evaluate_failed", error=str(e))
+
     return result
 
 

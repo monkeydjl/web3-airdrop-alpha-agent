@@ -17,6 +17,23 @@ fastapi==0.141.1
 uvicorn[standard]==0.52.1
 python-multipart==0.0.32
 
+# ── ASGI 传递依赖（必须显式锁定） ──
+#
+# 这两个包本来是 fastapi 的传递依赖、没写在本文件里，于是**只有 CI 会拉到新版**
+# —— 本地 venv 装的是旧版，两边跑的根本不是同一个组合，正是本文件开头警告的情形。
+#
+# 实际后果（2026-09-04，CI run 33883265813）：anyio 4.15.0 把
+# anyio.abc.BlockingPortal 变成弃用别名，而 starlette 1.3.1 的 testclient
+# 仍在用这个别名做类型注解。CI 跑 pytest 带 -W error::DeprecationWarning，
+# 于是 import TestClient 的 32 个测试文件在**收集阶段**全部报错、
+# 整套测试 exit code 2 一个用例都没跑（本机 anyio 4.14.2 全绿，看不到）。
+#
+# 弃用发生在第三方库内部，项目代码改不动；削弱 -W error 等于放弃提前发现
+# 依赖弃用的门禁。所以锁版本是唯一正确的修法。
+# 升级 fastapi 时这两行要一起重新验证。
+anyio==4.14.2
+starlette==1.3.1
+
 # ── 配置与校验 ──
 pydantic==2.13.4
 pydantic-settings==2.14.2

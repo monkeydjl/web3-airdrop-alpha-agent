@@ -31,7 +31,14 @@ interface LLMStatus {
   enabled: boolean;
   provider_count: number;
   total_model_count: number;
+  /** 轮询一圈的候选组合数（provider × model），ADR-016 */
+  candidate_count?: number;
+  /** 选择策略：每次调用从哪个组合开始。当前是 round_robin */
+  selection_strategy?: string;
+  /** 失败策略：这一次调用里遇到失败怎么走。当前是 provider_aware */
   failover_strategy: string;
+  /** 人类可读的策略说明 */
+  strategy_note?: string;
   providers: LLMProviderStatus[];
   temperature: number;
   max_tokens: number;
@@ -488,14 +495,21 @@ export default function SettingsPage() {
                 </span>
               </div>
               <div className="set-group-body">
-                {/* LLM 多接口/多模型故障转移配置 */}
+                {/* LLM 多接口/多模型轮询配置（ADR-016）。
+                    这里的文案此前写「接口1连不上 → 切接口2」，那描述的是
+                    固定顺序 failover —— 与现在的轮询是两件不同的事，
+                    照旧文案理解会以为「只有第一个接口在用」。 */}
                 <div className="set-subhead">
                   <span className="flex items-center gap-1.5">
                     <Shuffle className="h-3.5 w-3.5" strokeWidth={2} />
-                    LLM 多接口故障转移
+                    LLM 多接口轮询
                   </span>
                   <span className="set-subhead-note">
-                    接口1连不上 → 切接口2；模型1失败 → 切模型2
+                    每次调用轮换起点
+                    {typeof llmStatus?.candidate_count === 'number'
+                      ? ` · 共 ${llmStatus.candidate_count} 个候选组合`
+                      : ''}
+                    ；失败时按接口/模型分级切换
                   </span>
                 </div>
 
@@ -570,7 +584,7 @@ export default function SettingsPage() {
                           <span className="set-llm-models-title">
                             模型列表
                             <span className="set-llm-models-env">
-                              按顺序故障转移 · 共 {provider.models.length} 个
+                              参与轮询 · 共 {provider.models.length} 个
                             </span>
                           </span>
                         </div>
@@ -587,11 +601,14 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     </div>
-                    {/* 故障转移提示 */}
+                    {/* 轮询提示。刻意只在第一张卡片下方出现一次 —— 它描述的是
+                        全局调度策略，每个接口都挂一遍等于噪音。 */}
                     {pIdx === 0 && providers.length > 1 && (
                       <div className="set-llm-failover-hint">
                         <Shuffle className="h-3 w-3" strokeWidth={2} />
-                        <span>接口1失败时自动切换到接口2</span>
+                        <span>
+                          {providers.length} 个接口按 接口×模型 组合轮询，失败自动切换
+                        </span>
                       </div>
                     )}
                   </div>
@@ -601,10 +618,10 @@ export default function SettingsPage() {
                 <div className="set-subhead">
                   通用参数 <span className="set-subhead-note">所有接口共享</span>
                 </div>
-                <SettingRow label="Temperature" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
+                <SettingRow label="采样温度（Temperature）" env="LLM_TEMPERATURE" desc="0-1，越低越稳定">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_TEMPERATURE ?? llmStatus?.temperature} />
                 </SettingRow>
-                <SettingRow label="Max Tokens" env="LLM_MAX_TOKENS" desc="单次调用上限">
+                <SettingRow label="最大 Token 数（Max Tokens）" env="LLM_MAX_TOKENS" desc="单次调用上限">
                   <ReadonlyValue value={runtimeConfig?.thresholds?.LLM_MAX_TOKENS ?? llmStatus?.max_tokens} />
                 </SettingRow>
                 <SettingRow

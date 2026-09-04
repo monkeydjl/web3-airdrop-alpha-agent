@@ -283,7 +283,6 @@ _AUTHORITATIVE_SOURCES = ("manual", "api")
 _MERGE_BOOL_OR = (
     "has_testnet",
     "has_points_program",
-    "no_token_yet",
     "recent_funding",
     "has_docs",
     "has_whitepaper",
@@ -294,6 +293,19 @@ _MERGE_BOOL_OR = (
     "explicit_airdrop_mention",
     "has_task_portal",
     "has_contract",
+)
+# no_token_yet 不在 OR 里，单独按 AND 合并 —— 见 merge_raw_records 内注释。
+
+# 能对"是否已发币"给出证据性判断的来源：
+# - manual / api：刻意输入，两个方向都是真实断言
+# - coingecko / cryptorank / etherscan：本身就是代币上市类数据源，出现即上市
+# - defillama：symbol / gecko_id 口径的上市判断
+# - rootdata：token_status / tge 字段
+# - seed：显式字段
+# 文本类来源（twitter / medium / github / mirror）的 no_token_yet 是
+# "正文没提"翻平出的缺省值，不是证据 —— 不参与 AND，保持中性。
+_TOKEN_STATUS_SOURCES = frozenset(
+    {"manual", "api", "seed", "defillama", "rootdata", "coingecko", "cryptorank", "etherscan"}
 )
 # 数值证据：取最大（各源只会看到自己能看到的那部分）
 _MERGE_NUMERIC_MAX = (
@@ -490,6 +502,26 @@ def merge_raw_records(
             merged[field] = bool(override)
         elif any(field in r for r in sorted_records):
             merged[field] = any(bool(r.get(field)) for r in sorted_records)
+
+    # no_token_yet：反向证据，AND 合并（2026-09 修复）。
+    #
+    # True 的含义是"这个源**没有**看到代币"（弱证据），False 是"看到了代币"
+    # （强证据）——与 has_* 正好相反：任一 token 状态源看到代币，项目就应
+    # 判已发币。此前它混在 _MERGE_BOOL_OR 里，defillama 子条目的"没看到"
+    # （no_token_yet=True）会覆盖 coingecko 的已上市确认，让已发币项目以
+    # pre-TGE 身份通过 eligibility veto。只有 _TOKEN_STATUS_SOURCES 的记录
+    # 参与投票；文本类来源的缺省翻平不投票。manual/api 断言仍最高优先。
+    override = _authoritative_value(sorted_records, "no_token_yet", source_key)
+    if override is not _NO_VALUE:
+        merged["no_token_yet"] = bool(override)
+    else:
+        status_votes = [
+            r
+            for r in sorted_records
+            if str(r.get(source_key) or "").lower() in _TOKEN_STATUS_SOURCES and "no_token_yet" in r
+        ]
+        if status_votes:
+            merged["no_token_yet"] = all(bool(r.get("no_token_yet")) for r in status_votes)
 
     # 数值证据：取最大 / 取最小
     for field in _MERGE_NUMERIC_MAX:

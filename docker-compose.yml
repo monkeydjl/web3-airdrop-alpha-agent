@@ -41,8 +41,12 @@ services:
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-airdrop}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-airdrop_test}
-      - POSTGRES_DB=${POSTGRES_DB:-airdrop_test}
+      # 无默认值：留空时应用侧 DB_BACKEND=sqlite 用不到它（不影响），
+      # 而切 postgres 时生产自检会因"没有密码"拒绝启动 —— 这正是要的行为。
+      # 默认值必须与下面 postgres 服务的那一处保持一致，否则 app 连的库
+      # 和 PG 建的库不是同一个（症状是启动即 "database does not exist"）。
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
+      - POSTGRES_DB=${POSTGRES_DB:-airdrop}
 
       # LLM 配置（可选）
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -88,13 +92,24 @@ services:
       - "${POSTGRES_HOST_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-airdrop}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airdrop_test}
-      POSTGRES_DB: ${POSTGRES_DB:-airdrop_test}
+      # 密码**没有默认值**，缺失时 compose 直接报错退出（`:?` 语法）。
+      #
+      # 此前这里是 `${POSTGRES_PASSWORD:-airdrop_test}`。危险在于本文件的
+      # `APP_ENV` 默认是 **production**（见 backend 服务），所以
+      # `docker compose --profile postgres up` 会以生产身份带着一个公开写在
+      # 仓库里的密码静默跑起来，没有任何警告。
+      #
+      # 现在有两道闸门：这里让 compose 起不来（快速失败），
+      # `config.py` 的生产自检拒绝弱口令与占位符（就算有人绕开 compose 也拦得住）。
+      # 只靠应用侧不够 —— PG 容器自己会先用那个密码把数据目录初始化好，
+      # 之后改环境变量也不会重置已有密码。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD（生成：python -c "import secrets; print(secrets.token_urlsafe(24))"）}
+      POSTGRES_DB: ${POSTGRES_DB:-airdrop}
       TZ: ${TZ:-UTC}
     volumes:
       - airdrop_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airdrop} -d ${POSTGRES_DB:-airdrop_test}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airdrop} -d ${POSTGRES_DB:-airdrop}"]
       interval: 5s
       timeout: 5s
       retries: 10

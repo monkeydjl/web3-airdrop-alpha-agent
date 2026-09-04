@@ -152,6 +152,7 @@ class ScoreResult(BaseModel):
     reason: list[str] = Field(..., min_length=2, description="评分理由")
     sub_scores: dict[str, float] = Field(default_factory=dict, description="子项分数")
     weight_version: str = Field(default="v1.2", description="产出该分数的权重版本（ADR-006）")
+    veto: str | None = Field(default=None, description="资格门否决原因（ADR-015）；只影响标签，不改变总分")
 
 
 # ── 项目记录 ──────────────────────────────────
@@ -169,6 +170,7 @@ class ProjectRecord(BaseModel):
     label: str | None = None
     recommendation: str | None = None
     confidence: float | None = None
+    veto: str | None = None
     reason: list[str] | None = None
     raw_signals: dict[str, Any] | None = None
     source: str | None = None

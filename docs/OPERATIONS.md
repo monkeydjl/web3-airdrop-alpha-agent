@@ -221,9 +221,13 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **4 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **9 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
-  `0004_llm_spend_daily`。
+  `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
+  `0006_participation`（2026-08-31，参与流水）、
+  `0007_roi`（2026-08-31，收益台账）、
+  `0008_eligibility_veto`（2026-09-01，资格门否决记录）、
+  `0009_watched_wallets`（2026-09-02，领取监控自有地址）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -231,6 +235,38 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   破坏性迁移的回滚请先做备份（§6）。
   回滚到 `0003` 之前会丢掉 LLM 花费账本 —— 预算拦截会转为 fail-closed
   （拒绝所有 LLM 调用并报 `ledger_unavailable`），不是静默放行。
+  回滚掉 `0005` / `0006` 会丢掉推送历史与参与流水 —— 参与流水是用户操作
+  数据（不可再生成），回滚前务必确认（notify_log 只是运行时日志，可放弃）。
+  回滚掉 `0007` 会丢掉收益台账（`roi_entries` / `roi_outcomes`）——
+  **这是全库最不可再生成的数据**：投入金额与工时是用户一条条手敲的，
+  链上查不回来、也没有第二份来源。回滚前必须先备份（§6）。
+  回滚掉 `0008` 只丢 `projects.veto`（资格门否决原因，重跑 `POST /run` 可重算）。
+  回滚掉 `0009` 丢掉 `watched_wallets`（自有地址清单）—— 人工录入但**可重建**：
+  地址在用户自己的钱包里、label 是自定义备注，比 `0007` 低一档，仍建议先导出。
+  注意 Alchemy 控制台侧的地址清单**不受回滚影响**（MVP 手工维护），回滚后
+  webhook 仍会收到那些地址的事件，只是本地匹配不到、不再产生领取候选通知
+  （事件类型 airdrop_candidate —— 刻意不加反引号：§10.6 的指标门禁按反引号包裹的
+  下划线标识符抓指标名，包起来会被当成幽灵指标）。
+
+#### 给既有库加列的两处登记（漏一处就线上炸）
+
+`projects` / `raw_projects` / `interactions` 这几张表的**新增列**必须同时落在两处：
+
+1. `db.py` 的建表 DDL（新库靠它）；
+2. `db.py::init_db` 里的 `_add_column_if_not_exists(...)`（**既有库靠它**）。
+
+只改 DDL 不改第 2 处的失效方式很隐蔽：建表语句是 `CREATE TABLE IF NOT EXISTS`，
+既有库表已存在就整条跳过，列永远补不上。CI 是全新 checkout、表由 DDL 现建，
+**门禁全绿**；但任何已跑过的开发 / 生产库一升级就在写入时报
+`table projects has no column named <col>`。
+
+后果不止是一次报错：`repository.save` 失败会让整个 pipeline run 变
+`status="failed"`（评分本身是成功的，只是落不了库），
+表现为「升级后所有分析任务突然全挂」。
+
+ADR-015 的 `veto` 列就踩了这个坑，由 golden 回归集捕获（12 failed）。
+`alembic` 迁移**不能替代**第 2 处 —— 迁移在滚动 baseline 下做了存在性判断，
+且不是所有部署路径都跑 `alembic upgrade`。
 
 ### 3.6 Opportunity Shadow 灰度
 
@@ -285,6 +321,63 @@ cd backend
 
 采纳需要评审并**新建 model/profile 版本**，再走 expand-and-contract 发布与回滚计划，
 **绝不原地改已有版本**。
+
+### 3.9 历史回测（F3 / ACTION_LOOP_DESIGN §4）
+
+把 T0 前的公开信息灌进评分决策引擎，看它当年会不会抓到后来真发了币的项目。
+
+```powershell
+cd backend
+$env:PYTHONPATH="."
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py                    # 人读报告
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py --json             # 机器可读（stdout 只有 JSON）
+& ".\venv\Scripts\python.exe" scripts\run_backtest.py --export-samples   # 结论写入 roi_outcomes
+```
+
+安全性：走规则引擎（`enable_llm=False`，ADR-001）保证可复现，
+`save_to_db=False` **不写 projects 表** —— 已发币项目混进去会让 Dashboard
+显示一堆过期机会。`--export-samples` 幂等，重复跑不会重复写。
+
+**读报告时必须注意三件事**：
+
+1. 数据集当前 **19/50 条**（标 `pending_expansion=true`，报告会自动打警告）。
+   样本量不足时命中率置信区间很宽，**不足以支撑权重调整**。
+2. 负样本已补到 5 条、覆盖三类（迟迟不发币 / 明确不做代币激励 / 已发币无追加
+   分配），`fpr` 分母够了。若负样本被删回 1~2 条，报告会重新在 `fpr` 后面标
+   「分母仅 N 条，不可读」—— 那时不要读那个百分数。
+3. **当前误报率 100%（5 个负样本全被判 FARM），这是引擎的已知缺陷，不是数据
+   问题**，见下方。
+
+**🔴 已知缺陷：已发币项目仍被判 FARM**
+
+Chainlink 68 / Worldcoin 69 分越过 FARM 阈值 65。空投信号维度（评分八维中的
+airdrop signal，注意它是 subscore 名、不是 Prometheus 指标）已正确压到 20 分
+（`no_token_yet=false` 生效），但加权求和模型下压不住其余七维 ——
+execution / competition / transparency 各 100、team 85~95 把总分抬起来了。
+
+对本系统而言「已发币 = 无空投机会」应是**否决条件**，而非可被其他维度补偿的
+一项打分。修复要改评分结构、会牵动权重校准协议，**未在 M2 内做**，已用
+`xfail(strict=True)` 钉在 `tests/test_backtest.py` 里（修好会变 XPASS 报错，
+逼人回来删标记）。
+
+**运维影响**：生产库若混入已发币的成熟项目，Dashboard 可能把它们显示成 FARM。
+现有缓解手段是 `collectors/noise.py` 的共享 denylist（采集阶段挡掉蓝筹）
+\+ `scripts/purge_noise_projects.py` 清理存量。回测这个结论说明
+**不能只依赖评分兜底，denylist 仍是必需的第一道防线**。
+
+**回测样本不解锁校准门禁**：导出的样本 `source='backtest'`，
+`check_gate()` 只数 `live` 桶（真实反馈 + 人工录入）。两桶计数都在
+`GateResult.total_by_source` 里照实暴露，但灌多少历史数据都不会让门禁通过 ——
+否则扩充数据集就能绕过「有效样本 ≥200 / FARM ≥30」的协议约束。
+
+### 3.10 收益台账（F3）
+
+`/api/v1/roi/*` 六个端点，前端在 `/portfolio` 页。数据是**人工录入**的，
+诚实边界写在 `API_SPEC §40`：`amount_usd` 不做链上取价、`tx_hash` 只存档
+不验证、汇总不给时间定价（不引入凭空捏造的时薪）。
+
+零成本时 `roi_ratio` 返回 `null`，前端渲染「—」。不返回 `0`（会被读成
+"没赚没赔"）也不返回 `inf`（污染下游聚合）。
 
 ---
 
@@ -558,9 +651,16 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/settings`
 - `/api/v1/archive`
 - `/api/v1/scheduler`
+- `/api/v1/notify`
+- `/api/v1/watched-wallets`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。
+
+> `/api/v1/watched-wallets`（F4 领取监控，§3.10）的锁法与其它项**不同源**：
+> 别的前缀锁的是"会改状态或花钱"的写操作，它锁的是**读**。一份「这个人有哪些
+> 钱包」的清单配合公开链上数据就能还原完整持仓与交易史，所以 `GET` 也一起锁 ——
+> 只锁写在这里没意义。
 
 另有一层**按方法**的规则（`ADMIN_ONLY_METHOD_RULES`），用于"同一路径读开放、
 写受限"的两处 —— 前缀匹配表达不了它们：
@@ -715,7 +815,7 @@ curl http://localhost:18080/health
 
 ## 7. 调度任务
 
-三个调度器都在 `backend/app/scheduler.py` 的统一调度器里注册，
+四个调度器都在 `backend/app/scheduler.py` 的统一调度器里注册，
 时区统一 **UTC**，`misfire_grace_time = 3600` 秒，`coalesce=True`，`max_instances=1`。
 
 ### 7.1 采集任务（实测 cron）
@@ -827,6 +927,25 @@ cd backend
 03:00（开发机不常驻），不是任务没注册。**这两种原因的处置动作相反，
 而在新端点之前它们看起来完全一样。**
 
+### 7.4 决策推送（F1，ACTION_LOOP_DESIGN §2）
+
+`NOTIFY_ENABLED` 默认 **`false`**（2026-08-31 起存在）。开关关着时每日摘要
+job **不注册**，但 pipeline 收尾钩子的评估照常跑 —— 事件照常写入
+`notify_log`（留痕 + `airdrop_notify_event_evaluated_total` 指标可见），
+只是不发送。**关开关 ≠ 停审计**，排查「为什么没收到推送」先看这里。
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| job id | `notify_digest` | cron 表达式 `NOTIFY_DIGEST_CRON`（默认 `0 9 * * *`，UTC） |
+| 事件来源 | `app/notify/evaluator.py` | 跨线 / 新 FARM / 观察列表信号 / 每日摘要 |
+| 发送通道 | `NOTIFY_CHANNEL` | `telegram` / `discord_webhook`，凭证缺失时报错不发送 |
+| 单轮上限 | `NOTIFY_MAX_PER_RUN=20` | 防事件风暴 |
+| 手动验证 | `POST /api/v1/notify/test` | **管理员专用**；发一条测试消息验证凭证与连通 |
+| 排查入口 | `GET /api/v1/notify/log` | 发送历史含失败原因；`status=failed` 表示重试 3 次全败 |
+
+出站经 `utils/fetcher.post`，域名白名单生效（`api.telegram.org` / `discord.com`
+已登记 SECURITY §10.2）。推送是尽力而为：失败不影响采集与分析主链路。
+
 ---
 
 ## 8. 监控栈
@@ -931,9 +1050,8 @@ job 名 `airdrop-alpha`，送 Loki。
   实际连的是 Postgres，跟它自己声明的那行完全相反。这类错误最难发现：
   两行单独看都合理，只有读过 validator 才知道后者压过前者。
 - **2 个键全仓无人读取**：`LLM_API_KEYS` / `LLM_BASE_URLS`。
-  多接口故障转移真正读的是**编号变量**（`LLM_BASEURL_1` / `LLM_API_KEY_1`
-  / `LLM_MODELS_1_1`），走 `os.environ` 不经 Settings。
-  照着填那两个逗号分隔变量，LLM 一个接口都不会注册。
+  多接口真正读的是**编号变量**（当前格式见 §9.5），走 `os.environ`
+  不经 Settings。照着填那两个逗号分隔变量，LLM 一个接口都不会注册。
 - **2 个路径不存在**：`SEED_DATA_PATH=data/seed_projects.json`、
   `FETCHER_CACHE_DIR=data/fetcher_cache`。
 - **`WEIGHT_VERSION=score-v1.4` 混淆了两个版本轴**：`score-v1.4` 是评分
@@ -971,7 +1089,90 @@ job 名 `airdrop-alpha`，送 Loki。
 模板给 console 便于本地看）、4 个 `POSTGRES_*`（代码默认值是 CI 的测试实例
 `127.0.0.1:5433/airdrop_test`，模板不该把人指向测试库）、
 3 个 `OTEL_*` 与 2 个 `TELEGRAM_*`（分别由 OTel SDK 和 docker compose 直接读，
-不经 Settings）。
+不经 Settings）、7 个 `OPENAI_*_N` 编号 LLM 变量（见 §9.5，接口数量运行时决定，
+不可能声明成固定 Settings 字段）。
+
+### 9.5 LLM 多接口配置与轮询（ADR-016）
+
+#### 配置格式：三档优先级，命中即停
+
+| 优先级 | 变量 | 状态 |
+|---|---|---|
+| 1 | `OPENAI_BASE_URL_N` / `OPENAI_API_KEY_N` / `OPENAI_MODEL_N_M` | 当前标准 |
+| 2 | `LLM_BASEURL_N` / `LLM_API_KEY_N` / `LLM_MODELS_N_M` | 弃用窗口内仍支持 |
+| 3 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | 单接口回退 |
+
+新旧编号**同时存在时取新格式**，并打一条不含密钥的
+llm.legacy_numbered_config_ignored WARNING。**不合并** —— 「2 个新 + 2 个旧
+= 4 个接口，轮询顺序是什么」没有能向运维解释的答案，而更现实的风险是
+「旧配置忘删」静默变成额外的付费接口，账单上才发现。
+
+上限 **10 接口 × 每接口 10 模型**（旧实现是 5×5，第 6 个接口会被静默丢掉）。
+编号**允许空洞**：注释掉中间某个接口不会让它后面的接口失效。
+
+#### 一个接口要真正注册，三样都得有
+
+```
+base_url（必须 http:// 或 https:// 开头）+ api_key + 至少一个模型
+```
+
+缺任一即跳过并打 llm.provider_config_incomplete WARNING（字段只有 `index` /
+`missing` / `base_url_key`，**不含任何密钥值**）。
+
+> `http(s)://` 前缀校验不是洁癖。真实踩到的形态是复制模板时两行粘成一行：
+> `OPENAI_BASE_URL_2=OPENAI_MODEL_2_1=agnes-2.5-flash`。不校验则整个右侧被
+> 当成 base_url，直到**第一次真实调用**才失败，而且报的是「连接错误」——
+> 把排查方向指向网络而不是配置。
+
+`is_llm_enabled` 现在等于「Feature Flag 开 **且** 至少一个有效接口」。
+此前它只查「某个编号 KEY 是否非空」，于是「配了 key 但没配模型」会得到
+`enabled=true` + 零候选组合：状态接口说启用了，而每次调用都静默走规则引擎。
+
+#### 选择与失败是两件事
+
+`GET /api/v1/llm/status` 分开暴露：
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `selection_strategy` | `round_robin` | 每次调用**从哪个组合开始** |
+| `failover_strategy` | `provider_aware` | 这一次调用里**遇到失败怎么走** |
+| `candidate_count` | Σ 每接口模型数 | 轮询一圈几步 |
+
+轮询顺序（6 接口 × 各 2~3 模型的配置下同理）：
+
+```
+请求 1 → provider-1 / model-1
+请求 2 → provider-1 / model-2
+请求 3 → provider-2 / model-1
+...    → 一轮走完回到 provider-1 / model-1
+```
+
+失败处置：连接级（timeout / connect / 5xx / 429）跳过该接口**剩余模型**；
+模型级（400 / 404 / 422 / model not found）只跳当前模型；预算拒绝与输出泄漏
+**立即返回不重试**；全部失败降级规则引擎（ADR-001）。
+
+> 起点旋转而非截断，所以**每次调用仍会试完全部组合**。截断会让 failover
+> 深度随请求序号变化 —— 那是把可用性做成掷骰子。
+
+#### 排查：「为什么这次用的是 model-X」
+
+看 DEBUG 事件 llm.round_robin_selected（字段 `start_index` /
+`candidate_count` / `provider` / `model`）与成功事件 llm.success 的
+`provider` / `model`。**同一个 prompt 在不同请求上由不同模型回答是预期行为**，
+不是 bug。某个模型质量不达标的处置是从配置里摘掉它，不是回退固定顺序。
+
+#### 公平性边界（别按「严格均衡」验收）
+
+- 轮询计数器是**进程内**的，每个 uvicorn worker 各持一个。
+- 多 worker / 多实例下**不保证全局严格均衡**，只保证进程内均衡。
+- 进程重启后从第一个组合重新开始。
+- 以上只影响**流量分布**，不影响故障转移正确性与预算正确性。
+
+预算仍是**全局单账本**（`LLM_DAILY_BUDGET_USD` + `llm_spend_daily` 表），
+不按接口拆分：钱是一笔，拆成 N 份配额只会制造「总预算没超但某接口先被拦」
+这种既难解释又难运维的状态。价格表外的模型（免费接口的模型名大多不在
+`pricing.py` 里）按 `LLM_FALLBACK_PRICE_PER_1M_USD` 保守估算 ——
+**免费接口也必须计入**，否则「换个价格表外的模型名」就等于关掉预算。
 
 ---
 
@@ -1068,8 +1269,8 @@ CI 跑 pytest 时加了：
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
-| `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量 `LLM_BASEURL_1` 等，§9.4） |
-| `.env.example` 里的 `DUNE_API_KEY` | ⚠️ 配置字段存在但无任何 collector 读它 |
+| `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量，当前格式见 §9.5） |
+| `DUNE_API_KEY` | ❌ 已删除（2026-09-03）：配置字段、脱敏登记、模板行、DDL 种子行全部移除。此前是"配了也不生效"的装饰性键，会让人误以为需要去申请 Dune Key |
 | `.env.example` 里的 `TWITTER_API_KEY` / `TWITTER_API_SECRET` | ⚠️ 采集器不读，真正用的是 `TWITTER_BEARER_TOKEN` |
 | `SEED_ON_STARTUP` / `SEED_DATA_PATH` | ⚠️ 两个键**全仓 0 处读取**（启动灌种子靠手动跑 `scripts/seed.py`）。生产环境另有强制关闭，见 §12.13 |
 | 蓝绿 / 金丝雀发布 | ❌ 未实现 |

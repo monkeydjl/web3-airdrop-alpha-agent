@@ -67,6 +67,25 @@ competition 子分（权重 15%）基于同 `sector` 项目数计算，当前每
 - `sector_counts` 表需要每日全量重建 + 一致性监控，增加少量运维工作。
 - Trigger 实现依赖 PostgreSQL，SQLite 不支持 trigger 自动更新 `sector_counts`（V2 切 PG 前只能用进程内 LRU）。
 
+### 补注（2026-09-02）：`canonical_sector_counts()` 刻意不过缓存
+
+修 competition 分组虚高（详见 ADR-015 §「不解决什么」第 4 条）时新增了
+`repository.canonical_sector_counts()`，它**绕过 `SectorCountCache`**。这不是遗漏：
+
+- **缓存装不下它的返回形状。** `SectorCountCache` 按「单个 sector 键 → 计数」
+  设计，而这个方法返回的是**折叠后的整张分布**。硬塞进去还会让写时失效失准：
+  `invalidate_sector_cache(project.sector)` 传的是**原始写法**（`"Dexes"`），
+  而缓存里的键是规范键（`"DEX"`），失效根本打不中。
+- **它本来就不触发本 ADR 要解决的问题。** 本 ADR 的动机是「每个 sector 一条
+  `COUNT(*)`」的 N 次查询。折叠计数走**一条** `GROUP BY sector` 聚合，然后在
+  Python 侧折叠 —— 比缓存命中前的原路径更省，加缓存反而是无谓复杂度。
+- **不能复用 `global_sector_counts()`。** 那条路径最终走 `WHERE sector = ?`
+  精确匹配，传规范键 `"DEX"` 查不到库里存成 `"Dexes"` / `"dex"` /
+  `"Derivatives"` 的行 —— 会静默返回 0，让全库计数凭空消失。
+
+若未来 sector 基数增长到聚合查询也成为瓶颈，正确做法是本 ADR 的 V2（PG）路线：
+`sector_counts` 物化表**按规范键**存，而不是给折叠结果套一层进程内缓存。
+
 ### 需配套的工作
 1. V2 实现进程内 LRU `SectorCountCache` 类（`app/cache.py`）。
 2. V2 切 PG 后实现 `sector_counts` 表 + trigger。

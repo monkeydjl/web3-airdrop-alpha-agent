@@ -49,7 +49,39 @@ _EXPECTED_TABLES = {
     "archive_runs",
     # LLM 日花费账本（迁移 0004）
     "llm_spend_daily",
+    # 决策推派出站日志（迁移 0005，ACTION_LOOP_DESIGN §2）
+    "notify_log",
+    # 参与流水（迁移 0006，ACTION_LOOP_DESIGN §3）
+    "participation_plans",
+    "participation_tasks",
+    # 收益台账（迁移 0007，ACTION_LOOP_DESIGN §4）
+    "roi_entries",
+    "roi_outcomes",
+    # 领取监控的自有地址（迁移 0009，ACTION_LOOP_DESIGN §5）
+    "watched_wallets",
 }
+
+# 每个迁移引入的表 —— 可回滚性测试按「回滚到 N ⇒ 移除 N 之后全部表」推导，
+# 新迁移只需在这里登记一行，不必再改各测试的差集。
+_REVISION_TABLES: dict[str, set[str]] = {
+    "0004": {"llm_spend_daily"},
+    "0005": {"notify_log"},
+    "0006": {"participation_plans", "participation_tasks"},
+    "0007": {"roi_entries", "roi_outcomes"},
+    # 0008 只给 projects 加了一列（veto），不引入新表
+    "0008": set(),
+    "0009": {"watched_wallets"},
+}
+_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]
+
+
+def _tables_removed_after(revision: str) -> set[str]:
+    """回滚到 revision 时应当消失的表（revision 之后的所有迁移引入的表）。"""
+    idx = _REVISION_ORDER.index(revision)
+    out: set[str] = set()
+    for rev in _REVISION_ORDER[idx + 1 :]:
+        out |= _REVISION_TABLES.get(rev, set())
+    return out
 
 
 def _run(cmd: list[str], *, db_path: Path) -> subprocess.CompletedProcess:
@@ -149,13 +181,26 @@ def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:
 
 
 def test_alembic_version_recorded(tmp_path: Path) -> None:
-    """upgrade head 后 alembic_version 表记录最新版本 0004。"""
+    """upgrade head 后 alembic_version 表记录最新版本。
+
+    期望值从 `_REVISION_ORDER[-1]` 推导，**不再硬编码数字**（2026-09-02 改）：
+    这里钉住的语义本来就是「head 就是最后一个 revision」，写死数字的话每加
+    一个迁移都要来改两处（这张表 + 这行断言），而漏改的表现是本条测试红 ——
+    信息量为零的红灯，只会训练人把它当噪音顺手改掉。
+
+    现在漏登记 `_REVISION_TABLES` / `_REVISION_ORDER` 才会红，而那正是
+    真正需要人来确认的地方（新表要不要参与回滚推导）。
+    """
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     conn = sqlite3.connect(str(db_path))
     ver = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     conn.close()
-    assert ver is not None and ver[0] == "0004"
+    expected_head = _REVISION_ORDER[-1]
+    assert ver is not None and ver[0] == expected_head, (
+        f"alembic head 是 {ver[0] if ver else None}，但 _REVISION_ORDER 末位是 "
+        f"{expected_head} —— 新增迁移后请在 _REVISION_TABLES 与 _REVISION_ORDER 各登记一处"
+    )
 
 
 def test_alembic_0003_is_reversible(tmp_path: Path) -> None:
@@ -174,7 +219,7 @@ def test_alembic_0003_is_reversible(tmp_path: Path) -> None:
     _run_alembic("downgrade", "0002", db_path=db_path)
     tables = _get_user_tables(db_path)
     assert "archive_runs" not in tables
-    assert tables == _EXPECTED_TABLES - {"archive_runs", "llm_spend_daily"}, "回滚 0003 不应影响其它表"
+    assert tables == _EXPECTED_TABLES - {"archive_runs"} - _tables_removed_after("0003"), "回滚 0003 不应影响其它表"
 
     _, indexes = _dump_schema(db_path)
     assert "idx_archive_runs_started" not in indexes
@@ -199,7 +244,7 @@ def test_alembic_0004_is_reversible(tmp_path: Path) -> None:
 
     _run_alembic("downgrade", "0003", db_path=db_path)
     tables = _get_user_tables(db_path)
-    assert tables == _EXPECTED_TABLES - {"llm_spend_daily"}, "回滚 0004 只应移除 llm_spend_daily"
+    assert tables == _EXPECTED_TABLES - _tables_removed_after("0003"), "回滚 0004（到 0003）只应移除 llm_spend_daily"
 
     _run_alembic("upgrade", "head", db_path=db_path)
     assert _get_user_tables(db_path) == _EXPECTED_TABLES

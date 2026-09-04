@@ -27,7 +27,7 @@
 | 13 | Monitoring | [`OBSERVABILITY.md`](OBSERVABILITY.md) | ✅ |
 | 14 | Decisions (ADR) | `docs/adr/`（ADR-001~013 + `TEMPLATE.md`） | ✅ |
 | 15 | Changelog | [`CHANGELOG.md`](../CHANGELOG.md) | ✅ |
-| 16 | Direction | [`SYSTEM_DIRECTION_CHANGE.md`](SYSTEM_DIRECTION_CHANGE.md)（v2.0 自动扫描）、[`DATA_SOURCE_STRATEGY.md`](DATA_SOURCE_STRATEGY.md)（自动采集视角） | ✅ |
+| 16 | Direction | [`SYSTEM_DIRECTION_CHANGE.md`](SYSTEM_DIRECTION_CHANGE.md)（v2.0 自动扫描）、[`DATA_SOURCE_STRATEGY.md`](DATA_SOURCE_STRATEGY.md)（自动采集视角）、[`ACTION_LOOP_DESIGN.md`](ACTION_LOOP_DESIGN.md)（V3 执行闭环设计稿） | ✅ |
 
 > **2026-08-22 更正**：本表原先索引 6 个已在 `0966179`（移除遗留 HTML 原型与过时文件）
 > 中删除的文档 —— `PROJECT_BOOTSTRAP_OVERVIEW.md`、`IMPLEMENTATION_STATUS.md`、

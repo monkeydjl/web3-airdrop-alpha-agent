@@ -13,7 +13,7 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.auth import issue_anonymous_token
+from app.auth import issue_anonymous_token, verify_token
 from app.config import settings
 
 logger = structlog.get_logger(__name__)
@@ -22,17 +22,8 @@ router = APIRouter(tags=["auth"])
 
 
 # ═══════════════════════════════════════════════════════════════
-# Request/Response Models
+# Response Models
 # ═══════════════════════════════════════════════════════════════
-
-
-class AnonymousTokenRequest(BaseModel):
-    """匿名 token 签发请求（可选指定 user_id）。"""
-
-    user_id: str | None = Field(
-        default=None,
-        description="自定义用户标识，不传则自动生成 anon-<uuid>",
-    )
 
 
 class AnonymousTokenResponse(BaseModel):
@@ -55,21 +46,20 @@ class AnonymousTokenResponse(BaseModel):
     summary="签发匿名 token",
     description="签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证。",
 )
-def issue_anonymous(
-    request: AnonymousTokenRequest | None = None,
-) -> AnonymousTokenResponse:
+def issue_anonymous() -> AnonymousTokenResponse:
     """签发匿名 token。
 
     - 无需任何认证即可调用
     - token 有效期由 `AUTH_TOKEN_TTL_HOURS` 控制（默认 72 小时）
     - 匿名 token 不可访问管理员专用端点（POST /run, POST /re-score 等）
+    - **user_id 一律由服务端生成**（`anon-<uuid>`）：本端点在公开路径里，
+      接受调用方自报身份等于允许任何人给别人的 user_id 签 token，从而
+      读写按 user_id 隔离的 watchlist / feedback / interactions 数据
+      （2026-08-30 安全审核修复；此前的 `user_id` 请求字段已删除）
     """
-    user_id = request.user_id if request and request.user_id else None
-    token = issue_anonymous_token(user_id=user_id)
+    token = issue_anonymous_token()
 
-    # 从 token payload 提取 user_id
-    from app.auth import verify_token
-
+    # 从 token payload 提取 user_id（顺带自检签发结果可被校验）
     payload = verify_token(token)
     actual_user_id = payload["user_id"] if payload else "anonymous"
 

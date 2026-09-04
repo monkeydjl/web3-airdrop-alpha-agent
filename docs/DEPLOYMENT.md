@@ -131,14 +131,27 @@ docker compose --profile postgres up -d
 # 并设 DB_BACKEND=postgres（或直接给完整的 DATABASE_URL）
 ```
 
-启用 nginx：
+启用 nginx（**仅 API 反代 / 兼容旧部署**）：
 
 ```bash
 docker compose --profile production up -d
 ```
 
-⚠️ **nginx 把 `/metrics` 公开代理出去且无任何鉴权**（实测返回 200）。
-公网部署前必须自己加访问限制 —— 这一条仍是待决项，见 OPERATIONS.md。
+> ⚠️ 这份基础 compose **没有 Next.js 前端服务**。它的 nginx 挂载根目录
+> `nginx.conf`，将所有路径反代给 FastAPI；适合只发布 API 的旧部署，不能作为
+> 带 UI 的公网生产入口。
+>
+> **生产全栈（当前推荐）请改用独立 compose 文件：**
+> ```bash
+> docker compose -f docker-compose.prod.yml up -d --build
+> ```
+> 它才定义了 `frontend`（Next.js）、`web`、`db` 与前端 nginx；其 `/api/`
+> 会先经过 Next 的 `proxy.ts`，由服务器按端点分级注入管理员密钥或匿名 token。
+> 把它误写成 `--profile production` 的失败方式很隐蔽：容器全绿但没有 UI；
+> 若后端启用 `API_KEY`，浏览器 API 请求还会直接 401（根 nginx 绕过了 Next 代理）。
+>
+> `/metrics` 不再经生产 nginx 公开代理；Prometheus 从 `backend` 网络直连
+> `airdrop-web:8002/metrics`。公网看指标请走 Grafana 登录入口。
 
 ### 2.4 一键脚本
 

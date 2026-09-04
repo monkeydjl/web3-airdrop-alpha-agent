@@ -303,6 +303,131 @@ class TestNginxConfiguration:
             assert "gzip on" in content
 
 
+REPO_ROOT = Path(PROJECT_ROOT)
+PROD_COMPOSE = REPO_ROOT / "docker-compose.prod.yml"
+PROD_NGINX = REPO_ROOT / "docker" / "nginx" / "nginx-http.conf"
+
+
+def _load_prod_compose() -> dict:
+    data = yaml.safe_load(PROD_COMPOSE.read_text(encoding="utf-8"))
+    assert "services" in data, "生产 compose 解析不出 services，解析器和文件格式对不上了"
+    return data
+
+
+def _service_env(service: dict) -> dict[str, str]:
+    """把 compose 的 `environment` 列表转成 dict（值保留 `${VAR:?...}` 原文）。"""
+    raw = service.get("environment") or []
+    result: dict[str, str] = {}
+    for item in raw:
+        key, _, value = str(item).partition("=")
+        result[key.strip()] = value
+    assert result, "该服务没有解析出任何 environment 项，断言会变成空转"
+    return result
+
+
+class TestProductionEntrypointIsWired:
+    """生产入口的接线门禁 —— 这几条都是"本地全绿、公网全坏"的缺陷。
+
+    2026-09-03 实测：这四条同时存在，任意一条都足以让公网部署整站不可用，
+    而它们在 `npm run dev` + `uvicorn` 下**全都不会暴露** —— 那条路径上
+    没有 nginx、没有容器边界、也没有生产环境变量校验。
+    所以必须靠读配置文件的断言钉住，功能测试永远抓不到。
+    """
+
+    def test_nginx_routes_api_through_the_frontend_not_the_backend(self):
+        """`/api/` 必须交给 Next，否则 proxy.ts 的凭据注入根本不执行。
+
+        浏览器不持有任何后端凭据：凭据由 `frontend-next/proxy.ts` 在服务端
+        按路径分档注入（管理端前缀 → X-API-Key，其余 → 匿名 Bearer）。
+        `proxy_pass http://backend` 会让那段代码被完全绕过 ——
+        后端 `API_KEY` 非空时全站 401、页面空白。
+        """
+        content = PROD_NGINX.read_text(encoding="utf-8")
+        # 取 `location /api/ {` 到该块结束前的 proxy_pass 那一行
+        block = re.search(r"location /api/ \{(.*?)\n        \}", content, re.S)
+        assert block, "找不到 location /api/ 块 —— 配置结构变了，本断言已失效"
+        target = re.search(r"proxy_pass\s+(\S+);", block.group(1))
+        assert target, "location /api/ 里没有 proxy_pass，本断言已失效"
+        assert target.group(1) == "http://frontend", (
+            f"location /api/ 的 proxy_pass 是 {target.group(1)}，必须是 http://frontend。"
+            "指向 backend 会绕过 Next 的 proxy.ts → 凭据注入不执行 → 全站 401。"
+        )
+
+    def test_nginx_defines_the_frontend_upstream_it_proxies_to(self):
+        """指过去就得定义 upstream，否则 nginx 启动即 host not found。"""
+        content = PROD_NGINX.read_text(encoding="utf-8")
+        assert "upstream frontend" in content
+        assert "server frontend:3002" in content
+
+    def test_nginx_does_not_expose_metrics_publicly(self):
+        """`/metrics` 在后端 PUBLIC_PREFIXES 里，从公网转发过来就是免鉴权公开。
+
+        刻意断言"不含 proxy_pass"而不是"含 return 403"：将来换成别的拒绝
+        方式（`deny all` 等）也应该通过，唯一不能接受的是又把它转发出去。
+        """
+        content = PROD_NGINX.read_text(encoding="utf-8")
+        block = re.search(r"location /metrics \{(.*?)\n        \}", content, re.S)
+        assert block, "找不到 location /metrics 块 —— 配置结构变了，本断言已失效"
+        assert "proxy_pass" not in block.group(1), (
+            "生产 nginx 又把 /metrics 转发出去了。它在后端 PUBLIC_PREFIXES 里，"
+            "转发即公开内部指标；Prometheus 走 backend 网络直连容器，不需要这条路径。"
+        )
+
+    def test_frontend_service_gets_the_admin_key(self):
+        """缺 BACKEND_API_KEY 时 proxy.ts 会静默按无鉴权模式放行 → 全站 401。
+
+        断言用 `:?` 而不只是"这个键存在"：`${VAR}` 或 `${VAR:-}` 在未设置时
+        展开成空串，`proxy.ts` 拿到空值同样走那条静默分支。
+        """
+        env = _service_env(_load_prod_compose()["services"]["frontend"])
+        assert "BACKEND_API_KEY" in env, "生产前端服务没有 BACKEND_API_KEY，proxy.ts 拿不到管理员密钥"
+        assert env["BACKEND_API_KEY"].startswith("${BACKEND_API_KEY:?"), (
+            f"BACKEND_API_KEY 写成 {env['BACKEND_API_KEY']}，必须用 ${{VAR:?}} 强制必填 —— "
+            "空值会让 proxy.ts 按 MVP 无鉴权模式放行，表现是全站 401 且前端日志无异常。"
+        )
+
+    def test_production_compose_pins_app_env_itself(self):
+        """生产 compose 必须自己钉死 APP_ENV，不能靠 env_file 继承。
+
+        `.env.example` 的值是 `development`；靠继承的话 `config.py` 的生产自检
+        （API_KEY 长度 / AUTH_TOKEN_SECRET / CORS localhost / PG 弱口令）全部跳过，
+        容器照样变绿但跑的不是生产安全口径。
+        """
+        env = _service_env(_load_prod_compose()["services"]["web"])
+        assert env.get("APP_ENV") == "production", (
+            f"生产 compose 的 web 服务 APP_ENV={env.get('APP_ENV')!r}，必须显式写成 production。"
+        )
+
+    @pytest.mark.parametrize("key", ["API_KEY", "POSTGRES_PASSWORD"])
+    def test_security_critical_keys_are_required_not_bare_interpolation(self, key):
+        """裸 `${VAR}` 展开成空串会**覆盖** env_file 的正确值，且只给一个 warning。
+
+        对 `API_KEY` 而言那等于"鉴权中间件短路"——公网零鉴权的静默事故。
+        """
+        env = _service_env(_load_prod_compose()["services"]["web"])
+        joined = "\n".join(f"{k}={v}" for k, v in env.items())
+        assert f"${{{key}:?" in joined, (
+            f"{key} 在生产 compose 的 web 服务里没有用 ${{{key}:?...}} 必填语法。"
+            "裸插值在未设置时展开成空串并覆盖 env_file，Compose 只 warning 不报错。"
+        )
+
+    def test_frontend_dockerfile_bakes_the_proxy_target_at_build_time(self):
+        """`next.config.js` 的 rewrites 在 build 时读 API_PROXY_TARGET 并写进产物。
+
+        构建期漏掉 → production 构建得到空 rewrite → `/api` 被 Next 当自身路由
+        处理而 404。这与运行时 compose 传的同名变量是两个用途，不能互相替代。
+        """
+        content = (REPO_ROOT / "frontend-next" / "Dockerfile").read_text(encoding="utf-8")
+        builder = content.split("AS builder", 1)
+        assert len(builder) == 2, "Dockerfile 里找不到 builder 阶段，本断言已失效"
+        # 只看 builder 之后、runner 之前那段
+        build_stage = builder[1].split("AS runner", 1)[0]
+        assert "API_PROXY_TARGET" in build_stage, (
+            "frontend-next/Dockerfile 的 builder 阶段没有 API_PROXY_TARGET，"
+            "next.config.js 的 rewrites 会在构建期拿到空值 → 生产 /api 全部 404。"
+        )
+
+
 class TestDockerIgnore:
     """Test .dockerignore configuration."""
 

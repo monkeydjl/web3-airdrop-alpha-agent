@@ -118,6 +118,160 @@ DEFAULT_PROFILE = {
 }
 
 
+# 查表侧的写法归一。**只用于查 SECTOR_PROFILE，不改写 project.sector。**
+#
+# 为什么不去扩 utils.normalize.SECTOR_ALIAS：那个函数的产出进了
+# `create_dedup_key()` → `generate_deterministic_id()`，sector 是项目确定性 ID
+# 的组成部分。把 "Dexes" 归一成 "DEX" 会让同一个项目算出不同的 UUID，既有行
+# 全部变成孤儿、去重失效。归一必须留在查表这一侧。
+#
+# 键是 lower() 后的形式；值必须是 SECTOR_PROFILE 里真实存在的键
+# （由 test_narrative.py 的一致性测试保证，写错会红灯而不是静默走默认档）。
+_SECTOR_LOOKUP_ALIAS: dict[str, str] = {
+    # L2 / rollup 家族：DefiLlama 用 "Rollup"，CryptoRank 用 "Layer 2"
+    "layer2": "L2",
+    "layer 2": "L2",
+    "layer-2": "L2",
+    "l2": "L2",
+    "rollup": "L2",
+    "rollups": "L2",
+    "optimistic rollup": "L2",
+    # ZK
+    "zk": "ZK",
+    "zk rollup": "ZK",
+    "zk-rollup": "ZK",
+    "zero-knowledge": "ZK",
+    "zkevm": "ZK",
+    # DEX：DefiLlama 的 category 是复数 "Dexes"
+    "dex": "DEX",
+    "dexes": "DEX",
+    "dexs": "DEX",
+    "decentralized exchange": "DEX",
+    "derivatives": "DEX",
+    "perpetuals": "DEX",
+    "perp-dex": "DEX",
+    "dex-aggregator": "DEX",
+    # Restaking：LRT 赛道在 DefiLlama 里叫 "Liquid Restaking"
+    "restaking": "Restaking",
+    "liquid restaking": "Restaking",
+    "liquid restaking tokens": "Restaking",
+    "re-staking": "Restaking",
+    "restake": "Restaking",
+    # Lending / CDP
+    "lending": "Lending",
+    "cdp": "Lending",
+    "borrowing": "Lending",
+    # Bridge
+    "bridge": "Bridge",
+    "cross chain": "Bridge",
+    "cross-chain": "Bridge",
+    "interoperability": "Bridge",
+    # Infrastructure：模块化 / DA / 预言机 / 通用链都归这档
+    "infra": "Infrastructure",
+    "infrastructure": "Infrastructure",
+    "chain": "Infrastructure",
+    "modular": "Infrastructure",
+    "modular-da": "Infrastructure",
+    "modular-execution": "Infrastructure",
+    "data availability": "Infrastructure",
+    "oracle": "Infrastructure",
+    "oracles": "Infrastructure",
+    "services": "Infrastructure",
+    "l1": "Infrastructure",
+    # DeFi 泛类
+    "defi": "DeFi",
+    "de-fi": "DeFi",
+    "yield": "DeFi",
+    "farm": "DeFi",
+    "liquid staking": "DeFi",
+    "staking": "DeFi",
+    # Gaming
+    "gaming": "Gaming",
+    "game": "Gaming",
+    "games": "Gaming",
+    "gamefi": "GameFi",
+    # Privacy
+    "privacy": "Privacy",
+    "privacy-rollup": "Privacy",
+    # 其余单键归一（大小写 / 复数）
+    "ai": "AI",
+    "artificial intelligence": "AI",
+    "nft": "NFT",
+    "nfts": "NFT",
+    "dao": "DAO",
+    "daos": "DAO",
+}
+
+
+def canonical_sector_key(sector: str | None) -> str | None:
+    """把 sector 的各种写法折成规范键，未知写法原样返回。
+
+    与 `resolve_sector_profile()` 共用同一张别名表，但用途不同：这个函数用于
+    **按赛道分组**（competition 子分的 sector_count），而不是查热度档位。
+
+    与查档位一样，**不改写 `project.sector`** —— 那个值参与
+    `generate_deterministic_id()`，改了会让既有项目 ID 漂移。
+
+    未知写法返回 trim 后的原值而不是 None：分组场景下「不认识的赛道」仍然是
+    一个合法的独立分组，不能塌成同一个 None 桶 —— 那会把 RWA 和 SocialFi 算成
+    同一个赛道的竞品。
+    """
+    if not sector:
+        return sector
+
+    stripped = sector.strip()
+    if not stripped:
+        return stripped
+
+    if stripped in SECTOR_PROFILE:
+        return stripped
+
+    key = stripped.lower()
+
+    canonical = _SECTOR_LOOKUP_ALIAS.get(key)
+    if canonical is not None:
+        return canonical
+
+    for profile_key in SECTOR_PROFILE:
+        if profile_key.lower() == key:
+            return profile_key
+
+    return stripped
+
+
+def resolve_sector_profile(sector: str) -> tuple[dict[str, Any], str | None]:
+    """查 SECTOR_PROFILE，返回 (profile, 命中的规范键)。
+
+    未命中时返回 `(DEFAULT_PROFILE, None)` —— 第二个返回值是 None 让调用方能
+    **区分「命中了」与「走了默认档」**，这正是原实现缺的东西：
+    `SECTOR_PROFILE.get(sector, DEFAULT_PROFILE)` 未命中时静默返回默认档，
+    `DEFAULT_PROFILE` 又恰好让 narrative_timing 恒等于 60.0，于是这一维的
+    0.15 权重退化成常数，且没有任何信号提示。
+
+    三级查找，全部不改写 `project.sector` 本身：
+    1. 精确匹配（已是规范键）
+    2. lower() 后查别名表（吸收 "Dexes" / "Rollup" / "Layer 2" 这类真实写法）
+    3. lower() 后与规范键的 lower() 比对（纯大小写差异，如 "l2" / "zk"）
+    """
+    if not sector:
+        return DEFAULT_PROFILE, None
+
+    if sector in SECTOR_PROFILE:
+        return SECTOR_PROFILE[sector], sector
+
+    key = sector.strip().lower()
+
+    canonical = _SECTOR_LOOKUP_ALIAS.get(key)
+    if canonical is not None:
+        return SECTOR_PROFILE[canonical], canonical
+
+    for profile_key in SECTOR_PROFILE:
+        if profile_key.lower() == key:
+            return SECTOR_PROFILE[profile_key], profile_key
+
+    return DEFAULT_PROFILE, None
+
+
 def stage_to_timing(stage: str) -> str:
     """Map lifecycle stage to timing.
 
@@ -176,8 +330,18 @@ class NarrativeAgent(BaseAgent):
             # Get sector
             sector = state.project.sector or "Unknown"
 
-            # Get sector profile (static baseline)
-            profile = SECTOR_PROFILE.get(sector, DEFAULT_PROFILE)
+            # Get sector profile (static baseline).
+            # 未命中要出声：默认档让 narrative_timing 恒等 60.0，等于把这一维的
+            # 0.15 权重扔掉，而分数看上去完全正常 —— 没有日志就没人会发现。
+            profile, matched_sector = resolve_sector_profile(sector)
+            if matched_sector is None:
+                self.logger.warning(
+                    "narrative.sector_profile_missing",
+                    project_id=state.project.id,
+                    sector=sector,
+                    known_sectors=sorted(SECTOR_PROFILE),
+                    impact="narrative_timing 退化为默认档常数，该维权重实际未参与区分",
+                )
 
             # Calculate base heat score
             base_heat = profile["base_heat"]

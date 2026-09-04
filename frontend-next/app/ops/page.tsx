@@ -351,7 +351,7 @@ export default function OpsPage() {
         { method: 'POST', body: '{}' },
       );
       showToast(
-        `${sourceZh(sourceId)} 完成 · ${res.items_collected ?? '—'} items`,
+        `${sourceZh(sourceId)} 完成 · 已采集 ${res.items_collected ?? '—'} 项`,
         'success',
       );
       load();
@@ -560,7 +560,7 @@ export default function OpsPage() {
         />
         <Metric
           label="健康"
-          value={health == null ? '…' : health.ok ? 'OK' : 'DOWN'}
+          value={health == null ? '…' : health.ok ? '正常' : '不可用'}
           hint={health?.db_backend || health?.status || '—'}
           tone={health?.ok ? 'farm' : 'default'}
         />
@@ -689,7 +689,7 @@ export default function OpsPage() {
                       : 'bg-surface-3 text-ink-muted'
                   }`}
                 >
-                  {health?.status || (health?.ok ? 'healthy' : '—')}
+                  {health?.ok ? '健康' : health?.status || '—'}
                 </span>
               }
             />
@@ -704,7 +704,7 @@ export default function OpsPage() {
       {/* quarantine table full width */}
       <section className="mt-3 ops-card">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-          <h2 className="text-sm font-semibold text-ink">隔离区 Quarantine</h2>
+          <h2 className="text-sm font-semibold text-ink">隔离区</h2>
           <span className="font-mono text-[11px] text-ink-faint">
             {qCount < 0 ? '加载失败' : `${qCount} 条`}
           </span>

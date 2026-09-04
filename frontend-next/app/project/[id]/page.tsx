@@ -58,14 +58,14 @@ const SIGNAL_CHECKS: { key: string; label: string }[] = [
  * 现在权重从 `GET /settings/config` 的 `weights` 块按 `envKey` 取。
  */
 const DIMENSIONS = [
-  { id: 'airdrop_signal', envKey: 'WEIGHT_AIRDROP_SIGNAL' },
-  { id: 'narrative_timing', envKey: 'WEIGHT_NARRATIVE_TIMING' },
-  { id: 'execution', envKey: 'WEIGHT_EXECUTION' },
-  { id: 'team_reputation', envKey: 'WEIGHT_TEAM_REPUTATION' },
-  { id: 'risk', envKey: 'WEIGHT_RISK' },
-  { id: 'competition', envKey: 'WEIGHT_COMPETITION' },
-  { id: 'tokenomics', envKey: 'WEIGHT_TOKENOMICS' },
-  { id: 'transparency', envKey: 'WEIGHT_TRANSPARENCY' },
+  { id: 'airdrop_signal', label: '空投信号', envKey: 'WEIGHT_AIRDROP_SIGNAL' },
+  { id: 'narrative_timing', label: '叙事时机', envKey: 'WEIGHT_NARRATIVE_TIMING' },
+  { id: 'execution', label: '执行力', envKey: 'WEIGHT_EXECUTION' },
+  { id: 'team_reputation', label: '团队声誉', envKey: 'WEIGHT_TEAM_REPUTATION' },
+  { id: 'risk', label: '风险', envKey: 'WEIGHT_RISK' },
+  { id: 'competition', label: '竞争格局', envKey: 'WEIGHT_COMPETITION' },
+  { id: 'tokenomics', label: '代币经济学', envKey: 'WEIGHT_TOKENOMICS' },
+  { id: 'transparency', label: '透明度', envKey: 'WEIGHT_TRANSPARENCY' },
 ] as const;
 
 /** GET /settings/config 里本页真正用到的两块 */
@@ -173,7 +173,11 @@ export default function ProjectPage() {
     setError('');
     // 顺带拉一次运行时配置：8 维权重和 FARM/WATCH 阈值以前是写死在本文件里的
     // （见 DIMENSIONS 注释）。这一路失败不影响项目详情本身，所以单独 catch。
-    apiFetch<RuntimeThresholds>('/settings/config', { signal: ac.signal })
+    //
+    // 用 `/public-config` 而非 `/settings/config`：本页面向普通访客，而后者是
+    // 管理员专属（回显哪些密钥已配、采集源地址、cron、LLM 预算）。前端代理
+    // 已改为只给管理动作注入管理员密钥，继续打 /settings/config 会拿到 403。
+    apiFetch<RuntimeThresholds>('/public-config', { signal: ac.signal })
       .then((cfg) => {
         if (!mounted.current || myGeneration !== generation.current) return;
         setRuntimeCfg(cfg ?? null);
@@ -550,7 +554,7 @@ export default function ProjectPage() {
                   <Fact label="风险" value={riskLevelZh(String(team.risk_level ?? ''))} />
                   <Fact label="身份" value={teamTypeZh(String(team.team_type ?? ''))} />
                   <Fact
-                    label="Flags"
+                    label="风险标记"
                     value={
                       /* 后端字段名是 `team_flags`。此前这里读 `team.flags`，
                          而 API 从不返回这个键，所以这一行永远显示「无」——
@@ -613,7 +617,7 @@ export default function ProjectPage() {
                 const w = runtimeWeights[dim.envKey];
                 return (
                   <div className="pd-dim" key={dim.id}>
-                    <span className="pd-dim-name">{dim.id}</span>
+                    <span className="pd-dim-name">{dim.label}</span>
                     {/* 权重来自后端；拿不到就显示「×—」，不回落到写死的旧值 */}
                     <span className="pd-dim-weight">
                       ×{typeof w === 'number' ? w.toFixed(2) : '—'}
@@ -637,7 +641,7 @@ export default function ProjectPage() {
 
           {/* signals */}
           <section className="border-t border-line py-5">
-            <SecHead title="可核验信号" meta="meta.signals" />
+            <SecHead title="可核验信号" />
             <div className="grid gap-x-6 sm:grid-cols-2">
               {SIGNAL_CHECKS.map(({ key, label }) => {
                 const on = Boolean(signals[key]);
@@ -662,7 +666,7 @@ export default function ProjectPage() {
 
           {/* participation */}
           <section id="pd-participation" className="border-t border-line py-5">
-            <SecHead title="参与清单" meta="participation" />
+            <SecHead title="参与清单" />
             <ParticipationTasks projectId={project.id} />
           </section>
 
@@ -691,7 +695,7 @@ export default function ProjectPage() {
 
           {/* interactions */}
           <section className="border-t border-line py-5">
-            <SecHead title="我的投入" meta="interactions" />
+            <SecHead title="我的投入" />
             <InteractionPanel projectId={project.id} />
           </section>
 

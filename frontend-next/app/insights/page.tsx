@@ -27,7 +27,14 @@ interface LLMStatus {
   enabled: boolean;
   provider_count: number;
   total_model_count: number;
+  /** 轮询一圈的候选组合数（provider × model），ADR-016 */
+  candidate_count?: number;
+  /** 选择策略：每次调用从哪个组合开始。当前是 round_robin */
+  selection_strategy?: string;
+  /** 失败策略：这一次调用里遇到失败怎么走。当前是 provider_aware */
   failover_strategy: string;
+  /** 人类可读的策略说明 */
+  strategy_note?: string;
   providers: LLMProviderStatus[];
   temperature: number;
   max_tokens: number;
@@ -50,7 +57,7 @@ function normalizeSectors(
       .map((item) => {
         if (Array.isArray(item)) return { name: String(item[0]), count: Number(item[1]) || 0 };
         const o = item as { sector?: string; count?: number; name?: string };
-        return { name: String(o.sector || o.name || 'Unknown'), count: Number(o.count) || 0 };
+        return { name: String(o.sector || o.name || '未知'), count: Number(o.count) || 0 };
       })
       .filter((s) => s.count > 0)
       .sort((a, b) => b.count - a.count);
@@ -322,9 +329,15 @@ export default function InsightsPage() {
             <div className="ins-llm-titles">
               <span className="ins-llm-name">
                 <Shuffle className="h-4 w-4" strokeWidth={2} />
-                LLM 多接口故障转移
+                LLM 多接口轮询
               </span>
-              <span className="ins-llm-strategy">{llmStatus.failover_strategy}</span>
+              {/* 后端把「选择策略」与「失败策略」拆成两个字段（ADR-016）。
+                  这里优先展示 strategy_note —— 一个英文枚举值（round_robin）
+                  对运维没有信息量，读不出「多 worker 下不保证全局均衡」。
+                  strategy_note 缺失时退回旧字段，兼容未升级的后端。 */}
+              <span className="ins-llm-strategy">
+                {llmStatus.strategy_note || llmStatus.failover_strategy}
+              </span>
             </div>
             <span className={`ins-llm-badge ${llmStatus.enabled ? 'ok' : 'off'}`}>
               {llmStatus.enabled ? (
@@ -345,7 +358,7 @@ export default function InsightsPage() {
             </div>
             <div className="ins-llm-stat">
               <span className="ins-llm-stat-val">{llmStatus.temperature}</span>
-              <span className="ins-llm-stat-label">Temperature</span>
+              <span className="ins-llm-stat-label">采样温度</span>
             </div>
             <div className="ins-llm-stat">
               <span className="ins-llm-stat-val">${llmStatus.daily_budget_usd}</span>

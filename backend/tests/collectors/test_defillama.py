@@ -82,6 +82,61 @@ class TestDefiLlamaFilterCandidates:
         assert len(candidates) == 1
 
 
+class TestDefiLlamaFacetFiltering:
+    """2026-09 修复：已发币品牌的 symbol='-' 子条目不得混入 pre-TGE 候选。
+
+    生产库实测泄漏样例："Zircuit Staking"（母条目 Zircuit 带 ZRC/gecko_id，
+    在 _is_unlisted 处被过滤；子条目 symbol='-' 反而留下）。
+    """
+
+    def test_brand_prefix_facet_of_listed_protocol_skipped(self, collector: DefiLlamaCollector) -> None:
+        protocols = [
+            sample_protocol(
+                name="Zircuit", slug="zircuit", category="Canonical Bridge",
+                symbol="ZRC", gecko_id="zircuit",
+            ),
+            sample_protocol(name="Zircuit Staking", slug="zircuit-staking", category="Farm"),
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == []
+
+    def test_parent_linked_facet_of_listed_protocol_skipped(self, collector: DefiLlamaCollector) -> None:
+        protocols = [
+            sample_protocol(
+                name="Solv Protocol", slug="solv-protocol", category="Yield",
+                symbol="SOLV", gecko_id="solv-protocol",
+            ),
+            {
+                **sample_protocol(name="Solv Staking", slug="solv-staking", category="Farm"),
+                "parentProtocol": "parent#solv-protocol",
+            },
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == []
+
+    def test_facet_of_unlisted_parent_kept(self, collector: DefiLlamaCollector) -> None:
+        """母项目同样未上市 → 子条目跟随母项目保留（母条目承载 alpha）。"""
+        protocols = [
+            sample_protocol(name="Tonstack", slug="tonstack", category="Liquid Staking"),
+            {
+                **sample_protocol(name="Tonstack LSD", slug="tonstack-lsd", category="Liquid Staking"),
+                "parentProtocol": "parent#tonstack",
+            },
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert {c["name"] for c in candidates} == {"Tonstack", "Tonstack LSD"}
+
+    def test_short_listed_brand_stems_do_not_clobber(self, collector: DefiLlamaCollector) -> None:
+        """≥3 字符门槛：两字符上市条目名（如 "SX"）不作为品牌前缀判据。"""
+        protocols = [
+            sample_protocol(name="SX", slug="sx", category="Prediction Market",
+                            symbol="SX", gecko_id="sx"),
+            sample_protocol(name="SXPB Vault", slug="sxpb-vault", category="Yield"),
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == ["SXPB Vault"]
+
+
 class TestDefiLlamaDiscoveryScore:
     def test_score_components(self, collector: DefiLlamaCollector) -> None:
         protocol = sample_protocol(tvl=10_000_000, change_7d=0.5, chains=["A", "B", "C", "D", "E"])

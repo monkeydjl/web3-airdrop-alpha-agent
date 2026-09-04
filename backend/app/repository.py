@@ -111,8 +111,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -135,7 +135,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 RETURNING *
                 """
             elif sqlite3.sqlite_version_info >= (3, 24, 0):
@@ -149,8 +150,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -173,7 +174,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -185,8 +187,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -220,6 +222,9 @@ class ProjectRepository:
                     # 而不是用空壳覆盖掉可用的历史快照。
                     getattr(state, "weight_version", None) or None,
                     _sub_scores_json(state),
+                    # Unlike score snapshots, a successful scoring pass may have no
+                    # veto and must clear a stale previous veto.
+                    getattr(state, "veto", None),
                 ),
             )
             if postgres_upsert or sqlite_supports_returning:
@@ -241,6 +246,7 @@ class ProjectRepository:
                     "sector": project.sector,
                     "source": project.source,
                     "confidence": state.confidence,
+                    "veto": getattr(state, "veto", None),
                     "reason": state.reason,
                     "narrative": state.narrative.model_dump() if state.narrative else None,
                     "team": state.team.model_dump() if state.team else None,
@@ -446,6 +452,31 @@ class ProjectRepository:
                 partial(self.count_by_sector, sector),
             )
         return result
+
+    def canonical_sector_counts(self) -> dict[str, int]:
+        """全库 sector 计数，**按规范键折叠**（competition 分组口径）。
+
+        为什么不能复用 `global_sector_counts()`：那条路径最终走
+        `WHERE sector = ?` 精确匹配，传规范键 `"DEX"` 查不到库里存成
+        `"Dexes"` / `"dex"` / `"Derivatives"` 的行。同一逻辑赛道被拆成多组、
+        每组计数偏小，`COMPETITION_MAP` 就给出虚高的竞争度分 —— 把「赛道很挤」
+        错报成「几乎没有竞品」。
+
+        做法是一次 `GROUP BY sector` 拿到全部原始写法的分布，再在 Python 侧按
+        `canonical_sector_key()` 折叠。**这比 ADR-010 担心的 N 次 COUNT 更省**
+        （一条聚合查询 vs 每个 sector 一条），所以不额外过缓存：缓存是按单个
+        sector 键设计的，装不下"折叠后的整张分布"，硬塞会让写时失效
+        （`invalidate_sector_cache(project.sector)` 传的是原始写法）失准。
+        """
+        from app.agents.narrative import canonical_sector_key
+
+        folded: dict[str, int] = {}
+        for raw_sector, count in self.aggregate_counts("sector").items():
+            key = canonical_sector_key(raw_sector)
+            if not key:
+                continue
+            folded[key] = folded.get(key, 0) + count
+        return folded
 
     def invalidate_sector_cache(self, sector: str | None = None) -> None:
         """写时失效：写入项目后使对应 sector 缓存项失效（ADR-010）。"""

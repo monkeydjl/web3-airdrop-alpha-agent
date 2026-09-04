@@ -169,13 +169,26 @@ class HTTPCache:
             try:
                 mtime = disk_path.stat().st_mtime
                 if now - mtime >= ttl:
-                    disk_path.unlink(missing_ok=True)
+                    # 过期即删。删不掉也必须返回 None（视为 miss）——
+                    # 不能让它落进下面的 except 被当成"文件损坏"，
+                    # 那条路径的语义是不一样的。
+                    with contextlib.suppress(OSError):
+                        disk_path.unlink(missing_ok=True)
                     return None
                 with open(disk_path, encoding="utf-8") as f:
                     return json.load(f)
             except (json.JSONDecodeError, OSError):
-                # Corrupt cache file — remove and fall through
-                disk_path.unlink(missing_ok=True)
+                # Corrupt cache file — remove and fall through.
+                #
+                # 删除失败**绝不能**让异常冒泡：这里已经在 except 块里，
+                # 再抛出去就没人接了 —— 会一路穿出 `fetch()`，把「缓存文件读坏」
+                # 这种可降级的小事变成整个请求失败。缓存的语义是"有则加速、
+                # 无则回源"，任何一层出问题都该退回去发真实请求。
+                #
+                # 真实触发场景不止"文件被占用"：本机沙箱的 safe-delete 依赖
+                # 回收站，回收站不可用时 `unlink()` 直接抛 OSError。
+                with contextlib.suppress(OSError):
+                    disk_path.unlink(missing_ok=True)
 
         return None
 
@@ -385,6 +398,69 @@ async def _fetch_with_retry(
     if last_error is not None:
         raise last_error
     raise RuntimeError(f"fetch failed for {url} (no attempts made)")
+
+
+async def post(
+    url: str,
+    *,
+    json_body: dict[str, Any],
+    timeout: int | None = None,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+) -> int:
+    """POST JSON，返回成功响应的状态码。
+
+    与 `fetch()` 同一套出口约束：域名白名单 fail-closed、熔断器、信号量。
+    两个刻意差异（决策推送 senders 等单向发送场景）：
+
+    - **不写缓存** —— POST 没有"结果可复用"的语义，缓存一个发送动作
+      等于假装它没发生过；
+    - **不解析响应体** —— Discord webhook 成功返回 204 No Content，
+      `response.json()` 会直接炸。
+
+    4xx（除 429）是确定性失败，重试没有意义，立即抛错；5xx / 网络错误
+    按指数退避重试后抛最后一个错误。成功与否的判定只看状态码。
+    """
+    assert_url_allowed(url)
+    timeout = timeout or 10
+
+    global _in_flight
+    semaphore = _get_semaphore()
+    async with semaphore:
+        _in_flight += 1
+        FETCHER_SEMAPHORE_USAGE.set(_in_flight)
+        try:
+            last_error: Exception | None = None
+            for attempt in range(max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.request("POST", url, json=json_body)
+                except (httpx.HTTPError, httpx.TimeoutException) as e:
+                    last_error = e
+                    _circuit_breaker.record_failure()
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay * (2**attempt))
+                    continue
+
+                if response.is_success:
+                    _circuit_breaker.record_success()
+                    logger.info("fetch.post_success", url=url, attempt=attempt + 1, status=response.status_code)
+                    return response.status_code
+
+                _circuit_breaker.record_failure()
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    # 客户端错误（凭证错 / 参数错）重试也不会好 —— 立即失败。
+                    raise RuntimeError(f"POST {url} failed with client error {response.status_code} (not retried)")
+                last_error = RuntimeError(f"POST {url} failed with status {response.status_code}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2**attempt))
+
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(f"POST failed for {url} (no attempts made)")
+        finally:
+            _in_flight -= 1
+            FETCHER_SEMAPHORE_USAGE.set(_in_flight)
 
 
 # ═══════════════════════════════════════════════════════════════

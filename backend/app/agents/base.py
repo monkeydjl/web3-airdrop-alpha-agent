@@ -192,6 +192,7 @@ class PipelineState:
     score: int | None = None
     label: str | None = None  # "FARM", "WATCH", "IGNORE"
     confidence: float | None = None
+    veto: str | None = None
     reason: list[str] = field(default_factory=list)
     # 子分快照与生效权重版本：WEIGHT_CALIBRATION §4.3 step 1 的离线重加权需要
     # 子分快照，§1.2 要求每条分数带 weight_version；此前二者都未落到 state/DB，
@@ -232,6 +233,7 @@ class PipelineState:
             "score": self.score,
             "label": self.label,
             "confidence": self.confidence,
+            "veto": self.veto,
             "reason": self.reason,
             "errors": [e.to_dict() for e in self.errors],
             "started_at": self.started_at.isoformat(),

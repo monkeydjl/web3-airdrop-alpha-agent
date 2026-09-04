@@ -379,3 +379,44 @@ class TestLegacyRowBackfill:
         response = client.get("/api/v1/projects/legacy-2")
         team = response.json()["data"]["project"]["team"]
         assert "risk_level" not in team, "没有 team_score 就无从推导档位，不该编一个出来。"
+
+    def test_veto_reaches_the_detail_response(self, client):
+        """资格门否决必须能被读到，否则 projects.veto 就是死数据。
+
+        ADR-015 刻意让 `score` **不因否决改变**：一个被否决的项目分数照样很高。
+        所以只看 `score` 与 `label` 无法区分「模型给了低分」与「被规则否决」，
+        必须有字段承载。不暴露的话就是落了库却没人能读 —— 与
+        `team.risk_level` 当年「算了只打日志」是同一类失效。
+        """
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO projects (id, name, source, score, label, veto)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("vetoed-1", "Launched Bluechip", "seed", 69, "IGNORE", "already_launched"),
+        )
+        conn.commit()
+        conn.close()
+
+        project = client.get("/api/v1/projects/vetoed-1").json()["data"]["project"]
+        assert project["veto"] == "already_launched"
+        # 分数保持否决前的原值 —— 这正是不能靠 score 判断否决的原因。
+        assert project["score"] == 69
+
+    def test_pre_gate_rows_report_veto_as_null_not_a_default(self, client):
+        """资格门上线前写入的行，`veto` 必须是 null。
+
+        null 语义是「未经资格门评估」，不是「通过了资格门」。填一个假的
+        「无否决」会把历史行伪装成已评估过，而 ADR-015 明确历史数据不重算。
+        """
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO projects (id, name, source, score, label) VALUES (?, ?, ?, ?, ?)",
+            ("pre-gate-1", "Old Row", "seed", 72, "FARM"),
+        )
+        conn.commit()
+        conn.close()
+
+        project = client.get("/api/v1/projects/pre-gate-1").json()["data"]["project"]
+        assert project["veto"] is None

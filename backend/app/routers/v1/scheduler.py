@@ -61,6 +61,7 @@ class SchedulerJobsResponse(BaseModel):
 _JOB_OWNER: dict[str, str] = {
     "analysis_run_queue": "SCHEDULER_ENABLED",
     "archive_cleanup": "ARCHIVE_SCHEDULER_ENABLED",
+    "notify_digest": "NOTIFY_ENABLED",
 }
 _COLLECTION_SWITCH = "COLLECTION_SCHEDULER_ENABLED"
 
@@ -101,6 +102,8 @@ def _expected_jobs(request: Request) -> dict[str, str]:
         expected["analysis_run_queue"] = "SCHEDULER_ENABLED"
     if settings.archive_scheduler_enabled:
         expected["archive_cleanup"] = "ARCHIVE_SCHEDULER_ENABLED"
+    if settings.notify_enabled:
+        expected["notify_digest"] = "NOTIFY_ENABLED"
 
     if settings.collection_scheduler_enabled:
         registry = getattr(request.app.state, "collector_registry", None)
@@ -136,6 +139,7 @@ def get_scheduler_jobs(request: Request) -> SchedulerJobsResponse:
         "COLLECTION_SCHEDULER_ENABLED": settings.collection_scheduler_enabled,
         "ARCHIVE_SCHEDULER_ENABLED": settings.archive_scheduler_enabled,
         "COLLECTION_AUTO_RUN_ENABLED": settings.collection_auto_run_enabled,
+        "NOTIFY_ENABLED": settings.notify_enabled,
     }
     expected = _expected_jobs(request)
 

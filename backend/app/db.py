@@ -250,6 +250,7 @@ def _sqlite_ddl() -> str:
                 recommendation  TEXT,
                 confidence      REAL,
                 weight_version  TEXT,
+                veto            TEXT,
                 reason          TEXT,
                 narrative_json  TEXT,
                 team_json       TEXT,
@@ -473,6 +474,108 @@ def _sqlite_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_notification_reads_user
                 ON notification_reads(user_id);
+
+            -- 决策推派出站日志（ACTION_LOOP_DESIGN.md §2.5）
+            -- (event_key, channel) 唯一：同事件同通道天然去重，重发靠 UPSERT 忽略。
+            CREATE TABLE IF NOT EXISTS notify_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type  TEXT NOT NULL,
+                event_key   TEXT NOT NULL,
+                channel     TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_at     TIMESTAMP,
+                UNIQUE (event_key, channel)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notify_log_status
+                ON notify_log(status, created_at);
+
+            -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
+            -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
+            -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            -- 刻意不设 SQL 级外键（全仓约定，见 opportunity 的同类测试）：
+            -- 级联删除由路由层显式先删 task 再删 plan 保证。
+            --
+            CREATE TABLE IF NOT EXISTS participation_plans (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'active',
+                note        TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP,
+                UNIQUE (user_id, project_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS participation_tasks (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id      INTEGER NOT NULL,
+                ref          TEXT,
+                title        TEXT NOT NULL,
+                kind         TEXT NOT NULL DEFAULT 'other',
+                status       TEXT NOT NULL DEFAULT 'todo',
+                url          TEXT,
+                due_at       TIMESTAMP,
+                note         TEXT,
+                completed_at TIMESTAMP,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
+                ON participation_tasks(plan_id, status);
+
+            -- 收益台账（ACTION_LOOP_DESIGN.md §4，F3）
+            -- entries = 投入，outcomes = 产出，按 (user_id, project_id) 聚合出 ROI。
+            -- 诚实边界：amount_usd 以人工录入为准，MVP 不做链上自动取价；
+            -- tx_hash 只是凭证存档，不自动验证。
+            -- source 区分 live（真实操作留痕）与 backtest（历史回测导出），
+            -- 校准时两类样本分开统计（§4.3），不混算。
+            --
+            CREATE TABLE IF NOT EXISTS roi_entries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                amount_usd  REAL,
+                hours       REAL,
+                note        TEXT,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project
+                ON roi_entries(user_id, project_id);
+
+            CREATE TABLE IF NOT EXISTS roi_outcomes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                amount_usd  REAL,
+                tokens      REAL,
+                tx_hash     TEXT,
+                source      TEXT NOT NULL DEFAULT 'manual',
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
+                ON roi_outcomes(user_id, project_id);
+
+            -- 领取监控的自有地址（ACTION_LOOP_DESIGN.md §5，F4）
+            -- address 一律**小写存储**：归一必须写入侧与匹配侧同时做，否则
+            -- UNIQUE 形同虚设（0xAbC 与 0xabc 各占一行），而 Alchemy payload
+            -- 实际返回 EIP-55 混合大小写。同 competition 分组的教训。
+            -- active=0 表示保留登记但停止匹配（临时静音），与删除区分。
+            CREATE TABLE IF NOT EXISTS watched_wallets (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                address    TEXT NOT NULL UNIQUE,
+                label      TEXT NOT NULL,
+                chain      TEXT NOT NULL DEFAULT 'ethereum',
+                active     INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
+                ON watched_wallets(active, address);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
@@ -699,6 +802,7 @@ def _postgres_ddl() -> str:
                 recommendation  TEXT,
                 confidence      DOUBLE PRECISION,
                 weight_version  TEXT,
+                veto            TEXT,
                 reason          TEXT,
                 narrative_json  TEXT,
                 team_json       TEXT,
@@ -921,6 +1025,103 @@ def _postgres_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_notification_reads_user
                 ON notification_reads(user_id);
+
+            -- 决策推派出站日志（ACTION_LOOP_DESIGN.md §2.5）
+            -- (event_key, channel) 唯一：同事件同通道天然去重，重发靠 UPSERT 忽略。
+            CREATE TABLE IF NOT EXISTS notify_log (
+                id          SERIAL PRIMARY KEY,
+                event_type  TEXT NOT NULL,
+                event_key   TEXT NOT NULL,
+                channel     TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                sent_at     TIMESTAMPTZ,
+                UNIQUE (event_key, channel)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notify_log_status
+                ON notify_log(status, created_at);
+
+            -- 参与流水（ACTION_LOOP_DESIGN.md §3，F2）
+            -- plan/task 两级：plan 是「我在参与这个项目」，task 是具体动作。
+            -- user_id 来自 token 身份（get_current_user），不接受请求体自报。
+            -- 刻意不设 SQL 级外键（全仓约定，见 opportunity 的同类测试）：
+            -- 级联删除由路由层显式先删 task 再删 plan 保证。
+            --
+            CREATE TABLE IF NOT EXISTS participation_plans (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'active',
+                note        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMPTZ,
+                UNIQUE (user_id, project_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS participation_tasks (
+                id           SERIAL PRIMARY KEY,
+                plan_id      INTEGER NOT NULL,
+                ref          TEXT,
+                title        TEXT NOT NULL,
+                kind         TEXT NOT NULL DEFAULT 'other',
+                status       TEXT NOT NULL DEFAULT 'todo',
+                url          TEXT,
+                due_at       TIMESTAMPTZ,
+                note         TEXT,
+                completed_at TIMESTAMPTZ,
+                created_at   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan
+                ON participation_tasks(plan_id, status);
+
+            -- 收益台账（ACTION_LOOP_DESIGN.md §4，F3）
+            -- 同 SQLite 侧口径：投入/产出分表，source 区分 live 与 backtest，
+            -- 校准时分开统计。金额人工录入，不做链上取价。
+            CREATE TABLE IF NOT EXISTS roi_entries (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                amount_usd  DOUBLE PRECISION,
+                hours       DOUBLE PRECISION,
+                note        TEXT,
+                recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project
+                ON roi_entries(user_id, project_id);
+
+            CREATE TABLE IF NOT EXISTS roi_outcomes (
+                id          SERIAL PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                project_id  TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                amount_usd  DOUBLE PRECISION,
+                tokens      DOUBLE PRECISION,
+                tx_hash     TEXT,
+                source      TEXT NOT NULL DEFAULT 'manual',
+                recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project
+                ON roi_outcomes(user_id, project_id);
+
+            -- 领取监控的自有地址（ACTION_LOOP_DESIGN.md §5，F4）
+            -- 同 SQLite 侧口径：address 小写归一 + UNIQUE，active 为软开关。
+            -- 这里用 BOOLEAN 而非 INTEGER —— PG 有原生布尔，读出来就是 True/False，
+            -- 路由层不必再做 1/0 转换（SQLite 侧读出的是 int，转换在读取侧统一做）。
+            CREATE TABLE IF NOT EXISTS watched_wallets (
+                id         SERIAL PRIMARY KEY,
+                address    TEXT NOT NULL UNIQUE,
+                label      TEXT NOT NULL,
+                chain      TEXT NOT NULL DEFAULT 'ethereum',
+                active     BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
+                ON watched_wallets(active, address);
 
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
@@ -1149,6 +1350,10 @@ def init_db(conn: Any = None) -> None:
         # 不复用 raw_signals：那一列存的是采集到的**输入**信号（scripts/seed.py 与
         # raw_signals_hash 均按此语义写入），子分是**输出**，两者形状不兼容。
         _add_column_if_not_exists(db, "projects", "sub_scores", "TEXT")
+        # 资格门否决原因（ADR-015）。CREATE TABLE IF NOT EXISTS 不会给既有库补列，
+        # 漏登记这行会让所有已存在的开发/生产库在 save 时报
+        # "table projects has no column named veto"（评分成功但落库失败 → run 变 failed）。
+        _add_column_if_not_exists(db, "projects", "veto", "TEXT")
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
 

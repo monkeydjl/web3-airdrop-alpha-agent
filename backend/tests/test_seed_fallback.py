@@ -93,6 +93,42 @@ def test_seed_dataset_count():
     assert len(SEED_PROJECTS) >= 8
 
 
+class TestSeedLaunchedTokenFiltering:
+    """2026-09 修复：seed fallback 不得把"已发币且无空投信号"的条目送进流水线。
+
+    此前 seed 路径完全绕过 collect_from_repository 的已发币过滤，过时的
+    no_token_yet / explicit_airdrop 字段让 ZKsync / Berachain 等长期以
+    FARM 标签污染扫描结果。
+    """
+
+    def test_launched_real_projects_filtered_from_output(self):
+        """发币+空投已结束的真实项目不得出现在 fallback 输出里。"""
+        projects = get_seed_raw_projects()
+        names = {p.name for p in projects}
+        for launched in ("ZKsync Era", "Berachain", "LayerZero V2", "EigenLayer Pro",
+                         "Scroll zkEVM", "Celestia Modular", "Pyth Network"):
+            assert launched not in names, f"已发币项目 {launched} 泄漏进 fallback 输出"
+
+    def test_launched_projects_have_no_stale_airdrop_signals(self):
+        """刷新后的种子数据：已发币项目不得再携带 testnet/points/explicit 假信号。"""
+        launched = [p for p in SEED_PROJECTS if not p.get("no_token_yet")]
+        assert len(launched) >= 7, "种子集应保留足够多的已发币夹具"
+        for p in launched:
+            assert not p.get("has_testnet"), p["name"]
+            assert not p.get("has_points_program"), p["name"]
+            assert not p.get("explicit_airdrop_mention"), p["name"]
+            assert not p.get("has_task_portal"), p["name"]
+
+    def test_pre_tge_entries_survive_filtering(self):
+        """合成 pre-TGE 条目不受过滤影响，fallback 演示仍有信号覆盖。"""
+        projects = get_seed_raw_projects()
+        names = {p.name for p in projects}
+        assert "Galaxy Gaming Chain" in names
+        assert any(p.no_token_yet for p in projects)
+        assert any(p.has_testnet for p in projects)
+        assert any(p.has_points_program for p in projects)
+
+
 # ── Pipeline integration: fallback on empty repository ──────────
 
 

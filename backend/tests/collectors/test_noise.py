@@ -26,6 +26,12 @@ def test_early_defi_not_noise():
     assert not is_noise_project(name="T3tris Finance", slug="t3tris", category="Yield")
 
 
+def test_crypto_com_products_are_noise():
+    """CDC 质押/LSDFi 产品线：成熟品牌，无空投 alpha（2026-09 泄漏样例）。"""
+    assert is_noise_project(name="Crypto.com Liquid Staking", category="Liquid Staking")
+    assert not is_noise_project(name="CryptoNative Vault", category="Yield")
+
+
 def test_protocol_and_raw_helpers():
     assert is_noise_protocol({"name": "Uniswap V2", "slug": "uniswap-v2", "category": "Dexs"})
     assert is_noise_raw_project(

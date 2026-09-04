@@ -62,21 +62,95 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **269 个不同事件名**、
-**57 个命名空间**；段数分布：2 段 211 个、3 段 52 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **332 个不同事件名**、
+**66 个命名空间**（2026-09-04 随已发币过滤修复新增 `defillama.facet_skipped`）；
+段数分布：2 段 265 个、3 段 61 个、4 段 5 个、1 段 1 个。
+
+> **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
+> 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
+> 会逐一比对总数与命名空间数，加 F4 的 8 个事件时它当场就红了）。改动日志
+> 事件后必须用与该测试同源的正则重算，别凭印象改：
+> ```powershell
+> cd backend
+> & ".\venv\Scripts\python.exe" -c "import re,pathlib,collections; pat=re.compile(r'logger\.(?:debug|info|warning|warn|error|exception|critical)\(\s*\""([a-z0-9_.]+)\""'); e=set(); [e.update(pat.findall(p.read_text(encoding='utf-8'))) for p in pathlib.Path('app').rglob('*.py')]; print(len(e), len({x.split('.')[0] for x in e}))"
+> ```
 
 事件最多的命名空间：
 
 | 命名空间 | 事件数 | 例 |
 | --- | --- | --- |
-| `unified_scheduler` | 23 | `unified_scheduler.started` |
+| `unified_scheduler` | 28 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
+| `collector` | 20 | `collector.noise_quarantined` |
 | `orchestrator` | 20 | `orchestrator.pipeline_start` |
-| `collector` | 18 | `collector.noise_quarantined` |
-| `pipeline` | 12 | `pipeline.completed` |
+| `llm` | 20 | `llm.budget.exceeded` |
+| `pipeline` | 13 | `pipeline.completed` |
 | `collection_scheduler` | 12 | `collection_scheduler.metrics_alert_failed` |
 | `archive` | 10 | `archive.raw_projects.archived` |
-| `app` | 10 | `app.startup`、`app.shutdown` |
+
+收益台账（F3）的四个事件：`roi.entry_recorded`、`roi.entry_deleted`、
+`roi.outcome_recorded`、`roi.outcome_deleted`。
+
+领取监控（F4，ACTION_LOOP_DESIGN §5）落六个 `claim_watch.*` 事件：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| `claim_watch.candidate_detected` | INFO | 命中自有地址，产出 airdrop_candidate 事件 |
+| `claim_watch.skipped_internal_transfer` | INFO | from 与 to 都是自有地址，判为挪仓不报 |
+| `claim_watch.skipped_no_tx_hash` | INFO | payload 缺 `transactionHash`，不可追溯故不报 |
+| `claim_watch.wallet_registered` | INFO | 登记一个自有地址 |
+| `claim_watch.wallet_updated` | INFO | 改 label / chain / active |
+| `claim_watch.wallet_deleted` | INFO | 删除登记 |
+
+外加 `claim_watch.evaluate_failed` / `claim_watch.record_failed` /
+`webhook.alchemy.claim_watch_failed`（均 ERROR）—— 领取监控的失败**不会**
+让 webhook 返回非 200（那会触发 Alchemy 重投风暴），所以这三条是唯一能
+发现它坏了的途径，务必配告警。
+
+> **字段里的地址一律只记前 10 位**（`address_prefix`）。日志会落文件、可能
+> 被采集到集中式系统，与推送内容同一口径（§5.4.1）—— 完整地址进了日志，
+> `/watched-wallets` 那条管理员锁就白设了。
+
+LLM 多接口轮询（ADR-016）落三个事件：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| llm.round_robin_selected | DEBUG | 本次调用的起始组合，字段 `start_index` / `candidate_count` / `provider` / `model` |
+| llm.provider_config_incomplete | WARNING | 某个编号接口是半配置（缺 base_url / api_key / 模型，或 base_url 不是 http(s)://），已跳过 |
+| llm.legacy_numbered_config_ignored | WARNING | 新旧编号变量同时存在，取新格式；旧变量此时完全不起作用 |
+
+> 前者是回答「为什么这次用的是 model-X」的唯一途径 —— 轮询下**同一 prompt
+> 在不同请求上由不同模型回答是预期行为**，只看 llm.success 无法判断
+> 这是轮询正常轮换还是故障转移救回来的。
+>
+> 后两条**务必配告警**，它们都是静默失效：半配置的接口不会报错，只是
+> `provider_count` 比你配的少一个；旧变量残留则会让人改错地方（改了旧变量、
+> 以为生效了）。两条的字段都刻意**不含任何密钥或 base_url 值**。
+
+`llm.attempt_failed`（WARNING）的 `will_retry` 读作「**本次失败之后还有没有
+会被真正尝试的组合**」，不是「候选还没走完」。连接级失败会把该接口的剩余模型
+一并作废，所以剩余候选数不等于剩余尝试数 —— 最后一次失败必然是
+`will_retry=false`，紧接着就是降级。看到 `will_retry=false` 就直接去查
+`llm.all_providers_failed` 与各次 `error_type`，不必再找「重试为什么没生效」。
+
+资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
+`original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——
+分数本身不因否决改变，只看 `score` 无法区分两者。
+
+`narrative.sector_profile_missing`（WARNING，字段 `sector` / `known_sectors` /
+`impact`）：项目的 sector 没命中 `SECTOR_PROFILE`，`narrative_timing` 退化为
+默认档常数 60.0，**该维的 0.15 权重实际未参与区分**。
+
+> 这条务必配告警，因为它是**静默失效**：分数照样算得出来、看上去完全正常，
+> 只是八维模型实际只剩七维在区分项目。查表已做写法归一（`Dexes`→`DEX`、
+> `Rollup`→`L2` 等，见 `narrative.py::_SECTOR_LOOKUP_ALIAS`），所以这条一旦
+> 出现，说明遇到了**真正没有档位的新赛道**（如 `RWA`），处置是去
+> `SECTOR_PROFILE` 补一档真实热度值 —— 而不是把它硬塞进现有档位，那等于编造
+> 赛道热度。持续出现同一个 sector 意味着这批项目的该维得分一直是常数。
+
+> `roi.outcome_recorded` 的字段名是 `outcome_event`，**不是 `event`** ——
+> `event` 是 structlog `logger.info(event, *args, **kw)` 的位置参数名，
+> 当关键字传会 `TypeError`，且只在运行时炸、静态扫描扫不出来。
 
 **别按老文档写查询**：它列的 `run.start`、`agent.run.start`、`db.write.error`、
 `fetcher.fetch.start` 等 14 个事件名**全部不存在**。
@@ -165,7 +239,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（48 个，实测全量）
+### 3.2 完整指标目录（51 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -188,11 +262,23 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | `airdrop_agent_duration_seconds` | histogram | `agent` | 单 agent 墙钟耗时（buckets 0.001…10） |
 
 `result` 闭合为 `success` / `error` / `skipped`（定义在 `metrics.py::AGENT_RESULTS`）：
-`success` = agent 正常返回且产出结果字段；`error` = agent 抛异常；
+`success` = agent 正常返回且产出结果字段；error = agent 抛异常；
 `skipped` = 正常返回但产出字段为 None（跑了但没有可输出结果）。
 埋点在 `agents/orchestrator_simple.py` 的 `_run_agent`（narrative/team/tokenomics/risk）
 与 scorer 分支。这条取代了老文档把错误/跳过拆成两个独立 counter 的写法
 （老名字仍列在 §3.3，确实不存在）。
+
+#### Notify（3）
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `airdrop_notify_sent_total` | counter | `channel` | 决策推送成功发送条数（channel: telegram / discord_webhook） |
+| `airdrop_notify_failure_total` | counter | `channel` | 推送发送失败条数（重试 ≤3 次后 failed 落库） |
+| `airdrop_notify_event_evaluated_total` | counter | `event_type` | 评估器产出的事件数（event_type 闭合于 `metrics.py::NOTIFY_EVENT_TYPES`） |
+
+评估量与发送量是两个独立信号：`NOTIFY_ENABLED=false` 时评估照常发生
+（notify_log 留痕），发送恒为 0 —— 两条曲线背离本身就是排查线索。
+埋点在 `app/notify/service.py`。
 
 #### 采集（4）
 

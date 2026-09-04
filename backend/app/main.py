@@ -492,11 +492,15 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         interactions,
         llm,
         notifications,
+        notify,
         opportunity,
         participation,
         projects,
+        public_config,
         quarantine,
+        roi,
         run,
+        watched_wallets,
         watchlist,
         webhook,
     )
@@ -531,7 +535,13 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
     app.include_router(dashboard.router, prefix="/api/v1", tags=["v1"])
     app.include_router(notifications.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(notify.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(roi.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(watched_wallets.router, prefix="/api/v1", tags=["v1"])
     app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
+    # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
+    # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
+    app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])
 
     # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
     instrument_fastapi_app(app)

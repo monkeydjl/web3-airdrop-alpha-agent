@@ -298,6 +298,22 @@ n  > 15      -> 40
 ```
 （平滑备选：`max(40, 100 - (n-1)*8)`）
 
+> **分组口径：按规范键，不按 `sector` 原始写法**（2026-09-02 修复，见
+> ADR-015 §「不解决什么」第 4 条）。同一逻辑赛道在真实采集里有多种写法
+> （DefiLlama `"Dexes"` / CryptoRank `"DEX"` / github 推断 `"dex"` /
+> 衍生品所 `"Derivatives"`），按原始写法分组会把一个赛道拆成多组、每组计数
+> 偏小，`n <= 3` 命中率虚高 → **系统性偏乐观**。
+>
+> 分组用 `narrative.canonical_sector_key()`，与 `resolve_sector_profile()`
+> 共用别名表。`_calculate_sector_counts()`（计数侧）与 `_calc_competition()`
+> （查表侧）**必须同口径** —— 不一致会全部 miss 后静默退到中性 50。
+>
+> 未知赛道各自独立成组（返回 trim 后原值，不塌成 `None`），否则 `RWA` 与
+> `SocialFi` 会互相算成竞品。全库计数走 `repository.canonical_sector_counts()`
+> （一次 `GROUP BY` + Python 侧折叠），**不能**用 `WHERE sector = ?` 精确匹配。
+>
+> `sector` 本身**不被改写** —— 它参与 `generate_deterministic_id()`。
+
 > **性能优化**：competition 子分使用缓存计数而非每次实时 `COUNT(*)`，详见 [ENGINEERING_ROADMAP.md §7.5.1](ENGINEERING_ROADMAP.md)。
 > - MVP：直接 `COUNT(*)`（项目数 ≤1k）。
 > - V2：进程内 LRU 缓存（写时失效，TTL 300s）或 DB `sector_counts` 物化表（PG trigger 增量更新）。

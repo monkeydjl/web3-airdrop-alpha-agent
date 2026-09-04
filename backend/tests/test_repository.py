@@ -135,19 +135,22 @@ class TestProjectRepository:
         repo = ProjectRepository(db_conn)
 
         # First save
+        sample_state.veto = "already_launched"
         repo.save(sample_state)
 
-        # Update and save again
+        # A successful rescore without a veto must clear stale policy state.
         sample_state.score = 90
         sample_state.label = "WATCH"
+        sample_state.veto = None
         repo.save(sample_state)
 
         # Verify updated
-        cursor = db_conn.execute("SELECT score, label FROM projects WHERE id = ?", (sample_state.project.id,))
+        cursor = db_conn.execute("SELECT score, label, veto FROM projects WHERE id = ?", (sample_state.project.id,))
         row = cursor.fetchone()
 
         assert row["score"] == 90
         assert row["label"] == "WATCH"
+        assert row["veto"] is None
 
     def test_save_batch(self, db_conn, sample_state):
         """Test batch saving projects."""

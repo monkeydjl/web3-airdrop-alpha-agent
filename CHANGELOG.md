@@ -8,6 +8,213 @@
 
 ## [Unreleased]
 
+### Fixed — CI 整套后端测试因传递依赖漂移而收集失败（2026-09-04）
+
+`anyio` 与 `starlette` 是 fastapi 的传递依赖，此前没有写进
+`backend/requirements.txt`。后果是本机 venv 停在旧版、CI 每次全新安装拉最新版，
+**两边跑的不是同一个依赖组合**。当 anyio 4.15.0 把 `anyio.abc.BlockingPortal`
+变成弃用别名、而 starlette 的 testclient 仍用该别名做类型注解时，CI 的
+`-W error::DeprecationWarning` 把它升级成错误：32 个导入 TestClient 的测试文件
+在**收集阶段**全部报错，整套测试 exit code 2、一个用例都没跑
+（run 33883265813）。本机因为装着 anyio 4.14.2，同一条命令全绿，看不到问题。
+
+- 锁定 `anyio==4.14.2`、`starlette==1.3.1`（本机实测通过的组合）。弃用发生在
+  第三方库内部、项目代码改不动；放宽 `-W error` 等于放弃提前发现依赖弃用的能力，
+  所以锁版本是唯一正确的修法。
+- 新增门禁 `backend/tests/test_requirements_pinning.py`（3 条）：断言这两个
+  传递依赖必须显式 `==` 锁定，且 `requirements.txt` 每一行都不得使用区间约束。
+  刻意不断言具体版本号 —— 门禁要约束「必须锁」而非「锁在某个值」，否则每次合法
+  升级都会无意义变红。反向验证：删掉两行后精确红 1 条，其余 2 条仍过。
+- 遗留观察：starlette 已在提示 `Using httpx with starlette.testclient is
+  deprecated; install httpx2 instead`。该警告类型不继承 `DeprecationWarning`
+  故当前不致命，但升级 httpx 时需一并处理。
+
+### Fixed — 公网上线路径的四条静默阻塞（2026-09-03）
+
+四条缺陷各自都能让公网部署整站不可用或不安全，但**没有一条会在本地开发中暴露**，
+因为它们都只发生在"nginx + 容器 + 生产环境变量"这条本地跑不到的路径上。
+
+- **生产 nginx 把 `/api/` 直连后端，绕过了 Next 的凭据注入**
+  （`docker/nginx/nginx-http.conf`）。浏览器不持有任何后端凭据，凭据由
+  `frontend-next/proxy.ts` 在服务端按路径分档注入。`proxy_pass` 指向 backend
+  时那段代码根本不执行 → `API_KEY` 非空即全站 401、页面空白。改为指向
+  `frontend`。已确认这一跳不影响限流：Next 的 httpxy `setupOutgoing` 原样复制
+  请求头且未启用 `xfwd`，XFF 段数不变，`TRUSTED_PROXY_COUNT` 仍按 nginx 算 1。
+- **前端容器拿不到 `BACKEND_API_KEY`**（`docker-compose.prod.yml`）。
+  `proxy.ts` 在密钥缺失时按"MVP 无鉴权模式"放行且不注入任何凭据 ——
+  于是同样 401，而前端日志里没有任何异常。改用 `${VAR:?}` 让它缺失即启动失败。
+- **生产 compose 不强制 `APP_ENV=production`**。它靠 `env_file` 继承 `.env`，
+  而模板值是 `development` → `config.py` 的生产自检（API_KEY 长度、
+  `AUTH_TOKEN_SECRET`、CORS localhost、PG 弱口令）**全部跳过**，容器照样变绿。
+  改为在 compose 里显式钉死，不信任 `.env`。同时把 `API_KEY` 从裸 `${VAR}` 改成
+  `${VAR:?}`：`environment` 的插值即便展开成空串也会**覆盖** `env_file` 的正确值，
+  裸写法只给一个 warning，后端却变成"API_KEY 为空 = 鉴权中间件短路"。
+- **前端构建期缺 `API_PROXY_TARGET`**（`frontend-next/Dockerfile`）。
+  `next.config.js` 的 rewrites 在 **build 时**读取它并写进产物，不是运行时解析；
+  漏掉则 production 构建得到空 rewrite，`/api` 被 Next 当自身路由处理而 404。
+
+另外三处顺带修掉：
+
+- **`/metrics` 经生产 nginx 公开暴露**。它在后端 `PUBLIC_PREFIXES` 里，
+  **到哪儿就在哪儿免鉴权**，从公网转发过来等于公开项目数、pipeline 成败、
+  LLM 花费与各采集源错误率。而 Prometheus 走 `backend` 网络直连容器，从不经
+  nginx。改为直接 `return 403` —— 刻意**不用** `allow` 网段白名单：Docker
+  userland-proxy 会把外部客户端源地址改写成 `172.17.0.1`，正好落进
+  `172.16.0.0/12`，那种"只放行内网"的规则会对全体外部访客放行。
+  一条看起来收紧了、实际什么都没挡住的规则比没有规则更糟。
+- **`proxy.ts` 换匿名 token 走公网回环**：原先用 `request.nextUrl.origin`
+  （来自浏览器 Host，即公网域名），容器内 fetch 它要走 DNS → 外网 → 回环穿
+  nginx，任一环节不通就 catch 返 null → 请求裸奔后端拿 401。改为直连
+  `API_PROXY_TARGET` 内网地址，开发未配置时回退 origin。
+- **README 与 DEPLOYMENT 的生产命令指向错误的 compose 文件**。
+  `docker compose --profile production up` 作用于 `docker-compose.yml`，
+  而该文件**没有前端服务**，挂的是根 `nginx.conf`（整站反代到后端的纯 API 入口）
+  → 起来只有裸 API、没有 UI。前端只存在于 `docker-compose.prod.yml`，须用 `-f`。
+  README 里那张端口表描述的本来就是后者的拓扑，两处早已不自洽。
+
+通用教训：**"本地能跑"对部署配置几乎没有证明力。** 上面每一条在
+`npm run dev` + `uvicorn` 下都完全正常，因为那条路径上没有 nginx、没有容器边界、
+也没有生产环境变量校验。配置类缺陷要靠"照文档从零走一遍"来发现，
+而不是靠功能测试。
+
+### Added — M3/F4 领取监控（2026-09-02，按 ACTION_LOOP_DESIGN §5 实施）
+
+补上了执行闭环的最后一环。此前 M1 推送、F2 参与流水、F3 ROI 都已交付，评分决策
+引擎也修到 recall 1.000，但**空投真开领的时候没人提醒** —— 前面所有 FARM 决策的
+价值在最后一步漏掉。
+
+- **`watched_wallets` 表**（迁移 `0009`，四处同落：db.py 双方言 DDL + alembic +
+  DATABASE_DDL §2.9e）。`address` 小写归一 + UNIQUE，`active` 为软开关
+  （临时静音，与删除区分）。
+- **4 个端点整前缀管理员锁**（`GET` 也锁）：`/api/v1/watched-wallets` 的
+  CRUD。与本仓其它"读开放写受限"的端点不同 —— 一份「这个人有哪些钱包」的清单，
+  配合公开链上数据就能还原完整持仓与交易史，**泄露风险主要在读侧**。
+- **webhook 地址匹配**（`services/claim_watch.py`）：签名校验通过后匹配
+  `event.data.to` ∈ active 自有地址，且 `category=erc20`、`asset≠ETH` →
+  产出 `airdrop_candidate` 事件 → 站内通知 + F1 推送（复用既有
+  `dispatch_pending`，不另开发送路径）。
+
+三个刻意的设计取舍：
+
+- **地址归一在写入侧与匹配侧同时做**。只做一侧不会报错：漏写入侧则 UNIQUE 形同
+  虚设（`0xAbC` 与 `0xabc` 各占一行），漏匹配侧则永远匹配不上、静默什么都不发生。
+  Alchemy payload 实际返回 EIP-55 混合大小写。**与 `competition` 分组是同一类
+  教训**：同一实体的多种写法必须在唯一入口归一。
+- **`event_key` = `claim:{address}:{tx_hash}:{asset}`，三段都必须在**。只用
+  address 则同一钱包第二次收到空投被去重吃掉；只用 tx_hash 则一笔交易转给多个
+  自有地址时只提示一个（批量领取常见）；不含 asset 则同一交易内多种代币只提示一种。
+  缺 `tx_hash` 时**不发事件**而非用时间戳兜底 —— 不可追溯的提示对用户没用，
+  且时间戳会让 Alchemy 重投（at-least-once）时重复推送。
+- **脱敏做在事件构造侧，不是 API 响应层**。通知只含 `label` + 地址前 10 位：
+  推送目的地（Telegram/Discord）不受本系统控制，管理员锁护不住已经发出去的消息。
+  事件一旦带完整地址进了 `notify_log`，任何 sender 都会原样发出去。
+
+### Fixed — 一处既有日志泄露与一处过时文档（2026-09-02）
+
+- **`webhook.alchemy.processed` 原先记完整钱包地址**。该字段多数是别人的合约
+  （discovery 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于
+  把自有钱包地址写进日志文件，绕过 `/watched-wallets` 的管理员锁。改为
+  `address_prefix` 前 10 位：分不清来源时按更严的口径处理。
+- **`OBSERVABILITY.md` 写着"事件总数没有门禁保护"，实测不对**。
+  `test_documented_event_counts_match_reality` 会逐一比对总数与命名空间数，
+  加 F4 的 8 个 `claim_watch.*` 时它当场就红了。已就地修正并更新数字
+  （319 → 328 个事件、65 → 66 个命名空间）。
+- **`test_alembic_version_recorded` 的 head 版本号改为从 `_REVISION_ORDER[-1]`
+  推导**，不再硬编码。原先写死数字，每加一个迁移都要改两处，漏改的表现是这条
+  测试红 —— 一个信息量为零的红灯只会训练人把它当噪音顺手改掉。现在漏登记
+  `_REVISION_TABLES` 才会红，而那正是真正需要人确认的地方。
+- **`PATCH /watched-wallets/{id}` 用固定 SQL + `COALESCE(?, col)`** 而非按字段拼
+  SET 子句（拼接版本触发 ruff S608）。这里的片段确实都是字面量、注入不了，但把
+  安全建立在"凑巧没有用户输入流进拼接串"上是脆的：下一个人加字段时很自然会写成
+  `updates.append(f"{col} = ?")`，那一步就真开口子了。
+
+### Fixed — 术语门禁在 CI 上只覆盖了 backend 子树（2026-09-02）
+
+**这道闸门此前在 CI 上基本锁错了地方。** 症状是本机 `--all` 报 4 处术语回退，
+同样的内容在 CI 上一路绿灯。
+
+根因在两处叠加，单看任何一处都像是对的：
+
+1. `git ls-files` 返回的路径**相对 cwd**，且**只列 cwd 子树**。CI 里 pytest 的
+   `working-directory` 是 `backend/`（ci.yml §31），于是 `iter_tracked_files()`
+   只枚举到 314 个 backend 文件。
+2. `test_repo_wide_terminology_is_clean` 里有一句 `if path.is_file():` 跳过。
+   从 backend/ 跑时它拿到 `app/db.py`，拼成 `REPO_ROOT/app/db.py` 并不存在，
+   于是**每个文件都被静默跳过** —— 这条测试实际扫了零个文件，却因为 `files`
+   列表非空而通过。
+
+合计 **223 个待检文件从未被扫过**，其中包括 `docs/` 的全部 69 个文档、仓库根的
+`CHANGELOG.md`、`frontend-next/` 的 35 个源文件 —— 而术语约定主要就是给文档用的。
+
+修复：
+
+- `iter_tracked_files()` 加 `--full-name` **且** `cwd=REPO_ROOT`。两个都要：
+  只加 `--full-name` 仍然只列 cwd 子树；只改 `cwd` 则调用方拿到的相对路径与
+  自己的 cwd 不一致。
+- 那句 `if path.is_file()` 改为收集到 `missing` 列表后**断言为空**。路径不存在
+  是环境异常，必须报错而不是跳过 —— 静默跳过正是这次失效能潜伏这么久的原因。
+- 补 2 条回归（`test_tracked_paths_are_repo_root_relative_regardless_of_cwd`、
+  `test_scan_covers_docs_and_repo_root_files`），都用 `monkeypatch.chdir` 刻意
+  从 `backend/` 下跑。反向验证：把脚本改回旧写法，这 3 条精确变红。
+- 顺带修好被这个缺陷放过去的 4 处术语回退（`CHANGELOG.md`、`docs/OPERATIONS.md`、
+  `backend/scripts/run_backtest.py`、`.workbuddy/memory/MEMORY.md`）。
+
+教训与 `competition` 分组、地址归一同源：**「跳过异常输入」和「处理异常输入」
+长得很像，但前者会把 bug 变成沉默。** 断言不该建立在"列表非空"这种间接信号上。
+
+### Added — M1 执行闭环：决策推送 + 参与流水（2026-08-31，按 ACTION_LOOP_DESIGN 实施）
+
+- **F1 决策推送**：pipeline 收尾钩子评估跨线（65 上穿 FARM / 50 下穿）、新 FARM、
+  观察列表强信号，每日摘要 cron（`NOTIFY_DIGEST_CRON`，默认 09:00 UTC）汇总；
+  Telegram Bot API / Discord Webhook 双通道。出站一律经新增 `fetcher.post()`
+  （域名白名单 fail-closed 生效、不缓存、不解析响应体 —— Discord 204 空体）。
+  「至少一次评估、至多一次发送」由 `notify_log(event_key, channel)` 唯一约束保证；
+  重试 ≤3 次后 failed 落库可查（`GET /notify/log`，管理员专用）。
+  `NOTIFY_ENABLED` 默认 false：关开关 ≠ 停审计，评估照常留痕。
+- **F2 参与流水**：`participation_plans` / `participation_tasks` 服务端状态机
+  （plan 四态 / task 四态，迁移闭表非法即 422），按 token 身份隔离 —— **请求体
+  自报 user_id 被忽略**。建议清单可一键 seed 为任务（按生成 id 去重）；前端
+  ParticipationTasks 接服务端，本机勾选一次性迁移后清除。
+- 新表：`notify_log`（迁移 0005）、`participation_plans` / `participation_tasks`
+  （迁移 0006），SQLite/PG 双方言。API_SPEC §38/§39、OPERATIONS §7.4、
+  OBSERVABILITY（指标 48→51）、SECURITY §10.2（+api.telegram.org）同步。
+- 写端点分布 21→26：管理员 8 / 公开 2 / 匿名 token 16。
+
+
+### Added — 执行闭环设计稿（2026-08-30，V3 规划）
+
+- **`docs/ACTION_LOOP_DESIGN.md`**：四个后续子系统的设计文档（均为设计稿，未实现）——
+  决策推送（Telegram/Discord 出站）、参与流水（服务端任务状态机，替代 localStorage）、
+  收益台账与历史回测（为权重校准提供真值与引导样本）、领取监控（自有钱包到账提醒）。
+  含数据模型、API、配置、指标/日志、门禁同步清单与 M1–M3 任务拆解。
+- 5 个新术语收编 GLOSSARY §1（标注「设计稿」）；00_index §16 登记。
+
+### Security / Fixed — 全项目审核修复三连（2026-08-30，独立审核 P1）
+
+- **匿名 token 不再接受调用方自报身份**：`POST /auth/anonymous` 此前接受
+  请求体里的 `user_id` 并直接写进 token —— 而端点在公开路径里，等于任何人
+  都能给别人的 user_id 签 token，读写按 user_id 隔离的 watchlist / feedback /
+  interactions。现在 `user_id` 一律服务端生成（`anon-<uuid>`），请求字段从
+  schema 中删除（带该字段的调用方不受影响，值被忽略）。见 API_SPEC §14。
+- **分析队列中毒防护**：一条损坏的 `raw_data` / `discovered_at` 曾让整批
+  `collect_from_repository` 抛异常，且该行 `processed=0` + 按分数倒序每轮
+  重新被取到，流水线永久卡死（只能手工修库）。现在坏行隔离（quarantine）
+  + 跳过，批次继续；顺手把三处几乎相同的隔离块抽成 `_quarantine_row()`
+  （日志事件名微调：隔离失败事件改为 `<成功事件>.quarantine_failed`，新增
+  `collector.corrupt_raw_data` / `collector.corrupt_discovered_at` /
+  `collector.quarantine_mark_failed`，无监控依赖）。
+- **Alchemy webhook 签名密钥独立成键**：`ALCHEMY_API_KEY` 重命名为
+  `ALCHEMY_WEBHOOK_SIGNING_KEY` —— 它本来就只被 `POST /webhook/alchemy`
+  的 HMAC 校验读取，却顶着「API key」的名字；拿 Data APIs 的 API key 填
+  旧键时合法回调永远 401，webhook 实际不可用。**升级注意**：`.env` 里如配了
+  `ALCHEMY_API_KEY` 需改名为 `ALCHEMY_WEBHOOK_SIGNING_KEY`（值不变）。
+  同步 `.env.example` / 日志脱敏清单 / DATA_SOURCE_STRATEGY §8。
+- **Release 流水线加测试门禁**：tag push 不触发 CI（ci.yml 只匹配分支），
+  发布镜像的 commit 可能从未通过任何测试；且发布构建吃 gha 缓存，会把带
+  已知 CVE 的旧基础层带进镜像（security.yml 已因此改 no-cache，release 漏
+  同步）。现在 release 前置 `Release Test Gate`（ruff + mypy strict + 全量
+  pytest），构建改 `no-cache: true`。
+
 ### Security — 三个安全缺口全堵上（2026-08-29，档1）
 
 - **LLM 输出泄漏过滤**：LLM 返回文本在下游使用前做一次敏感信息清扫
