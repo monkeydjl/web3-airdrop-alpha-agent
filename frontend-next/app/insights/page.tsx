@@ -310,7 +310,7 @@ export default function InsightsPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 min-[1600px]:grid-cols-6">
         <StatCard label="项目总数" value={projects.length} accent="brand" />
         {LABEL_ORDER.map((l) => (
           <StatCard
@@ -423,7 +423,7 @@ export default function InsightsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1600px]:grid-cols-3">
         <div className="ins-card">
           <SectionTitle
             title="重点参与榜"
@@ -486,7 +486,7 @@ export default function InsightsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1600px]:grid-cols-3">
         <div className="ins-card">
           <SectionTitle title="最热叙事" />
           {(insights?.hottest_narratives || []).length === 0 ? (

@@ -247,6 +247,22 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
 
 -- ============================================
+-- 2.8c project_skips 表（用户自主「不参与」标记，2026-09-08）
+-- ============================================
+-- 用户层的状态：与系统评出的 label/veto 无关 —— 系统说「值得」的项目，
+-- 用户可以因为系统看不见的现实约束（资金不够跑再质押之类）选「不了」。
+-- 工作台默认隐藏这些项目，可随时取消。刻意不复用 label=IGNORE：
+-- 那是模型的结论，跳过是用户的决定，要能被分别撤掉。
+CREATE TABLE IF NOT EXISTS project_skips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,                   -- 关联项目
+    user_id     TEXT,                             -- 用户标识（MVP 缺省 default）
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, user_id)
+);
+
+
+-- ============================================
 -- 2.9b notify_log 表（决策推派出站日志，ACTION_LOOP_DESIGN §2.5）
 -- ============================================
 -- 「至少一次评估、至多一次发送」由 (event_key, channel) 唯一约束保证：

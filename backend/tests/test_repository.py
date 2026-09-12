@@ -477,6 +477,49 @@ class TestProjectRepository:
         assert len(projects) == 5
         assert total == 10
 
+    def test_list_projects_filter_by_veto_no_participation_path(self, db_conn, sample_state):
+        """按 veto 过滤：高分但缺参与路径的项目是被压回 WATCH 的关键一批，
+        工作台要用它作为「人工验证」清单的 entry point。"""
+        repo = ProjectRepository(db_conn)
+
+        cases = [
+            ("p1", "no_participation_path"),
+            ("p2", "already_launched"),
+            ("p3", "no_participation_path"),
+            ("p4", None),
+        ]
+        for pid, veto in cases:
+            state = PipelineState(
+                project=RawProject(id=pid, name=f"P-{pid}", source="test"),
+                context=AgentContext(run_id="r"),
+                score=70,
+                label="WATCH",
+                confidence=0.5,
+                reason=[],
+            )
+            state.veto = veto
+            repo.save(state)
+
+        projects, total = repo.list_projects(veto="no_participation_path")
+        assert total == 2
+        assert {p["name"] for p in projects} == {"P-p1", "P-p3"}
+
+    def test_list_projects_filter_by_veto_none_not_implied(self, db_conn, sample_state):
+        """传 None 等价于不过滤，避免前端传空被误当 veto='' 匹配。"""
+        repo = ProjectRepository(db_conn)
+        for pid in ("a", "b"):
+            state = PipelineState(
+                project=RawProject(id=pid, name=pid, source="test"),
+                context=AgentContext(run_id="r"),
+                score=60,
+                label="WATCH",
+                confidence=0.5,
+                reason=[],
+            )
+            repo.save(state)
+        _projects, total = repo.list_projects()
+        assert total == 2
+
     def test_list_projects_filter_by_label(self, db_conn, sample_state):
         """Test filtering by label."""
         repo = ProjectRepository(db_conn)

@@ -481,6 +481,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     from app.routers.v1 import (
         action_queue,
         ai_brief,
+        ai_chat,
         archive,
         auth,
         collections,
@@ -500,6 +501,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         quarantine,
         roi,
         run,
+        skip,
         watched_wallets,
         watchlist,
         webhook,
@@ -522,6 +524,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(insights.router, prefix="/api/v1", tags=["v1"])
     app.include_router(quarantine.router, prefix="/api/v1", tags=["v1"])
     app.include_router(ai_brief.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(ai_chat.router, prefix="/api/v1", tags=["v1"])
     app.include_router(auth.router, prefix="/api/v1", tags=["v1"])
     app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
@@ -538,6 +541,7 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(notify.router, prefix="/api/v1", tags=["v1"])
     app.include_router(roi.router, prefix="/api/v1", tags=["v1"])
     app.include_router(watched_wallets.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(skip.router, prefix="/api/v1", tags=["v1"])
     app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
     # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
     # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。

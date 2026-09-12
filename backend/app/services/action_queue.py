@@ -139,6 +139,12 @@ def build_action_queue(
         if not pid:
             continue
 
+        # 用户标记「不参与」的项目不得出现在这里：工作台列表会把它隐藏，
+        # 行动队列再把它递上来，就是「跳过」这个决定在坑用户。
+        # skipped 由 list_projects 左联 project_skips 注入。
+        if row.get("skipped"):
+            continue
+
         is_engaged = pid in engaged
         if is_engaged and not include_engaged:
             skipped_engaged += 1

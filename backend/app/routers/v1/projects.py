@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.openapi import ERROR_RESPONSE_EXAMPLES, PROJECTS_LIST_RESPONSE_EXAMPLE
 from app.repository import ProjectRepository
+from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
@@ -129,6 +130,11 @@ def list_projects(
     sort_by: SortBy = Query(SortBy.SCORE, description="排序字段"),
     sort_order: SortOrder = Query(SortOrder.DESC, description="排序顺序"),
     auto_discovered: bool | None = Query(None, description="筛选自动发现项目 (true) 或手动录入 (false)"),
+    veto: str | None = Query(
+        None,
+        description="按资格否决筛选（no_participation_path=缺参与路径、already_launched=已发币）",
+    ),
+    user_id: str | None = Query(None, description="用户 ID（匿名时走 default）"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -171,6 +177,8 @@ def list_projects(
             sort_by=sort_by.value,
             sort_order=sort_order.value,
             auto_discovered=auto_discovered,
+            veto=veto,
+            skip_user_id=user_id or DEFAULT_USER,
         )
 
         # Convert to response format — include discovery metadata for Dashboard
@@ -186,6 +194,8 @@ def list_projects(
                 "discovery_source": p.get("discovery_source"),
                 "discovered_at": str(p["discovered_at"]) if p.get("discovered_at") else None,
                 "auto_discovered": bool(p.get("auto_discovered", False)),
+                "veto": p.get("veto"),
+                "skipped": bool(p.get("skipped", False)),
             }
             for p in db_projects
         ]
@@ -218,6 +228,7 @@ def list_projects(
                 "stage": stage,
                 "min_score": min_score,
                 "auto_discovered": auto_discovered,
+                "veto": veto,
             },
             "sort": {
                 "by": sort_by.value,
@@ -347,6 +358,10 @@ def get_project(
                     # score 不因否决改变，只看 score/label 无法区分「分数低」与
                     # 「被规则否决」。NULL 语义是「未经资格门评估」，不填默认值。
                     "veto": project.get("veto"),
+                    # 用户自主「不参与」标记（get_by_id 已把 LEFT JOIN 算进来）。
+                    # 与 veto 刻意分两列：系统判断（veto）与用户决定（skipped）
+                    # 要能分别呈现/撤掉（2026-09-08，§44）。
+                    "skipped": bool(project.get("skipped", False)),
                     "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
                     "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
                 }

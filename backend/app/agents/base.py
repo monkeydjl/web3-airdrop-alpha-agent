@@ -78,6 +78,13 @@ class RawProject:
     tvl_usd: float | None = None
     description: str | None = None
 
+    # 站点活性信号（2026-09-08，vitals 探测器写入）：
+    # site_alive=None 表示「还没探测过」，与「探测到挂了」严格区分 ——
+    # 避免第一周采集前就把灰色惩罚打到所有项目上。
+    site_alive: bool | None = None
+    site_checked_at: str | None = None  # ISO 时间戳（探测发生时间）
+    site_http_status: int | None = None  # 最近的 HTTP 状态码（连接错误/超时为 None）
+
     # v1.3 evidence / verifiable path / delivery
     has_task_portal: bool = False  # Galxe / Layer3 / quest / points portal
     has_contract: bool = False  # on-chain product / verified contract signal

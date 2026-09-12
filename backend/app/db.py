@@ -171,7 +171,16 @@ def _connect_sqlite() -> DbConnection:
         _ENSURED_SQLITE_DIRS.add(str(parent))
     # 路由处理器现由线程池并发执行，SQLite 写锁竞争是真实存在的；
     # 显式 busy_timeout 让并发写等待而不是直接抛 "database is locked"。
-    conn = sqlite3.connect(str(db_path), timeout=settings.sqlite_busy_timeout_seconds)
+    # check_same_thread=False：同步生成器依赖（如 get_opportunity_workflow_service）
+    # 的 __enter__ 建连、处理器使用、__exit__ close 分别跑在线程池的不同 worker
+    # 线程上，默认 True 会概率性抛 ProgrammingError（表现为详情页间歇 500）。
+    # 单连接在一次请求内是顺序使用，且底层 SQLite 为 serialized 模式
+    # （sqlite3.threadsafety == 3），跨线程顺序访问安全。
+    conn = sqlite3.connect(
+        str(db_path),
+        timeout=settings.sqlite_busy_timeout_seconds,
+        check_same_thread=False,
+    )
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(f"PRAGMA busy_timeout={int(settings.sqlite_busy_timeout_seconds * 1000)}")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -461,6 +470,18 @@ def _sqlite_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 user_id     TEXT,
                 note        TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, user_id)
+            );
+
+            -- 用户自主「不参与」标记（2026-09-08）：与 veto / 评分无关，只表示
+            -- 「这个用户主动放弃这个项目」（如没资金跑再质押）。工作台默认隐藏，
+            -- 可从「显示不参与」开关再看回来。刻意不与 veto 复用同一字段 ——
+            -- veto 是系统判断，跳过是用户选择，两者要能被分别清掉。
+            CREATE TABLE IF NOT EXISTS project_skips (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(project_id, user_id)
             );
@@ -1012,6 +1033,15 @@ def _postgres_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 user_id     TEXT,
                 note        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, user_id)
+            );
+
+            -- 用户自主「不参与」标记，语义同 sqlite 段
+            CREATE TABLE IF NOT EXISTS project_skips (
+                id          SERIAL PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                user_id     TEXT,
                 created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(project_id, user_id)
             );

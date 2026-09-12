@@ -247,6 +247,15 @@ class ScorerAgent(BaseAgent):
         if getattr(p, "has_contract", False):
             score += 10.0  # product/contracts actually exist
 
+        # 官网活性信号（2026-09-08，vitals 探测）。site_alive=False 意味
+        # 「我们打过去过，官网真挂了」（连接错/超时/410 截断都算凉透）。
+        # 用户看着一个 65+ 分项目的第一个问题往往是「官网呢」，这信号
+        # 不言不语就把坑踩掉，必须扣分。None（没探过）则不处理 ——
+        # 探测是新增能力，存量不应因此被误判。
+        site_alive = getattr(p, "site_alive", None)
+        if site_alive is False:
+            score -= 12.0
+
         tvl = getattr(p, "tvl_usd", None)
         if tvl is not None:
             try:
@@ -615,6 +624,10 @@ class ScorerAgent(BaseAgent):
             candidates.append(("roadmap unclear vs shipping signals", 18, False))
         if getattr(state.project, "has_contract", False):
             candidates.append(("on-chain product / contract signal", 16, False))
+        site_alive = getattr(state.project, "site_alive", None)
+        if site_alive is False:
+            # 官网挂到连不上/摘牌是确定性事故：理由必须看得见，而不仅仅影响分数
+            candidates.append(("official site unreachable (vitals probe)", 18, True))
 
         # Transparency (v1.2/v1.3)
         tr_score = subscores.get("transparency", 50)

@@ -1,6 +1,9 @@
 'use client';
 
 import { AiBriefPanel } from '@/components/AiBriefPanel';
+import { AiChatPanel } from '@/components/AiChatPanel';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
@@ -48,6 +51,22 @@ const SIGNAL_CHECKS: { key: string; label: string }[] = [
   { key: 'has_github', label: 'GitHub' },
   { key: 'has_twitter', label: '社媒' },
 ];
+
+/** 右栏「本页导航」锚点清单；id 与下方各 <section> 一一对应，改动 section 时同步这里。
+ *  排序即页面信息架构：决策区 → 行动区 → 个人区 → 明细参考区（后四者默认折叠）。 */
+const PAGE_SECTIONS = [
+  { id: 'pd-reasons', label: '为何是这个标签' },
+  { id: 'pd-brief', label: '简报' },
+  { id: 'pd-chat', label: 'AI 追问' },
+  { id: 'pd-signals', label: '可核验信号' },
+  { id: 'pd-participation', label: '参与清单' },
+  { id: 'pd-opportunity', label: 'Opportunity 行动流' },
+  { id: 'pd-interactions', label: '我的投入' },
+  { id: 'pd-feedback', label: '校正这条判断' },
+  { id: 'pd-funding', label: '融资' },
+  { id: 'pd-agents', label: '四路分析' },
+  { id: 'pd-dims', label: '8 维子分' },
+] as const;
 
 /**
  * 8 个评分维度。
@@ -129,6 +148,7 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rescoring, setRescoring] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [selectedSignal, setSelectedSignal] = useState<string | null>(null);
   const [outcome, setOutcome] = useState('');
@@ -234,6 +254,23 @@ export default function ProjectPage() {
     }
   };
 
+  // 「不参与」开/关。跳过是用户选择（与系统 veto 刻意分开列出），只改展示层。
+  const toggleSkip = async () => {
+    if (!project) return;
+    setSkipping(true);
+    try {
+      await apiFetch(`/projects/${project.id}/skip`, {
+        method: project.skipped ? 'DELETE' : 'POST',
+        body: '{}',
+      });
+      setProject({ ...project, skipped: !project.skipped });
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '操作失败', 'error');
+    } finally {
+      setSkipping(false);
+    }
+  };
+
   const sendFeedback = async () => {
     if (!project) return;
     if (!selectedSignal) {
@@ -266,7 +303,7 @@ export default function ProjectPage() {
       <>
         <TopBar title="加载中…" subtitle="正在获取项目数据" />
         <div className="app-content animate-fade-in">
-          <div className="mx-auto max-w-[1080px] space-y-4 py-2">
+          <div className="mx-auto max-w-[1440px] space-y-4 py-2">
         <div className="skeleton h-3 w-24" />
         <div className="skeleton h-9 w-1/2" />
         <div className="skeleton h-4 w-2/5" />
@@ -407,7 +444,10 @@ export default function ProjectPage() {
       </TopBar>
 
     <div className="app-content animate-fade-in">
-      <div className="mx-auto max-w-[1080px]">
+      <div className="mx-auto max-w-[1440px]">
+
+      {/* 项目切换栏：上一个/下拉跳选/下一个 + ←/→ 快捷键 */}
+      <ProjectSwitcher projectId={project.id} />
 
       {/* masthead */}
       <header className="mb-9 grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
@@ -440,6 +480,23 @@ export default function ProjectPage() {
               disabled={rescoring}
             >
               {rescoring ? '评分中…' : '重新评分'}
+            </button>
+            <button
+              type="button"
+              className={`min-h-9 rounded-lg border border-line px-3 py-1.5 text-xs transition-colors ${
+                project.skipped
+                  ? 'bg-surface-2 text-ink-faint hover:text-ink'
+                  : 'text-ink-muted hover:border-ink-muted hover:text-ink'
+              }`}
+              disabled={skipping}
+              onClick={toggleSkip}
+              title={
+                project.skipped
+                  ? '已在「不参与」列表里，工作台不再显示。点击恢复'
+                  : '不参与：加入自己的跳过列表，工作台默认隐藏'
+              }
+            >
+              {skipping ? '…' : project.skipped ? '取消不参与' : '不参与'}
             </button>
             {site ? (
               <a
@@ -499,10 +556,10 @@ export default function ProjectPage() {
       </header>
 
       {/* body */}
-      <div className="grid gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+      <div className="grid gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,1fr)_280px] 2xl:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
         <div className="min-w-0 space-y-0">
           {/* reasons */}
-          <section className="border-t border-line py-5 first:border-t-0 first:pt-0">
+          <section id="pd-reasons" className="scroll-mt-[4.5rem] border-t border-line py-5 first:border-t-0 first:pt-0">
             <SecHead title="为何是这个标签" meta="权威主决策" />
             {reasons.length ? (
               <ol className="m-0 list-none space-y-0 p-0">
@@ -524,10 +581,153 @@ export default function ProjectPage() {
             )}
           </section>
 
-          {/* agents matrix */}
-          <section className="border-t border-line py-5">
-            <SecHead title="四路分析" meta="并行 Agent" />
-            <div className="grid border-t border-line sm:grid-cols-2">
+          {/* AI brief — 进页面读缓存（GET 只读零成本），生成/重新生成走按钮 */}
+          <section id="pd-brief" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="简报" meta="规则 / 可选 LLM · 带缓存" />
+            <AiBriefPanel projectId={project.id} />
+          </section>
+
+          {/* AI chat — 简报的追问延伸，多轮对话分析 */}
+          <section id="pd-chat" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="AI 追问" meta="多轮 · 基于本项目数据" />
+            <AiChatPanel projectId={project.id} />
+          </section>
+
+          {/* signals */}
+          <section id="pd-signals" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="可核验信号" />
+            <div className="grid gap-x-6 sm:grid-cols-2 min-[1600px]:grid-cols-3">
+              {SIGNAL_CHECKS.map(({ key, label }) => {
+                const on = Boolean(signals[key]);
+                return (
+                  <div
+                    key={key}
+                    className="flex items-baseline justify-between gap-3 border-b border-line py-2 text-[13px]"
+                  >
+                    <span className="text-ink-muted">{label}</span>
+                    <span
+                      className={`font-mono text-[11px] font-semibold tracking-wide ${
+                        on ? 'text-farm dark:text-farm' : 'text-ink-faint'
+                      }`}
+                    >
+                      {on ? '有' : '无'}
+                    </span>
+                  </div>
+                );
+              })}
+              {typeof signals.site_alive === 'boolean' ? (
+                <div className="flex items-baseline justify-between gap-3 border-b border-line py-2 text-[13px]">
+                  <span className="text-ink-muted">官网可访问</span>
+                  <span
+                    className={`font-mono text-[11px] font-semibold tracking-wide ${
+                      signals.site_alive ? 'text-farm dark:text-farm' : 'text-watch dark:text-watch'
+                    }`}
+                    title={
+                      signals.site_alive
+                        ? `探测于 ${String(signals.site_checked_at || '—')}`
+                        : `探测于 ${String(signals.site_checked_at || '—')} —— 官网连接失败或返回 4xx/5xx，这个项目可能已停服`
+                    }
+                  >
+                    {signals.site_alive ? '可访问' : '不可达'}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          {/* participation */}
+          <section id="pd-participation" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="参与清单" />
+            <ParticipationTasks projectId={project.id} />
+          </section>
+
+          {/* opportunity — 旁路引擎，低频，默认收起 */}
+          <CollapsibleSection id="pd-opportunity" title="Opportunity 行动流" meta="非权威旁路">
+            <OpportunityWorkflowPanel projectId={project.id} />
+          </CollapsibleSection>
+
+          {/* interactions */}
+          <section id="pd-interactions" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="我的投入" />
+            <InteractionPanel projectId={project.id} />
+          </section>
+
+          {/* feedback */}
+          <section id="pd-feedback" className="scroll-mt-[4.5rem] border-t border-line py-5">
+            <SecHead title="校正这条判断" meta="进入校准样本" />
+            <p className="mb-3 text-[13px] text-ink-muted" style={{ lineHeight: 1.55 }}>
+              样本累计足够后可跑权重校准。先选类型，再可选填事后结果与备注。
+            </p>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="反馈类型">
+              {SIGNALS.map((s) => {
+                const on = selectedSignal === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    aria-pressed={on}
+                    disabled={feedbackSending}
+                    onClick={() => setSelectedSignal(on ? null : s.id)}
+                    className={`min-h-8 rounded-sm border px-2.5 text-xs font-medium tracking-wide transition ${
+                      on
+                        ? 'border-ink bg-surface-2 text-ink'
+                        : 'border-line bg-transparent text-ink-muted hover:border-line hover:bg-surface-2 hover:text-ink'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3.5 grid gap-3 sm:grid-cols-[12rem_1fr]">
+              <select
+                className="select"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value)}
+                aria-label="事后结果"
+              >
+                {OUTCOMES.map((o) => (
+                  <option key={o.id || 'none'} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                placeholder="可选：哪里判断偏了"
+                value={note}
+                maxLength={500}
+                onChange={(e) => setNote(e.target.value)}
+                aria-label="备注"
+              />
+            </div>
+            <p className="mt-1 font-mono text-[10px] tracking-wide text-ink-faint">
+              {note.length} / 500
+            </p>
+            <button
+              type="button"
+              className="btn-secondary mt-3 min-h-8 text-xs"
+              disabled={feedbackSending}
+              onClick={sendFeedback}
+            >
+              {feedbackSending ? '提交中…' : '提交反馈'}
+            </button>
+          </section>
+
+          {/* funding — 低频数据修正，默认收起 */}
+          <CollapsibleSection id="pd-funding" title="融资" meta="可编辑 → 重评">
+            <FundingPanel
+              projectId={project.id}
+              initialFunding={project.funding}
+              initialNote={project.funding_note}
+              onSaved={loadProject}
+            />
+          </CollapsibleSection>
+
+
+          {/* agents matrix — 评分明细，默认收起 */}
+          <CollapsibleSection id="pd-agents" title="四路分析" meta="并行 Agent">
+            <div className="grid border-t border-line sm:grid-cols-2 min-[1600px]:grid-cols-4">
               <div className="border-b border-line py-3.5 sm:border-r sm:pr-5">
                 <p className="mb-2.5 text-xs font-semibold text-ink">叙事</p>
                 <dl className="m-0 space-y-1.5">
@@ -604,11 +804,10 @@ export default function ProjectPage() {
                 </dl>
               </div>
             </div>
-          </section>
+          </CollapsibleSection>
 
-          {/* 8 dim scores */}
-          <section className="border-t border-line py-5">
-            <SecHead title="8 维子分" meta={weightVersion} />
+          {/* 8 dim scores — 技术细节，默认收起 */}
+          <CollapsibleSection id="pd-dims" title="8 维子分" meta={weightVersion}>
             <div className="pd-dims">
               {DIMENSIONS.map((dim) => {
                 const val = subScores[dim.id] ?? 0;
@@ -637,134 +836,32 @@ export default function ProjectPage() {
               <span className="font-mono">{weightVersion}</span> · 阈值 FARM≥
               {farmThreshold ?? '—'} / WATCH≥{watchThreshold ?? '—'}
             </p>
-          </section>
+          </CollapsibleSection>
 
-          {/* signals */}
-          <section className="border-t border-line py-5">
-            <SecHead title="可核验信号" />
-            <div className="grid gap-x-6 sm:grid-cols-2">
-              {SIGNAL_CHECKS.map(({ key, label }) => {
-                const on = Boolean(signals[key]);
-                return (
-                  <div
-                    key={key}
-                    className="flex items-baseline justify-between gap-3 border-b border-line py-2 text-[13px]"
-                  >
-                    <span className="text-ink-muted">{label}</span>
-                    <span
-                      className={`font-mono text-[11px] font-semibold tracking-wide ${
-                        on ? 'text-farm dark:text-farm' : 'text-ink-faint'
-                      }`}
-                    >
-                      {on ? '有' : '无'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* participation */}
-          <section id="pd-participation" className="border-t border-line py-5">
-            <SecHead title="参与清单" />
-            <ParticipationTasks projectId={project.id} />
-          </section>
-
-          {/* opportunity */}
-          <section className="border-t border-line py-5">
-            <SecHead title="Opportunity 行动流" meta="非权威旁路" />
-            <OpportunityWorkflowPanel projectId={project.id} />
-          </section>
-
-          {/* AI brief */}
-          <section className="border-t border-line py-5">
-            <SecHead title="简报" meta="规则 / 可选 LLM" />
-            <AiBriefPanel projectId={project.id} autoLoad />
-          </section>
-
-          {/* funding */}
-          <section className="border-t border-line py-5">
-            <SecHead title="融资" meta="可编辑 → 重评" />
-            <FundingPanel
-              projectId={project.id}
-              initialFunding={project.funding}
-              initialNote={project.funding_note}
-              onSaved={loadProject}
-            />
-          </section>
-
-          {/* interactions */}
-          <section className="border-t border-line py-5">
-            <SecHead title="我的投入" />
-            <InteractionPanel projectId={project.id} />
-          </section>
-
-          {/* feedback */}
-          <section className="border-t border-line py-5">
-            <SecHead title="校正这条判断" meta="进入校准样本" />
-            <p className="mb-3 text-[13px] text-ink-muted" style={{ lineHeight: 1.55 }}>
-              样本累计足够后可跑权重校准。先选类型，再可选填事后结果与备注。
-            </p>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="反馈类型">
-              {SIGNALS.map((s) => {
-                const on = selectedSignal === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    aria-pressed={on}
-                    disabled={feedbackSending}
-                    onClick={() => setSelectedSignal(on ? null : s.id)}
-                    className={`min-h-8 rounded-sm border px-2.5 text-xs font-medium tracking-wide transition ${
-                      on
-                        ? 'border-ink bg-surface-2 text-ink'
-                        : 'border-line bg-transparent text-ink-muted hover:border-line hover:bg-surface-2 hover:text-ink'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-3.5 grid gap-3 sm:grid-cols-[12rem_1fr]">
-              <select
-                className="select"
-                value={outcome}
-                onChange={(e) => setOutcome(e.target.value)}
-                aria-label="事后结果"
-              >
-                {OUTCOMES.map((o) => (
-                  <option key={o.id || 'none'} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="input"
-                placeholder="可选：哪里判断偏了"
-                value={note}
-                maxLength={500}
-                onChange={(e) => setNote(e.target.value)}
-                aria-label="备注"
-              />
-            </div>
-            <p className="mt-1 font-mono text-[10px] tracking-wide text-ink-faint">
-              {note.length} / 500
-            </p>
-            <button
-              type="button"
-              className="btn-secondary mt-3 min-h-8 text-xs"
-              disabled={feedbackSending}
-              onClick={sendFeedback}
-            >
-              {feedbackSending ? '提交中…' : '提交反馈'}
-            </button>
-          </section>
         </div>
 
         {/* rail — sticky summary on desktop */}
         <aside className="min-w-0 border-t border-line pt-5 lg:sticky lg:top-[calc(3.5rem+1rem)] lg:self-start lg:border-t-0 lg:pt-0">
           <div className="space-y-5">
+            {/* 本页导航：只在桌面端展示（移动端右栏沉在正文之后，导航没有意义） */}
+            <nav aria-label="本页导航" className="hidden border-b border-line pb-5 lg:block">
+              <h3 className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+                本页导航
+              </h3>
+              <ul className="m-0 list-none p-0">
+                {PAGE_SECTIONS.map((s) => (
+                  <li key={s.id}>
+                    <a
+                      href={`#${s.id}`}
+                      className="block border-b border-line/70 py-1.5 text-[12.5px] text-ink-muted transition-colors last:border-b-0 hover:text-ink"
+                    >
+                      {s.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+
             <div className="border-b border-line pb-5">
               <h3 className="mb-3 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
                 摘要

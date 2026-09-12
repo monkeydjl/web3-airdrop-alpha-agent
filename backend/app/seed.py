@@ -14,9 +14,9 @@
   随刷新更正。已发币且空投已结束的项目不再携带 testnet / points /
   task portal / explicit_airdrop 信号 —— 此前正是这些过时信号让
   ZKsync / Berachain 等长期以 FARM 标签污染扫描结果。
-- 真实项目全部发币后，fallback 演示所需的 pre-TGE 信号覆盖（testnet /
-  points / no_token_yet）由**显式合成条目**承担（example.com 域名，
-  与 Galaxy Gaming Chain 同一模式），不对应任何真实项目。
+- 唯一保留的合成演示条目是 Galaxy Gaming Chain（example.com 假域名，
+  RFC 2606 保留域永不解析）：真实项目全部发币后，fallback 过滤后的
+  输出只剩它一个，pre-TGE 信号覆盖由它单独承担。
 - get_seed_raw_projects 与 collect_from_repository 保持同一过滤口径：
   "已发币且无空投信号"的条目不进入流水线（见函数注释）。
 
@@ -217,9 +217,12 @@ SEED_PROJECTS: list[dict[str, Any]] = [
         "funding_lead_investors": ["Multicoin"],
         "funding_tier": "tier2",
     },
-    # ── 合成 pre-TGE 项目：显式演示数据（example.com），不对应真实项目 ──
-    # 真实项目全部发币后，fallback 演示的 testnet / points / no_token_yet
-    # 信号覆盖由这些条目承担。
+    # ── 合成 pre-TGE 演示条目（唯一一个）──
+    # example.com 假域名（RFC 2606 保留域，永不解析），不对应真实项目。
+    # 真实项目全部发币后，fallback 过滤后的输出只剩它一个，testnet /
+    # points / no_token_yet 的演示信号覆盖由它单独承担。
+    # 2026-09-05：曾补充的另外 4 个合成条目（Aurelia Oracle 等）已按用户
+    # 要求移除 —— SEED_FALLBACK_ENABLED=false 时 fallback 本就不触发。
     {
         "name": "Galaxy Gaming Chain",
         "url": "https://galaxy-gaming.example.com",
@@ -242,93 +245,6 @@ SEED_PROJECTS: list[dict[str, Any]] = [
         "funding_investors": ["Animoca", "Spartan"],
         "funding_lead_investors": ["Animoca"],
         "funding_tier": "tier2",
-    },
-    {
-        "name": "Aurelia Oracle",
-        "url": "https://aurelia-oracle.example.com",
-        "sector": "Oracle",
-        "stage": "testnet",
-        "source": "seed",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "tvl_usd": 3_500_000,
-        "description": "Synthetic seed entry: oracle network in testnet, points program, pre-TGE",
-        "has_docs": True,
-        "has_twitter": True,
-        "sybil_friction": "medium",
-        "funding_total_usd": 18_000_000,
-        "funding_rounds": 2,
-        "funding_last_date": "2026-03-18",
-        "funding_investors": ["Placeholder", "1kx"],
-        "funding_lead_investors": ["Placeholder"],
-        "funding_tier": "tier1",
-    },
-    {
-        "name": "Meridian Restaking",
-        "url": "https://meridian-restaking.example.com",
-        "sector": "Restaking",
-        "stage": "mainnet",
-        "source": "seed",
-        "has_testnet": False,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "tvl_usd": 9_000_000,
-        "description": "Synthetic seed entry: restaking protocol live without token, points program running",
-        "has_github": True,
-        "github_stars": 900,
-        "sybil_friction": "high",
-        "funding_total_usd": 27_000_000,
-        "funding_rounds": 2,
-        "funding_last_date": "2026-01-22",
-        "funding_investors": ["Electric Capital", "1kx", "Robot Ventures"],
-        "funding_lead_investors": ["Electric Capital"],
-        "funding_tier": "tier1",
-    },
-    {
-        "name": "Vector Modular DA",
-        "url": "https://vector-modular.example.com",
-        "sector": "Infra",
-        "stage": "mainnet",
-        "source": "seed",
-        "has_testnet": False,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "tvl_usd": None,
-        "description": "Synthetic seed entry: modular data availability layer, pre-TGE with docs and audits",
-        "has_docs": True,
-        "has_whitepaper": True,
-        "has_twitter": True,
-        "funding_total_usd": 35_000_000,
-        "funding_rounds": 2,
-        "funding_last_date": "2026-05-30",
-        "funding_investors": ["Framework", "Pantera"],
-        "funding_lead_investors": ["Framework"],
-        "funding_tier": "tier1",
-    },
-    {
-        "name": "Quanta ZK",
-        "url": "https://quanta-zk.example.com",
-        "sector": "ZK",
-        "stage": "testnet",
-        "source": "seed",
-        "has_testnet": True,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "tvl_usd": None,
-        "description": "Synthetic seed entry: ZK coprocessor in testnet, no token yet",
-        "has_github": True,
-        "github_stars": 420,
-        "funding_total_usd": 8_000_000,
-        "funding_rounds": 1,
-        "funding_last_date": "2026-07-01",
-        "funding_investors": ["Robot Ventures"],
-        "funding_lead_investors": ["Robot Ventures"],
-        "funding_tier": "tier1",
     },
 ]
 

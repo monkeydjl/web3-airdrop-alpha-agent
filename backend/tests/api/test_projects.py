@@ -51,6 +51,27 @@ class TestListProjectsEndpoint:
         assert result["page"] == 2
         assert result["page_size"] == 50
 
+    def test_list_projects_with_veto_filter(self, client):
+        """按 veto 筛选（缺参与路径的人工验证清单入口），filters 回显。"""
+        response = client.get("/api/v1/projects?veto=no_participation_path")
+        assert response.status_code == 200
+
+        data = response.json()
+        result = data["data"]
+        assert result["filters"]["veto"] == "no_participation_path"
+
+    def test_list_projects_response_items_carry_veto(self, client):
+        """响应项必须带 veto 字段 —— 否则前端无法在卡片上标「待验证」，
+        只能靠名字猜。字段缺失在 `data` 为 dict 透传时不会报 500，
+        只表现为前端永远不显示徽标，所以必须显式断言。"""
+        response = client.get("/api/v1/projects?veto=no_participation_path&page_size=20")
+        assert response.status_code == 200
+
+        result = response.json()["data"]
+        for p in result["projects"]:
+            assert "veto" in p, "列表项必须带 veto 字段供前端打标"
+            assert p["veto"] == "no_participation_path"
+
     def test_list_projects_with_label_filter(self, client):
         """Test filtering by label."""
         response = client.get("/api/v1/projects?label=FARM")

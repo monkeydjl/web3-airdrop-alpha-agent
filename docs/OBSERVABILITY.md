@@ -62,9 +62,10 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **332 个不同事件名**、
-**66 个命名空间**（2026-09-04 随已发币过滤修复新增 `defillama.facet_skipped`）；
-段数分布：2 段 265 个、3 段 61 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **343 个不同事件名**、
+**69 个命名空间**（2026-09-08 随「官网活性探测」新增 4 个：`vitals.probe_completed` /
+`unified_scheduler.vitals_job_added` / `vitals_disabled` / `vitals_failed`）；
+段数分布：2 段 276 个、3 段 61 个、4 段 5 个、1 段 1 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`

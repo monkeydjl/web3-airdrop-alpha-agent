@@ -292,7 +292,7 @@ function RoiEntryForm({ onSaved, onClose }: { onSaved: () => void; onClose: () =
         </button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 min-[1600px]:grid-cols-4">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">项目 ID</span>
           <input

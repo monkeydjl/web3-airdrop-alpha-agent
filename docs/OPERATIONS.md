@@ -221,13 +221,14 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **9 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **10 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
   `0007_roi`（2026-08-31，收益台账）、
   `0008_eligibility_veto`（2026-09-01，资格门否决记录）、
-  `0009_watched_wallets`（2026-09-02，领取监控自有地址）。
+  `0009_watched_wallets`（2026-09-02，领取监控自有地址）、
+  `0010_project_skips`（2026-09-08，用户「不参与」标记）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1

@@ -28,6 +28,23 @@ os.environ["HOST"] = "127.0.0.1"
 # the host. Tests that don't use tmp_path will fall through to this default.
 os.environ.setdefault("DB_PATH", str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"))
 
+# ── 把 SEED_FALLBACK_ENABLED 钉在测试值上 ────────────────────────
+# `seed_fallback_enabled` 的类默认值是 True，但 pydantic-settings 会读仓库根
+# 目录的 .env。本地开发者按生产加固清单把 SEED_FALLBACK_ENABLED 写成 false
+# （GO_LIVE 要求生产关闭，且生产自检还会再强制关一次）后，pytest 会继承这个
+# 值 —— 后果是 §10.2 的 seed fallback 在本机测试里永远不触发，
+# test_seed_fallback.py 的两条流水线用例在 CI（无 .env）全绿、本机稳定红，
+# 且报错（project_count == 0）完全看不出与本地配置有关。
+#
+# 与上面 APP_ENV 同理用强制赋值而不是 setdefault：目的就是盖掉操作员本地的
+# 生产配置，测试环境要的是与本地 .env 无关的确定性。
+#
+# 生产侧断言不受影响：test_production_hardening.py 用 init kwargs 显式构造
+# Settings（优先级高于环境变量），且生产自检本身会无条件覆盖该字段；
+# test_pipeline_run / api/test_collections 里需要的「关」都是在 settings
+# 对象上显式 monkeypatch 的，同样与这里的进程环境变量无关。
+os.environ["SEED_FALLBACK_ENABLED"] = "true"
+
 # ── 把 fetcher 磁盘缓存隔离到测试专用目录 ─────────────────────────
 # `settings.fetcher_cache_dir` 默认是相对路径 `"cache"`，即 `backend/cache/` ——
 # 那是**生产会用的真实缓存目录**。测试直接往里写有两个后果：

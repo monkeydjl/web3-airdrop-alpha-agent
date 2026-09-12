@@ -19,6 +19,12 @@ export interface Project {
   score: number;
   label: Label;
   confidence: number;
+  /** 资格否决:no_participation_path = 分数够但缺参与路径（被从 FARM 压回 WATCH,
+      需要人工验证官网/Twitter 找任务入口）。响应里仅在后端甄别过时出现。 */
+  veto?: string | null;
+  /** 用户自主「不参与」标记（veto 是系统判断，这个是自己点的）。
+      与 label=IGNORE 刻意分开：模型结论与用户决定要能被分别撤掉。 */
+  skipped?: boolean;
   url?: string | null;
   source?: string | null;
   reason?: string[];

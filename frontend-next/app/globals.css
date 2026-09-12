@@ -9,8 +9,8 @@
   --surface-2: 248 250 252;
   --surface-3: 241 245 249;
   --ink: 15 23 42;
-  --ink-muted: 100 116 139;
-  --ink-faint: 148 163 184;
+  --ink-muted: 71 85 105;
+  --ink-faint: 100 116 139;
   --line: 226 232 240;
   --ring: 16 185 129;
 
@@ -63,8 +63,8 @@
   --surface-2: 30 41 59;
   --surface-3: 51 65 85;
   --ink: 226 232 240;
-  --ink-muted: 148 163 184;
-  --ink-faint: 100 116 139;
+  --ink-muted: 203 213 225;
+  --ink-faint: 148 163 184;
   --line: 51 65 85;
   --ring: 52 211 153;
 
@@ -633,6 +633,22 @@
     @apply grid gap-3;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  /* 高分屏：卡片重排成更多列而不是拉宽 —— 档位与 .app-content 的限宽分档
+     （1600/1920/2560）对齐。写死列数的自定义网格在容器放开后每张卡会被
+     拉到 600px+，必须跟着分档加列。 */
+  @media (min-width: 1600px) {
+    .col-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1920px) {
+    .col-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+
   .col-card {
     @apply card flex flex-col gap-3 p-4 transition border-line;
   }
@@ -1662,12 +1678,26 @@
   background: rgb(var(--surface-2));
 }
 
-/* ── 内容容器（限宽居中） ── */
+/* ── 内容容器（限宽居中） ──
+   分档限宽：≤1600 屏维持 1400 不变；更高分屏逐步放开，避免高分屏两侧
+   大片空白。用固定档位而非纯流式，防止超宽屏上正文行宽过长。 */
 .app-content {
   padding: 24px;
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+}
+
+@media (min-width: 1600px) {
+  .app-content { max-width: 1600px; }
+}
+
+@media (min-width: 1920px) {
+  .app-content { max-width: 1840px; }
+}
+
+@media (min-width: 2560px) {
+  .app-content { max-width: 2320px; }
 }
 
 /* ── 页脚 ── */

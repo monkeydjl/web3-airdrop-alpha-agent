@@ -74,12 +74,13 @@ class UnifiedScheduler:
     # ── 生命周期 ──────────────────────────────────
 
     def start(self) -> None:
-        """启动统一调度器：注册全部采集 job + 分析 job + 归档 job + 推送 job，然后启动。"""
+        """启动统一调度器：注册全部采集 job + 分析 job + 归档 job + 推送 job + 活性探测，然后启动。"""
         if (
             not settings.scheduler_enabled
             and not settings.collection_scheduler_enabled
             and not settings.archive_scheduler_enabled
             and not settings.notify_enabled
+            and not settings.vitals_scheduler_enabled
         ):
             self._logger.info("unified_scheduler.disabled")
             return
@@ -88,6 +89,7 @@ class UnifiedScheduler:
         self._register_analysis_job()
         self._register_archive_job()
         self._register_notify_job()
+        self._register_vitals_job()
         self.scheduler.start()
         self._logger.info("unified_scheduler.started")
 
@@ -364,6 +366,48 @@ class UnifiedScheduler:
             self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
         finally:
             conn.close()
+
+    # ── 官网活性探测 job（vitals，2026-09-08）──────
+    #
+    #    探测的是「这项目官网还活着吗」—— Goose 这类僵尸项目的官网域名
+    #    往往早已停服，而一个还活着的站点是「想做这个项目的人摸着官网
+    #    能能走」的前提。曾经的漏检：采集不知道它，分析也当它是活的。
+
+    def _register_vitals_job(self) -> None:
+        """注册官网活性探测 job（每天空闲时段跑一轮）。"""
+        if not settings.vitals_scheduler_enabled:
+            self._logger.info("unified_scheduler.vitals_disabled")
+            return
+
+        self.scheduler.add_job(
+            self._run_vitals,
+            trigger=CronTrigger.from_crontab(settings.vitals_cron, timezone=settings.timezone),
+            id="vitals_probe",
+            name="Probe project site liveness",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+            max_instances=1,
+        )
+        self._logger.info(
+            "unified_scheduler.vitals_job_added",
+            cron=settings.vitals_cron,
+            timezone=settings.timezone,
+        )
+
+    async def _run_vitals(self) -> None:
+        """执行一轮探测：异步探测，结果写回 meta.signals；状态变了才写库，
+        不会为「没变化」反复推高 updated_at 进而毁连 AI 简报缓存。"""
+        from app.services.vitals import run_vitals_probe
+
+        try:
+            stats = await run_vitals_probe()
+            # 只在统计里的 down 非零时额外 warning —— 让监控能看到
+            # 「今天有项目官网挂了」，正常日子推 info 就够
+            log = self._logger.warning if stats["down"] else self._logger.info
+            log("unified_scheduler.vitals_completed", **stats)
+        except Exception as e:
+            self._logger.error("unified_scheduler.vitals_failed", error=str(e), exc_info=True)
 
     # ── 推送 job 注册（ACTION_LOOP_DESIGN §2）──────
 

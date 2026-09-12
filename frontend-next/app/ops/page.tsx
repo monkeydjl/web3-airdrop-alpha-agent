@@ -552,7 +552,7 @@ export default function OpsPage() {
       ) : null}
 
       {/* 4 metrics like design */}
-      <div className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4 min-[1600px]:grid-cols-6">
         <Metric
           label="采集源"
           value={loading ? '—' : sources.length}

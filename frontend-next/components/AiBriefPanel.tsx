@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from '@/lib/api';
+import { relativeTime } from '@/lib/format';
 import { useCallback, useEffect, useState } from 'react';
 
 export interface AiBriefData {
@@ -15,6 +16,14 @@ export interface AiBriefData {
    * 说错会让人去查密钥，而问题在预算。
    */
   degraded_reason?: string | null;
+  /**
+   * 命中 projects.meta 缓存。GET 只读缓存（进页面零成本）；
+   * POST force=false 时未过期的缓存也直接返回，不再重新生成。
+   */
+  cached?: boolean;
+  /** 缓存存在但已过期（项目被重评/更新过）—— 旧解读不可信，提示重新生成 */
+  stale?: boolean;
+  generated_at?: string | null;
   headline?: string;
   summary?: string;
   bullets?: string[];
@@ -52,30 +61,60 @@ export function AiBriefPanel({
 }) {
   const [data, setData] = useState<AiBriefData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [staleHint, setStaleHint] = useState(false);
   const [error, setError] = useState('');
 
+  /** 读缓存（GET 只读，永不触发 LLM）。进页面即调。 */
   const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch<AiBriefData>(`/projects/${projectId}/ai-brief`, {
-        method: 'POST',
-        body: '{}',
-      });
-      setData(res);
+      const res = await apiFetch<AiBriefData>(`/projects/${projectId}/ai-brief`);
+      if (res.cached) {
+        setData(res);
+        setStaleHint(false);
+      } else {
+        setData(null);
+        setStaleHint(res.stale === true);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '解读生成失败');
+      setError(err instanceof Error ? err.message : '解读读取失败');
     } finally {
       setLoading(false);
     }
   }, [projectId]);
+
+  /** 生成（POST）。force=false：没缓存才生成；force=true：强制重新生成。 */
+  const generate = useCallback(
+    async (force: boolean) => {
+      if (!projectId) return;
+      setGenerating(true);
+      setError('');
+      setStaleHint(false);
+      try {
+        const res = await apiFetch<AiBriefData>(`/projects/${projectId}/ai-brief`, {
+          method: 'POST',
+          body: JSON.stringify({ force }),
+        });
+        setData(res);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : '解读生成失败');
+      } finally {
+        setGenerating(false);
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     if (autoLoad && projectId) {
       load();
     }
   }, [autoLoad, projectId, load]);
+
+  const busy = loading || generating;
 
   const paragraphs =
     data?.display_text
@@ -97,19 +136,42 @@ export function AiBriefPanel({
           </div>
           <div className="flex items-center gap-2">
             {data ? (
-              <span
-                className={`badge ${
-                  data.mode === 'llm'
-                    ? 'bg-farm-soft text-farm dark:bg-farm/20 dark:text-farm'
-                    : 'bg-surface-3 text-ink-muted'
-                }`}
-              >
-                {data.mode === 'llm' ? '大模型增强' : '规则引擎'}
-              </span>
+              <>
+                <span
+                  className={`badge ${
+                    data.mode === 'llm'
+                      ? 'bg-farm-soft text-farm dark:bg-farm/20 dark:text-farm'
+                      : 'bg-surface-3 text-ink-muted'
+                  }`}
+                >
+                  {data.mode === 'llm' ? '大模型增强' : '规则引擎'}
+                </span>
+                {data.cached && data.generated_at ? (
+                  <span className="badge bg-surface-3 text-ink-muted">
+                    缓存 · {relativeTime(data.generated_at)}
+                  </span>
+                ) : null}
+              </>
             ) : null}
-            <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={load} disabled={loading}>
-              {loading ? '生成中…' : data ? '重新生成' : '生成解读'}
-            </button>
+            {data ? (
+              <button
+                type="button"
+                className="btn-secondary !py-1.5 text-xs"
+                onClick={() => generate(true)}
+                disabled={busy}
+              >
+                {generating ? '生成中…' : '重新生成'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-secondary !py-1.5 text-xs"
+                onClick={() => generate(false)}
+                disabled={busy}
+              >
+                {generating ? '生成中…' : '生成解读'}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -125,7 +187,11 @@ export function AiBriefPanel({
         ) : error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
             {error}
-            <button type="button" className="ml-3 underline" onClick={load}>
+            <button
+              type="button"
+              className="ml-3 underline"
+              onClick={() => (data ? generate(true) : generate(false))}
+            >
               重试
             </button>
           </div>
@@ -136,7 +202,7 @@ export function AiBriefPanel({
             ) : null}
 
             {data.bullets && data.bullets.length > 0 ? (
-              <ul className="grid gap-2 sm:grid-cols-2">
+              <ul className="grid gap-2 sm:grid-cols-2 min-[1600px]:grid-cols-3">
                 {data.bullets.map((b) => (
                   <li
                     key={b}
@@ -164,9 +230,13 @@ export function AiBriefPanel({
           </div>
         ) : (
           <div className="py-6 text-center">
-            <p className="text-sm text-ink-muted">点击「生成解读」获取针对本项目的完整分析说明</p>
-            <button type="button" className="btn-primary mt-4" onClick={load}>
-              生成智能解读
+            <p className="text-sm text-ink-muted">
+              {staleHint
+                ? '评分已更新，之前的解读已过期 —— 点击重新生成'
+                : '点击「生成解读」获取针对本项目的完整分析说明（生成后本地缓存，重评前不再重复生成）'}
+            </p>
+            <button type="button" className="btn-primary mt-4" onClick={() => generate(false)}>
+              {staleHint ? '重新生成解读' : '生成智能解读'}
             </button>
           </div>
         )}

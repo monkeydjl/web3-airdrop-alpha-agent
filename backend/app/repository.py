@@ -22,6 +22,7 @@ from app.agents.base import PipelineState
 from app.db import dict_from_row, get_connection, is_postgres, scalar
 from app.opportunity.economic_evidence import replay_economic_snapshots_for_project
 from app.services.project_signals import merge_meta, parse_meta
+from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
@@ -352,6 +353,42 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
+    def set_meta_key(self, project_id: str, key: str, value: Any) -> dict[str, Any] | None:
+        """写 meta 顶层单键，**不推高 updated_at**。
+
+        与 update_meta_signals 的语义区分：后者表达「项目内容变了」（融资修正、
+        信号合并），必须推高 updated_at 让下游缓存失效；而写 ai_brief 这类
+        派生缓存不是内容变更 —— 若推高，任何拿 updated_at 判新鲜度的缓存都会
+        在写入瞬间满足 updated_at > generated_at，出生即过期（实测踩过）。
+        行锁 + 读改写与 update_meta_signals 同一模式，避免并发丢更新。
+        """
+        conn = self._get_conn()
+        try:
+            with suppress(Exception):
+                if hasattr(conn, "begin_serialized_write"):
+                    conn.begin_serialized_write()
+            select_sql = "SELECT * FROM projects WHERE id = ?"
+            if getattr(conn, "kind", None) == "postgres":
+                select_sql += " FOR UPDATE"
+            row = conn.execute(select_sql, (project_id,)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            d = dict_from_row(row)
+            meta = parse_meta(d.get("meta"))
+            meta[key] = value
+            meta_json = json.dumps(meta, ensure_ascii=False)
+            conn.execute(
+                "UPDATE projects SET meta = ? WHERE id = ?",
+                (meta_json, project_id),
+            )
+            conn.commit()
+            d["meta"] = meta_json
+            return d
+        finally:
+            if self._should_close():
+                conn.close()
+
     def save_batch(self, states: list[PipelineState]) -> int:
         """批量保存项目。
 
@@ -509,11 +546,23 @@ class ProjectRepository:
             project_id: 项目 ID
 
         Returns:
-            项目字典，不存在返回 None
+            项目字典，不存在返回 None。字段里带 `skipped`（默认用户「不参与」标记，
+            由 project_skips 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
         """
+        # 与 list_projects 同一个 skipped 口径：LEFT JOIN project_skips，
+        # 按 default 用户（或未标注归属的 NULL 行）—— 单用户 MVP 的归属规则。
         conn = self._get_conn()
         try:
-            cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+            cursor = conn.execute(
+                """
+                SELECT p.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                FROM projects p
+                LEFT JOIN project_skips ps
+                  ON ps.project_id = p.id AND (ps.user_id = ? OR ps.user_id IS NULL)
+                WHERE p.id = ?
+                """,
+                (DEFAULT_USER, project_id),
+            )
             row = cursor.fetchone()
             return dict_from_row(row) if row else None
         finally:
@@ -531,6 +580,8 @@ class ProjectRepository:
         sort_by: str = "score",
         sort_order: str = "desc",
         auto_discovered: bool | None = None,
+        veto: str | None = None,
+        skip_user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -574,6 +625,10 @@ class ProjectRepository:
                 conditions.append("auto_discovered = ?")
                 params.append(1 if auto_discovered else 0)
 
+            if veto:
+                conditions.append("veto = ?")
+                params.append(veto)
+
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             # 查询总数（scalar 兼容 sqlite Row 与 Postgres dict_row）
@@ -591,15 +646,31 @@ class ProjectRepository:
             sort_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
             order_clause = f"ORDER BY {sort_column} {sort_direction}"
 
+            # skipped JOIN：把用户「不参与」标记左联进列表（项目仍在库里，
+            # 只是默认前端不再展示）。主查询逻辑不感知跳过 —— 它是展示层。
+            # skip_user_id 缺省按 default 用户口径，与路由层一致。
+            effective_skip_user = skip_user_id or DEFAULT_USER
+            join_scope = (
+                "AND (ps.user_id = ? OR ps.user_id IS NULL)"
+                if effective_skip_user == DEFAULT_USER
+                else "AND ps.user_id = ?"
+            )
+            skip_join = (
+                "LEFT JOIN project_skips ps ON ps.project_id = projects.id " + join_scope
+            )
+            skip_params = [effective_skip_user]
+
             # 分页查询
             offset = (page - 1) * page_size
             list_query = f"""
-                SELECT * FROM projects
+                SELECT projects.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                FROM projects
+                {skip_join}
                 {where_clause}
                 {order_clause}
                 LIMIT ? OFFSET ?
             """
-            cursor = conn.execute(list_query, [*params, page_size, offset])
+            cursor = conn.execute(list_query, [*skip_params, *params, page_size, offset])
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]

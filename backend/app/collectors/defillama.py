@@ -18,7 +18,7 @@ import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
-from app.collectors.noise import is_noise_protocol
+from app.collectors.noise import is_listed_brand_subproduct, is_noise_protocol
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.utils.normalize import normalize_sector
@@ -181,7 +181,14 @@ class DefiLlamaCollector(DataCollector):
             for listed in listed_names:
                 if len(listed) >= 3 and name.startswith(listed):
                     return True
-        return False
+        # 3. 品牌首词兜底（静态注册表）：父链接为 null、名字与母条目互不为
+        #    前缀时（实测：Plume Vaults vs Plume Mainnet，PLUME 早已 TGE），
+        #    按首词命中已知已发币品牌。首词 + 通用词停用 + 最短长度三重
+        #    约束防误伤（Mystic Finance myPLUME 不受影响），见 noise.py。
+        return is_listed_brand_subproduct(
+            name=str(protocol.get("name") or ""),
+            slug=str(protocol.get("slug") or ""),
+        )
 
     def _is_noise_protocol(self, protocol: dict[str, Any]) -> bool:
         """Back-compat wrapper for tests."""

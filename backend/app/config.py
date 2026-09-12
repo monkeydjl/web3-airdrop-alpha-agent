@@ -374,6 +374,12 @@ class Settings(BaseSettings):
     archive_scheduler_enabled: bool = True
     archive_cron: str = "0 3 * * *"
 
+    # 官网活性探测：归在归档之后（03:00）、采集之前（08:00）跑一轮。
+    # 项目官网凉了会把 `site_alive=False` 写进 signals —— 这是
+    # 「Goose」这类僵尸项目的关键下课信号（2026-09-08）。
+    vitals_scheduler_enabled: bool = True
+    vitals_cron: str = "30 4 * * *"
+
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
     weight_narrative_timing: float = 0.15

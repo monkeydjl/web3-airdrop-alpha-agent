@@ -285,3 +285,33 @@ class TestDefiLlamaEconomicOptionA:
         assert discovery.discovery_score == score_missing
         # raw still None/missing, not coerced to 0
         assert discovery.raw_data.get("change_7d") is None or "change_7d" not in discovery.raw_data
+
+
+class TestFacetOfListedBrandToken:
+    """品牌首词兜底：parentProtocol 为 null、名字与母条目互不为前缀的
+    已发币品牌子条目，必须被排除出候选。
+
+    实测语料（2026-09-06）：Plume Vaults（symbol='-'、parentProtocol=null、
+    TVL $144M）与母条目 Plume Mainnet（symbol='PLUME'）—— 既有前缀规则
+    ("Zircuit Staking" ⊂ "Zircuit") 接不住这对，Plume Vaults 以 WATCH 65
+    混进扫描结果。
+    """
+
+    def test_plume_vaults_excluded_as_brand_facet(self, collector: DefiLlamaCollector) -> None:
+        protocols = [
+            sample_protocol(name="Plume Mainnet", slug="plume-mainnet", symbol="PLUME", gecko_id="plume", tvl=0),
+            sample_protocol(name="Plume Vaults", slug="plume-vaults", tvl=144_705_790),
+        ]
+        assert collector._filter_candidates(protocols) == []
+
+    def test_genuine_unlisted_project_with_similar_name_kept(self, collector: DefiLlamaCollector) -> None:
+        """品牌词只按首词匹配：Mystic Finance myPLUME 的品牌是 Mystic，
+        不能因为名字里带 plume 被误杀。"""
+        protocols = [
+            sample_protocol(name="Plume Mainnet", slug="plume-mainnet", symbol="PLUME", gecko_id="plume", tvl=0),
+            sample_protocol(
+                name="Mystic Finance myPLUME", slug="mystic-finance-myplume", symbol="-", tvl=200_000_000
+            ),
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == ["Mystic Finance myPLUME"]

@@ -45,6 +45,12 @@ function DashboardContent() {
   const [keyword, setKeyword] = useState('');
   const [hideIgnore, setHideIgnore] = useState(true);
   const [hasFundingOnly, setHasFundingOnly] = useState(false);
+  // 「分数已达 FARM 线、但缺参与路径」是库里唯一上不去的一批 —— 单独抽出来做
+  // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那 86 行）。
+  const [needsVerifyOnly, setNeedsVerifyOnly] = useState(false);
+  // 「不参与」默认从工作台隐藏（这是它的主要用途：说不要了就别天天出现），
+  // 可以从「显示不参与」开关找回 —— 找回入口必须存在，否则就是单向墙。
+  const [showSkipped, setShowSkipped] = useState(false);
   const [stageFilter, setStageFilter] = useState('');
   const [minScore, setMinScore] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('score');
@@ -135,16 +141,18 @@ function DashboardContent() {
   const filtered = useMemo(() => {
     const list = projects.filter((p) => {
       if (hideIgnore && !labelFilter && p.label === 'IGNORE') return false;
+      if (!showSkipped && p.skipped) return false;
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;
       if (stageFilter && p.stage !== stageFilter) return false;
       if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
+      if (needsVerifyOnly && p.veto !== 'no_participation_path') return false;
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -276,6 +284,14 @@ function DashboardContent() {
             <input type="checkbox" className="rounded border-line text-farm focus:ring-farm/30" checked={hasFundingOnly} onChange={(e) => setHasFundingOnly(e.target.checked)} />
             有融资信号
           </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted" title="分数已达 FARM 线，但系统没找到测试网/积分/任务入口 —— 这条清单是你的「下一步动手项」">
+            <input type="checkbox" className="rounded border-line text-watch focus:ring-watch/30" checked={needsVerifyOnly} onChange={(e) => setNeedsVerifyOnly(e.target.checked)} />
+            待验证参与路径
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted" title="打开后也显示「不参与」的项目（默认隐藏;点进去详情页可取消）">
+            <input type="checkbox" className="rounded border-line text-ink-muted focus:ring-ink-muted/30" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} />
+            显示不参与
+          </label>
           <div className="toolbar-actions">
             <button type="button" className="btn-secondary btn-sm" disabled={filtered.length === 0} onClick={() => exportProjectsCsv(filtered)}>
               导出 CSV ({filtered.length})
@@ -308,7 +324,7 @@ function DashboardContent() {
           )}
         />
       ) : view === 'grid' ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">
           {filtered.map((p, i) => <ProjectCard key={p.id} project={p} rank={i + 1} />)}
         </div>
       ) : (

@@ -135,7 +135,7 @@ export function EmptyState({
 
 export function SkeletonGrid({ n = 8 }: { n?: number }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">
       {Array.from({ length: n }).map((_, i) => (
         <div key={i} className="dash-card p-4 space-y-3">
           <div className="skeleton h-4 w-2/3" />

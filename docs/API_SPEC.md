@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-09-02 随领取监控更新）
+### 2.1 写操作的鉴权分布（实测，2026-09-05 随 ai-chat 追问对话更新）
 
-全仓共 **33 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **36 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 11 |
 | 无鉴权（公开） | 2 |
-| 匿名 token 可调 | 20 |
+| 匿名 token 可调 | 23 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -124,7 +124,7 @@
 
 `opportunity/evidence` 只追加证据条目，不花钱、不改评分事实。
 
-`ai-brief` 和 `opportunity/evaluate` 会走 LLM（**有额度成本**），
+`ai-brief`、`ai-chat` 和 `opportunity/evaluate` 会走 LLM（**有额度成本**），
 但刻意没有按角色锁：成本改由 `LLM_DAILY_BUDGET_USD` 的预算门统一拦截。
 理由是锁角色挡不住真实风险 —— 管理员自己刷同样会花钱。
 
@@ -182,7 +182,8 @@
 | GET | `/api/v1/projects/{project_id}/interactions` | v1 | V2（已实现） | 某项目的参与记录 |
 | GET | `/api/v1/projects/{project_id}/participation-tasks` | v1 | V2（已实现） | 参与任务清单（**挂在项目下**，无顶层端点） |
 | GET / PATCH | `/api/v1/projects/{project_id}/funding` | v1 | V2（已实现） | 融资信息 / 人工修正 |
-| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | 生成 AI 简报（**GET 也是重新生成，不是读缓存**；POST 同义，无 `/regenerate`） |
+| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | AI 简报（**GET 只读缓存，永不花钱**；POST 生成，`{"force": true}` 强制重新生成，2026-09-06 起带 meta 缓存） |
+| POST | `/api/v1/projects/{project_id}/ai-chat` | v1 | V2（已实现） | 项目追问对话（多轮问答，历史由前端持有；纯 LLM，无规则回退） |
 | GET | `/api/v1/projects/{project_id}/opportunity` | v1 | V2（已实现） | 旁路机会引擎最新快照 |
 | POST | `/api/v1/projects/{project_id}/opportunity/evaluate` | v1 | V2（已实现） | 显式执行机会评估 |
 | GET / POST | `/api/v1/projects/{project_id}/opportunity/evidence` | v1 | V2（已实现） | 证据历史 / 追加证据 |
@@ -191,6 +192,7 @@
 | POST | `/api/v1/quarantine/release` | v1 | V2（已实现） | 解除隔离（**POST release**，无 `DELETE /{id}`） |
 | GET | `/api/v1/watchlist` | v1 | V2（已实现） | 关注列表 |
 | POST / DELETE | `/api/v1/watchlist/{project_id}` | v1 | V2（已实现） | 加入 / 移出关注（项目 id 在**路径**上） |
+| POST / DELETE | `/api/v1/projects/{project_id}/skip` | v1 | V2（已实现，2026-09-08） | 用户自主「不参与」标记（§44） |
 | GET | `/api/v1/settings/config` | v1 | V2（已实现） | 运行时配置只读快照 |
 | GET | `/api/v1/llm/status` | v1 | V2（已实现） | LLM 开关与提供方状态 |
 | GET | `/api/v1/archive/runs` | v1 | V2（已实现） | 归档运行历史（只读，详见 §37） |
@@ -239,7 +241,7 @@
 | GET | `/api/v1/feedback` | 405 | 列表端点不存在；按项目查是 `GET /feedback/{project_id}` |
 | GET | `/api/v1/participation-tasks` | 404 | 挂在项目下：`/projects/{project_id}/participation-tasks` |
 | GET | `/api/v1/webhook/status` | 404 | 真实路径含 provider：`/webhook/alchemy/status` |
-| POST | `/api/v1/projects/{id}/ai-brief/regenerate` | 404 | `POST /ai-brief` 本身就是重新生成 |
+| POST | `/api/v1/projects/{id}/ai-brief/regenerate` | 404 | 强制重新生成用 `POST /ai-brief` + `{"force": true}`（2026-09-06 起） |
 | GET / PATCH | `/api/v1/quarantine/{id}` | 404 | 解除隔离是 `POST /quarantine/release` |
 | POST | `/api/v1/watchlist` | 405 | 项目 id 在路径上：`POST /watchlist/{project_id}` |
 | PUT | `/api/v1/projects/{id}/funding` | 405 | 真实动词是 **PATCH** |
@@ -1475,7 +1477,9 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 
 ### 32a. GET /api/v1/projects/{project_id}/ai-brief
 
-获取项目的 AI 简报（规则生成 / 可选 LLM 增强）。
+**只读缓存**（2026-09-06 起）：返回项目的 AI 简报缓存（规则生成 / 可选 LLM 增强），
+有新鲜缓存就返回（`cached: true`），没有或已过期返回空态（`cached: false` +
+`stale` 标记）。**GET 永不触发生成、永不花 LLM 额度** —— 生成一律走 §32b 的 POST。
 
 > ⚠️ **本节此前记录的响应体是虚构的**（2026-08-24 按实测更正）。
 > 原文写的是 `{"brief": "...", "llm_available": false, "generated_at": "..."}`
@@ -1484,8 +1488,12 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 >
 > 照原文写前端会拿到 `undefined`，然后大概率被渲染成空白而不是报错 ——
 > **一个字段名写错的文档，产生的是空白页面，不是错误信息。**
+>
+> 2026-09-06 起本节语义再次变更：简报加了 meta 缓存，响应新增
+> `cached` / `stale` / `generated_at` 三个字段，`generated_at` 这次是
+> 真实存在的了；GET 从「POST 的别名（每次重新生成）」改为「只读缓存」。
 
-**响应 200**:
+**响应 200**（命中新鲜缓存）:
 ```json
 {
   "ok": true,
@@ -1495,6 +1503,9 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
     "mode": "rule",
     "llm_available": false,
     "degraded_reason": "llm_disabled",
+    "cached": true,
+    "stale": false,
+    "generated_at": "2026-09-06T08:30:00+00:00",
     "headline": "Nova Protocol 是一个 L2 扩容方案...",
     "summary": "...",
     "bullets": ["..."],
@@ -1507,6 +1518,25 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
   }
 }
 ```
+
+**响应 200**（无缓存 / 已过期 —— 同样是 200，前端按 `cached` 分支）:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "proj-001",
+    "project_name": "Nova Protocol",
+    "llm_available": false,
+    "cached": false,
+    "stale": true
+  }
+}
+```
+
+**缓存与 `stale`**：缓存存于 `projects.meta.ai_brief`，新鲜度 =
+`generated_at` 晚于/等于行的 `updated_at`。项目被重评、改融资、采集回写
+—— 任何行更新都会推高 `updated_at`，缓存自动过期（`stale: true`），
+过期解读**不会**返回，避免旧分数配新解读的误导。
 
 **`mode` 与 `degraded_reason`**：`mode` 只有 `llm` / `rule` 两个值，
 而回退到 `rule` 有四种原因，必须靠 `degraded_reason` 区分：
@@ -1535,13 +1565,24 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 > `POST /projects/{id}/ai-brief/regenerate` —— 实测 404。
 > 真实做法是对**同一个路径**发 POST。
 
-重新生成 AI 简报。响应体与 32a 完全相同。
+生成 AI 简报（无新鲜缓存时）并写入缓存。响应体结构与 32a 相同
+（外加 `cached: false`，重新生成场景可能带 `stale: true`）。
 
-> 补一条实测事实：**`GET` 并不是"读缓存"** —— 它在代码里就是
+**请求体**（可选）:
+```json
+{"force": true}
+```
+
+- `force=false`（默认，旧调用方传 `{}` 或省略 body 均兼容）：有新鲜缓存
+  直接返回（`cached: true`，**零 LLM 成本**）；无缓存或已过期才生成并写缓存。
+- `force=true`：无视缓存强制重新生成（「重新生成」按钮走这里）。
+
+> ~~补一条实测事实：**`GET` 并不是"读缓存"** —— 它在代码里就是
 > `return await project_ai_brief(project_id)`，即 POST 的别名，
-> 每次都重新生成。所以 `GET` 也会花 LLM 额度。
-> 这一点值得写清楚，因为「GET 是安全的、不产生副作用」是个很强的默认预期，
-> 而这里它不成立。
+> 每次都重新生成。所以 `GET` 也会花 LLM 额度。~~
+> **2026-09-06 起此事实失效**：GET 改为只读缓存（见 §32a），
+> 只有 POST 会触发生成。留着这段是为了让「曾经 GET 会花钱」这件事
+> 有据可查 —— 照旧文档集成 GET 的调用方，升级后只会变省钱，不会变错。
 
 ---
 
@@ -2191,3 +2232,99 @@ F4 领取监控（[ACTION_LOOP_DESIGN §5](ACTION_LOOP_DESIGN.md#5-f4-领取监�
 > 实施记录：第一版抄了一份查表逻辑，凭印象写成 `LABEL_THRESHOLDS.get(label, 0)`，
 > 而它是 `list[tuple[int, str]]` 而非 dict，直接 AttributeError。这恰好印证了
 > 原注释里那句「抄一份就意味着下次再调时有两个地方要改」。
+
+## 43. ai-chat（项目追问对话，2026-09-05 新增）
+
+### 43a. POST /api/v1/projects/{project_id}/ai-chat
+
+针对单个项目的多轮追问问答，是 §32a AI 简报（单向独白）的补充：用户追问
+「为什么是这个分」「参与的主要风险」这类静态面板答不了的问题。回答基于
+系统注入的项目快照（评分因子 / narrative / team / risk / tokenomics / 融资 /
+规则简报 bullets），数据里没有的字段模型被要求明确说没有、不许编造。
+
+**请求体**:
+```json
+{
+  "messages": [
+    {"role": "user", "content": "为什么是这个评分？"},
+    {"role": "assistant", "content": "……"},
+    {"role": "user", "content": "参与的主要风险是什么？"}
+  ]
+}
+```
+
+- `role` 只允许 `user` / `assistant`；**最后一条必须是 `user`**。
+- 会话历史由**前端持有**、随请求全量传入，服务端无状态、不落库；
+  后端只把最近 12 条发给模型，并以此兜底截断。
+- 校验（违反返回 **400**，`code: "INVALID_MESSAGES"`）：非空、≤ 20 条、
+  单条 ≤ 2000 字、非空白、末条为 user。校验先于查库执行。
+- 项目不存在返回 **404**（与 §32a 同风格）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "proj-001",
+    "project_name": "Nova Protocol",
+    "reply": "评分低主要因为团队信息不足……",
+    "degraded_reason": null,
+    "llm_available": true
+  }
+}
+```
+
+**与 §32a 的关键差异**：本端点**没有规则引擎可回退**（自由问答无法用模板
+拼），所以不存在 `mode` 字段；降级时 `reply` 为 `null`，`degraded_reason`
+只有三态：
+
+| `degraded_reason` | 含义 | 该怎么办 |
+| --- | --- | --- |
+| `llm_disabled` | 没配 `OPENAI_API_KEY` 或开关关着 | 配密钥 |
+| `budget_exceeded` | **当日 LLM 预算已用完** | UTC 零点自动恢复；要立即恢复就调大 `LLM_DAILY_BUDGET_USD` 并重启 |
+| `llm_error` | 所有接口都失败了 | 稍后重试 / 查 `ai_chat.llm_failed` 日志 |
+
+> 预算口径与 §32a 相同：走 `llm_chat` 的日预算闸门，**请求发出之前**检查。
+> 注意对话每轮都携带完整项目快照 + 历史，单轮成本高于一次 `ai-brief`；
+> 前端输入限 500 字 / 6 轮上下文，就是为了压这个成本。
+
+回归测试：`backend/tests/test_ai_chat.py`（service 降级语义与上下文截断、
+路由校验与字段透传，全部 mock `llm_chat`，不联网）。
+
+
+## 44. project-skips（用户自主「不参与」，2026-09-08 新增）
+
+用户层状态：与系统评分 / veto 无关 —— 系统说「值得」的项目，用户可以因为
+系统看不见的现实约束（没资金跑某个赛道）选「不参与」。工作台默认隐藏这些
+项目，可随时用「显示不参与」开关再看回来或取消。**刻意不复用
+label="IGNORE"** —— 那是模型的结论，跳过是用户的决定，要能被分别撤掉。
+
+### 44a. POST /api/v1/projects/{project_id}/skip
+
+标记项目为「不参与」。幂等：重复标记返回 `already: true`，不产生多行。
+
+**请求体**（可选）: `{"user_id": "default"}`
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "project_id": "...", "user_id": "default", "skipped": true, "already": false }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+### 44b. DELETE /api/v1/projects/{project_id}/skip
+
+取消「不参与」。项目没被标记过时返回 404（`NOT_SKIPPED`）。
+
+### 44c. 列表响应的 skip 联动（/projects 同一路由）
+
+响应项新增 `skipped: bool`，由 `project_skips` 左联得出，按默认匿名用户
+口径（`user_id='default'` 匹配或 user_id IS NULL 归属未标注记录），
+与 interactions / watchlist 的用户隔离规则一致。新增查询参数
+`user_id`：换用户视角看自己的跳过清单时用。
+
+校验组对齐：这组端点是匿名可写 —— 与 watchlist / feedback 同一口径，
+在 `test_admin_only_rules.py::ANON_WRITABLE` 里登记了理由。
+回归测试：`backend/tests/api/test_skip.py`（幂等、404、用户隔离、列表联动）。

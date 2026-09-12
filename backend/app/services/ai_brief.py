@@ -2,18 +2,26 @@
 
 Always has a high-quality rule-based brief. Optionally enhances with LLM
 when OPENAI_API_KEY is configured (OpenAI-compatible base URL).
+
+生成结果缓存于 projects.meta.ai_brief（2026-09-06）：重访直接读缓存，
+只有评分变了（行 updated_at 推高）或调用方 force 才重新生成 —— 否则每次
+进详情页都会烧一次 LLM 预算。
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from app.config import settings
+from app.repository import ProjectRepository
 
 logger = structlog.get_logger(__name__)
+
+BRIEF_CACHE_KEY = "ai_brief"
 
 LABEL_ZH = {
     "FARM": "重点参与",
@@ -430,3 +438,70 @@ async def generate_project_brief(project: dict[str, Any]) -> dict[str, Any]:
         # 为什么回退到规则引擎，让前端能说对话（见 try_llm_brief 的 docstring）。
         "degraded_reason": degraded_reason,
     }
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    """行里的 updated_at 可能是 datetime（postgres）也可能是 ISO 字符串
+    （sqlite）。统一解析成 aware datetime；解析不了返回 None。"""
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
+def get_cached_brief(project: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """读取项目的简报缓存。返回 `(payload, stale)`。
+
+    新鲜度判定：`payload.generated_at` 晚于/等于行的 `updated_at` → 新鲜。
+    项目任何行更新（重评、改融资、采集回写）都会推高 `updated_at`，
+    缓存因此自动过期，无需失效钩子。缺 `generated_at` 的缓存视为不存在
+    —— 没有时间戳就无法判新鲜度，宁可重新生成也不能把旧解读配新分数。
+    """
+    meta = project.get("meta")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            return (None, False)
+    if not isinstance(meta, dict):
+        return (None, False)
+    payload = meta.get(BRIEF_CACHE_KEY)
+    if not isinstance(payload, dict):
+        return (None, False)
+    generated = _parse_dt(payload.get("generated_at"))
+    if generated is None:
+        return (None, False)
+    updated = _parse_dt(project.get("updated_at"))
+    if updated is not None and updated > generated:
+        return (None, True)
+    return (payload, False)
+
+
+def store_brief_cache(
+    project_id: str,
+    brief: dict[str, Any],
+    repo: ProjectRepository | None = None,
+) -> None:
+    """把生成好的简报写进 projects.meta.ai_brief。
+
+    generated_at 取写入时刻。写缓存走 `set_meta_key`（**不推高**行的
+    updated_at）—— 推高会让缓存写完立即满足 updated_at > generated_at，
+    出生即过期（微秒级竞态，实测踩过：症状是每次打开详情页都要重新点生成）。
+    之后真正的项目更新（重评/改融资）推高 updated_at → 缓存自动过期。
+
+    repo 参数供测试注入与调用方同库的 repository（ProjectRepository() 默认
+    连接指向默认库，内存库测试必须显式传入，否则写进另一个库）。
+    """
+    # 直接回填进 brief：调用方（路由）在 store 之后拼响应体，让当次响应
+    # 也带上生成时间，而不是只有下次 GET 缓存命中时才有。
+    brief["generated_at"] = datetime.now(UTC).isoformat()
+    payload = dict(brief)
+    (repo or ProjectRepository()).set_meta_key(project_id, BRIEF_CACHE_KEY, payload)

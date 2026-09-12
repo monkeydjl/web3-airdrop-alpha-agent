@@ -70,14 +70,20 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/notifications/read"): "把自己的通知标记已读，只影响自己的未读状态。",
     ("POST", "/api/v1/watchlist/{project_id}"): "把项目加进自己的关注列表，按 user_id 隔离。",
     ("DELETE", "/api/v1/watchlist/{project_id}"): "从自己的关注列表里移除，按 user_id 隔离。",
-    # ⚠️ 下面两条**消耗 LLM 额度**，属于"会花钱"那一类，但本轮刻意没有锁：
+    ("POST", "/api/v1/projects/{project_id}/skip"): "用户层「不参与」标记，按 user_id 隔离，不改项目评分。",
+    ("DELETE", "/api/v1/projects/{project_id}/skip"): "取消「不参与」，同上。",
+    # ⚠️ 下面三条**消耗 LLM 额度**，属于"会花钱"那一类，但本轮刻意没有锁：
     # 所有者已决定给 LLM_DAILY_BUDGET_USD 实现真正的拦截，届时成本由预算门
     # 统一挡住，比按角色锁更贴合真实风险（管理员刷同样会花钱）。
-    # 这两行留在这里是为了让"它们没被锁"成为一个**显式的、写着理由的决定**，
+    # 这几行留在这里是为了让"它们没被锁"成为一个**显式的、写着理由的决定**，
     # 而不是又一个没人注意到的口子。
     ("POST", "/api/v1/projects/{project_id}/ai-brief"): (
         "会走 LLM（有额度成本）。刻意不按角色锁：改由 LLM 每日预算门统一拦截，"
         "见 LLM_DAILY_BUDGET_USD。锁角色挡不住管理员自己刷爆额度。"
+    ),
+    ("POST", "/api/v1/projects/{project_id}/ai-chat"): (
+        "项目追问对话，会走 LLM（有额度成本）。与 ai-brief 同口径："
+        "由预算门而非角色控制成本，锁角色挡不住管理员自己刷爆额度。"
     ),
     ("POST", "/api/v1/projects/{project_id}/opportunity/evaluate"): (
         "同上 —— 旁路机会引擎评估会走 LLM，由预算门而非角色控制成本。"

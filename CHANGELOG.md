@@ -8,6 +8,232 @@
 
 ## [Unreleased]
 
+### Added — 官网活性探测（vitals scanner，2026-09-08）
+
+用户看到的症状：库里躺着一堆 X 账号停更、官网打不开的「僵尸项目」（举例
+Goose），分数却根本没吃到这个信号 —— 系统只看了「有没有测试网/积分」，从没
+探过「官网还能不能打开」。
+
+- **新增 `services/vitals.py`**：纯 stdlib + httpx 探测，HEAD 优先、405 落 GET、
+  跟随重定向，超时 5s。400/410 算挂，401/403 只是反爬不算。重点是
+  `site_alive=False` 只写进真打出去过并得到否定结果的行 —— 没探过的行绝不背锅。
+- **写入策略**：状态变了才写 meta.signals，不变就不动（这是为了不让每次探测
+  推高 updated_at，顺带冲掉 AI 简报缓存——那个竞态两周前刚修复过）。
+- **评分**：`_calc_execution` 里官网挂了（site_alive=False）减 12 分，并作为
+  forced reason 打出来（「official site unreachable (vitals probe)」)，
+  详情页的「可核验信号」新增一行「官网可访问 / 不可达」，工作台卡片同步一个
+  灰色警示徽标。
+- **调度**：`vitals_probe` job（默认每日 04:30，排在归档之后、采集之前）；
+  运营开关 `VITALS_SCHEDULER_ENABLED` / `VITALS_CRON`。
+- **实测**：对线上库 237 个有官网的项目跑了一轮，探测到 45 个「官网挂了」
+  （连接超时/4xx/5xx）。例子里提到的 Goose 的 URL 是 DefiLlama 的项目页 —
+— 探测集成测试用真实网络时一次拿到传输错误（`http_status=None`)、下一轮
+  重探又能拿到 200，说明探测本身正常。这类偶发挂不会影响评分，只有**连续**
+  被探挂才值得警惕。这个数字系统给出的是「还活着」的证据链，起的是筛查
+  第一道嫌疑的作用，不是判死刑。
+- **不做的**:X(Twitter）账号最近发推探测 —— 那需要 X API 的 Bearer Token
+  （免费层级里连读都是付费的），要做的话先把 `TWITTER_BEARER_TOKEN` 配上就行，
+  但这一步当前不在本次范围内。
+
+### Added — 「不参与」用户级标记（2026-09-08）
+
+系统说「值得」的项目，用户可能因系统看不见的现实约束（没资金跑再质押、
+不想碰某个赛道）选择不参与 —— 这类决定不属于模型，但不能每次重列工作台
+都见到同一个不想再看的项目。
+
+- **底层**：新表 `project_skips`（双方言 DDL + alembic 0010，刻意不设外键）。
+  刻意不复用 `label="IGNORE"`：那是模型的结论，`skip` 是用户的决定，要能被
+  分别撤掉。
+- **API**（§44）：匿名可写，与 watchlist/feedback 同一口径，写请求登记进
+  `ANON_WRITABLE` 门禁。`POST /projects/{id}/skip` 幂等（重复标点回到原地、
+  不多产一行）；`DELETE` 取消（没标过才 404）;`GET /projects` 多一个
+  `skipped` 字段 + 可选 `user_id` 参数；详情页 `GET /projects/{id}` 同样带
+  `skipped` 字段，点开按下去就是切换。
+- **前端**：详情页评分操作的同一排加「不参与 / 取消不参与」按钮；工作台
+  筛选区加「显示不参与」复选框（默认关：被跳过的项目从列表消失，这是这个
+  功能的全部意义），勾选后那些项目以「不参与」徽标可见、可恢复。
+  拆了 ProjectCard 的外层链接包覆，免得和按钮点击钻跳。
+
+### Added — 侧栏「不参与」页（2026-09-08，承接上一条）
+
+跳出列表的漏冷点：被「不参与」挡下来的项目在工作台看不到了，但要后悔时没有
+入口——只能去详情页取消，还得记得它是哪一个。新增：
+
+- **侧栏「不参与」导航项**（/skipped)：集中列出你跳过的所有项目
+  （名称/评分/阶段/来源 + 每个一条「恢复」按钮，点一下就从列表回到工作台）。
+- 空态放一条引导，与「收藏关注」页同款（还没跳过任何项目时该页是引导页）。
+- 前端至此闭环：加 → 工作台消失 → 左侧栏集中管理 → 恢复回原位。
+
+### Added — 「待验证参与路径」卡片的人工核验按钮（2026-09-08）
+
+上一项把 86 个「分数够 FARM 线但缺参与路径」的项目做成了清单，但清单本身
+不产生样本 —— 校准门禁（200 条）还是零。本次在待验证卡片上加两个按钮：
+「有路径 → 升 FARM」「没路径 → 维持观察」，点击走现有的 `POST /api/v1/feedback`
+（`wrong_label` + note=正确标签），产出正是 `calibration.extract_samples`
+识别的样本形态。卡片按钮不再是链接套链接（ProjectCard 外层改为 div，
+详情跳转由内部 Link 承担），校验按钮点击不穿透进详情页。核验后的卡片
+原位变对勾不再打扰。
+
+### Added — 「待验证参与路径」人工验证清单(2026-09-08)
+
+数据分析盘出的事实：库里 score ≥65 的 108 个项目里 **86 个**全被
+`veto=no_participation_path` 从 FARM 压回 WATCH —— 不是质量不行，只是系统没有
+quest 数据源(Galxe/Layer3 都要 key)，找不到测试网/积分/任务入口。这批本来
+会永久卡在中间态。本次把这批从「看不见的死水」变成「可勾选执行的清单」：
+
+- **后端**:`GET /api/v1/projects` 新增 `veto` 查询参数，响应项透出 `veto`
+  字段；repository 同步支持（纯只读筛选，不动 updated_at）。
+- **前端**：工作台筛选条新增「待验证参与路径」复选框；项目卡片对这类项目打
+  「待验证路径」徽标（悬停说明：分数够、缺路径、去官网/Twitter 看一眼）。
+- 实测线上：`?veto=no_participation_path` 返回 86 行，头部即 Set Protocol /
+  Symbiotic —— 本来就该人工去看的项目。
+- 门禁:repository/API/前端结构/编码全部过；评分逻辑与权重一个字符没动
+  （需要 200 条反馈样本才能谈校准，没凑够之前凭感觉调权重是假精准）。
+
+### Added — 详情页项目切换栏（2026-09-08）
+
+详情页此前没有横向切换能力：看完一个项目要回工作台才能进下一个。
+
+- **`ProjectSwitcher`**（挂在 masthead 上方）：`‹ 上一个 / 下拉跳选 / 下一个 ›`
+  + 键盘 ←/→（输入控件聚焦时不抢键）。排序与工作台同口径（score 降序）。
+- **邻接在前端算**：项目列表接口 page_size≤500，一次拉齐后求前后邻 ——
+  不为切换器单开「neighbors」端点，少一份鉴权/文档成本；列表失败时
+  切换栏静默收起，不挡详情本体。
+
+### Fixed — 已发币品牌子产品绕过过滤（Plume Vaults 案例，2026-09-06）
+
+用户报告：Plume 早已 TGE、币价不温不火，"Plume Vaults" 却以 WATCH 65 出现在
+扫描结果。三层归因、三层修复（A 修信号源头 + B 清存量）：
+
+- **信号源头**：DefiLlama 采集器 `_is_unlisted` 把「子产品自己没有 symbol /
+  gecko_id」当成「未发币、有潜在空投」—— Plume Vaults 因此携带
+  `no_token_yet=True`。而已发币过滤第一行就是「no_token_yet=True → 放行」，
+  输入错，过滤器只能放行。实测 DefiLlama 语料：Plume Vaults 的
+  parentProtocol 为 **null**，与母条目 Plume Mainnet（symbol=PLUME）互不为
+  名字前缀 —— 既有的 `_is_facet_of_listed` 前缀规则（"Zircuit Staking" ⊂
+  "Zircuit"）接不住。
+- **A（防新增）**：`_is_facet_of_listed` 加品牌首词兜底规则 —— 首词命中
+  `KNOWN_LISTED_BRANDS` 注册表（plume/zksync/berachain/scroll/celestia/
+  pyth/layerzero/eigenlayer/hyperliquid，只收有公开 TGE 证据的品牌）即判为
+  品牌子产品。防误伤三重约束：只匹配**首词**（Mystic Finance myPLUME 的
+  myplume 不算）、通用词停用（mainnet/finance/vaults…）、最短 4 字符
+  （避免 "SX"）。
+- **B（清存量）**：`scripts/backfill_listed_subproducts.py`（dry-run 默认、
+  `--apply` 写库）对 projects 全量追溯：品牌命中且无自有空投信号的行降级
+  IGNORE、reason 留痕、meta.signals.no_token_yet 修正为 False（与未来
+  rescore 的 veto 一致）。有自有信号（points 等）的行不动，seed 行不动，
+  幂等可重复运行。实测：215 行扫出 1 行（Plume Vaults），已降级。
+- **运维坑（记两个）**：① 这些信号只存在 meta.signals，行上独立列为
+  None —— 只读列会漏判；② DB_PATH 相对路径按 CWD 解析，脚本必须与后端
+  同 CWD（backend/）运行才命中同一库文件。
+- 回归：`tests/collectors/test_noise.py` 品牌匹配 6 条、
+  `tests/collectors/test_defillama.py` 候选过滤 2 条、
+  `tests/scripts/test_backfill_listed_subproducts.py` 追溯 6 条。
+
+### Fixed — Stop.bat 的后端停止步骤从未生效过（2026-09-06）
+
+`Stop.bat` 用 `tasklist | findstr "uvicorn"` 找后端进程，但 tasklist 的映像名
+是 `python.exe`，"uvicorn" 只是命令行参数、tasklist 根本不显示 —— 该步骤
+**从未杀掉过任何后端进程**，而 `[OK] Backend service stopped` 是无条件打印的。
+后果：用户的「重启后端」实际是「再起一个实例绑同一个端口」，Windows 下新旧
+两个实例同时 LISTENING，流量仍进改动**前**启动的旧进程。2026-09-06 排查
+「AI 简报缓存明明实现完却不生效」时实测：8002 上挂着两个 PID，接客的是
+9/5 启动的旧实例（新代码全在，只是没被加载）。修复手段与「重启 ritual 正确
+但工具骗了人」这件事的教训：
+
+- **Stop.bat 改为按端口 8002 的 LISTENING 行定位后端**（与前端步骤同一模式），
+  `taskkill /F /T` 连子进程树一起杀。
+- 前端步骤补 `LISTENING` 过滤：此前按 `:3002` 的**所有** netstat 行杀 PID，
+  established 连接行的 PID 是连接另一端 —— 典型就是用户自己的浏览器，
+  运行 Stop.bat 有把浏览器杀掉的隐患。
+- 新增门禁 `test_shell_scripts.py::TestWindowsBatchScripts`：断言 Stop.bat
+  按端口定位、过滤 LISTENING，且按映像名找 "uvicorn" 的空转写法不得回归。
+  另：手编含中文的 .bat 必须保留 UTF-8 BOM（`test_repo_windows_scripts_all_have_bom`
+  当场抓到编辑弄丢 BOM —— 门禁系统自身按设计工作了）。
+
+### Added — AI 简报缓存（2026-09-06）
+
+此前 `POST /projects/{id}/ai-brief` 每次调用都完整重新生成，GET 还是 POST
+的别名 —— 「进详情页看一眼」就是烧一次 LLM 预算，前端也因此只能把简报
+做成纯手动触发。本改动让生成的简报可缓存、可复用：
+
+- **存储**：`projects.meta.ai_brief`，走新增的 `ProjectRepository.set_meta_key`
+  （**不建新表**）。写缓存刻意**不推高** `updated_at`：初版走
+  `update_meta_signals`，它写行时把 `updated_at` 推到几微秒后的「现在」，
+  于是 `updated_at > generated_at` 当场成立、缓存**出生即过期** —— 症状是
+  每次打开详情页都要重新点生成。单测全 mock 写入路径抓不到这种竞态，
+  靠真库往返测试（`test_store_then_read_roundtrip_is_fresh`）定位。
+  `merge_meta` 保留未知键，重评/采集回写不会冲掉缓存
+  （回归钉：`test_meta_ai_brief_key_survives_rescore`）。
+- **新鲜度**：缓存的 `generated_at` 晚于/等于行 `updated_at` 即新鲜；
+  重评、改融资、采集回写都会推高 `updated_at` → 缓存自动过期，
+  无需失效钩子。缺时间戳的缓存视为不存在（宁可重生成，不让旧解读配新分数）。
+- **API 语义**（API_SPEC §32 同步改写）：`GET` 从「POST 别名（每次重新
+  生成、花 LLM 额度）」改为**只读缓存**，永不触发生成；`POST` 增加可选
+  `{"force": true}`，默认先查缓存。响应新增 `cached` / `stale` /
+  `generated_at`。
+- **前端**：进详情页自动 GET 零成本展示缓存解读（「缓存 · x 分钟前」角标），
+  无缓存/过期显示空态与引导按钮（过期提示「评分已更新」）；
+  「重新生成」= force=true。
+- 回归：`test_ai_brief.py` 19 条（缓存命中不调 LLM、过期重生成、force
+  强制、GET 只读、meta 存续钉）。
+
+### Changed — 项目详情页信息架构重排（2026-09-06）
+
+详情页此前 11 个区块平铺，「简报」沉在第 7 屏、两块纯明细（四路分析 /
+8 维子分）占着第 2、3 屏，首屏看不到解读。按「决策 → 行动 → 个人 → 明细」
+四层重排：
+
+- **新顺序**：为何是这个标签 → 简报 → AI 追问 → 可核验信号 → 参与清单 →
+  Opportunity 行动流 → 我的投入 → 校正这条判断 → 融资 → 四路分析 → 8 维子分；
+  右栏锚点导航同步。
+- **四个区块默认折叠**（`CollapsibleSection` 新组件）：Opportunity 行动流、
+  融资、四路分析、8 维子分。头部整行可点（`aria-expanded`），折叠时子树
+  不挂载。用受控 button 而非原生 `<details>`：React 对 details 的 open
+  属性是受控语义，重渲染会把用户手动展开的状态打回去。
+- **简报改手动生成**：`autoLoad={false}`，进页面不再自动调 LLM（此前每次
+  进详情页都烧一次预算），面板内已有「生成解读」按钮承担触发。
+
+### Fixed — 本地 .env 的 SEED_FALLBACK_ENABLED 泄进测试环境（2026-09-05）
+
+`tests/conftest.py` 的测试隔离清单（APP_ENV / API_KEY / HOST / DB_PATH）漏了
+种子开关。开发者本地 `.env` 按生产加固清单把 `SEED_FALLBACK_ENABLED` 写成
+false 后，pydantic-settings 在 import 期读入，§10.2 的 seed fallback 在本机
+测试里永不触发：`test_seed_fallback.py` 两条流水线用例 CI 全绿、本机稳定红
+（`assert 0 > 0`，与代码改动毫无关系，极难归因）。
+
+- conftest 改为强制 `os.environ["SEED_FALLBACK_ENABLED"] = "true"`，与本文件
+  既有条目同一哲学：**测试环境要的是与本地 .env 无关的确定性**。
+- 生产侧断言不受影响：`test_production_hardening.py` 用 init kwargs 显式构造
+  Settings（优先级高于环境变量），且生产自检本身无条件覆盖该字段；
+  test_pipeline_run / api/test_collections 需要的「关」都是 settings 对象上
+  显式 monkeypatch 的。
+- 实测：4 个引用该开关的测试文件 117 条全过。此前全量套件 7 条失败中，5 条为
+  ai-chat 功能引入的门禁问题、2 条即本条 —— 七条均已逐条修复并单独复跑验证。
+
+### Added — 项目详情页 AI 追问对话（2026-09-05）
+
+详情页此前只有「智能解读」一次性独白（`POST /projects/{id}/ai-brief`），
+用户对「为什么是这个分」「参与的主要风险」这类追问没有出口。本功能补上
+多轮对话：
+
+- **`POST /api/v1/projects/{project_id}/ai-chat`**（`routers/v1/ai_chat.py`
+  + `services/ai_chat.py`）：会话历史由前端持有、随请求传入，服务端无状态。
+  system prompt 注入项目快照（评分因子 / narrative / team / risk /
+  tokenomics / 融资 / 规则简报 bullets），数据里没有的字段要求模型明说没有。
+- **鉴权归属**：与 ai-brief 同口径进 `ANON_WRITABLE`（写一句理由）—— 会走
+  LLM 但由 `LLM_DAILY_BUDGET_USD` 预算门统一拦成本，不按角色锁。
+- **无规则回退**：自由问答无法用模板拼，降级只有 `llm_disabled` /
+  `budget_exceeded` / `llm_error` 三态，`reply` 为 null 并透传原因，前端按
+  原因给处置提示（口径对齐 API_SPEC §43a）。
+- **成本控制**：服务端只发最近 12 条历史（6 轮）、单条 ≤2000 字、请求 ≤20
+  条；前端输入限 500 字，预算闸门在 `llm_chat` 内、请求发出前检查。
+- **前端 `AiChatPanel`**：详情页新增「AI 追问」section（`pd-chat`，同步右栏
+  锚点导航），预设问题 chips 引导高价值提问，Enter 发送 / 失败把话还给输入框。
+- 回归：`backend/tests/test_ai_chat.py` 15 条（降级语义、上下文截断与接地、
+  路由校验与字段透传，全部 mock `llm_chat` 不联网）；全量套件 3403 通过、
+  覆盖率 89%。
+
 ### Fixed — CI 整套后端测试因传递依赖漂移而收集失败（2026-09-04）
 
 `anyio` 与 `starlette` 是 fastapi 的传递依赖，此前没有写进

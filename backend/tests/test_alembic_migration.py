@@ -34,6 +34,8 @@ _EXPECTED_TABLES = {
     "opportunity_assessments",
     "opportunity_economic_snapshots",
     "watchlist",
+    # 用户自主「不参与」标记（2026-09-08，迁移 0010）
+    "project_skips",
     "weight_changelog",
     # V2 新表（§5.4，迁移 0002）
     "quarantine",
@@ -71,8 +73,9 @@ _REVISION_TABLES: dict[str, set[str]] = {
     # 0008 只给 projects 加了一列（veto），不引入新表
     "0008": set(),
     "0009": {"watched_wallets"},
+    "0010": {"project_skips"},
 }
-_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]
+_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]
 
 
 def _tables_removed_after(revision: str) -> set[str]:

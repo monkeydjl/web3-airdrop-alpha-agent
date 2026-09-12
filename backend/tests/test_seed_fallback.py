@@ -48,24 +48,28 @@ def test_seed_projects_created_at_is_none():
         assert p.created_at is None, f"Project {p.name} has created_at={p.created_at}, expected None"
 
 
-def test_seed_projects_have_diverse_sectors():
-    projects = get_seed_raw_projects()
-    sectors = {p.sector for p in projects if p.sector}
+def test_seed_dataset_have_diverse_sectors():
+    """Seed 数据集的赛道多样性（2026-09-05 起多样性在数据集层面：真实项目
+    全部已发币会被过滤掉，过滤后输出只剩唯一的 pre-TGE 演示条目）。"""
+    sectors = {str(p.get("sector")) for p in SEED_PROJECTS if p.get("sector")}
     assert len(sectors) >= 5, f"Expected >=5 sectors, got {sectors}"
 
 
-def test_seed_projects_have_funding_clues():
-    """At least some seed projects carry funding data for token_risk heuristics (§6.5)."""
-    projects = get_seed_raw_projects()
-    with_funding = [p for p in projects if p.funding_total_usd and p.funding_total_usd > 0]
+def test_seed_dataset_have_funding_clues():
+    """Seed 数据集携带 funding 数据供 token_risk 启发式使用（§6.5）。
+
+    断言对象是 SEED_PROJECTS 数据集而非 get_seed_raw_projects() 过滤输出：
+    已发币的真实项目（funding 线索的主要载体）会被过滤掉。
+    """
+    with_funding = [p for p in SEED_PROJECTS if p.get("funding_total_usd") and p["funding_total_usd"] > 0]
     assert len(with_funding) >= 3, f"Expected >=3 projects with funding, got {len(with_funding)}"
 
     # At least one tier1 investor
-    tier1 = [p for p in projects if p.funding_tier == "tier1"]
+    tier1 = [p for p in SEED_PROJECTS if p.get("funding_tier") == "tier1"]
     assert len(tier1) >= 1
 
     # At least one with lead investors
-    with_leads = [p for p in projects if p.funding_lead_investors]
+    with_leads = [p for p in SEED_PROJECTS if p.get("funding_lead_investors")]
     assert len(with_leads) >= 1
 
 

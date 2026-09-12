@@ -190,6 +190,8 @@ async def test_start_disabled_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(settings, "scheduler_enabled", False)
     monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
     monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "notify_enabled", False)
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
 
     sched = UnifiedScheduler(registry)
     sched.start()
@@ -393,6 +395,8 @@ async def test_archive_alone_still_starts_scheduler(monkeypatch):
     monkeypatch.setattr(settings, "scheduler_enabled", False)
     monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
     monkeypatch.setattr(settings, "archive_scheduler_enabled", True)
+    # vitals 是第五个独立开关，不符合这条测试的假设（无关维度应该关掉）
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
 
     sched = UnifiedScheduler(_make_fake_registry())
     sched.start()
@@ -468,3 +472,56 @@ def test_run_archive_swallows_errors(monkeypatch, tmp_path):
     sched._run_archive()  # 不应抛出
 
     assert "unified_scheduler.archive_failed" in events
+
+
+# ── vitals job（官网活性探测）───────────────────────────────────────────────
+# 同归档 job 一组测：它是为了回答「这个项目官网还活着吗」而每天跑一次的
+# 探测，独立于采集/分析。漏注册时新东西什么都不发生，所以今天它得被锁进
+# 测试里（2026-09-08 新增的教训就是这类东西加了一直没被跑）。
+
+
+@pytest.mark.asyncio
+async def test_vitals_job_is_registered(monkeypatch):
+    """vitals job 启动后必须出现在 job 列表里。"""
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "vitals_probe" in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_vitals_job_absent_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "vitals_probe" not in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_vitals_alone_still_starts_scheduler(monkeypatch):
+    """vitals 是归档那种的服务—— 它了别的都关了也应该能跑起来。
+
+    否则会跟归档 job 一样被「全都关了所以不起调度器」的诊断碾过去，
+    恰恰 vitals 本来就是「托管维护」（装上就没声那类）。
+    """
+    monkeypatch.setattr(settings, "scheduler_enabled", False)
+    monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "notify_enabled", False)
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert sched.scheduler.running
+        assert [j["id"] for j in sched.get_jobs()] == ["vitals_probe"]
+    finally:
+        sched.shutdown(wait=False)

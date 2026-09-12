@@ -62,6 +62,7 @@ _JOB_OWNER: dict[str, str] = {
     "analysis_run_queue": "SCHEDULER_ENABLED",
     "archive_cleanup": "ARCHIVE_SCHEDULER_ENABLED",
     "notify_digest": "NOTIFY_ENABLED",
+    "vitals_probe"       : "VITALS_SCHEDULER_ENABLED",
 }
 _COLLECTION_SWITCH = "COLLECTION_SCHEDULER_ENABLED"
 
