@@ -96,9 +96,10 @@ export function ActionQueue({ limit = 5, onDone }: Props) {
   };
 
   return (
-    <div className="dash-card p-5">
-      <div className="mb-1 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">今日行动</h2>
+    <div className="dash-card p-5 h-full flex flex-col justify-between">
+      <div>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-ink">今日行动</h2>
         <button
           type="button"
           onClick={() => reload()}
@@ -195,9 +196,10 @@ export function ActionQueue({ limit = 5, onDone }: Props) {
           );
         })}
       </ul>
+      </div>
 
       {items.length > 0 && (
-        <p className="mt-3 text-[11px] leading-relaxed text-ink-muted">
+        <p className="mt-3 pt-3 border-t border-line/60 text-[11px] leading-relaxed text-ink-muted">
           标记「已做」会写入你的交互记录，可在
           <Link href="/portfolio" className="mx-1 underline">
             参与复盘

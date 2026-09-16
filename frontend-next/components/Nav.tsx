@@ -51,12 +51,15 @@ export function Nav() {
     <aside className="app-sidebar">
       {/* ── 品牌 ── */}
       <Link href="/" className="app-sidebar-brand">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-farm text-white">
-          <Radar className="h-[18px] w-[18px]" strokeWidth={2.2} />
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-400 text-slate-950 shadow-lg shadow-emerald-500/25">
+          <Radar className="h-5 w-5" strokeWidth={2.4} />
         </span>
         <div className="app-sidebar-brand-text leading-tight">
-          <div className="text-sm font-semibold tracking-tight text-ink">空投阿尔法</div>
-          <div className="font-mono text-[10px] tracking-wide text-ink-faint">早期项目雷达</div>
+          <div className="text-sm font-bold tracking-tight text-ink flex items-center gap-1.5">
+            <span>空投阿尔法</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-farm animate-pulse" />
+          </div>
+          <div className="font-mono text-[10px] tracking-wider text-ink-faint uppercase">Alpha Terminal</div>
         </div>
       </Link>
 
@@ -69,10 +72,13 @@ export function Nav() {
             <Link
               key={item.href}
               href={item.href}
-              className={`app-sidebar-nav-item ${active ? 'active' : ''}`}
+              className={`app-sidebar-nav-item group relative ${active ? 'active font-semibold' : ''}`}
             >
-              <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+              <Icon className="h-5 w-5 shrink-0 transition-transform group-hover:scale-110" strokeWidth={active ? 2.3 : 1.9} />
               <span className="app-sidebar-nav-label">{item.label}</span>
+              {active && (
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-farm shadow-sm shadow-farm" />
+              )}
             </Link>
           );
         })}
@@ -87,8 +93,8 @@ export function Nav() {
         title="切换主题"
       >
         {theme === 'dark'
-          ? <Sun className="h-5 w-5 shrink-0" strokeWidth={2} />
-          : <Moon className="h-5 w-5 shrink-0" strokeWidth={2} />}
+          ? <Sun className="h-5 w-5 shrink-0 text-amber-400" strokeWidth={2} />
+          : <Moon className="h-5 w-5 shrink-0 text-slate-600" strokeWidth={2} />}
         <span className="app-sidebar-nav-label">{theme === 'dark' ? '浅色模式' : '深色模式'}</span>
       </button>
 
@@ -100,7 +106,7 @@ export function Nav() {
         <div className="app-sidebar-api">
           <span
             className={`h-2 w-2 shrink-0 rounded-full ${
-              health === null ? 'bg-ink-faint' : health.ok ? 'bg-farm' : 'bg-red-500'
+              health === null ? 'bg-ink-faint' : health.ok ? 'bg-farm animate-pulse' : 'bg-red-500'
             }`}
           />
           <span className="app-sidebar-footer-text text-xs text-ink-muted">
@@ -109,8 +115,8 @@ export function Nav() {
           <span className="app-sidebar-footer-text ml-auto font-mono text-[11px] text-ink-faint">v1.4.2</span>
         </div>
         <div className="app-sidebar-engine-badges">
-          <span className="app-sidebar-engine-chip">score-v1.4 · 权威</span>
-          <span className="app-sidebar-engine-chip">opportunity-v2.0 · 影子</span>
+          <span className="app-sidebar-engine-chip font-mono text-[10px] border-emerald-500/30 text-emerald-400 dark:bg-emerald-500/10">score-v1.4 · 权威</span>
+          <span className="app-sidebar-engine-chip font-mono text-[10px] border-cyan-500/30 text-cyan-400 dark:bg-cyan-500/10">opp-v2.0 · 影子</span>
         </div>
       </div>
     </aside>

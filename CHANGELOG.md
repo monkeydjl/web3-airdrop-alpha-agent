@@ -151,6 +151,23 @@ quest 数据源(Galxe/Layer3 都要 key)，找不到测试网/积分/任务入�
   另：手编含中文的 .bat 必须保留 UTF-8 BOM（`test_repo_windows_scripts_all_have_bom`
   当场抓到编辑弄丢 BOM —— 门禁系统自身按设计工作了）。
 
+### Added — 采集入库门槛：静态过滤死项目（2026-09-15）
+
+用户点名：Goose 这类已经死了的项目不该被扫描进库 —— 官网没了、X 停更，
+表面上是活项目，实际不能参与也没法跟进，在采集里整条算法应被剔除。
+
+两条路径分离看空间情况：
+
+- 有官网 / 有 GitHub 里非测试网的项目本来就该留着。单条 URL 占位（聚合
+  站链接本身）不够下令，特点是第一条话》（DefiLlama place url 肯定不出现）
+  + GitHub repo 早已停更（最近 push 超过 365 天）。这两个条件同时为真时才
+  把项目拦在采集门外。层级不命中，不算视它畏死。数据测试（用户 brochure
+  不误伤、不抢匀体积安静赔钱的拦截。
+- 基于现有防呆：itNoise / 已发币品牌脚本的逻辑没动，这个规则参照起来
+  是机械的工作。
+- 日志再留点新动：`defillama.zombie_skipped` 计数事件一个处长评估机器
+  的代理数。另一个思想加热，不动 `defillama.noise_skipped` 老伙伴。
+
 ### Added — AI 简报缓存（2026-09-06）
 
 此前 `POST /projects/{id}/ai-brief` 每次调用都完整重新生成，GET 还是 POST

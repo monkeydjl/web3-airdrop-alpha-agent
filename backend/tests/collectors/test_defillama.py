@@ -315,3 +315,50 @@ class TestFacetOfListedBrandToken:
         ]
         candidates = collector._filter_candidates(protocols)
         assert [c["name"] for c in candidates] == ["Mystic Finance myPLUME"]
+
+
+class TestZombieFilter:
+    """入库前的死项目过滤：没官网、GitHub 久不更新，不该出现在候选里。
+
+    导火索（2026-09-15 用户原话）：「像 Goose 那样的项目根本就不该进这个库」 —
+    这类项目数据面再健康（TVL 在动）也查不到别的证据：
+    - 官网缺失（或者 defillama.com 占位链接）；
+    - GitHub 注册后没人每年再 push 过；
+    - 跟持有类项目的「死网站」是可以由它独立查证的。
+    """
+
+    def test_url_missing_and_github_stale_is_dropped(self, collector: DefiLlamaCollector) -> None:
+        """F1：url 缺失且无 ppmitted github。**假定应采取尽的快筛。"""
+        protocols = [
+            {"name": "DeadZone", "slug": "deadzone", "url": "", "github": ["deadgh"],
+             "category": "DeFi", "tvl": 5_000_000, "twitter": None, "symbol": "-"},
+            {"name": "LiveLink", "slug": "livelink", "url": "https://live.example",
+             "github": ["lslabs"], "category": "DeFi", "tvl": 20_000_000, "symbol": "-"},
+        ]
+        out = collector._filter_candidates(protocols)
+        names = [p["name"] for p in out]
+        assert "DeadZone" not in names
+        assert "LiveLink" in names
+
+    def test_url_placeholder_never_survives(self, collector: DefiLlamaCollector) -> None:
+        """F2：URL 里挂着聚合站详情页占位链（非真官网）的也应被撇。"""
+        protocols = [
+            {"name": "Placeholder", "slug": "ph", "url": "https://defillama.com/protocol/ph",
+             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
+            {"name": "RealSite", "slug": "real", "url": "https://real.example",
+             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
+        ]
+        out = collector._filter_candidates(protocols)
+        names = [p["name"] for p in out]
+        assert "Placeholder" not in names
+        assert "RealSite" in names
+
+    def test_zombie_with_testnet_kept(self, collector: DefiLlamaCollector) -> None:
+        """Goose 那反证：就算项目有 testnet 也不该进（因为这是个噪音特质）。"""
+        protocols = [
+            {"name": "Goose", "slug": "goose", "url": "",
+             "github": ["GooseFarmLabs"], "has_testnet": True,
+             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
+        ]
+        out = collector._filter_candidates(protocols)
+        assert out == [], "Goose 这种条目不该留下来 (testnet 是展能不是保命)"

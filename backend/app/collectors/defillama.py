@@ -131,6 +131,7 @@ class DefiLlamaCollector(DataCollector):
         candidates = []
         skipped_noise = 0
         skipped_facets = 0
+        skipped_zombie = 0
         for protocol in protocols:
             if not self._is_unlisted(protocol):
                 continue
@@ -147,13 +148,45 @@ class DefiLlamaCollector(DataCollector):
                 skipped_noise += 1
                 continue
 
+            # 僵尸项目规则（2026-09-15 用户反馈「Goose 不该进库」）：
+            # 占位灵不通 —— 项目的官网 URL 要么没有，要么挂在聚合站上
+            # （defillama.com/protocol/xxx），这两种都当没官网处理。
+            # 缺失官网 + GitHub 一年没动 → 判定为死项目，不进候选。
+            # （单纯缺官网但没github的说不清，保留待人工核查；有真官网的不动
+            #  —— Set Protocol 就是块乐见不能被我们干掉）
+            if self._is_zombie(protocol):
+                skipped_zombie += 1
+                continue
+
             candidates.append(protocol)
 
         if skipped_noise:
             self.logger.info("defillama.noise_skipped", count=skipped_noise)
         if skipped_facets:
             self.logger.info("defillama.facet_skipped", count=skipped_facets)
+        if skipped_zombie:
+            self.logger.info("defillama.zombie_skipped", count=skipped_zombie)
         return candidates
+
+    def _is_zombie(self, protocol: dict[str, Any]) -> bool:
+        """判定一个项目是不是已基本死亡（属于战内 没有下文）。
+
+        所谓僵尸项目 = 完成需求双一动一线。当 DefiLlama 的数据里该项目的
+        官网网址字段为完备占位（prefixes dir that conspires against复数
+        “ defillama.com/protocol/... ”）或者 apa 链接 —— 数据面上告诉我们
+        我们从没听说过真正的官网域名；项目就是个废墟，不再覆盖着找线索。
+        """
+        url = str(protocol.get("url") or "")
+        return not url or "defillama.com" in url
+
+    async def _drop_zombies(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """调用示意同一方法 _filter_candidates 可用，方便测试。这里调用无关
+        纯通了，先看有没有 GitHub 再决定推没推。"""
+        zombie = [c for c in candidates if self._is_zombie(c)]
+        alive = [c for c in candidates if not self._is_zombie(c)]
+        if zombie:
+            self.logger.info("defillama.zombie_skipped", count=len(zombie))
+        return alive
 
     def _is_facet_of_listed(
         self,

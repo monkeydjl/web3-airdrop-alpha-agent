@@ -56,6 +56,28 @@ _OK = "ok"
 _DEAD = "dead"
 _UNKNOWN = "unknown"
 
+# 聚合站的**项目详情页**不是官网 —— DefiLlama 没有官网字段时，采集器用它做
+# 占位链接（实测：Plume Vaults、Goose 的 url 都是 `defillama.com/protocol/...`）。
+# 对这种链接做活性探测只会得到「聚合站活着」，跟项目本身死没死完全无关 ——
+# 探错对象会把僵尸项目粉饰成活着。
+_AGGREGATOR_HOSTS = (
+    "defillama.com",
+    "www.defillama.com",
+    "coingecko.com",
+    "www.coingecko.com",
+    "coinmarketcap.com",
+    "www.coinmarketcap.com",
+)
+
+
+def is_aggregator_url(url: str) -> bool:
+    """判断 URL 是不是聚合站的项目页（不属于官网探测对象）。"""
+    try:
+        host = httpx.URL(url).host or ""
+    except Exception:
+        return False
+    return host.lower() in _AGGREGATOR_HOSTS
+
 
 async def probe_site(url: str) -> tuple[str, int | None]:
     """对一个 URL 探测一次。返回 (verdict, http_status)。"""
@@ -108,7 +130,7 @@ async def run_vitals_probe(repo: ProjectRepository | None = None) -> dict[str, i
     pending: list[tuple[str, str, bool | None]] = []  # (project_id, url, prev alive)
     for row in rows:
         url = row.get("url")
-        if not url:
+        if not url or is_aggregator_url(str(url)):
             stats["skipped_no_url"] += 1
             continue
 

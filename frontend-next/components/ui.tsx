@@ -25,30 +25,66 @@ export function StatCard({
   hint?: string;
   accent?: 'farm' | 'watch' | 'ignore' | 'brand';
 }) {
-  const ring =
-    accent === 'farm'
-      ? 'from-farm/20 to-transparent'
-      : accent === 'watch'
-        ? 'from-watch/20 to-transparent'
-        : accent === 'ignore'
-          ? 'from-ignore/15 to-transparent'
-          : 'from-brand-500/15 to-transparent';
-  const valueColor =
-    accent === 'farm'
-      ? 'text-farm dark:text-farm'
-      : accent === 'watch'
-        ? 'text-watch dark:text-watch'
-        : accent === 'ignore'
-          ? 'text-ignore-dark dark:text-slate-300'
-          : 'text-farm dark:text-farm';
+  const isFarm = accent === 'farm';
+  const isWatch = accent === 'watch';
+  const isIgnore = accent === 'ignore';
+
+  const accentBorder = isFarm
+    ? 'border-emerald-500/30 hover:border-emerald-500/60'
+    : isWatch
+      ? 'border-amber-500/30 hover:border-amber-500/60'
+      : isIgnore
+        ? 'border-slate-700/50 hover:border-slate-500/60'
+        : 'border-cyan-500/30 hover:border-cyan-500/60';
+
+  const glowBg = isFarm
+    ? 'bg-gradient-to-br from-emerald-500/10 to-transparent'
+    : isWatch
+      ? 'bg-gradient-to-br from-amber-500/10 to-transparent'
+      : isIgnore
+        ? 'bg-gradient-to-br from-slate-500/10 to-transparent'
+        : 'bg-gradient-to-br from-cyan-500/10 to-transparent';
+
+  const valueColor = isFarm
+    ? 'text-emerald-400 font-mono'
+    : isWatch
+      ? 'text-amber-400 font-mono'
+      : isIgnore
+        ? 'text-slate-400 font-mono'
+        : 'text-cyan-300 font-mono';
+
+  const badgeText = isFarm ? 'PRIORITY' : isWatch ? 'MONITOR' : isIgnore ? 'NOISE' : 'RADAR';
+  const badgeClass = isFarm
+    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+    : isWatch
+      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+      : isIgnore
+        ? 'bg-slate-800 text-slate-400 border border-slate-700'
+        : 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30';
+
+  const progressBg = isFarm
+    ? 'bg-gradient-to-r from-emerald-500 to-cyan-400'
+    : isWatch
+      ? 'bg-amber-400'
+      : isIgnore
+        ? 'bg-slate-600'
+        : 'bg-cyan-400';
 
   return (
-    <div className={`dash-card relative overflow-hidden p-4 sm:p-5`}>
-      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${ring}`} />
+    <div className={`dash-card relative overflow-hidden p-4 sm:p-5 border ${accentBorder} transition-all duration-200 group`}>
+      <div className={`pointer-events-none absolute inset-0 ${glowBg}`} />
       <div className="relative">
-        <div className="text-xs font-medium uppercase tracking-wider text-ink-muted">{label}</div>
-        <div className={`mt-1 text-3xl font-bold tabular-nums ${valueColor}`}>{value}</div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted">{label}</span>
+          <span className={`font-mono text-[9px] font-bold px-1.5 py-0.5 rounded ${badgeClass}`}>
+            {badgeText}
+          </span>
+        </div>
+        <div className={`mt-2 text-3xl font-extrabold tabular-nums tracking-tight ${valueColor}`}>{value}</div>
         {hint ? <div className="mt-1 text-xs text-ink-faint">{hint}</div> : null}
+        <div className="w-full bg-surface-3 h-1 rounded-full mt-3 overflow-hidden">
+          <div className={`h-full rounded-full ${progressBg}`} style={{ width: isFarm ? '75%' : isWatch ? '45%' : isIgnore ? '85%' : '95%' }} />
+        </div>
       </div>
     </div>
   );
@@ -67,28 +103,28 @@ export function ScoreRing({
   const c = 2 * Math.PI * r;
   const pct = Math.max(0, Math.min(100, score)) / 100;
   const color =
-    label === 'FARM' ? '#10b981' : label === 'WATCH' ? '#f59e0b' : label === 'IGNORE' ? '#64748b' : '#6366f1';
+    label === 'FARM' ? '#00f5a0' : label === 'WATCH' ? '#ffb800' : label === 'IGNORE' ? '#64748b' : '#00d2ff';
 
   return (
-    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+    <div className="relative inline-flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
       <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="currentColor" className="text-line" strokeWidth="8" />
+        <circle cx="50" cy="50" r={r} fill="none" stroke="currentColor" className="text-surface-3" strokeWidth="7" />
         <circle
           cx="50"
           cy="50"
           r={r}
           fill="none"
           stroke={color}
-          strokeWidth="8"
+          strokeWidth="7"
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={c * (1 - pct)}
-          className="transition-all duration-700"
+          className="transition-all duration-700 drop-shadow-[0_0_8px_rgba(0,245,160,0.3)]"
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold tabular-nums text-ink">{score}</span>
-        <span className="text-[10px] tracking-wide text-ink-faint">评分</span>
+        <span className="text-xl font-mono font-extrabold tabular-nums text-ink leading-tight">{Math.round(score)}</span>
+        <span className="text-[9px] font-mono tracking-wider text-ink-faint uppercase">SCORE</span>
       </div>
     </div>
   );
@@ -100,11 +136,11 @@ export function ConfidenceBar({ value }: { value: number }) {
     <div>
       <div className="mb-1 flex justify-between text-xs">
         <span className="text-ink-muted">置信度</span>
-        <span className={`font-semibold tabular-nums ${confColor(value)}`}>{formatPct(value)}</span>
+        <span className={`font-mono font-semibold tabular-nums ${confColor(value)}`}>{formatPct(value)}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-brand-500 to-farm transition-all duration-500"
+          className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500 shadow-sm shadow-emerald-500/30"
           style={{ width: `${pct}%` }}
         />
       </div>
