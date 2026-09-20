@@ -671,6 +671,53 @@ function OpportunityAssessmentSummary({
             {opportunity.model_version} / {opportunity.profile_version}
             {opportunity.assessment_id ? ` · id ${opportunity.assessment_id}` : ''}
           </p>
+          {(opportunity.capital_friction_tier_zh || opportunity.fatigue_index != null) && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {opportunity.capital_friction_tier_zh ? (
+                <span
+                  className={`badge text-xs ${
+                    opportunity.capital_friction_tier === 'zero_cost'
+                      ? 'border border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-medium'
+                      : opportunity.capital_friction_tier === 'heavy_capital'
+                      ? 'border border-red-500/40 bg-red-500/15 text-red-700 dark:text-red-300 font-medium'
+                      : 'bg-surface-3 text-ink-muted'
+                  }`}
+                >
+                  {opportunity.capital_friction_tier_zh}
+                </span>
+              ) : null}
+              {opportunity.fatigue_index != null ? (
+                <span
+                  className={`badge text-xs ${
+                    opportunity.fatigue_index >= 0.7
+                      ? 'border border-amber-500/40 bg-amber-500/20 text-amber-800 dark:text-amber-300 font-semibold'
+                      : 'bg-surface-3 text-ink-muted'
+                  }`}
+                >
+                  PUA 疲劳指数: {(opportunity.fatigue_index * 100).toFixed(0)}%
+                  {opportunity.fatigue_level_zh ? ` (${opportunity.fatigue_level_zh})` : ''}
+                </span>
+              ) : null}
+            </div>
+          )}
+          {opportunity.exit_advisory?.active ? (
+            <div className="mt-3 rounded-lg border border-red-500/50 bg-red-500/10 p-2.5 text-red-700 dark:text-red-300">
+              <div className="flex items-center gap-1.5 font-bold text-xs">
+                <span>🚨 止损撤退预警 (Exit Advisory)</span>
+                <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px]">
+                  {opportunity.exit_advisory.severity === 'critical' ? '紧急' : '警示'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs">{opportunity.exit_advisory.recommendation_zh}</p>
+              {opportunity.exit_advisory.reasons_zh?.length ? (
+                <ul className="mt-1 list-inside list-disc text-[11px] opacity-90">
+                  {opportunity.exit_advisory.reasons_zh.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

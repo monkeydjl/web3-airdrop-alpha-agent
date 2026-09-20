@@ -221,6 +221,31 @@ def _digest_event(new_projects: list[dict[str, Any]], now: datetime) -> NotifyEv
     )
 
 
+def _exit_advisories_today(conn: Any, window_start: str) -> list[dict[str, Any]]:
+    """寻找在今日窗口内暴露出严重恶化（官网离线或开发停更）的项目。"""
+    sql = """
+        SELECT id, name, site_alive, github_recent_push_days
+        FROM projects
+        WHERE (site_alive = 0 OR github_recent_push_days >= 60)
+          AND updated_at >= ?
+    """
+    rows = conn.execute(sql, (window_start,)).fetchall()
+    results = []
+    for r in rows:
+        reasons = []
+        if _row_value(r, "site_alive") == 0:
+            reasons.append("核心官网/交互门户失联")
+        if (_row_value(r, "github_recent_push_days") or 0) >= 60:
+            reasons.append("代码连续 60 天无更新")
+        if reasons:
+            results.append({
+                "project_id": str(_row_value(r, "id")),
+                "project_name": _row_value(r, "name"),
+                "reasons": reasons,
+            })
+    return results
+
+
 def evaluate_events(
     conn: Any,
     *,
@@ -281,6 +306,18 @@ def evaluate_events(
                 event_key=f"signal:{s['project_id']}:{s['raw_id']}",
                 title=f"观察列表新信号（{s['source_id']}）：{'、'.join(s['flags'])}",
                 body=_project_ref(s["project_id"], s["project_name"]),
+            )
+        )
+
+    for adv in _exit_advisories_today(conn, window):
+        pid = adv["project_id"]
+        reasons_text = "、".join(adv["reasons"])
+        events.append(
+            NotifyEvent(
+                event_type="exit_advisory",
+                event_key=f"exit_adv:{pid}:{_day_tag(now)}",
+                title=f"🚨 止损撤退预警：{reasons_text}",
+                body=f"{_project_ref(pid, adv['project_name'])}\n建议：项目出现显著恶化或停摆迹象，建议立即赎回质押资产并停止交互。",
             )
         )
 

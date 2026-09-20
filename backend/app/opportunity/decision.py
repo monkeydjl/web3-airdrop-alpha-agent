@@ -11,6 +11,10 @@ from app.opportunity.models import (
     RiskLevel,
 )
 
+PUA_FATIGUE_WARNING = "PUA_FATIGUE_WARNING"
+HEAVY_CAPITAL_LOCKUP = "HEAVY_CAPITAL_LOCKUP"
+EXIT_RECOMMENDED = "EXIT_RECOMMENDED"
+
 WATCH_REASON_ACTIONS = {
     "WAIT_TASK_OPEN": "Wait for official participation to open, then reassess.",
     "WAIT_RULES": "Wait for official eligibility and multiwallet rules, then reassess.",
@@ -20,6 +24,7 @@ WATCH_REASON_ACTIONS = {
     "WAIT_EARLY_ENTRY": "Monitor for an actionable participation window or clearer eligibility path.",
     "REWARD_TOO_UNCERTAIN": "Validate conservative reward economics before participating.",
     "SINGLE_WALLET_ONLY": "Use a compatible single-wallet profile if official rules permit it.",
+    PUA_FATIGUE_WARNING: "Hold off on depositing further capital due to prolonged points inflation or multiple seasons.",
 }
 
 IGNORE_REASON_ACTIONS = {
@@ -31,6 +36,8 @@ IGNORE_REASON_ACTIONS = {
     "NO_AIRDROP_CASE": "Do not participate without a viable distribution case.",
     "PROJECT_INACTIVE": "Do not participate while the project is confirmed inactive.",
     "PROFILE_MISMATCH": "Do not participate under this user profile.",
+    HEAVY_CAPITAL_LOCKUP: "Do not participate under current profile due to excessive capital lockup or high friction.",
+    EXIT_RECOMMENDED: "Do not participate or hold assets: project exhibits severe deterioration or inactivity.",
 }
 
 BLOCK_REASON_ACTIONS = {
@@ -78,6 +85,7 @@ WATCH_REASON_ACTIONS_ZH = {
     "WAIT_EARLY_ENTRY": "观察可参与的时间窗口或更清晰的资格路径。",
     "REWARD_TOO_UNCERTAIN": "在参与前先核验保守收益预期。",
     "SINGLE_WALLET_ONLY": "若官方规则允许，使用兼容的单钱包画像参与。",
+    "PUA_FATIGUE_WARNING": "积分周期过长或多季稀释严重，存在明显 PUA 风险，建议暂停追加资金沉淀。",
 }
 
 IGNORE_REASON_ACTIONS_ZH = {
@@ -89,6 +97,8 @@ IGNORE_REASON_ACTIONS_ZH = {
     "NO_AIRDROP_CASE": "在缺乏可行分发依据时不建议参与。",
     "PROJECT_INACTIVE": "项目已确认处于非活跃状态，切勿参与。",
     "PROFILE_MISMATCH": "在当前用户画像下不建议参与。",
+    "HEAVY_CAPITAL_LOCKUP": "资金沉淀要求过高或摩擦损耗过大，不符合低成本/保本画像。",
+    "EXIT_RECOMMENDED": "项目出现显著恶化或停摆迹象，建议立即撤出资金并停止交互。",
 }
 
 BLOCK_REASON_ACTIONS_ZH = {
@@ -129,11 +139,15 @@ def decide(
     )
 
     if inputs.safety_blocked or capital_security_risk == RiskLevel.CRITICAL:
-        return _blocked("SAFETY_BLOCK", now)
+        return _blocked("SAFETY_BLOCK", now, inputs)
     if inputs.integrity_blocked:
-        return _blocked("INTEGRITY_BLOCK", now)
+        return _blocked("INTEGRITY_BLOCK", now, inputs)
     if inputs.official_multiwallet_policy == "forbidden":
-        return _blocked("RULE_BLOCK", now)
+        return _blocked("RULE_BLOCK", now, inputs)
+
+    # 止损撤退判定：若项目检测到恶化/停摆迹象，直接触发撤退
+    if inputs.exit_advisory and inputs.exit_advisory.get("active"):
+        return _not_fit("EXIT_RECOMMENDED", now, inputs)
 
     # 已确知为"不符合画像"的硬约束必须先于"证据不足"判定。
     # 超预算成本会让 _derive_eligibility 返回 None（probability.py:115），进而把
@@ -142,13 +156,13 @@ def decide(
     # 且 _structural_reason 里的 TOO_EXPENSIVE 在真实链路上永远不可达。
     determinate_code = _determinate_misfit(inputs, profile)
     if determinate_code is not None:
-        return _not_fit(determinate_code, now)
+        return _not_fit(determinate_code, now, inputs)
 
     if inputs.critical_unknowns:
         codes = _unique_codes(
             _UNKNOWN_REASON_CODES.get(unknown, "WAIT_MORE_EVIDENCE") for unknown in inputs.critical_unknowns
         )
-        return _insufficient(codes, now)
+        return _insufficient(codes, now, inputs)
 
     missing_codes = _missing_evidence_codes(
         inputs=inputs,
@@ -159,12 +173,12 @@ def decide(
         economics=economics,
     )
     if missing_codes:
-        return _insufficient(missing_codes, now)
+        return _insufficient(missing_codes, now, inputs)
 
     if inputs.task_path_known is False:
-        return _insufficient(("WAIT_RULES",), now)
+        return _insufficient(("WAIT_RULES",), now, inputs)
     if inputs.authorization_exit_known is False:
-        return _insufficient(("WAIT_MORE_EVIDENCE",), now)
+        return _insufficient(("WAIT_MORE_EVIDENCE",), now, inputs)
 
     assert event is not None
     assert eligibility is not None
@@ -185,12 +199,12 @@ def decide(
         profile=profile,
     )
     if structural_code is not None:
-        return _not_fit(structural_code, now)
+        return _not_fit(structural_code, now, inputs)
 
     if inputs.profile_fit == "single_wallet_only":
-        return _monitor(("SINGLE_WALLET_ONLY",), now)
+        return _monitor(("SINGLE_WALLET_ONLY",), now, inputs)
     if inputs.participation_open is False:
-        return _monitor(("WAIT_TASK_OPEN",), now)
+        return _monitor(("WAIT_TASK_OPEN",), now, inputs)
 
     confidence = inputs.confidence
     has_airdrop_evidence = (
@@ -243,8 +257,13 @@ def decide(
     )
     watch_codes = _unique_codes(code for passed, code in failed_checks if not passed)
     if watch_codes:
-        return _monitor(watch_codes, now)
-    return _actionable(now)
+        return _monitor(watch_codes, now, inputs)
+
+    # PUA 疲劳指数判定：若疲劳指数 >= 0.70，阻断直接冲刺，降级为观望
+    if inputs.fatigue_index is not None and inputs.fatigue_index >= 0.70:
+        return _monitor(("PUA_FATIGUE_WARNING",), now, inputs)
+
+    return _actionable(now, inputs)
 
 
 def _missing_evidence_codes(
@@ -345,6 +364,11 @@ def _structural_reason(
         return "TOO_EXPENSIVE"
     if inputs.weekly_time_confirmed_minimum and inputs.weekly_maintenance_hours > profile.weekly_time_limit_hours:
         return "TOO_TIME_INTENSIVE"
+    if inputs.capital_friction_tier == "heavy_capital" and (
+        (inputs.capital_at_risk_usd is not None and inputs.capital_at_risk_usd.low >= 500)
+        or (inputs.hard_cost_usd is not None and inputs.hard_cost_usd.low > profile.hard_cost_limit_per_wallet_usd)
+    ):
+        return HEAVY_CAPITAL_LOCKUP
     return None
 
 
@@ -385,7 +409,7 @@ def _unique_codes(codes: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(codes))
 
 
-def _actionable(now: datetime) -> DecisionResult:
+def _actionable(now: datetime, inputs: OpportunityInputs | None = None) -> DecisionResult:
     deadline = now + timedelta(hours=48)
     return DecisionResult(
         status=DecisionStatus.ACTIONABLE,
@@ -393,10 +417,13 @@ def _actionable(now: datetime) -> DecisionResult:
         recommended_action=_ACTIONABLE_ACTION,
         review_at=deadline,
         expires_at=deadline,
+        exit_advisory=inputs.exit_advisory if inputs else None,
+        fatigue_index=inputs.fatigue_index if inputs else None,
+        capital_friction_tier=inputs.capital_friction_tier if inputs else None,
     )
 
 
-def _monitor(codes: tuple[str, ...], now: datetime) -> DecisionResult:
+def _monitor(codes: tuple[str, ...], now: datetime, inputs: OpportunityInputs | None = None) -> DecisionResult:
     deadline = now + timedelta(days=7)
     return DecisionResult(
         status=DecisionStatus.MONITOR,
@@ -405,10 +432,13 @@ def _monitor(codes: tuple[str, ...], now: datetime) -> DecisionResult:
         recommended_action=WATCH_REASON_ACTIONS[codes[0]],
         review_at=deadline,
         expires_at=deadline,
+        exit_advisory=inputs.exit_advisory if inputs else None,
+        fatigue_index=inputs.fatigue_index if inputs else None,
+        capital_friction_tier=inputs.capital_friction_tier if inputs else None,
     )
 
 
-def _insufficient(codes: tuple[str, ...], now: datetime) -> DecisionResult:
+def _insufficient(codes: tuple[str, ...], now: datetime, inputs: OpportunityInputs | None = None) -> DecisionResult:
     deadline = now + timedelta(days=7)
     return DecisionResult(
         status=DecisionStatus.INSUFFICIENT_EVIDENCE,
@@ -417,10 +447,13 @@ def _insufficient(codes: tuple[str, ...], now: datetime) -> DecisionResult:
         recommended_action=_INSUFFICIENT_ACTION,
         review_at=deadline,
         expires_at=deadline,
+        exit_advisory=inputs.exit_advisory if inputs else None,
+        fatigue_index=inputs.fatigue_index if inputs else None,
+        capital_friction_tier=inputs.capital_friction_tier if inputs else None,
     )
 
 
-def _not_fit(code: str, now: datetime) -> DecisionResult:
+def _not_fit(code: str, now: datetime, inputs: OpportunityInputs | None = None) -> DecisionResult:
     deadline = now + timedelta(days=30)
     return DecisionResult(
         status=DecisionStatus.NOT_FIT,
@@ -429,10 +462,13 @@ def _not_fit(code: str, now: datetime) -> DecisionResult:
         recommended_action=_NOT_FIT_ACTION,
         review_at=deadline,
         expires_at=deadline,
+        exit_advisory=inputs.exit_advisory if inputs else None,
+        fatigue_index=inputs.fatigue_index if inputs else None,
+        capital_friction_tier=inputs.capital_friction_tier if inputs else None,
     )
 
 
-def _blocked(code: str, now: datetime) -> DecisionResult:
+def _blocked(code: str, now: datetime, inputs: OpportunityInputs | None = None) -> DecisionResult:
     deadline = now + timedelta(days=30)
     return DecisionResult(
         status=DecisionStatus.BLOCKED,
@@ -442,4 +478,7 @@ def _blocked(code: str, now: datetime) -> DecisionResult:
         recommended_action=_BLOCKED_ACTION,
         review_at=deadline,
         expires_at=deadline,
+        exit_advisory=inputs.exit_advisory if inputs else None,
+        fatigue_index=inputs.fatigue_index if inputs else None,
+        capital_friction_tier=inputs.capital_friction_tier if inputs else None,
     )

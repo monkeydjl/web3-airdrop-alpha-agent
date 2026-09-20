@@ -32,6 +32,11 @@ from app.opportunity.models import (
     ProbabilityRange,
     RiskSet,
 )
+from app.services.anti_pua import (
+    FATIGUE_LEVEL_ZH,
+    FRICTION_TIER_ZH,
+    get_fatigue_level,
+)
 
 WORKFLOW_VERSION: Literal["opportunity-action-workflow-v1"] = "opportunity-action-workflow-v1"
 LEGACY_MODEL_VERSION: Literal["score-v1.4"] = "score-v1.4"
@@ -201,6 +206,12 @@ class OpportunitySummaryProjection(BaseModel):
     scored_at: datetime
     review_at: datetime
     expires_at: datetime
+    fatigue_index: float | None = None
+    fatigue_level: str | None = None
+    fatigue_level_zh: str | None = None
+    capital_friction_tier: str | None = None
+    capital_friction_tier_zh: str | None = None
+    exit_advisory: dict[str, Any] | None = None
 
 
 class NextActionProjection(BaseModel):
@@ -380,10 +391,11 @@ def build_workflow_projection(
         can_start_validation=state == "ACTIONABLE",
     )
 
+    opportunity_proj = _project_opportunity(assessment)
     return OpportunityWorkflowProjection(
         project_id=project_id,
         legacy=_project_legacy(project),
-        opportunity=_project_opportunity(assessment),
+        opportunity=opportunity_proj,
         workflow=WorkflowSection(
             state=state,
             next_action=next_action,
@@ -435,6 +447,14 @@ def _project_opportunity(
 ) -> OpportunitySummaryProjection | None:
     if assessment is None:
         return None
+
+    fatigue_index = assessment.fatigue_index
+    fatigue_level = get_fatigue_level(fatigue_index) if fatigue_index is not None else None
+    fatigue_level_zh = FATIGUE_LEVEL_ZH.get(fatigue_level) if fatigue_level else None
+
+    friction_tier = assessment.capital_friction_tier
+    friction_tier_zh = FRICTION_TIER_ZH.get(friction_tier) if friction_tier else None
+
     return OpportunitySummaryProjection(
         assessment_id=assessment.assessment_id,
         model_version=assessment.model_version,
@@ -459,6 +479,12 @@ def _project_opportunity(
         scored_at=assessment.scored_at,
         review_at=assessment.review_at,
         expires_at=assessment.expires_at,
+        fatigue_index=fatigue_index,
+        fatigue_level=fatigue_level,
+        fatigue_level_zh=fatigue_level_zh,
+        capital_friction_tier=friction_tier,
+        capital_friction_tier_zh=friction_tier_zh,
+        exit_advisory=assessment.exit_advisory,
     )
 
 

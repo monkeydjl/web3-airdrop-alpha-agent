@@ -107,5 +107,12 @@
   - `.github/PULL_REQUEST_TEMPLATE.md`、`CONVENTIONS.md`、`CONTRIBUTING.md`、`skills/review-code-review.md`、`skills/backend-agent-implementation.md` 统一移除 `.lock.txt` 与「关键模块 ≥ 90%」漂移；
   - `evaluation/README.md` 修正实际目录结构并对齐回测/校准脚本真实路径；
   - 修复 `backend/app/services/user_scope.py` 文档字符串中问号紧贴句号引发的编码门禁误报；全仓文档一致性与编码门禁 100% 通过。
+- 防 PUA 与保本止损引擎（Anti-PUA & Capital Preservation Engine，2026-09-20 落地）：
+  - 核心算法：`backend/app/services/anti_pua.py` 纯确定性函数（`calculate_fatigue_index` 4 维权重、`classify_capital_friction_tier` 4 级摩擦、`evaluate_exit_advisory` 4 类恶化指标）；
+  - 决策门禁：`app/opportunity/decision.py` 拦截疲劳指数 ≥ 0.70 降级为 `WATCH`（`PUA_FATIGUE_WARNING`），超限重资本标记 `IGNORE`（`HEAVY_CAPITAL_LOCKUP`），触发恶化预警直接终止交互（`EXIT_RECOMMENDED`）；
+  - 投影与通知：`app/opportunity/workflow.py` 在 `OpportunitySummaryProjection` 注入中英文分析，`app/notify/evaluator.py` 联动生成 `exit_advisory` 紧急预警事件；
+  - 前端视觉呈现：`ProjectCard.tsx` 动态呈现「零资金成本」「PUA预警」「建议撤退」徽标；`app/project/[id]/page.tsx` 顶部显示撤退与疲劳警示横幅；`OpportunityWorkflowPanel.tsx` 嵌入撤退预警框与摩擦等级；
+  - 1,079 项全栈单元、契约与前端规范测试 100% 通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
+

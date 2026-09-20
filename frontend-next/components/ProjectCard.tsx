@@ -67,6 +67,30 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
                   待验证路径
                 </span>
               ) : null}
+              {project.signals?.has_testnet && !project.signals?.has_points_program ? (
+                <span
+                  className="badge bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-medium"
+                  title="纯测试网/零成本交互：无需质押真实本金，保本优先"
+                >
+                  零资金成本
+                </span>
+              ) : null}
+              {project.reason?.includes('PUA_FATIGUE_WARNING') ? (
+                <span
+                  className="badge bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-semibold"
+                  title="PUA疲劳度过高：多季积分稀释、长周期或代币不透明，建议降低投入预期"
+                >
+                  PUA预警
+                </span>
+              ) : null}
+              {project.reason?.includes('EXIT_RECOMMENDED') ? (
+                <span
+                  className="badge bg-red-500/20 text-red-400 border border-red-500/40 text-[10px] font-semibold animate-pulse"
+                  title="触发撤退预警：流动性流失、开发停摆或官网离线，建议及时止损撤退"
+                >
+                  建议撤退
+                </span>
+              ) : null}
               {project.signals?.site_alive === false ? (
                 <span
                   className="badge bg-red-500/15 text-red-400 border border-red-500/30 text-[10px]"

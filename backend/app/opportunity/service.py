@@ -201,6 +201,9 @@ class OpportunityService:
             scored_at=now,
             review_at=decision.review_at,
             expires_at=decision.expires_at,
+            fatigue_index=decision.fatigue_index,
+            capital_friction_tier=decision.capital_friction_tier,
+            exit_advisory=decision.exit_advisory,
         )
         if persist:
             return self.opportunity_repo.save_assessment(assessment)

@@ -232,6 +232,17 @@ export interface LegacyDecisionProjection {
   authoritative: true;
 }
 
+export type FatigueLevel = 'low' | 'medium' | 'high' | 'critical';
+export type FrictionTier = 'zero_cost' | 'low_cost' | 'medium_cost' | 'heavy_capital';
+
+export interface ExitAdvisory {
+  active: boolean;
+  reasons: string[];
+  reasons_zh: string[];
+  severity: 'critical' | 'warning' | 'none' | string;
+  recommendation_zh: string;
+}
+
 export interface OpportunitySummaryProjection {
   shadow: true;
   assessment_id: string | null;
@@ -258,6 +269,12 @@ export interface OpportunitySummaryProjection {
   scored_at: string;
   review_at: string;
   expires_at: string;
+  fatigue_index?: number | null;
+  fatigue_level?: FatigueLevel | null;
+  fatigue_level_zh?: string | null;
+  capital_friction_tier?: FrictionTier | null;
+  capital_friction_tier_zh?: string | null;
+  exit_advisory?: ExitAdvisory | null;
 }
 
 export interface NextActionProjection {
@@ -377,6 +394,12 @@ export interface OpportunityWorkflowProjection {
   validation: ValidationSection;
   review_at: string | null;
   expires_at: string | null;
+  fatigue_index?: number | null;
+  fatigue_level?: FatigueLevel | null;
+  fatigue_level_zh?: string | null;
+  capital_friction_tier?: FrictionTier | null;
+  capital_friction_tier_zh?: string | null;
+  exit_advisory?: ExitAdvisory | null;
 }
 
 export interface InteractionCreatePayload {

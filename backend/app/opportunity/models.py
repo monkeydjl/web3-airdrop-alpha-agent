@@ -228,6 +228,9 @@ class DecisionResult(BaseModel):
     recommended_action: str
     review_at: datetime
     expires_at: datetime
+    exit_advisory: dict[str, Any] | None = None
+    fatigue_index: float | None = None
+    capital_friction_tier: str | None = None
 
     @model_validator(mode="after")
     def remediation_matches_status(self) -> Self:
@@ -293,6 +296,9 @@ class OpportunityInputs(BaseModel):
     integrity_blocked: bool | None = None
     safety_blocked: bool | None = None
     evidence_ids: tuple[str, ...] = ()
+    fatigue_index: float | None = None
+    capital_friction_tier: str | None = None
+    exit_advisory: dict[str, Any] | None = None
 
 
 class OpportunityAssessment(BaseModel):
@@ -328,6 +334,9 @@ class OpportunityAssessment(BaseModel):
     scored_at: datetime
     review_at: datetime
     expires_at: datetime
+    fatigue_index: float | None = None
+    capital_friction_tier: str | None = None
+    exit_advisory: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def remediation_matches_status(self) -> Self:

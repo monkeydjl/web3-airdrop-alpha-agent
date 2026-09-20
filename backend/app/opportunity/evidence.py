@@ -576,6 +576,49 @@ def build_inputs(
         liquidity=liquidity_risk,
     )
 
+    from app.services.anti_pua import (
+        calculate_fatigue_index,
+        classify_capital_friction_tier,
+        evaluate_exit_advisory,
+    )
+
+    has_points = bool(project_row.get("has_points_program"))
+    desc = (str(project_row.get("description") or "") + " " + str(project_row.get("sector") or "")).lower()
+    season_count = 1
+    if "season 3" in desc or "s3" in desc:
+        season_count = 3
+    elif "season 2" in desc or "s2" in desc:
+        season_count = 2
+
+    tge_clarity = "unannounced"
+    if project_row.get("explicit_airdrop_mention"):
+        tge_clarity = "confirmed_quarter"
+
+    is_perp = any(k in desc for k in ("perp", "derivative", "perpetual"))
+    hard_cost_val = normalized.get("hard_cost_usd")
+    hard_cost_base = hard_cost_val.base if hard_cost_val else None
+    cap_risk_val = normalized.get("capital_at_risk_usd")
+    cap_risk_base = cap_risk_val.base if cap_risk_val else None
+
+    friction_tier = classify_capital_friction_tier(
+        has_testnet=bool(project_row.get("has_testnet")),
+        hard_cost_usd=hard_cost_base,
+        capital_at_risk_usd=cap_risk_base,
+        is_perp=is_perp,
+    )
+
+    fatigue_idx = calculate_fatigue_index(
+        duration_months=6.0 if has_points else 1.0,
+        season_count=season_count,
+        tge_transparency=tge_clarity,
+        lockup_days=30 if is_perp else 0,
+    ) if has_points else 0.10
+
+    exit_adv = evaluate_exit_advisory(
+        github_inactive_days=project_row.get("github_recent_push_days"),
+        site_alive=project_row.get("site_alive"),
+    )
+
     return OpportunityInputs(
         project_id=project_id,
         event_probability=normalized.get("event_probability"),
@@ -623,4 +666,7 @@ def build_inputs(
         integrity_blocked=integrity_blocked,
         safety_blocked=safety_blocked,
         evidence_ids=tuple(sorted({record.evidence_id for record, _ in supporting if record.evidence_id is not None})),
+        fatigue_index=fatigue_idx,
+        capital_friction_tier=friction_tier,
+        exit_advisory=exit_adv,
     )

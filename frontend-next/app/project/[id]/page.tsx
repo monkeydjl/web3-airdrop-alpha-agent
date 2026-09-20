@@ -454,6 +454,38 @@ export default function ProjectPage() {
       {/* 项目切换栏：上一个/下拉跳选/下一个 + ←/→ 快捷键 */}
       <ProjectSwitcher projectId={project.id} />
 
+      {/* 止损与撤退主动预警 / 官网离线横幅 */}
+      {(reasons.includes('EXIT_RECOMMENDED') || signals.site_alive === false) && (
+        <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-300">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div className="space-y-1">
+              <h3 className="font-semibold text-red-200">止损与撤退预警 (Exit Advisory)</h3>
+              <p className="text-xs leading-relaxed text-red-300/90">
+                {signals.site_alive === false
+                  ? '该项目官网探测连接失败（4xx/5xx 或域名离线），项目方可能已停服或放弃运营，建议立即暂停资金投入并撤回流动性。'
+                  : '监测到该项目触发撤退预警信号（流动性大幅流失、开发长期停摆或规则恶化），当前市场环境下建议保本优先，及时止损。'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PUA 疲劳度过高预警横幅 */}
+      {reasons.includes('PUA_FATIGUE_WARNING') && (
+        <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-amber-200">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div className="space-y-1">
+              <h3 className="font-semibold text-amber-100">PUA 疲劳与稀释预警 (Fatigue & Dilution Warning)</h3>
+              <p className="text-xs leading-relaxed text-amber-300/90">
+                该项目积分周期过长、赛季膨胀严重或代币经济透明度极低（PUA 疲劳指数 ≥ 0.70）。在当前存量市场下，直接冲刺期望回报低，已降级为观察并建议控制时间与交互成本。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* masthead */}
       <header className="mb-9 grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">

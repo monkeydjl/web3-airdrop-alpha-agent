@@ -395,6 +395,7 @@ const ACTION_REASON_ZH: Record<string, string> = {
   WAIT_EARLY_ENTRY: '观察可参与的时间窗口或更清晰的资格路径。',
   REWARD_TOO_UNCERTAIN: '在参与前先核验保守收益预期。',
   SINGLE_WALLET_ONLY: '若官方规则允许，使用兼容的单钱包画像参与。',
+  PUA_FATIGUE_WARNING: '积分周期过长或多季稀释严重，存在明显 PUA 风险，建议暂停追加资金沉淀。',
 
   // Ignore reasons
   NEGATIVE_EXPECTED_VALUE: '在基准预期净收益为负时切勿参与。',
@@ -405,6 +406,8 @@ const ACTION_REASON_ZH: Record<string, string> = {
   NO_AIRDROP_CASE: '在缺乏可行分发依据时不建议参与。',
   PROJECT_INACTIVE: '项目已确认处于非活跃状态，切勿参与。',
   PROFILE_MISMATCH: '在当前用户画像下不建议参与。',
+  HEAVY_CAPITAL_LOCKUP: '资金沉淀要求过高或摩擦损耗过大，不符合低成本/保本画像。',
+  EXIT_RECOMMENDED: '项目出现显著恶化或停摆迹象，建议立即撤出资金并停止交互。',
 };
 
 export function reasonActionZh(msg: string, code?: string): string {
@@ -438,6 +441,8 @@ const RECOMMENDED_ACTION_ZH: Record<string, string> = {
     '在当前画像下切勿投入时间或资金。',
   'do not interact until credible remediation evidence is verified.':
     '在可信整改证据核实前切勿交互。',
+  'redeem staked assets and discontinue interaction due to negative project trajectory.':
+    '由于项目发展出现显著恶化/停摆迹象，建议立即赎回质押资产并停止交互。',
 };
 
 export function recommendedActionZh(act?: string | null): string {
@@ -479,5 +484,29 @@ const VERIFICATION_STATUS_ZH: Record<string, string> = {
 export function verificationStatusZh(s?: string | null): string {
   if (!s) return '';
   return VERIFICATION_STATUS_ZH[s.toLowerCase()] || s;
+}
+
+const FATIGUE_LEVEL_ZH: Record<string, string> = {
+  low: '健康早期',
+  medium: '成熟观望',
+  high: '高疲劳预警',
+  critical: '严重 PUA 风险',
+};
+
+export function fatigueLevelZh(lvl?: string | null): string {
+  if (!lvl) return '';
+  return FATIGUE_LEVEL_ZH[lvl.toLowerCase()] || lvl;
+}
+
+const FRICTION_TIER_ZH: Record<string, string> = {
+  zero_cost: '零资金成本',
+  low_cost: '极低磨损',
+  medium_cost: '中度磨损',
+  heavy_capital: '重度质押/高磨损',
+};
+
+export function capitalFrictionTierZh(tier?: string | null): string {
+  if (!tier) return '';
+  return FRICTION_TIER_ZH[tier.toLowerCase()] || tier;
 }
 
