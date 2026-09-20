@@ -27,6 +27,7 @@ Reference:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -35,8 +36,11 @@ import os
 import re
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any, cast
 
+import bcrypt
+import jwt
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -56,6 +60,10 @@ PUBLIC_PREFIXES = (
     "/version",
     "/api/v1/webhook",
     "/api/v1/auth/anonymous",  # 匿名 token 签发端点
+    "/api/v1/auth/register",   # 用户注册
+    "/api/v1/auth/login",      # 用户登录
+    "/api/v1/auth/refresh",    # 刷新 token
+    "/api/v1/ha/status",       # HA 状态与负载均衡健康探测（公开只读）
 )
 
 # 需要管理员权限的端点（匿名 token 不可访问），**不分方法**——整个前缀都锁。
@@ -134,6 +142,144 @@ def requires_admin(method: str, path: str) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
+# RBAC 角色与权限控制 (V3, ADR-008 §2 & ROADMAP §25.2, §25.7)
+# ═══════════════════════════════════════════════════════════════
+
+ROLE_ADMIN = "admin"
+ROLE_ANALYST = "analyst"
+ROLE_VIEWER = "viewer"
+ROLE_ANONYMOUS = "anonymous"
+
+ALL_ROLES = (ROLE_ADMIN, ROLE_ANALYST, ROLE_VIEWER, ROLE_ANONYMOUS)
+
+# viewer 角色禁止访问的写操作与路径（只读仪表盘角色，ROADMAP §25.2 & ADR-008 §2）
+VIEWER_FORBIDDEN_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
+    # 反馈操作（ROADMAP §25.2: viewer 不可提交反馈）
+    (
+        frozenset({"POST"}),
+        re.compile(r"^/api/v1/feedback(?:/|$)"),
+    ),
+    # 状态写操作（项目跳过/参与/台账/交互/关注列表/画像）
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/interactions(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "DELETE"}),
+        re.compile(r"^/api/v1/watchlist(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "DELETE"}),
+        re.compile(r"^/api/v1/projects/[^/]+/skip(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/participation(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/projects/[^/]+/participation(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "DELETE"}),
+        re.compile(r"^/api/v1/roi(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "DELETE"}),
+        re.compile(r"^/api/v1/projects/[^/]+/roi(?:/|$)"),
+    ),
+    (
+        frozenset({"DELETE"}),
+        re.compile(r"^/api/v1/user-profile(?:/|$)"),
+    ),
+    (
+        frozenset({"POST"}),
+        re.compile(r"^/api/v1/projects/[^/]+/opportunity/(?:evaluate|evidence)(?:/|$)"),
+    ),
+)
+
+
+def check_role_permission(role: str, method: str, path: str) -> tuple[bool, str]:
+    """检查指定角色是否允许执行 (method, path) 操作。
+
+    角色权限矩阵 (ADR-008 §2 & ROADMAP §25.2):
+    - admin: 全部权限
+    - analyst: 查看项目、提交反馈、事后标注、re-score、管理个人资源
+    - viewer: 只读 Dashboard（不可触发 run/re-score、不可提交反馈与修改数据）
+    - anonymous: 查看项目、提交反馈/events（V2），不可触发 run/re-score，不可访问 admin 端点
+
+    Returns:
+        (allowed: bool, reason: str)
+    """
+    method = method.upper()
+
+    # 1. 公开路径一律放行
+    if any(path == p or path.startswith(p + "/") for p in PUBLIC_PREFIXES):
+        return True, ""
+
+    # 2. admin 角色拥有所有权限
+    if role == ROLE_ADMIN:
+        return True, ""
+
+    # 3. analyst 角色：允许 re-score，其余 admin 专属端点禁止
+    if role == ROLE_ANALYST:
+        if path.startswith("/api/v1/re-score"):
+            return True, ""
+        if requires_admin(method, path):
+            return False, "Admin access required for this endpoint"
+        return True, ""
+
+    # 4. viewer 角色：只读 Dashboard（不可触发 run/re-score、不可提交反馈与修改数据）
+    if role == ROLE_VIEWER:
+        if requires_admin(method, path):
+            return False, "Admin access required for this endpoint"
+        if any(method in methods and pattern.match(path) for methods, pattern in VIEWER_FORBIDDEN_RULES):
+            return False, f"Role '{ROLE_VIEWER}' is not authorized to perform {method} on {path}"
+        return True, ""
+
+    # 5. anonymous 角色：不可访问 admin 端点
+    if role == ROLE_ANONYMOUS:
+        if requires_admin(method, path):
+            return False, "Admin access required for this endpoint"
+        return True, ""
+
+    # 未知角色默认拒绝
+    return False, f"Role '{role}' is not recognized"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 密码安全 (V3, ROADMAP §25.3.3)
+# ═══════════════════════════════════════════════════════════════
+
+
+def hash_password(password: str) -> str:
+    """使用 bcrypt 哈希密码（cost factor 12，ROADMAP §25.3.3）。"""
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """验证明文密码与 bcrypt 哈希是否匹配。"""
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    """密码强度检查（ROADMAP §25.3.3）：≥8 字符，含大小写字母 + 数字。"""
+    if len(password) < 8:
+        return False, "密码长度必须至少为 8 个字符"
+    if not re.search(r"[A-Z]", password):
+        return False, "密码必须包含至少一个大写字母"
+    if not re.search(r"[a-z]", password):
+        return False, "密码必须包含至少一个小写字母"
+    if not re.search(r"[0-9]", password):
+        return False, "密码必须包含至少一个数字"
+    return True, ""
+
+
+# ═══════════════════════════════════════════════════════════════
 # Token 签发/校验
 # ═══════════════════════════════════════════════════════════════
 
@@ -159,6 +305,15 @@ def _get_secret() -> bytes:
     return _EPHEMERAL_SECRET
 
 
+def _get_jwt_secret() -> str:
+    """获取 JWT 签名密钥（字符串）。"""
+    if settings.jwt_secret:
+        return settings.jwt_secret
+    if settings.auth_token_secret:
+        return settings.auth_token_secret
+    return _get_secret().hex()
+
+
 def _b64url_encode(data: bytes) -> str:
     """URL-safe base64 编码（无 padding）。"""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -176,7 +331,7 @@ def issue_anonymous_token(
     user_id: str | None = None,
     ttl_hours: int | None = None,
 ) -> str:
-    """签发匿名 token。
+    """签发匿名 token（V2 HMAC 格式，向后兼容）。
 
     Args:
         user_id: 用户标识，None 时自动生成 anon-<uuid>
@@ -219,7 +374,7 @@ def issue_anonymous_token(
 
 
 def verify_token(token: str) -> dict[str, Any] | None:
-    """校验 token 并返回 payload。
+    """校验匿名 HMAC token 并返回 payload（V2，向后兼容）。
 
     Args:
         token: token 字符串
@@ -262,6 +417,162 @@ def verify_token(token: str) -> dict[str, Any] | None:
     return cast(dict[str, Any], payload)
 
 
+# ═══════════════════════════════════════════════════════════════
+# JWT 体系与吊销黑名单 (V3, ADR-008 & ROADMAP §25.3.3)
+# ═══════════════════════════════════════════════════════════════
+
+
+_BLACKLISTED_JTIS: set[str] = set()
+
+
+def issue_access_token(
+    user_id: str,
+    role: str,
+    expires_minutes: int | None = None,
+) -> tuple[str, str, int]:
+    """签发 JWT Access Token（V3，ADR-008 & ROADMAP §25.3.3）。
+
+    Returns:
+        (token_str, jti, expires_in_seconds)
+    """
+    if expires_minutes is None:
+        expires_minutes = settings.jwt_access_token_expire_minutes
+
+    now = int(time.time())
+    expires_in = expires_minutes * 60
+    exp = now + expires_in
+    jti = uuid.uuid4().hex
+
+    payload = {
+        "sub": user_id,
+        "role": role,
+        "iat": now,
+        "exp": exp,
+        "jti": jti,
+        "type": "access",
+    }
+
+    token = jwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
+    logger.info("auth.access_token_issued", user_id=user_id, role=role, jti=jti, exp=exp)
+    return token, jti, expires_in
+
+
+def issue_refresh_token(
+    user_id: str,
+    expires_days: int | None = None,
+) -> tuple[str, str, int]:
+    """签发 JWT Refresh Token（V3，ADR-008 & ROADMAP §25.3.3）。
+
+    Returns:
+        (token_str, jti, expires_in_seconds)
+    """
+    if expires_days is None:
+        expires_days = settings.jwt_refresh_token_expire_days
+
+    now = int(time.time())
+    expires_in = expires_days * 86400
+    exp = now + expires_in
+    jti = uuid.uuid4().hex
+
+    payload = {
+        "sub": user_id,
+        "iat": now,
+        "exp": exp,
+        "jti": jti,
+        "type": "refresh",
+    }
+
+    token = jwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
+    logger.info("auth.refresh_token_issued", user_id=user_id, jti=jti, exp=exp)
+    return token, jti, expires_in
+
+
+def hash_refresh_token(token: str) -> str:
+    """计算 Refresh Token 的 SHA-256 哈希用于在 sessions 表持久化。"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def blacklist_token_jti(
+    jti: str,
+    expires_at: datetime | None = None,
+    conn: Any | None = None,
+) -> None:
+    """将 JTI 记入吊销黑名单（内存缓存 + 持久化表）。"""
+    _BLACKLISTED_JTIS.add(jti)
+    if expires_at is None:
+        expires_at = datetime.fromtimestamp(time.time() + 7 * 86400, tz=UTC)
+
+    from app.db import DbConnection, get_connection
+    from app.repositories.user import BlacklistedJtiRepository
+
+    def _do_write(c: DbConnection) -> None:
+        repo = BlacklistedJtiRepository(c)
+        repo.blacklist_jti(jti, expires_at)
+
+    if conn is not None:
+        _do_write(conn)
+    else:
+        try:
+            with get_connection() as c:
+                _do_write(c)
+        except Exception as exc:
+            logger.warning("auth.blacklist_persist_failed", jti=jti, error=str(exc))
+
+
+def is_jti_blacklisted(jti: str, conn: Any | None = None) -> bool:
+    """检查 JTI 是否已被吊销。"""
+    if not jti:
+        return False
+    if jti in _BLACKLISTED_JTIS:
+        return True
+
+    from app.db import DbConnection, get_connection
+    from app.repositories.user import BlacklistedJtiRepository
+
+    def _do_check(c: DbConnection) -> bool:
+        repo = BlacklistedJtiRepository(c)
+        return repo.is_blacklisted(jti)
+
+    try:
+        if conn is not None:
+            res = _do_check(conn)
+        else:
+            with get_connection() as c:
+                res = _do_check(c)
+        if res:
+            _BLACKLISTED_JTIS.add(jti)
+        return res
+    except Exception:
+        return False
+
+
+def decode_and_verify_jwt(token: str, expected_type: str | None = None) -> dict[str, Any] | None:
+    """校验 JWT 签名、过期时间与吊销状态。
+
+    Args:
+        token: JWT 字符串
+        expected_type: 期望的 token 类型（"access" 或 "refresh"）
+
+    Returns:
+        payload 字典（成功）或 None（失败/过期/已吊销）
+    """
+    if not token or token.count(".") != 2:
+        return None
+    try:
+        payload = jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
+    except (jwt.PyJWTError, Exception):
+        return None
+
+    if expected_type and payload.get("type") != expected_type:
+        return None
+
+    jti = payload.get("jti")
+    if jti and is_jti_blacklisted(jti):
+        return None
+
+    return cast(dict[str, Any], payload)
+
+
 def is_admin_token(provided: str) -> bool:
     """检查是否为管理员 API Key。"""
     expected = (settings.api_key or "").strip()
@@ -276,26 +587,26 @@ def is_admin_token(provided: str) -> bool:
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
-    """双令牌鉴权中间件。
+    """双令牌与 JWT 鉴权中间件 (V2 + V3, ADR-008 & ROADMAP §25.7)。
 
     鉴权层级：
-    1. api_key 为空 → 全部放行（MVP 模式）
-    2. 公开路径 → 放行
-    3. X-API-Key / Bearer <api_key> → 管理员权限
-    4. Bearer <anonymous_token> → 匿名权限（受限）
-    5. 无 token → 401
+    1. api_key 为空且未提供凭证 → 全部放行（MVP 模式）
+    2. OPTIONS 预检请求 → 放行
+    3. 公开路径（PUBLIC_PREFIXES） → 放行
+    4. X-API-Key / Bearer <api_key> → 管理员权限
+    5. Bearer <jwt_token> → JWT 鉴权（校验 sub、role、exp、jti 黑名单）
+    6. Bearer <anonymous_token> → 匿名权限（受限）
+    7. 无有效凭证 → 401 UNAUTHORIZED
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         expected = (settings.api_key or "").strip()
-        if not expected:
-            return await call_next(request)
+        path = request.url.path
 
         # CORS 预检请求不携带自定义头，必须放行交给 CORSMiddleware 处理
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        path = request.url.path
         if any(path == p or path.startswith(p + "/") for p in PUBLIC_PREFIXES):
             return await call_next(request)
 
@@ -305,6 +616,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             auth = request.headers.get("Authorization") or ""
             if auth.lower().startswith("bearer "):
                 provided = auth[7:].strip()
+
+        # MVP 模式：若未配置 api_key 且未传任何凭证，放行
+        if not expected and not provided:
+            return await call_next(request)
 
         if not provided:
             return JSONResponse(
@@ -318,33 +633,129 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # 管理员 API Key
+        # 1. 管理员 API Key
         if is_admin_token(provided):
             request.state.user_id = "admin"
-            request.state.user_role = "admin"
+            request.state.user_role = ROLE_ADMIN
+            request.state.auth_method = "api_key"
             return await call_next(request)
 
-        # 匿名 token
-        payload = verify_token(provided)
-        if payload is not None:
-            user_id = payload.get("user_id", "anonymous")
-            role = payload.get("role", "anonymous")
+        # 1b. 动态可撤销 API Key (V3, ROADMAP §25.3.3)
+        if provided.startswith("ak_"):
+            def _verify_ak(raw_key: str) -> dict[str, Any] | None:
+                from app.db import get_connection
+                from app.repositories.api_key import ApiKeyRepository
 
-            # 检查管理员专用端点（整前缀 + 按方法两层规则）
-            if requires_admin(request.method, path):
+                with get_connection() as conn:
+                    repo = ApiKeyRepository(conn)
+                    record = repo.find_active_key_by_raw(raw_key)
+                    if record:
+                        repo.update_last_used(record["id"])
+                    return record
+
+            # P1-4: DB 查询与 12 轮 bcrypt 计算移出主事件循环
+            key_record = await asyncio.to_thread(_verify_ak, provided)
+            if key_record:
+                user_id = key_record["user_id"]
+                role = key_record["role"]
+                key_id = key_record["id"]
+
+                # RBAC 权限检查
+                allowed, reason = check_role_permission(role, request.method, path)
+                if not allowed:
+                    logger.warning(
+                        "auth.rbac_denied",
+                        user_id=user_id,
+                        role=role,
+                        method=request.method,
+                        path=path,
+                        reason=reason,
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "ok": False,
+                            "error": {
+                                "code": "FORBIDDEN",
+                                "message": reason,
+                            },
+                        },
+                    )
+
+                logger.info("auth.api_key_authenticated", user_id=user_id, key_id=key_id, role=role)
+                request.state.user_id = user_id
+                request.state.user_role = role
+                request.state.api_key_id = key_id
+                request.state.auth_method = "api_key"
+                return await call_next(request)
+
+        # 2. JWT Access Token (V3)
+        # P1-4: JWT 解密与 JTI 黑名单 DB 查询移出主事件循环
+        jwt_payload = await asyncio.to_thread(decode_and_verify_jwt, provided, "access")
+        if jwt_payload is not None:
+            user_id = jwt_payload.get("sub", "anonymous")
+            role = jwt_payload.get("role", ROLE_VIEWER)
+            jti = jwt_payload.get("jti", "")
+
+            # RBAC 权限检查
+            allowed, reason = check_role_permission(role, request.method, path)
+            if not allowed:
+                logger.warning(
+                    "auth.rbac_denied",
+                    user_id=user_id,
+                    role=role,
+                    method=request.method,
+                    path=path,
+                    reason=reason,
+                )
                 return JSONResponse(
                     status_code=403,
                     content={
                         "ok": False,
                         "error": {
                             "code": "FORBIDDEN",
-                            "message": "Admin access required for this endpoint",
+                            "message": reason,
                         },
                     },
                 )
 
             request.state.user_id = user_id
             request.state.user_role = role
+            request.state.jwt_jti = jti
+            request.state.auth_method = "jwt"
+            return await call_next(request)
+
+        # 3. 匿名 token (V2 HMAC)
+        payload = verify_token(provided)
+        if payload is not None:
+            user_id = payload.get("user_id", "anonymous")
+            role = payload.get("role", ROLE_ANONYMOUS)
+
+            # RBAC 权限检查
+            allowed, reason = check_role_permission(role, request.method, path)
+            if not allowed:
+                logger.warning(
+                    "auth.rbac_denied",
+                    user_id=user_id,
+                    role=role,
+                    method=request.method,
+                    path=path,
+                    reason=reason,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "ok": False,
+                        "error": {
+                            "code": "FORBIDDEN",
+                            "message": reason,
+                        },
+                    },
+                )
+
+            request.state.user_id = user_id
+            request.state.user_role = role
+            request.state.auth_method = "anonymous"
             return await call_next(request)
 
         # 无效凭证
@@ -365,7 +776,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 # ═══════════════════════════════════════════════════════════════
 
 
-def get_current_user(request: Request) -> dict[str, str]:
+def get_current_user(request: Request) -> dict[str, Any]:
     """从 request.state 获取当前用户信息。
 
     用于端点函数中获取 user_id：
@@ -376,9 +787,41 @@ def get_current_user(request: Request) -> dict[str, str]:
     """
     user_id = getattr(request.state, "user_id", None)
     role = getattr(request.state, "user_role", None)
+    auth_method = getattr(request.state, "auth_method", None)
+    jwt_jti = getattr(request.state, "jwt_jti", None)
 
     if not user_id:
-        # 鉴权未启用（MVP 模式）或公开路径
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return {"user_id": "anonymous", "role": ROLE_ANONYMOUS, "auth_method": "none", "jwt_jti": None}
 
-    return {"user_id": user_id, "role": role}
+    return {
+        "user_id": user_id,
+        "role": role or ROLE_ANONYMOUS,
+        "auth_method": auth_method or "unknown",
+        "jwt_jti": jwt_jti,
+    }
+
+
+def require_role(*allowed_roles: str):
+    """FastAPI 依赖注入：检查当前请求用户是否属于指定角色之一。
+
+    用于端点函数显式限定访问角色：
+        @router.post("/re-score", dependencies=[Depends(require_role("admin", "analyst"))])
+        def re_score(...):
+            ...
+    """
+    from fastapi import HTTPException
+
+    def _dependency(request: Request) -> str:
+        role = getattr(request.state, "user_role", ROLE_ANONYMOUS)
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "FORBIDDEN",
+                    "message": f"Role '{role}' is not authorized to access this resource",
+                },
+            )
+        return role
+
+    return _dependency
+

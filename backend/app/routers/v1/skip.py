@@ -9,9 +9,10 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Request
 from pydantic import BaseModel
 
+from app.auth import ROLE_ADMIN, get_current_user
 from app.db import get_connection
 from app.services.user_scope import DEFAULT_USER
 
@@ -40,9 +41,15 @@ def _project_exists(conn: Any, project_id: str) -> bool:
     response_model=SkipResponse,
     summary="标记项目为「不参与」",
 )
-def skip_project(project_id: str = Path(...), body: SkipRequest | None = None) -> SkipResponse:
+def skip_project(req: Request, project_id: str = Path(...), body: SkipRequest | None = None) -> SkipResponse:
     """标记项目为「不参与」。幂等：重复标记返回 already=True，不产生多行。"""
-    uid = (body.user_id if body else None) or DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = (body.user_id if body else None) or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = (body.user_id if body else None) or DEFAULT_USER
 
     try:
         with get_connection() as conn:
@@ -87,9 +94,15 @@ def skip_project(project_id: str = Path(...), body: SkipRequest | None = None) -
     response_model=SkipResponse,
     summary="取消「不参与」标记",
 )
-def unskip_project(project_id: str = Path(...), user_id: str | None = None) -> SkipResponse:
+def unskip_project(req: Request, project_id: str = Path(...), user_id: str | None = None) -> SkipResponse:
     """取消「不参与」。项目没被标记过时返回 404。"""
-    uid = user_id or DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = user_id or DEFAULT_USER
 
     try:
         with get_connection() as conn:

@@ -58,6 +58,10 @@ openpyxl==3.1.5
 psycopg[binary]==3.3.4
 alembic==1.19.1
 
+# ── 安全与认证 ──
+bcrypt==5.0.0
+pyjwt==2.14.0
+
 # ── 指标 ──
 prometheus-client==0.26.0
 

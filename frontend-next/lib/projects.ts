@@ -21,19 +21,30 @@ export interface AllProjects {
  * 列表、统计卡、赛道分布与筛选下拉全部基于被截断的切片计算，且界面上没有
  * 任何提示。
  */
-export async function fetchAllProjects(signal?: AbortSignal): Promise<AllProjects> {
-  const first = await apiFetch<ProjectsResponse>(`/projects?page=1&page_size=${PAGE_SIZE}`, {
-    signal,
-  });
+export async function fetchAllProjects(
+  signal?: AbortSignal,
+  options?: { curated?: boolean },
+): Promise<AllProjects> {
+  const curated = options?.curated ?? false;
+  const curatedQuery = curated ? '&curated=true' : '';
+  const first = await apiFetch<ProjectsResponse>(
+    `/projects?page=1&page_size=${PAGE_SIZE}${curatedQuery}`,
+    {
+      signal,
+    },
+  );
   const total = Number(first.total ?? first.projects?.length ?? 0);
   const projects = [...(first.projects || [])];
 
   const cap = Math.min(total, MAX_PROJECTS);
   let page = 2;
   while (projects.length < cap) {
-    const next = await apiFetch<ProjectsResponse>(`/projects?page=${page}&page_size=${PAGE_SIZE}`, {
-      signal,
-    });
+    const next = await apiFetch<ProjectsResponse>(
+      `/projects?page=${page}&page_size=${PAGE_SIZE}${curatedQuery}`,
+      {
+        signal,
+      },
+    );
     const batch = next.projects || [];
     if (batch.length === 0) break;
     projects.push(...batch);

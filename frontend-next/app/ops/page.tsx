@@ -1,6 +1,7 @@
 'use client';
 
 import { EmptyState, Switch, Toast } from '@/components/ui';
+import { AnomalyDetectionPanel } from '@/components/AnomalyDetectionPanel';
 import { TopBar } from '@/components/TopBar';
 import { apiFetch, fetchHealth } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
@@ -576,6 +577,11 @@ export default function OpsPage() {
           hint={`${ixSummary?.total ?? 0} 条记录`}
           tone={net < 0 ? 'watch' : 'farm'}
         />
+      </div>
+
+      {/* 异常检测与质量告警巡检 (W12-04) */}
+      <div className="mt-5">
+        <AnomalyDetectionPanel />
       </div>
 
       {/* main grid: sources | cost + health */}

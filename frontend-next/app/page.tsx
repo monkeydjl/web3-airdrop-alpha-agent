@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
-import { LABEL_ORDER, LABEL_ZH, sortProjects, stageZh } from '@/lib/format';
+import { LABEL_ORDER, sortProjects, stageZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSourceApi, Label, Project } from '@/lib/types';
@@ -75,12 +75,19 @@ function DashboardContent() {
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
-  const loader = useCallback(async (signal: AbortSignal) => {
-    const all = await fetchAllProjects(signal);
-    return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
-  }, []);
+  const [curatedOnly, setCuratedOnly] = useState(true);
+  // 工作台默认精选模式：后端已按评分/置信度/近90天活动/参与路径过滤。
+  // 关掉「精选模式」开关即可查看后台候选池（未达标项目不删除，只是不上首页）。
 
-  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, []);
+  const loader = useCallback(
+    async (signal: AbortSignal) => {
+      const all = await fetchAllProjects(signal, { curated: curatedOnly });
+      return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
+    },
+    [curatedOnly],
+  );
+
+  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly]);
   const projects: Project[] = useMemo(() => data?.projects ?? [], [data]);
   const truncated = data?.truncated ?? false;
 
@@ -254,6 +261,17 @@ function DashboardContent() {
         <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
           {/* Quick Filter Pills */}
           <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCuratedOnly((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                curatedOnly
+                  ? 'bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/20'
+                  : 'bg-surface-2 text-cyan-300 hover:bg-surface-3 border border-cyan-500/25'
+              }`}
+            >
+              ✨ 精选模式
+            </button>
             <button
               type="button"
               onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); }}

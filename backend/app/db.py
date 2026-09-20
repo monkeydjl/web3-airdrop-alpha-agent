@@ -742,6 +742,67 @@ def _sqlite_ddl() -> str:
                 error_message           TEXT
             );
 
+            -- V3 用户认证表（ADR-008 & ROADMAP §25.4）
+            CREATE TABLE IF NOT EXISTS users (
+                id              TEXT PRIMARY KEY,
+                email           TEXT UNIQUE NOT NULL,
+                password_hash   TEXT NOT NULL,
+                display_name    TEXT,
+                role            TEXT NOT NULL DEFAULT 'viewer',
+                is_active       INTEGER DEFAULT 1,
+                preferences     TEXT,
+                last_login_at   TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id                  TEXT PRIMARY KEY,
+                user_id             TEXT NOT NULL,
+                refresh_token_hash  TEXT NOT NULL UNIQUE,
+                ip                  TEXT,
+                user_agent          TEXT,
+                expires_at          TIMESTAMP NOT NULL,
+                revoked             INTEGER DEFAULT 0,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS blacklisted_jti (
+                jti             TEXT PRIMARY KEY,
+                expires_at      TIMESTAMP NOT NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                key_hash        TEXT NOT NULL UNIQUE,
+                role            TEXT NOT NULL,
+                last_used_at    TIMESTAMP,
+                expires_at      TIMESTAMP,
+                is_revoked      INTEGER DEFAULT 0,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- V3 多实例 HA 选主租约表（W12-03）
+            CREATE TABLE IF NOT EXISTS leader_election (
+                resource_id       TEXT PRIMARY KEY,
+                leader_id         TEXT NOT NULL,
+                lease_expires_at  TIMESTAMP NOT NULL,
+                acquired_at       TIMESTAMP NOT NULL,
+                version           INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
+
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+            CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_blacklisted_expires ON blacklisted_jti(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_revoked ON api_keys(is_revoked);
+
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);
             CREATE INDEX IF NOT EXISTS idx_projects_sector ON projects(sector);
@@ -1277,6 +1338,67 @@ def _postgres_ddl() -> str:
                 signals_archive_pruned  INTEGER DEFAULT 0,
                 error_message           TEXT
             );
+
+            -- V3 用户认证表（ADR-008 & ROADMAP §25.4）
+            CREATE TABLE IF NOT EXISTS users (
+                id              TEXT PRIMARY KEY,
+                email           TEXT UNIQUE NOT NULL,
+                password_hash   TEXT NOT NULL,
+                display_name    TEXT,
+                role            TEXT NOT NULL DEFAULT 'viewer',
+                is_active       INTEGER DEFAULT 1,
+                preferences     TEXT,
+                last_login_at   TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id                  TEXT PRIMARY KEY,
+                user_id             TEXT NOT NULL,
+                refresh_token_hash  TEXT NOT NULL UNIQUE,
+                ip                  TEXT,
+                user_agent          TEXT,
+                expires_at          TIMESTAMPTZ NOT NULL,
+                revoked             INTEGER DEFAULT 0,
+                created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS blacklisted_jti (
+                jti             TEXT PRIMARY KEY,
+                expires_at      TIMESTAMPTZ NOT NULL,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                key_hash        TEXT NOT NULL UNIQUE,
+                role            TEXT NOT NULL,
+                last_used_at    TIMESTAMPTZ,
+                expires_at      TIMESTAMPTZ,
+                is_revoked      INTEGER DEFAULT 0,
+                created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- V3 多实例 HA 选主租约表（W12-03）
+            CREATE TABLE IF NOT EXISTS leader_election (
+                resource_id       TEXT PRIMARY KEY,
+                leader_id         TEXT NOT NULL,
+                lease_expires_at  TIMESTAMPTZ NOT NULL,
+                acquired_at       TIMESTAMPTZ NOT NULL,
+                version           INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
+
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+            CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_blacklisted_expires ON blacklisted_jti(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_revoked ON api_keys(is_revoked);
 
             CREATE INDEX IF NOT EXISTS idx_projects_score ON projects(score);
             CREATE INDEX IF NOT EXISTS idx_projects_label ON projects(label);

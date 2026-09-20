@@ -75,6 +75,7 @@ class RawProject:
     github_stars: int = 0
     github_recent_push_days: int | None = None  # days since last push; None = unknown
     explicit_airdrop_mention: bool = False  # "airdrop confirmed" / official wording
+    explicit_no_airdrop: bool = False  # official statement disclaiming token / airdrop
     tvl_usd: float | None = None
     description: str | None = None
 
@@ -133,6 +134,7 @@ class RawProject:
             "github_stars": self.github_stars,
             "github_recent_push_days": self.github_recent_push_days,
             "explicit_airdrop_mention": self.explicit_airdrop_mention,
+            "explicit_no_airdrop": self.explicit_no_airdrop,
             "tvl_usd": self.tvl_usd,
             "description": self.description,
             "has_task_portal": self.has_task_portal,

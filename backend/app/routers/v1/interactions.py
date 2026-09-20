@@ -13,11 +13,13 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal, Self, cast
 
 import structlog
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.auth import ROLE_ADMIN, get_current_user
 from app.db import dict_from_row, get_connection, scalar
 from app.repository import ProjectRepository
+from app.services.user_scope import build_user_scope_filter
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["interactions"])
@@ -374,7 +376,7 @@ def _validate_status_transition(current_status: str | None, new_status: str) -> 
 
 
 @router.post("/interactions")
-def create_interaction(body: InteractionCreate) -> dict[str, Any]:
+def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
     """Create a participation log for a project."""
     repo = ProjectRepository()
     project = repo.get_by_id(body.project_id)
@@ -383,6 +385,14 @@ def create_interaction(body: InteractionCreate) -> dict[str, Any]:
             status_code=404,
             detail={"code": "NOT_FOUND", "message": f"Project {body.project_id} not found"},
         )
+
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = body.user_id
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = body.user_id
 
     score_at = project.get("score")
     label_at = project.get("label")
@@ -423,7 +433,7 @@ def create_interaction(body: InteractionCreate) -> dict[str, Any]:
             insert_sql,
             (
                 body.project_id,
-                body.user_id,
+                uid,
                 body.status,
                 started,
                 ended,
@@ -459,9 +469,10 @@ def create_interaction(body: InteractionCreate) -> dict[str, Any]:
         item = _row_to_item(row) if row else {"project_id": body.project_id}
         logger.info(
             "interaction.created",
-            interaction_id=item.get("id"),
+            id=item.get("id"),
             project_id=body.project_id,
             status=body.status,
+            user_id=uid,
         )
         return {"ok": True, "data": item}
     except Exception:
@@ -473,15 +484,27 @@ def create_interaction(body: InteractionCreate) -> dict[str, Any]:
 
 @router.get("/interactions")
 def list_interactions(
+    req: Request,
     project_id: str | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    user_id: str | None = Query(None, description="用户标识过滤（仅管理员可用）"),
 ) -> dict[str, Any]:
-    """List interaction logs (optionally filter by project / status)."""
+    """List interaction logs (optionally filter by project / status / user)."""
     conn = get_connection()
     try:
+        current_user = get_current_user(req)
+        scope_clause, scope_params = build_user_scope_filter(
+            user_id=current_user["user_id"],
+            role=current_user["role"],
+            admin_filter_user_id=user_id,
+        )
+
         clauses: list[str] = []
         params: list[Any] = []
+        if scope_clause:
+            clauses.append(scope_clause)
+            params.extend(scope_params)
         if project_id:
             clauses.append("project_id = ?")
             params.append(project_id)
@@ -548,19 +571,18 @@ def interactions_summary() -> dict[str, Any]:
             """
         ).fetchone()
         s = dict_from_row(sums) if sums else {}
-        total_cost = float(s.get("total_cost") or 0)
-        total_profit = float(s.get("total_profit") or 0)
         return {
             "ok": True,
             "data": {
-                "total": total,
+                "total_interactions": total,
                 "by_status": by_status,
                 "by_outcome": by_outcome,
-                "label_outcome_matrix": label_outcome,
-                "total_cost_usd": total_cost,
-                "total_profit_usd": total_profit,
-                "net_usd": total_profit - total_cost,
-                "total_hours": float(s.get("total_hours") or 0),
+                "label_outcome": label_outcome,
+                "aggregates": {
+                    "total_cost_usd": s.get("total_cost", 0),
+                    "total_profit_usd": s.get("total_profit", 0),
+                    "total_hours_spent": s.get("total_hours", 0),
+                },
             },
         }
     finally:
@@ -569,14 +591,17 @@ def interactions_summary() -> dict[str, Any]:
 
 @router.get("/projects/{project_id}/interactions")
 def list_project_interactions(
-    project_id: str = Path(...),
+    project_id: str,
+    req: Request,
     limit: int = Query(50, ge=1, le=200),
+    user_id: str | None = Query(None, description="用户标识过滤（仅管理员可用）"),
 ) -> dict[str, Any]:
-    return list_interactions(project_id=project_id, status=None, limit=limit)
+    return list_interactions(req=req, project_id=project_id, status=None, limit=limit, user_id=user_id)
 
 
 @router.patch("/interactions/{interaction_id}")
 def update_interaction(
+    req: Request,
     interaction_id: int = Path(...),
     body: InteractionUpdate = Body(...),  # noqa: B008 - FastAPI 惯用写法
 ) -> dict[str, Any]:
@@ -608,6 +633,13 @@ def update_interaction(
                 detail={"code": "NOT_FOUND", "message": "Interaction not found"},
             )
         current = dict_from_row(existing)
+        current_user = get_current_user(req)
+        if current_user["role"] != ROLE_ADMIN:
+            if current.get("user_id") and current.get("user_id") != current_user["user_id"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                )
         if "status" in fields:
             _validate_status_transition(current.get("status"), fields["status"])
         final_survival = fields.get("survival_result", current.get("survival_result"))
@@ -681,9 +713,22 @@ def update_interaction(
 
 
 @router.delete("/interactions/{interaction_id}")
-def delete_interaction(interaction_id: int = Path(...)) -> dict[str, Any]:
+def delete_interaction(req: Request, interaction_id: int = Path(...)) -> dict[str, Any]:
     conn = get_connection()
     try:
+        current_user = get_current_user(req)
+        if current_user["role"] != ROLE_ADMIN:
+            existing = conn.execute("SELECT user_id FROM interactions WHERE id = ?", (interaction_id,)).fetchone()
+            if not existing:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                )
+            if existing[0] and existing[0] != current_user["user_id"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                )
         cur = conn.execute("DELETE FROM interactions WHERE id = ?", (interaction_id,))
         conn.commit()
         if (cur.rowcount or 0) == 0:

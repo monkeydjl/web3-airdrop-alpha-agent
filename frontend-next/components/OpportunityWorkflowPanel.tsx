@@ -1,7 +1,17 @@
-﻿'use client';
+'use client';
 
 import { apiFetch } from '@/lib/api';
-import { labelZh } from '@/lib/format';
+import {
+  blockerCodeZh,
+  factorKeyZh,
+  freshnessZh,
+  labelZh,
+  reasonActionZh,
+  recommendedActionZh,
+  severityZh,
+  sourceTypeZh,
+  verificationStatusZh,
+} from '@/lib/format';
 import type {
   EligibilityResult,
   InteractionStatus,
@@ -644,7 +654,7 @@ function OpportunityAssessmentSummary({
             <span className="font-semibold text-ink">{labelZh(opportunity.public_label)}</span>
             <span className="text-xs text-ink-faint">{STATE_ZH[opportunity.status]}</span>
           </div>
-          <p className="text-ink-muted">{opportunity.recommended_action}</p>
+          <p className="text-ink-muted">{opportunity.recommended_action_zh || recommendedActionZh(opportunity.recommended_action)}</p>
           <p className="text-xs text-ink-faint">
             总体置信度{' '}
             <span className="tabular-nums">
@@ -771,8 +781,9 @@ function BlockerAndUpgradeConditions({
           <ul className="mt-1.5 space-y-1 text-xs text-red-700/90 dark:text-red-200/90">
             {blockers.map((b) => (
               <li key={`${b.code}-${b.message}`}>
-                <span className="font-medium">{b.code}</span>
-                {b.severity ? ` (${b.severity})` : ''}: {b.message}
+                <span className="font-medium">{b.code_zh || blockerCodeZh(b.code)}</span>
+                {b.severity ? ` (${b.severity_zh || severityZh(b.severity)})` : ''}:{' '}
+                {b.message_zh || reasonActionZh(b.message, b.code)}
               </li>
             ))}
           </ul>
@@ -784,7 +795,8 @@ function BlockerAndUpgradeConditions({
           <ul className="mt-1.5 space-y-1 text-xs text-ink-muted">
             {upgrades.map((u) => (
               <li key={`${u.code}-${u.message}`}>
-                <span className="font-medium text-ink">{u.code}</span>: {u.message}
+                <span className="font-medium text-ink">{u.code}</span>:{' '}
+                {u.message_zh || reasonActionZh(u.message, u.code)}
               </li>
             ))}
           </ul>
@@ -812,7 +824,7 @@ function EvidenceSummary({
       </div>
       {evidence.missing_factor_keys?.length ? (
         <p className="text-xs text-ink-muted">
-          缺失因子：{evidence.missing_factor_keys.join(', ')}
+          缺失因子：{evidence.missing_factor_keys.map((k) => factorKeyZh(k)).join('、')}
         </p>
       ) : null}
       {evidence.items.length === 0 ? (
@@ -825,13 +837,13 @@ function EvidenceSummary({
               className="rounded-lg border border-line/60 bg-surface-2/30 px-2.5 py-2"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-ink">{item.factor_key}</span>
+                <span className="font-medium text-ink">{item.factor_key_zh || factorKeyZh(item.factor_key)}</span>
                 <span className="badge bg-surface-3">{item.source_grade}</span>
-                <span className="badge bg-surface-3">{item.freshness}</span>
-                <span className="text-ink-faint">{item.verification_status}</span>
+                <span className="badge bg-surface-3">{item.freshness_zh || freshnessZh(item.freshness)}</span>
+                <span className="text-ink-faint">{item.verification_status_zh || verificationStatusZh(item.verification_status)}</span>
               </div>
               <p className="mt-0.5 text-ink-muted">
-                {item.source_type}
+                {item.source_type_zh || sourceTypeZh(item.source_type)}
                 {item.source_url && /^https?:\/\//i.test(item.source_url) ? (
                   <>
                     {' · '}

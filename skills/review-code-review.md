@@ -19,8 +19,8 @@
 | Pydantic 变更 → 契约测试 | 没有 `tests/contracts/` 目录。Pydantic 变更的兜底是 `test_frontend_field_parity.py` / `test_frontend_enum_parity.py` / `test_frontend_flag_parity.py` 三条前后端一致性测试 |
 | 「（单元/契约/golden/API）」 | 真实目录是 `backend/tests/` 下的 `agents/` `api/` `collectors/` `opportunity/` `scripts/` `utils/` `golden/`；golden 唯一入口是 `backend/tests/golden/test_golden_cases.py` |
 
-> **PR 模板自身也有漂移。** `.github/PULL_REQUEST_TEMPLATE.md` 里仍写着 `.lock.txt` 与
-> 「关键模块 ≥ 90%」。审查时按上表判定，别照模板打勾。要修模板是另一件事，别混进业务 PR。
+> **PR 模板已对齐门禁规范。** `.github/PULL_REQUEST_TEMPLATE.md` 已对齐实际门禁
+> （行覆盖率 ≥ 80%、`requirements.txt` 精确 pin，无 `.lock.txt` 与「关键模块 ≥ 90%」漂移）。
 
 ## 输入要求
 - 文件：`.github/PULL_REQUEST_TEMPLATE.md`

@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-09-05 随 ai-chat 追问对话更新）
+### 2.1 写操作的鉴权分布（实测，2026-09-19 随 V3 GDPR 合规更新）
 
-全仓共 **36 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **48 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 11 |
-| 无鉴权（公开） | 2 |
-| 匿名 token 可调 | 23 |
+| 无鉴权（公开） | 5 |
+| 匿名 token 可调 | 32 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -88,8 +88,11 @@
 `POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
 `DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41）。
 
-公开的 2 个：`POST /auth/anonymous`（匿名入口本身）、
-`POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）。
+公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
+`POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
+`POST /auth/register`（用户注册入口）、
+`POST /auth/login`（用户登录入口）、
+`POST /auth/refresh`（刷新令牌入口）。
 
 #### 收紧的是哪三个，为什么
 
@@ -181,6 +184,8 @@
 | PATCH / DELETE | `/api/v1/interactions/{interaction_id}` | v1 | V2（已实现） | 更新 / 删除单条参与记录 |
 | GET | `/api/v1/projects/{project_id}/interactions` | v1 | V2（已实现） | 某项目的参与记录 |
 | GET | `/api/v1/projects/{project_id}/participation-tasks` | v1 | V2（已实现） | 参与任务清单（**挂在项目下**，无顶层端点） |
+| GET | `/api/v1/projects/{project_id}/multi-wallet-strategy` | v1 | V3（已实现） | 多钱包防女巫与资金分配建议（US-019 / W12-01，详见 §45） |
+| GET | `/api/v1/projects/{project_id}/timeline` | v1 | V3（已实现） | 项目跨 run 演化时间序列与画像指标（Roadmap §24.3 / W12-02，详见 §46） |
 | GET / PATCH | `/api/v1/projects/{project_id}/funding` | v1 | V2（已实现） | 融资信息 / 人工修正 |
 | GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | AI 简报（**GET 只读缓存，永不花钱**；POST 生成，`{"force": true}` 强制重新生成，2026-09-06 起带 meta 缓存） |
 | POST | `/api/v1/projects/{project_id}/ai-chat` | v1 | V2（已实现） | 项目追问对话（多轮问答，历史由前端持有；纯 LLM，无规则回退） |
@@ -193,6 +198,8 @@
 | GET | `/api/v1/watchlist` | v1 | V2（已实现） | 关注列表 |
 | POST / DELETE | `/api/v1/watchlist/{project_id}` | v1 | V2（已实现） | 加入 / 移出关注（项目 id 在**路径**上） |
 | POST / DELETE | `/api/v1/projects/{project_id}/skip` | v1 | V2（已实现，2026-09-08） | 用户自主「不参与」标记（§44） |
+| GET / DELETE | `/api/v1/user-profile` | v1 | V3（已实现，2026-09-19） | 用户推断偏好画像与偏好记忆重置（Roadmap §24.3 / W12-02，详见 §47） |
+| GET | `/api/v1/anomalies` | v1 | V3（已实现，2026-09-19） | 评分漂移与数据质量巡检报告（W12-04，详见 §48） |
 | GET | `/api/v1/settings/config` | v1 | V2（已实现） | 运行时配置只读快照 |
 | GET | `/api/v1/llm/status` | v1 | V2（已实现） | LLM 开关与提供方状态 |
 | GET | `/api/v1/archive/runs` | v1 | V2（已实现） | 归档运行历史（只读，详见 §37） |
@@ -218,8 +225,24 @@
 | GET | `/api/v1/public-config` | v1 | 上线前置（2026-09-03） | 评分方法论快照：8 维权重 + 标签阈值（**匿名 token 可读**，详见 §42） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
-| POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
+| GET / POST | `/api/v1/events` | v1 | V3（已实现，2026-09-19） | 提交/查询隐式行为埋点（支持行级隔离，详见 §13 / §13b） |
 | POST | `/api/v1/auth/anonymous` | v1 | V2（已实现） | 获取匿名用户 token（Dashboard 首次访问） |
+| POST | `/api/v1/auth/register` | v1 | V3（已实现，2026-09-19） | 用户注册（W12-06，详见 §49b） |
+| POST | `/api/v1/auth/login` | v1 | V3（已实现，2026-09-19） | 用户登录（W12-06，详见 §49c） |
+| POST | `/api/v1/auth/refresh` | v1 | V3（已实现，2026-09-19） | 刷新 Access Token（W12-06，详见 §49d） |
+| POST | `/api/v1/auth/logout` | v1 | V3（已实现，2026-09-19） | 登出当前设备会话（W12-06，详见 §49e） |
+| POST | `/api/v1/auth/logout/all` | v1 | V3（已实现，2026-09-19） | 全设备登出（W12-06，详见 §49f） |
+| GET | `/api/v1/auth/me` | v1 | V3（已实现，2026-09-19） | 获取当前用户信息（W12-06，详见 §49g） |
+| GET | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 获取当前用户偏好设置（W12-08，详见 §50a） |
+| PUT | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 全量更新用户偏好设置（W12-08，详见 §50b） |
+| PATCH | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 增量合并用户偏好设置（W12-08，详见 §50c） |
+| DELETE | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 清除用户偏好设置（W12-08，详见 §50d） |
+| GET | `/api/v1/api-keys` | v1 | V3（已实现，2026-09-19） | 列出当前用户的 API Key（W12-09，详见 §51a） |
+| POST | `/api/v1/api-keys` | v1 | V3（已实现，2026-09-19） | 创建新的 API Key（W12-09，详见 §51b） |
+| DELETE | `/api/v1/api-keys/{key_id}` | v1 | V3（已实现，2026-09-19） | 撤销指定的 API Key（W12-09，详见 §51c） |
+| GET | `/api/v1/user/data` | v1 | V3（已实现，2026-09-19） | 导出用户所有数据（W12-11，详见 §52a） |
+| DELETE | `/api/v1/user/account` | v1 | V3（已实现，2026-09-19） | 注销删除用户账户（W12-11，详见 §52b） |
+| GET | `/api/v1/ha/status` | v1 | V3（已实现，2026-09-20） | 集群选主与 HA 状态查询（公开只读，W12-03，详见 §53） |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |
@@ -733,6 +756,10 @@ curl -X POST http://localhost:8002/api/v1/run \
 - `signals`：按 signal 取值聚合的计数（如 `{"useful": 3, "wrong_label": 1}`）
 - `items`：明细列表
 
+**行级数据隔离（V3，W12-10）**：
+- 非管理员（`analyst` / `viewer` / `anonymous`）：仅能查看属于自身的反馈记录与统计计数，无法查看他人数据。
+- 管理员（`admin`）：可查看所有用户的反馈，亦可通过 `?user_id=` 过滤特定用户。
+
 ### 10.1 GET /api/v1/feedback/pending-review
 
 待复盘队列。参数：`limit`（默认 **20**）、`user_id`（可选）。
@@ -799,6 +826,45 @@ curl -X POST http://localhost:8002/api/v1/run \
 ```
 
 **错误**：`422` 超长字段或 `detail` 传了非字符串。
+
+---
+
+### 13b. GET /api/v1/events
+
+查询隐式行为事件埋点列表（V3，W12-10 行级数据隔离）。
+
+**查询参数**：
+- `project_id`（可选，string）：按项目 ID 筛选
+- `event_type`（可选，string）：按事件类型筛选
+- `limit`（可选，int，默认 50，1~200）：返回条数
+- `offset`（可选，int，默认 0）：分页偏移
+- `user_id`（可选，string）：指定用户过滤（**仅管理员可用**；非管理员指定该参数无效，强制仅能查看自身事件）
+
+**隔离规则**：
+- 非管理员（`analyst`, `viewer`, `anonymous`）：仅能查看属于当前登录/Token 用户的行为事件埋点，无法查看他人事件。
+- 管理员（`admin`）：默认可查看全量用户的事件埋点；可传入 `user_id` 过滤特定用户的事件。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "project_id": "layerx-001",
+        "user_id": "usr_abc123",
+        "event_type": "expand",
+        "detail": "{\"duration_ms\":1200}",
+        "timestamp": "2026-09-19 14:30:00"
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
 
 ---
 
@@ -2328,3 +2394,657 @@ label="IGNORE"** —— 那是模型的结论，跳过是用户的决定，要�
 校验组对齐：这组端点是匿名可写 —— 与 watchlist / feedback 同一口径，
 在 `test_admin_only_rules.py::ANON_WRITABLE` 里登记了理由。
 回归测试：`backend/tests/api/test_skip.py`（幂等、404、用户隔离、列表联动）。
+
+
+## 45. multi-wallet-strategy（多钱包防女巫与资金策略，US-019 / W12-01）
+
+根据项目女巫审查难度（sybil_factor）、部署阶段（mainnet/testnet）、Perp 成本画像及参与路径，输出多钱包参与梯度建议、资金预估与 4 项防女巫隔离准则。严格遵守纯建议红线，严禁且不提供任何私钥托管或自动化脚本。
+
+### 45a. GET /api/v1/projects/{project_id}/multi-wallet-strategy
+
+获取指定项目的多钱包参与建议（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "test-project",
+    "project_name": "Test Project",
+    "status": "recommended",
+    "recommended_wallets_min": 1,
+    "recommended_wallets_max": 5,
+    "recommended_wallets_optimal": 3,
+    "tier": "small_cluster",
+    "tier_zh": "精品小集群（3-5号）",
+    "strategy_summary": "该项目女巫难度中等，建议采用小规模精品集群参与...",
+    "capital_per_wallet_usd_min": 50.0,
+    "capital_per_wallet_usd_max": 200.0,
+    "total_capital_usd_min": 150.0,
+    "total_capital_usd_max": 1000.0,
+    "capital_notes": "主网交互需预留 Gas 与交互流动性",
+    "weekly_hours_per_wallet": 0.5,
+    "total_weekly_hours": 1.5,
+    "hygiene_guidelines": [
+      {
+        "rule_id": "zero_wallet_transfer",
+        "title": "严禁钱包互转（资金零关联）",
+        "description": "所有参与钱包之间绝对不要在链上有直接资金往来。提币必须经由中心化交易所不同子账号独立出金。",
+        "severity": "critical"
+      }
+    ],
+    "risk_warnings": []
+  }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+回归测试：`backend/tests/test_multi_wallet_strategy.py`、`backend/tests/api/test_projects.py`。
+
+
+## 46. project-timeline（项目演化时间轴与历史指标，Roadmap §24.3 / W12-02）
+
+从 `project_history` 表重构项目跨 run 演化时间序列、阶段跃迁、评分走势与波动率指标。
+
+### 46a. GET /api/v1/projects/{project_id}/timeline
+
+获取项目的演化历史时间轴（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "test-project",
+    "project_name": "Test Project",
+    "score_trend": "rising",
+    "score_volatility": 4.5,
+    "stage_progression": ["testnet", "mainnet"],
+    "stage_transitions": [
+      {
+        "from_stage": "testnet",
+        "to_stage": "mainnet",
+        "timestamp": "2026-09-01T00:00:00Z"
+      }
+    ],
+    "label_history": ["WATCH", "FARM"],
+    "timeline": [
+      {
+        "snapshot_id": 1,
+        "run_id": "run-001",
+        "score": 68,
+        "label": "WATCH",
+        "stage": "testnet",
+        "weight_version": "v1.2",
+        "created_at": "2026-08-01T00:00:00Z",
+        "diff_from_previous_score": 0
+      },
+      {
+        "snapshot_id": 2,
+        "run_id": "run-002",
+        "score": 82,
+        "label": "FARM",
+        "stage": "mainnet",
+        "weight_version": "v1.2",
+        "created_at": "2026-09-01T00:00:00Z",
+        "diff_from_previous_score": 14
+      }
+    ],
+    "first_seen_at": "2026-08-01T00:00:00Z",
+    "latest_snapshot_at": "2026-09-01T00:00:00Z",
+    "snapshot_count": 2,
+    "llm_context_summary": "【项目演化画像】项目 Test Project..."
+  }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+回归测试：`backend/tests/test_project_memory.py`、`backend/tests/api/test_memory_endpoints.py`。
+
+
+## 47. user-profile（用户偏好画像与记忆向量，Roadmap §24.3 / W12-02）
+
+从用户自主行为（反馈 feedback、流水 interactions、关注 watchlist、跳过 project_skips）动态推断偏好向量，支持个性化加权排序与 GDPR 隐私一键重置。
+
+### 47a. GET /api/v1/user-profile
+
+获取当前用户的推断偏好画像与赛道亲和度向量（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "default",
+    "sector_affinity": {
+      "AI": 1.45,
+      "L2": 1.2
+    },
+    "risk_tolerance": "moderate",
+    "favorite_sectors": ["AI", "L2"],
+    "engagement_summary": {
+      "feedback_count": 5,
+      "interaction_count": 2,
+      "watchlist_count": 3,
+      "skip_count": 1,
+      "total_signals": 11
+    },
+    "inferred_at": "2026-09-19T01:00:00Z",
+    "is_cleared": false
+  }
+}
+```
+
+### 47b. DELETE /api/v1/user-profile
+
+一键重置当前用户的偏好记忆向量（匿名 token 可写，隐私与 GDPR 合规）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "default",
+    "sector_affinity": {},
+    "risk_tolerance": "moderate",
+    "favorite_sectors": [],
+    "engagement_summary": {
+      "total_signals": 0
+    },
+    "inferred_at": "2026-09-19T01:00:00Z",
+    "is_cleared": true
+  }
+}
+```
+
+回归测试：`backend/tests/test_user_memory.py`、`backend/tests/api/test_memory_endpoints.py`。
+
+---
+
+## 48. anomalies
+
+### 48a. GET /api/v1/anomalies
+
+主动扫描全仓评分分布（均值漂移、标签分布偏斜、0分爆发）与数据质量指标（P0/P1 字段完整性、采集时效性、隔离区积压）（W12-04 / DATA_QUALITY.md §4）。
+
+**权限**: 匿名 token / 管理员 API Key 均可（只读诊断）
+
+**查询参数**:
+- `force_refresh` (bool, optional, 默认 false): 是否跳过 60 秒内存缓存并强制重新全量巡检
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "overall_status": "healthy",
+    "checked_at": "2026-09-19T10:00:00Z",
+    "total_anomalies": 0,
+    "critical_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "drift_summary": {
+      "total_projects": 50,
+      "mean_score": 52.4,
+      "median_score": 53.0,
+      "stddev_score": 14.2,
+      "zero_score_count": 1,
+      "zero_score_ratio": 0.02,
+      "label_counts": {
+        "FARM": 12,
+        "WATCH": 28,
+        "IGNORE": 10
+      },
+      "label_ratios": {
+        "FARM": 0.24,
+        "WATCH": 0.56,
+        "IGNORE": 0.2
+      },
+      "baseline_mean": 50.0,
+      "mean_drift": 2.4,
+      "out_of_bounds_count": 0
+    },
+    "quality_summary": {
+      "p0_completeness": 1.0,
+      "p1_completeness": 0.94,
+      "p0_missing_count": 0,
+      "p1_missing_count": 3,
+      "quarantine_pending": 0,
+      "stale_sources": [],
+      "total_sources_monitored": 5
+    },
+    "anomalies": []
+  }
+}
+```
+
+回归测试：`backend/tests/test_anomaly_detection.py`、`backend/tests/api/test_anomaly_endpoints.py`。
+
+---
+
+## 49. auth (用户认证与会话管理)
+
+### 49a. POST /api/v1/auth/anonymous
+
+签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证（V2 兼容）。
+
+**权限**: 无需认证（公开）
+
+**响应 200**:
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "token_type": "Bearer",
+  "expires_in": 259200,
+  "user_id": "anon-3b7c8e9f1a2d"
+}
+```
+
+### 49b. POST /api/v1/auth/register
+
+用户注册端点。创建新用户并返回 JWT Access Token 与 Refresh Token。首位注册用户自举为 admin，后续用户默认 viewer。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123",
+  "display_name": "Alpha Hunter"
+}
+```
+
+**响应 200**:
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "refresh_token": "eyJhbGciOi...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "usr_9f1a2d3b4c5e",
+    "email": "user@example.com",
+    "display_name": "Alpha Hunter",
+    "role": "admin",
+    "is_active": true,
+    "created_at": "2026-09-19T10:00:00Z"
+  }
+}
+```
+
+### 49c. POST /api/v1/auth/login
+
+用户登录端点。验证邮箱与密码，成功后返回 JWT 与 Refresh Token，并创建持久化 Session。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123"
+}
+```
+
+**响应 200**: 同注册响应。
+
+### 49d. POST /api/v1/auth/refresh
+
+使用 Refresh Token 刷新 Access Token。校验 Token 签名、过期与 sessions 表有效性。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "refresh_token": "eyJhbGciOi..."
+}
+```
+
+**响应 200**: 同注册响应。
+
+### 49e. POST /api/v1/auth/logout
+
+登出当前设备会话。将当前 Access Token 的 JTI 记入黑名单，并撤销对应 Session。
+
+**权限**: JWT 认证
+
+**请求体** (可选):
+```json
+{
+  "refresh_token": "eyJhbGciOi..."
+}
+```
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "Logged out successfully"
+  }
+}
+```
+
+### 49f. POST /api/v1/auth/logout/all
+
+全设备登出端点。将当前 Access Token 记入黑名单，并撤销该用户的所有设备 Sessions。
+
+**权限**: JWT 认证
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "All sessions revoked",
+    "revoked_sessions": 3
+  }
+}
+```
+
+### 49g. GET /api/v1/auth/me
+
+获取当前登录用户的个人基本信息与角色。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "id": "usr_9f1a2d3b4c5e",
+  "email": "user@example.com",
+  "display_name": "Alpha Hunter",
+  "role": "admin",
+  "is_active": true,
+  "created_at": "2026-09-19T10:00:00Z"
+}
+```
+
+回归测试：`backend/tests/test_auth_jwt.py`、`backend/tests/api/test_auth_endpoints.py`。
+
+---
+
+## 50. user-preferences (用户偏好设置，W12-08)
+
+### 50a. GET /api/v1/user/preferences
+
+获取当前登录用户的偏好配置（赛道偏好权重、风险偏好、偏好阶段、通知与界面主题等）。若尚未设置则返回默认配置。
+
+**权限**: JWT 认证或管理员 API Key（匿名 Token 返回 401）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "sector_preferences": {
+      "L2": 1.2,
+      "Restaking": 0.8,
+      "GameFi": 0.5
+    },
+    "risk_tolerance": 0.7,
+    "preferred_stage": ["testnet"],
+    "notifications": {
+      "telegram": "username_or_chatid",
+      "new_farm_alert": true,
+      "daily_digest": true
+    },
+    "language": "zh",
+    "theme": "dark"
+  }
+}
+```
+
+### 50b. PUT /api/v1/user/preferences
+
+全量更新当前登录用户的偏好配置并持久化入库。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体**:
+```json
+{
+  "sector_preferences": {
+    "L2": 1.2,
+    "Restaking": 0.8
+  },
+  "risk_tolerance": 0.6,
+  "preferred_stage": ["testnet", "mainnet"],
+  "notifications": {
+    "daily_digest": true
+  },
+  "language": "en",
+  "theme": "light"
+}
+```
+
+**响应 200**: 同 GET 响应结构。
+
+### 50c. PATCH /api/v1/user/preferences
+
+增量合并更新当前登录用户的偏好配置（字段级覆盖，字典级浅合并）。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体** (所有字段可选):
+```json
+{
+  "risk_tolerance": 0.8,
+  "theme": "dark"
+}
+```
+
+**响应 200**: 同 GET 响应结构。
+
+### 50d. DELETE /api/v1/user/preferences
+
+清除当前登录用户的偏好配置，重置为默认值（GDPR §25.9 隐私合规）。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "sector_preferences": {},
+    "risk_tolerance": 0.5,
+    "preferred_stage": [],
+    "notifications": {},
+    "language": "zh",
+    "theme": "dark"
+  }
+}
+```
+
+回归测试：`backend/tests/test_user_preferences.py`、`backend/tests/api/test_user_preferences_endpoints.py`。
+
+---
+
+## 51. api-keys (API Key 管理与认证，W12-09)
+
+### 51a. GET /api/v1/api-keys
+
+列出当前登录用户的 API Key 列表（脱敏显示，不包含原始密钥）。admin 用户可通过 `?all=true` 查询全仓 Key。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "key_1a2b3c4d5e6f7081",
+      "user_id": "usr_9f1a2d3b4c5e",
+      "name": "CI Pipeline Key",
+      "role": "analyst",
+      "last_used_at": "2026-09-19T10:30:00Z",
+      "expires_at": "2027-09-19T10:00:00Z",
+      "is_revoked": false,
+      "created_at": "2026-09-19T10:00:00Z"
+    }
+  ]
+}
+```
+
+### 51b. POST /api/v1/api-keys
+
+创建新的可撤销 API Key。生成的明文 `raw_key` 仅在本次响应中返回一次，数据库仅存储其不可逆 bcrypt 哈希。非 admin 用户不可越权授予高于自身角色的权限。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体**:
+```json
+{
+  "name": "Trading Bot Key",
+  "role": "analyst",
+  "expires_in_days": 90
+}
+```
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "key": {
+      "id": "key_1a2b3c4d5e6f7081",
+      "user_id": "usr_9f1a2d3b4c5e",
+      "name": "Trading Bot Key",
+      "role": "analyst",
+      "last_used_at": null,
+      "expires_at": "2026-12-18T10:00:00Z",
+      "is_revoked": false,
+      "created_at": "2026-09-19T10:00:00Z"
+    },
+    "raw_key": "ak_1a2b3c4d5e6f7081_random_high_entropy_secret_string_here"
+  }
+}
+```
+
+### 51c. DELETE /api/v1/api-keys/{key_id}
+
+撤销指定的 API Key。撤销后使用该 Key 进行鉴权将立即被拒绝（HTTP 401）。非 admin 用户仅可撤销归属于自身的 Key。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "API key revoked successfully",
+    "key_id": "key_1a2b3c4d5e6f7081"
+  }
+}
+```
+
+回归测试：`backend/tests/test_api_keys.py`、`backend/tests/api/test_api_keys_endpoints.py`。
+
+---
+
+## 52. user-data (GDPR 数据可携带权与账户注销，W12-11)
+
+### 52a. GET /api/v1/user/data
+
+导出当前登录用户的所有个人数据（反馈、events、偏好、关注、交互流水、参与计划、ROI 台账、API Keys 元数据等）为结构化 JSON（GDPR §25.9 数据可携带权 / ADR-008 §6）。敏感字段（`password_hash`、`key_hash`）绝不导出。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "exported_at": "2026-09-19T14:30:00Z",
+    "user": {
+      "id": "usr_9f1a2d3b4c5e",
+      "email": "alice@example.com",
+      "display_name": "Alice",
+      "role": "analyst",
+      "is_active": true,
+      "last_login_at": "2026-09-19T14:00:00Z",
+      "created_at": "2026-09-19T10:00:00Z",
+      "updated_at": "2026-09-19T14:00:00Z"
+    },
+    "preferences": {
+      "sector_preferences": {"L2": 1.2},
+      "risk_tolerance": 0.7,
+      "language": "zh",
+      "theme": "dark"
+    },
+    "feedback": [],
+    "events": [],
+    "watchlist": [],
+    "project_skips": [],
+    "interactions": [],
+    "participation_plans": [],
+    "participation_tasks": [],
+    "roi_entries": [],
+    "roi_outcomes": [],
+    "api_keys": []
+  }
+}
+```
+
+### 52b. DELETE /api/v1/user/account
+
+彻底注销当前登录用户账户（GDPR §25.9 被遗忘权 / ADR-008 §6）：
+1. **反馈去标识化**：`feedback.user_id` 置 `NULL`，切断身份关联的同时保留校准样本供模型训练；
+2. **私有数据硬删除**：物理删除 `events`（行为遥测）、`watchlist`、`project_skips`、`interactions`、`notification_reads` 等；
+3. **凭据销毁**：当前 JWT JTI 记入黑名单，物理清理 `sessions` 与 `api_keys`；
+4. **释放邮箱**：删除 `users` 记录，原邮箱可重新注册。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "usr_9f1a2d3b4c5e",
+    "status": "deleted",
+    "message": "Account successfully deleted and data de-identified/erased",
+    "deidentified_feedback_count": 3,
+    "deleted_events_count": 12
+  }
+}
+```
+
+回归测试：`backend/tests/test_gdpr.py`、`backend/tests/api/test_gdpr_endpoints.py`。
+
+---
+
+## 53. ha (高可用与选主状态，W12-03)
+
+### 53a. GET /api/v1/ha/status
+
+查询当前节点的集群高可用（HA）与分布式选主状态（ADR-008 §4 / W12-03）。
+包含当前实例是否为 Leader、当前有效 Leader 的实例标识、租约到期时间、心跳周期以及当前节点运行时选主状态。
+该端点为公开只读端点，用于负载均衡健康探测、网关调度路由及多实例运维监控。
+
+**权限**: 公开只读（无需凭据）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "ha_enabled": true,
+    "instance_id": "inst-a1b2c3d4",
+    "is_leader": true,
+    "current_leader": "inst-a1b2c3d4",
+    "lease_expires_at": "2026-09-20T10:15:30Z",
+    "heartbeat_interval_seconds": 3,
+    "lease_ttl_seconds": 10,
+    "status": "leader"
+  }
+}
+```
+
+当 HA 未启用 (`ha_enabled=false`) 时，所有实例均独立运行调度器，`is_leader` 默认为 `true`，`status` 为 `"standalone"`。
+
+回归测试：`backend/tests/test_leader_election.py`、`backend/tests/api/test_ha_endpoints.py`。

@@ -138,7 +138,7 @@ Web3 Airdrop Alpha Agent System/
 │   │   ├── __init__.py
 │   │   ├── main.py                 # FastAPI app + 路由注册（/api/v1/run, /api/v1/projects, /api/v1/export_import 已注册）
 │   │   ├── config.py               # pydantic-settings：权重/阈值/源/LLM/调度
-│   │   ├── models.py               # Pydantic 模型（RawProject / AgentResult 系列 + AgentContext）
+│   │   ├── models.py               # Pydantic 模型（NarrativeResult / TeamResult / RiskResult / TokenomicsResult 系列）
 │   │   ├── db.py                   # SQLite 数据层（WAL）
 │   │   ├── repository.py           # 数据访问层（projects 读写封装）
 │   │   ├── export.py               # 项目导出（CSV/JSON）
@@ -380,10 +380,13 @@ CREATE TABLE narratives (
 ```python
 class BaseAgent(ABC):
     name: str
+
     @abstractmethod
-    def run(self, context: AgentContext) -> AgentResult: ...
-    # 可选 LLM 增强钩子（ADR-001），失败返回 None 触发规则回退
-    def llm_enhance(self, prompt: str) -> str | None: ...
+    async def run(self, state: PipelineState) -> PipelineState: ...
+
+    # 可选 LLM 增强钩子（ADR-001 / ADR-012），失败返回 None 触发规则回退
+    async def llm_enhance(self, state: PipelineState, _prompt: str) -> str | None: ...
+
     # Agent 自检钩子（供 /health 端点聚合）
     def health_check(self) -> dict:
         return {"agent": self.name, "status": "healthy", "latency_ms": None, "error_rate": 0.0}
@@ -413,14 +416,15 @@ class PipelineState:
 - **迁移 LangGraph**：state 字段 → `TypedDict`，reducer → `Annotated[list, add]`；node 签名 `node(state) -> partial state`。接口已对齐，迁移成本主要是替换基类与调度器。
 
 #### 6.1.2 AgentContext 输入 schema
-`context` 不仅是 dict，明确字段以约束契约：
+`context` 作为 `state.context` 传递共享配置与并发控制参数：
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `run_id` | str | 本次 pipeline 运行唯一 ID（写入 logs） |
-| `project` | RawProject | 原始项目（含 raw_signals） |
-| `upstream` | dict[str, Result] | 上游 node 已产出的结果（按需取用） |
-| `config` | RuntimeConfig | 权重/阈值/LLM 开关（只读快照） |
-| `deadline_ms` | int | 本 node 软超时（超时则回退规则引擎） |
+| `enable_llm` | bool | 是否启用 LLM 增强（默认 False） |
+| `llm_model` | str | 使用的 LLM 模型名称（默认 "gpt-4o-mini"） |
+| `llm_discovery_score_threshold` | float | 触发 LLM 增强的发现分阈值（默认 0.7，ADR-012） |
+| `max_concurrent_projects` | int | 单批次最大并发项目数（默认 10） |
+| `llm_semaphore_size` | int | LLM 并发调用信号量大小（默认 5） |
 
 #### 6.1.3 运行时保证
 - **留痕**：每次 `run` 自动写 `logs` 表（`run_id`/`project_id`/`agent_name`/`input`/`output`/`duration_ms`/`error`）。

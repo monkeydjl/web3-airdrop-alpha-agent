@@ -21,6 +21,28 @@ def client():
     return TestClient(app)
 
 
+def test_curated_query_excludes_projects_without_activity_evidence(client, monkeypatch, tmp_path):
+    from app.repository import ProjectRepository
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "curated.db"))
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO projects (id, name, score, confidence, label, meta) VALUES (?, ?, ?, ?, ?, ?)",
+            ("unverified", "Unverified", 95, 0.95, "FARM", json.dumps({"signals": {"has_testnet": True}})),
+        )
+        conn.commit()
+        response = client.get("/api/v1/projects?curated=true")
+        assert response.status_code == 200
+        result = response.json()["data"]
+        assert result["projects"] == []
+        assert result["total"] == 0
+        assert ProjectRepository(conn).get_by_id("unverified") is not None
+    finally:
+        conn.close()
+
+
 class TestListProjectsEndpoint:
     """Test GET /api/v1/projects endpoint."""
 
@@ -441,3 +463,65 @@ class TestLegacyRowBackfill:
 
         project = client.get("/api/v1/projects/pre-gate-1").json()["data"]["project"]
         assert project["veto"] is None
+
+
+class TestMultiWalletStrategyEndpoint:
+    """Tests for GET /api/v1/projects/{id}/multi-wallet-strategy (US-019)."""
+
+    def test_multi_wallet_strategy_returns_404_for_nonexistent_project(self, client):
+        resp = client.get("/api/v1/projects/nonexistent-xyz/multi-wallet-strategy")
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_multi_wallet_strategy_endpoint_returns_recommendations(self, client):
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, sector, stage, score, label, meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "multi-strat-1",
+                    "ClusterL2",
+                    "L2",
+                    "mainnet",
+                    82,
+                    "FARM",
+                    json.dumps({"signals": {"has_points_program": True, "sybil_friction": "medium"}}),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.get("/api/v1/projects/multi-strat-1/multi-wallet-strategy")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["project_id"] == "multi-strat-1"
+        assert data["status"] == "recommended"
+        assert data["recommended_wallets_optimal"] == 3
+        assert len(data["hygiene_guidelines"]) == 4
+
+    def test_multi_wallet_strategy_endpoint_ineligible_for_vetoed_project(self, client):
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, veto)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("multi-strat-vetoed", "DeadCoin", 68, "IGNORE", "explicit_no_airdrop"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.get("/api/v1/projects/multi-strat-vetoed/multi-wallet-strategy")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["status"] == "ineligible"
+        assert data["recommended_wallets_optimal"] == 0
+

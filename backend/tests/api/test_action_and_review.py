@@ -26,16 +26,39 @@ def _insert_project(
     score: int,
     label: str,
     signals: dict | None = None,
+    curated: bool = True,
 ) -> None:
-    """插入一行项目：扩展信号写进 meta.signals（与生产存储形态一致）。"""
-    meta = json.dumps(
-        {
-            "signals": signals
-            if signals is not None
-            else {"has_testnet": True, "has_task_portal": True, "has_docs": True}
-        },
-        ensure_ascii=False,
-    )
+    """插入一行项目：扩展信号写进 meta.signals（与生产存储形态一致）。
+
+    精选门槛（2026-09-17）默认注入达标形态（confidence + curation_evidence）；
+    需要未达标形态的测试显式传 curated=False。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    meta: dict = {
+        "signals": signals
+        if signals is not None
+        else {"has_testnet": True, "has_task_portal": True, "has_docs": True}
+    }
+    if curated:
+        now = datetime.now(UTC)
+        meta["curation_evidence"] = [
+            {
+                "kind": "development",
+                "source": "github",
+                "url": f"https://github.com/{pid}/repo",
+                "occurred_at": (now - timedelta(days=3)).isoformat(),
+            },
+            {
+                "kind": "campaign",
+                "source": "galxe",
+                "url": f"https://galxe.com/{pid}/campaign/1",
+                "status": "active",
+                "checked_at": now.isoformat(),
+            },
+        ]
+    confidence = 0.9 if curated else 0.5
+    meta_json = json.dumps(meta, ensure_ascii=False)
     with get_connection() as conn:
         conn.execute(
             """
@@ -43,7 +66,7 @@ def _insert_project(
                 (id, name, sector, stage, score, label, confidence, url, source, meta)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (pid, name, "ZK", "testnet", score, label, 0.7, f"https://{pid}.example", "test", meta),
+            (pid, name, "ZK", "testnet", score, label, confidence, f"https://{pid}.example", "test", meta_json),
         )
         conn.commit()
 
@@ -75,7 +98,7 @@ class TestActionQueue:
 
     def test_engaged_projects_are_excluded_then_included_on_demand(self, client):
         _insert_project("p-a", name="Alpha", score=90, label="FARM")
-        _insert_project("p-b", name="Beta", score=70, label="FARM")
+        _insert_project("p-b", name="Beta", score=80, label="FARM")
 
         with get_connection() as conn:
             conn.execute(
@@ -141,7 +164,7 @@ class TestActionQueue:
         必须能读到 NULL 那批（见 tests/test_user_scope.py）。
         """
         _insert_project("p-mark", name="MarkMe", score=88, label="FARM")
-        _insert_project("p-other", name="Other", score=70, label="FARM")
+        _insert_project("p-other", name="Other", score=80, label="FARM")
 
         first = client.get("/api/v1/action-queue?limit=10").json()["data"]
         assert "p-mark" in {i["project_id"] for i in first["items"]}

@@ -21,7 +21,7 @@ import structlog
 from app.agents.base import PipelineState
 from app.db import dict_from_row, get_connection, is_postgres, scalar
 from app.opportunity.economic_evidence import replay_economic_snapshots_for_project
-from app.services.project_signals import merge_meta, parse_meta
+from app.services.project_signals import curation_reasons, merge_meta, parse_meta
 from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
@@ -98,6 +98,15 @@ class ProjectRepository:
             if existing is not None:
                 existing_meta = dict_from_row(existing).get("meta")
             meta_json = merge_meta(existing_meta, project)
+            # 精选活动证据：pipeline 已采集信号 → meta.curation_evidence。
+            # 与 signals 同一 meta 写入事务，读取方 curation_reasons 只看这里。
+            from app.services.curation_evidence import build_curation_evidence
+
+            curation_evidence = build_curation_evidence(state)
+            if curation_evidence:
+                meta = parse_meta(meta_json)
+                meta["curation_evidence"] = curation_evidence
+                meta_json = json.dumps(meta, ensure_ascii=False)
             source_count = int(getattr(project, "source_count", 1) or 1)
 
             # SQLite added DML RETURNING in 3.35; older runtimes must snapshot
@@ -582,6 +591,7 @@ class ProjectRepository:
         auto_discovered: bool | None = None,
         veto: str | None = None,
         skip_user_id: str | None = None,
+        curated: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -629,12 +639,29 @@ class ProjectRepository:
                 conditions.append("veto = ?")
                 params.append(veto)
 
-            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-
             # 查询总数（scalar 兼容 sqlite Row 与 Postgres dict_row）
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
             cursor = conn.execute(count_query, params)
             total = int(scalar(cursor.fetchone()) or 0)
+
+            if curated:
+                rows = conn.execute(f"SELECT projects.* FROM projects {where_clause}", params).fetchall()
+                kept_ids: list[str] = []
+                for row in rows:
+                    record = dict_from_row(row)
+                    if not curation_reasons(record):
+                        kept_ids.append(str(record["id"]))
+                if kept_ids:
+                    placeholders = ",".join("?" for _ in kept_ids)
+                    conditions.append(f"projects.id IN ({placeholders})")
+                    params.extend(kept_ids)
+                else:
+                    conditions.append("1 = 0")
+                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+                count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
+                cursor = conn.execute(count_query, params)
+                total = int(scalar(cursor.fetchone()) or 0)
 
             # 构建排序
             sort_column = {

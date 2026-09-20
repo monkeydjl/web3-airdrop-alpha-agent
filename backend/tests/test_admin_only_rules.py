@@ -114,6 +114,22 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ): "记自己的产出（空投到账/未领），同上隔离；是校准正负样本的来源。",
     ("DELETE", "/api/v1/roi/entries/{entry_id}"): "删错记的投入，跨 token 一律 404。",
     ("DELETE", "/api/v1/roi/outcomes/{outcome_id}"): "删错记的产出，跨 token 一律 404。",
+    ("DELETE", "/api/v1/user-profile"): "清除自己的偏好画像记忆，按 user_id 隔离，符合 GDPR 隐私遗忘权。",
+    # ── 用户认证（W12-06，ADR-008 §V3，2026-09-19）──
+    ("POST", "/api/v1/auth/register"): "用户注册入口，未登录用户创建账户并获取令牌。",
+    ("POST", "/api/v1/auth/login"): "用户登录入口，凭账号密码凭证获取 JWT 与 Refresh Token。",
+    ("POST", "/api/v1/auth/refresh"): "使用 refresh token 刷新 access token，无需管理员权限。",
+    ("POST", "/api/v1/auth/logout"): "登录用户登出当前会话并吊销 token，仅影响自身会话。",
+    ("POST", "/api/v1/auth/logout/all"): "登录用户登出所有设备会话，仅影响自身全部会话。",
+    # ── 用户偏好（W12-08，ROADMAP §25.6 / §25.10，2026-09-19）──
+    ("PUT", "/api/v1/user/preferences"): "全量更新登录用户自身偏好设置，按 token 身份隔离。",
+    ("PATCH", "/api/v1/user/preferences"): "增量合并登录用户自身偏好设置，按 token 身份隔离。",
+    ("DELETE", "/api/v1/user/preferences"): "清除登录用户自身偏好设置，重置为默认值，符合 GDPR 隐私遗忘权。",
+    # ── API Key 管理（W12-09，ROADMAP §25.3.3 / §25.10，2026-09-19）──
+    ("POST", "/api/v1/api-keys"): "创建登录用户自身 API Key，返回一次性明文凭证，按 token 身份隔离。",
+    ("DELETE", "/api/v1/api-keys/{key_id}"): "撤销登录用户自身 API Key，按 token 身份隔离。",
+    # ── GDPR 合规（W12-11，ROADMAP §25.9 / §25.10，2026-09-19）──
+    ("DELETE", "/api/v1/user/account"): "用户注销删除自身账户与去标识化反馈（GDPR §25.9 / ADR-008 §6）。",
 }
 
 

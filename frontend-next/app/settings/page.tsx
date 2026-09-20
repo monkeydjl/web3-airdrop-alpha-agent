@@ -9,10 +9,12 @@ import {
   RotateCcw,
   Server,
   Shuffle,
+  Wallet,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { TopBar } from '@/components/TopBar';
 import { Switch, Toast } from '@/components/ui';
+import { WatchedWalletsPanel } from '@/components/WatchedWalletsPanel';
 import { apiFetch } from '@/lib/api';
 
 // ── 配置数据（只读展示，对齐设计稿默认值） ──
@@ -364,6 +366,7 @@ export default function SettingsPage() {
     { id: 'set-engine', label: '引擎层', icon: BrainCircuit },
     { id: 'set-automation', label: '自动化层', icon: CalendarClock },
     { id: 'set-platform', label: '平台层', icon: Layers },
+    { id: 'set-wallets', label: '监控钱包', icon: Wallet },
   ];
 
   return (
@@ -846,6 +849,11 @@ export default function SettingsPage() {
                   <ReadonlyValue value={runtimeConfig?.platform?.APP_ENV} mono />
                 </SettingRow>
               </div>
+            </section>
+
+            {/* 5. 监控钱包配置（Claim Watch） */}
+            <section className="set-group" id="set-wallets" aria-label="监控钱包配置">
+              <WatchedWalletsPanel />
             </section>
 
             {/* 说明栏：本页只读，没有写入接口，所以不放"保存"按钮 */}

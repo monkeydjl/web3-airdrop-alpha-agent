@@ -315,8 +315,12 @@ async def _run_pipeline(
     try:
         from app.db import get_connection
 
-        with get_connection() as conn:
-            update_db_gauges(conn)
+        def _update_gauges() -> None:
+            with get_connection() as conn:
+                update_db_gauges(conn)
+
+        # P1-4: 同步 DB 读取移出主事件循环
+        await asyncio.to_thread(_update_gauges)
     except Exception as e:
         logger.warning("pipeline.gauge_update_failed", error=str(e))
 

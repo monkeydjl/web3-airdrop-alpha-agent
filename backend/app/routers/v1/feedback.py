@@ -13,13 +13,14 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.auth import ROLE_ADMIN, get_current_user
 from app.config import settings
 from app.db import get_connection, insert_returning_id
 from app.metrics import record_feedback
-from app.services.user_scope import DEFAULT_USER, owned_project_ids, owned_project_ids_where
+from app.services.user_scope import DEFAULT_USER, build_user_scope_filter, owned_project_ids, owned_project_ids_where
 
 logger = structlog.get_logger(__name__)
 
@@ -135,13 +136,21 @@ class ErrorResponse(BaseModel):
     summary="提交用户反馈",
     description="用户对项目评分结果提交反馈，用于后续权重校准。",
 )
-def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
+def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
     """提交用户反馈。"""
     if not settings.enable_feedback_system:
         raise HTTPException(
             status_code=400,
             detail={"code": "FEEDBACK_DISABLED", "message": "Feedback system is disabled"},
         )
+
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = request.user_id or current_user["user_id"]
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = request.user_id or "anonymous"
 
     try:
         with get_connection() as conn:
@@ -151,7 +160,7 @@ def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
                 INSERT INTO feedback (project_id, user_id, signal, note, outcome)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (request.project_id, request.user_id, request.signal, request.note, request.outcome),
+                (request.project_id, uid, request.signal, request.note, request.outcome),
             )
             conn.commit()
 
@@ -162,6 +171,7 @@ def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
             project_id=request.project_id,
             signal=request.signal,
             feedback_id=feedback_id,
+            user_id=uid,
         )
 
         return FeedbackResponse(
@@ -193,7 +203,7 @@ def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
         "\n\nReference: WEIGHT_CALIBRATION.md §3.3"
     ),
 )
-def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
+def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> FeedbackResponse:
     """批量写入结果标记。整批在同一事务内提交，避免部分写入。"""
     if not settings.enable_feedback_system:
         raise HTTPException(
@@ -201,14 +211,19 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
             detail={"code": "FEEDBACK_DISABLED", "message": "Feedback system is disabled"},
         )
 
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = request.user_id or current_user["user_id"]
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = request.user_id or "anonymous"
+
     project_ids = [item.project_id for item in request.items]
 
     try:
         with get_connection() as conn:
             # 先校验项目存在，再写入。
-            # 缺这一步时任意 project_id 都会入库：实测一次请求注入 200 条
-            # 伪造 ID（ghost-0..199）即可让 calibration_ready 变 True，
-            # 即用凭空数据决定真实评分权重。校准样本必须指向真实项目。
             placeholders = ",".join("?" for _ in set(project_ids))
             rows = conn.execute(
                 f"SELECT id FROM projects WHERE id IN ({placeholders})",  # noqa: S608 — 占位符按数量生成，取值全部绑定
@@ -233,7 +248,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
                 INSERT INTO feedback (project_id, user_id, signal, note, outcome)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                [(item.project_id, request.user_id, item.signal, item.note, item.outcome) for item in request.items],
+                [(item.project_id, uid, item.signal, item.note, item.outcome) for item in request.items],
             )
             conn.commit()
 
@@ -244,6 +259,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
             "feedback.batch_submitted",
             count=len(request.items),
             project_count=len(set(project_ids)),
+            user_id=uid,
         )
 
         return FeedbackResponse(
@@ -280,11 +296,17 @@ def submit_feedback_batch(request: FeedbackBatchRequest) -> FeedbackResponse:
     ),
 )
 def get_pending_review(
+    req: Request,
     limit: int = Query(20, ge=1, le=100, description="返回条数"),
-    user_id: str | None = Query(None, max_length=64, description="用户标识（缺省 default）"),
+    user_id: str | None = Query(None, max_length=64, description="用户标识（仅管理员可指定，缺省 default）"),
 ) -> FeedbackResponse:
     """返回待标记结果的项目列表。"""
-    uid = user_id or DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = user_id or DEFAULT_USER
+    else:
+        uid = current_user["user_id"] if current_user["user_id"] != "anonymous" else (user_id or DEFAULT_USER)
+
     try:
         with get_connection() as conn:
             # 已有 outcome 的项目不再需要标记。
@@ -351,22 +373,37 @@ def get_pending_review(
     "/feedback/{project_id}",
     response_model=FeedbackResponse,
     summary="查询项目反馈",
-    description="获取指定项目的所有用户反馈统计。",
+    description="获取指定项目的所有用户反馈统计（非管理员仅返回自身反馈，管理员可查看全部或按用户过滤）。",
 )
-def get_feedback(project_id: str) -> FeedbackResponse:
-    """查询项目反馈。"""
+def get_feedback(
+    project_id: str,
+    req: Request,
+    user_id: str | None = Query(None, description="用户标识过滤（仅管理员可用）"),
+) -> FeedbackResponse:
+    """查询项目反馈（行级隔离）。"""
     if not settings.enable_feedback_system:
         raise HTTPException(
             status_code=400,
             detail={"code": "FEEDBACK_DISABLED", "message": "Feedback system is disabled"},
         )
 
+    current_user = get_current_user(req)
+    scope_clause, scope_params = build_user_scope_filter(
+        user_id=current_user["user_id"],
+        role=current_user["role"],
+        admin_filter_user_id=user_id,
+    )
+
+    sql = "SELECT * FROM feedback WHERE project_id = ?"
+    params: list[Any] = [project_id]
+    if scope_clause:
+        sql += f" AND {scope_clause}"
+        params.extend(scope_params)
+    sql += " ORDER BY created_at DESC"
+
     try:
         with get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM feedback WHERE project_id = ? ORDER BY created_at DESC",
-                (project_id,),
-            ).fetchall()
+            rows = conn.execute(sql, tuple(params)).fetchall()
 
             feedback_list = [dict(row) for row in rows]
 
@@ -402,13 +439,21 @@ def get_feedback(project_id: str) -> FeedbackResponse:
     summary="提交隐式事件",
     description="埋点用户隐式行为事件（如点击、展开）。",
 )
-def submit_event(request: EventRequest) -> FeedbackResponse:
+def submit_event(request: EventRequest, req: Request) -> FeedbackResponse:
     """提交隐式事件埋点。"""
     if not settings.enable_events_tracking:
         raise HTTPException(
             status_code=400,
             detail={"code": "EVENTS_DISABLED", "message": "Events tracking is disabled"},
         )
+
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = request.user_id or current_user["user_id"]
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = request.user_id or "anonymous"
 
     try:
         with get_connection() as conn:
@@ -420,7 +465,7 @@ def submit_event(request: EventRequest) -> FeedbackResponse:
                 """,
                 (
                     request.project_id,
-                    request.user_id,
+                    uid,
                     request.event_type,
                     request.detail,
                     datetime.now(UTC),
@@ -433,6 +478,7 @@ def submit_event(request: EventRequest) -> FeedbackResponse:
             project_id=request.project_id,
             event_type=request.event_type,
             event_id=event_id,
+            user_id=uid,
         )
 
         return FeedbackResponse(
@@ -446,6 +492,89 @@ def submit_event(request: EventRequest) -> FeedbackResponse:
         raise HTTPException(
             status_code=500,
             detail={"code": "DB_ERROR", "message": "Failed to save event"},
+        ) from e
+
+
+@router.get(
+    "/events",
+    response_model=FeedbackResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "事件系统未启用"},
+        500: {"model": ErrorResponse, "description": "数据库错误"},
+    },
+    summary="查询隐式事件",
+    description="查询用户行为事件埋点列表（非管理员仅返回自身埋点，管理员可查看全部或按用户过滤）。",
+)
+def list_events(
+    req: Request,
+    project_id: str | None = Query(None, max_length=64, description="项目 ID 筛选"),
+    event_type: str | None = Query(None, max_length=32, description="事件类型筛选"),
+    limit: int = Query(50, ge=1, le=200, description="返回条数"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    user_id: str | None = Query(None, description="用户标识过滤（仅管理员可用）"),
+) -> FeedbackResponse:
+    """查询行为事件列表（行级隔离）。"""
+    if not settings.enable_events_tracking:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "EVENTS_DISABLED", "message": "Events tracking is disabled"},
+        )
+
+    current_user = get_current_user(req)
+    scope_clause, scope_params = build_user_scope_filter(
+        user_id=current_user["user_id"],
+        role=current_user["role"],
+        admin_filter_user_id=user_id,
+    )
+
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if scope_clause:
+        clauses.append(scope_clause)
+        params.extend(scope_params)
+
+    if project_id:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+
+    if event_type:
+        clauses.append("event_type = ?")
+        params.append(event_type)
+
+    where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    try:
+        with get_connection() as conn:
+            count_row = conn.execute(
+                f"SELECT COUNT(*) FROM events{where_sql}",  # noqa: S608
+                tuple(params),
+            ).fetchone()
+            total = int(count_row[0]) if count_row else 0
+
+            query_sql = f"""
+                SELECT id, project_id, user_id, event_type, detail, timestamp
+                FROM events
+                {where_sql}
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ? OFFSET ?
+            """  # noqa: S608
+            rows = conn.execute(query_sql, tuple(params + [limit, offset])).fetchall()
+            items = [dict(row) for row in rows]
+
+        return FeedbackResponse(
+            data={
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+    except Exception as e:
+        logger.error("event.list_failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "DB_ERROR", "message": "Failed to list events"},
         ) from e
 
 

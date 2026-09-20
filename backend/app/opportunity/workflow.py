@@ -14,9 +14,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.opportunity.decision import (
+    ACTION_RECOMMENDATIONS_ZH,
     BLOCK_REASON_ACTIONS,
+    BLOCK_REASON_ACTIONS_ZH,
     IGNORE_REASON_ACTIONS,
+    IGNORE_REASON_ACTIONS_ZH,
     WATCH_REASON_ACTIONS,
+    WATCH_REASON_ACTIONS_ZH,
 )
 from app.opportunity.models import (
     ConfidenceSet,
@@ -105,6 +109,60 @@ _BLOCKER_SEVERITY = {
     "RULE_BLOCK": "high",
 }
 
+_BLOCKER_CODE_ZH = {
+    "SAFETY_BLOCK": "安全阻断",
+    "INTEGRITY_BLOCK": "数据完整性阻断",
+    "RULE_BLOCK": "规则限制阻断",
+}
+
+_SEVERITY_ZH = {
+    "critical": "严重",
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+}
+
+_FACTOR_KEY_ZH = {
+    "event_probability": "空投事件概率",
+    "eligibility_probability": "资格准入概率",
+    "survival_probability": "存活/防女巫概率",
+    "reward_probability": "奖励发放概率",
+    "conditional_reward_usd": "预期奖励 (USD)",
+    "conditional_reward": "预期奖励",
+    "hard_cost_usd": "硬性成本 (USD)",
+    "hard_cost": "硬性成本",
+    "weekly_maintenance_minutes": "每周维护时间 (分)",
+    "weekly_maintenance": "每周维护时间",
+    "participation_open": "参与通道开放",
+    "multiwallet_policy": "多钱包政策",
+    "distribution_catalyst_3_6m": "3-6个月分发催化剂",
+    "capital_at_risk_usd": "风险资金 (USD)",
+    "expected_capital_loss_usd": "预期资本损失 (USD)",
+    "liquidity_cost_usd": "流动性成本 (USD)",
+    "total_time_hours": "总耗时 (小时)",
+    "economics_direct_evidence": "经济学直接证据",
+}
+
+_SOURCE_TYPE_ZH = {
+    "official": "官方渠道",
+    "third_party": "第三方",
+    "on_chain": "链上数据",
+    "manual": "人工录入",
+    "community": "社群线索",
+}
+
+_VERIFICATION_STATUS_ZH = {
+    "verified": "已核实",
+    "unverified": "未核实",
+    "disputed": "有争议",
+    "rejected": "已驳回",
+}
+
+_FRESHNESS_ZH = {
+    "CURRENT": "有效",
+    "EXPIRED": "已过期",
+}
+
 
 class LegacyDecisionProjection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -126,6 +184,7 @@ class OpportunitySummaryProjection(BaseModel):
     status: DecisionStatus
     public_label: Literal["FARM", "WATCH", "IGNORE"]
     recommended_action: str
+    recommended_action_zh: str | None = None
     blocker_codes: tuple[str, ...] = ()
     watch_reason_codes: tuple[str, ...] = ()
     ignore_reason_codes: tuple[str, ...] = ()
@@ -172,8 +231,11 @@ class BlockerProjection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     code: str
+    code_zh: str | None = None
     severity: str
+    severity_zh: str | None = None
     message: str
+    message_zh: str | None = None
 
 
 class UpgradeConditionProjection(BaseModel):
@@ -181,6 +243,7 @@ class UpgradeConditionProjection(BaseModel):
 
     code: str
     message: str
+    message_zh: str | None = None
 
 
 class WorkflowSection(BaseModel):
@@ -198,17 +261,21 @@ class EvidenceItemProjection(BaseModel):
 
     evidence_id: str | None = None
     factor_key: str
+    factor_key_zh: str | None = None
     value: Any
     value_type: str
     observation_type: str
     source_url: str
     source_type: str
+    source_type_zh: str | None = None
     source_grade: Literal["A", "B", "C", "D", "U"]
     verification_status: str
+    verification_status_zh: str | None = None
     observed_at: datetime
     effective_at: datetime | None = None
     expires_at: datetime | None = None
     freshness: Literal["CURRENT", "EXPIRED"]
+    freshness_zh: str | None = None
     age_days: int = Field(ge=0)
 
     @field_serializer("value", when_used="json")
@@ -375,6 +442,7 @@ def _project_opportunity(
         status=assessment.status,
         public_label=assessment.public_label,
         recommended_action=assessment.recommended_action,
+        recommended_action_zh=ACTION_RECOMMENDATIONS_ZH.get(assessment.recommended_action),
         blocker_codes=assessment.blocker_codes,
         watch_reason_codes=assessment.watch_reason_codes,
         ignore_reason_codes=assessment.ignore_reason_codes,
@@ -641,11 +709,15 @@ def _build_blockers(
             code,
             f"Blocked by {code}; do not interact until remediation evidence is verified.",
         )
+        severity = _BLOCKER_SEVERITY.get(code, "high")
         blockers.append(
             BlockerProjection(
                 code=code,
-                severity=_BLOCKER_SEVERITY.get(code, "high"),
+                code_zh=_BLOCKER_CODE_ZH.get(code),
+                severity=severity,
+                severity_zh=_SEVERITY_ZH.get(severity),
                 message=message,
+                message_zh=BLOCK_REASON_ACTIONS_ZH.get(code),
             )
         )
     return tuple(blockers)
@@ -660,16 +732,28 @@ def _build_upgrade_conditions(
         return ()
 
     conditions: dict[str, str] = {}
+    conditions_zh: dict[str, str] = {}
     for code in assessment.watch_reason_codes:
         text = WATCH_REASON_ACTIONS.get(str(code), f"Resolve watch reason {code}.")
         conditions[str(code)] = text
+        conditions_zh[str(code)] = WATCH_REASON_ACTIONS_ZH.get(str(code), text)
     for code in assessment.ignore_reason_codes:
         text = IGNORE_REASON_ACTIONS.get(str(code), f"Resolve ignore reason {code}.")
         conditions[str(code)] = text
+        conditions_zh[str(code)] = IGNORE_REASON_ACTIONS_ZH.get(str(code), text)
     for key in missing_factor_keys:
         conditions[f"MISSING_{key}"] = f"Provide verified evidence for critical factor {key}."
+        factor_zh = _FACTOR_KEY_ZH.get(key, key)
+        conditions_zh[f"MISSING_{key}"] = f"请为关键因子【{factor_zh}】补齐核验证据。"
 
-    return tuple(UpgradeConditionProjection(code=code, message=conditions[code]) for code in sorted(conditions))
+    return tuple(
+        UpgradeConditionProjection(
+            code=code,
+            message=conditions[code],
+            message_zh=conditions_zh.get(code),
+        )
+        for code in sorted(conditions)
+    )
 
 
 def _project_evidence(
@@ -704,17 +788,21 @@ def _project_evidence(
             EvidenceItemProjection(
                 evidence_id=record.evidence_id,
                 factor_key=record.factor_key,
+                factor_key_zh=_FACTOR_KEY_ZH.get(record.factor_key),
                 value=_json_safe(record.value),
                 value_type=record.value_type,
                 observation_type=record.observation_type,
                 source_url=str(record.source_url),
                 source_type=record.source_type,
+                source_type_zh=_SOURCE_TYPE_ZH.get(record.source_type.lower()) if record.source_type else None,
                 source_grade=record.source_grade,
                 verification_status=record.verification_status,
+                verification_status_zh=_VERIFICATION_STATUS_ZH.get(record.verification_status.lower()) if record.verification_status else None,
                 observed_at=record.observed_at,
                 effective_at=record.effective_at,
                 expires_at=record.expires_at,
                 freshness=freshness,
+                freshness_zh=_FRESHNESS_ZH.get(freshness),
                 age_days=age_days,
             )
         )

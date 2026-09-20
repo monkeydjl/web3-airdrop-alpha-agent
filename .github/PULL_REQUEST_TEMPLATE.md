@@ -23,13 +23,13 @@
 - [ ] 本地测试通过：`pytest -q --cov` 全绿
 - [ ] lint 通过：`ruff check .` + `ruff format --check .`
 - [ ] 无 `print()` / `input()` / 调试断点残留
-- [ ] 行覆盖率 ≥ 80%（关键模块 ≥ 90%）
+- [ ] 行覆盖率 ≥ 80%
 
 ### 文档与配置
 - [ ] Pydantic 模型变更时同步更新了契约测试
 - [ ] API 变更时同步更新了 `API_SPEC.md`
 - [ ] 环境变量变更时同步更新了 `.env.example`
-- [ ] 新增外部依赖时同步更新 `requirements.txt` + `.lock.txt`
+- [ ] 新增外部依赖时同步更新 `pyproject.toml` / `requirements.txt`
 - [ ] `AgentError.kind` 新增枚举时同步更新了文档
 
 ### 架构与兼容

@@ -8,6 +8,8 @@ import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
 import { ParticipationTasks } from '@/components/ParticipationTasks';
+import { MultiWalletStrategyPanel } from '@/components/MultiWalletStrategyPanel';
+import { ProjectTimelinePanel } from '@/components/ProjectTimelinePanel';
 import { TopBar } from '@/components/TopBar';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
@@ -15,6 +17,7 @@ import { ArrowLeft, Plus } from 'lucide-react';
 import {
   formatPct,
   lifecycleStageZh,
+  reasonZh,
   relativeTime,
   riskLevelZh,
   safeExternalUrl,
@@ -60,6 +63,8 @@ const PAGE_SECTIONS = [
   { id: 'pd-chat', label: 'AI 追问' },
   { id: 'pd-signals', label: '可核验信号' },
   { id: 'pd-participation', label: '参与清单' },
+  { id: 'pd-multi-wallet', label: '多钱包策略' },
+  { id: 'pd-timeline', label: '演化时间轴' },
   { id: 'pd-opportunity', label: 'Opportunity 行动流' },
   { id: 'pd-interactions', label: '我的投入' },
   { id: 'pd-feedback', label: '校正这条判断' },
@@ -572,7 +577,7 @@ export default function ProjectPage() {
                     <span className="pt-0.5 font-mono text-[11px] font-semibold tracking-wide text-ink-faint">
                       {String(i + 1).padStart(2, '0')}
                     </span>
-                    <span className="text-ink">{r}</span>
+                    <span className="text-ink">{project.reason_zh?.[i] || reasonZh(r)}</span>
                   </li>
                 ))}
               </ol>
@@ -640,6 +645,16 @@ export default function ProjectPage() {
             <SecHead title="参与清单" />
             <ParticipationTasks projectId={project.id} />
           </section>
+
+          {/* multi-wallet strategy (US-019 / W12-01) */}
+          <CollapsibleSection id="pd-multi-wallet" title="多钱包策略建议" meta="US-019 · 防女巫与资金预算" defaultOpen={true}>
+            <MultiWalletStrategyPanel projectId={project.id} />
+          </CollapsibleSection>
+
+          {/* project evolution timeline (Roadmap §24.3 / W12-02) */}
+          <CollapsibleSection id="pd-timeline" title="项目演化时间轴" meta="V3 Memory · 评分走势与阶段迁移" defaultOpen={true}>
+            <ProjectTimelinePanel projectId={project.id} />
+          </CollapsibleSection>
 
           {/* opportunity — 旁路引擎，低频，默认收起 */}
           <CollapsibleSection id="pd-opportunity" title="Opportunity 行动流" meta="非权威旁路">

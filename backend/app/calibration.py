@@ -579,18 +579,20 @@ def run_calibration(
     *,
     search: bool = False,
     triggered_by: str = "human",
+    force: bool = False,
 ) -> CalibrationReport:
     """运行校准流程。
 
     1. 提取样本
     2. 门禁检查
-    3. 如果 search=True 且门禁通过：搜索 + 记录候选
+    3. 如果 search=True 且 (门禁通过 或 force=True)：搜索 + 记录候选
     4. 返回报告
 
     Args:
         conn: DB 连接
         search: 是否执行搜索（--search 标志）
         triggered_by: 触发者（human / scheduled_job）
+        force: 是否强制执行搜索（仅限开发/实验环境，绕过 200 样本门禁）
 
     Returns:
         CalibrationReport
@@ -608,7 +610,7 @@ def run_calibration(
     baseline_metrics = compute_j(samples, current_weights)
     baseline_j = baseline_metrics["j"]
 
-    if not gate.passed:
+    if not gate.passed and not force:
         logger.info("calibration.gate_not_met", reason=gate.reason)
         return CalibrationReport(
             gate=gate,
@@ -633,10 +635,22 @@ def run_calibration(
         )
 
     # 4. 搜索
+    if not samples:
+        return CalibrationReport(
+            gate=gate,
+            baseline_j=baseline_j,
+            best_j=baseline_j,
+            best_weights=None,
+            current_weights=current_weights,
+            improvement=0.0,
+            metrics=baseline_metrics,
+        )
+
     best_weights, best_j, best_metrics = grid_search(samples, current_weights)
 
     # 5. 记录候选
     new_version = f"v1.{int(current_version.split('.')[-1]) + 1}" if "." in current_version else "v2"
+    effective_triggered = f"{triggered_by} (force_experiment)" if force and not gate.passed else triggered_by
     changelog_id = record_candidate(
         conn,
         from_version=current_version,
@@ -644,7 +658,7 @@ def run_calibration(
         weights=best_weights,
         sample_size=gate.total_samples,
         metrics=best_metrics,
-        triggered_by=triggered_by,
+        triggered_by=effective_triggered,
     )
 
     return CalibrationReport(

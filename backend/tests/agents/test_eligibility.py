@@ -7,8 +7,10 @@ import asyncio
 from app.agents.base import AgentContext, PipelineState, RawProject
 from app.agents.eligibility import (
     VETO_ALREADY_LAUNCHED,
+    VETO_EXPLICIT_NO_AIRDROP,
     VETO_NO_PARTICIPATION_PATH,
     apply_eligibility_gate,
+    has_participation_path,
     is_already_launched_without_airdrop_path,
 )
 from app.agents.scorer import ScorerAgent
@@ -160,3 +162,44 @@ def test_explicit_mention_does_not_override_the_already_launched_veto() -> None:
     decision = apply_eligibility_gate(project, "FARM")
     assert decision.label == "IGNORE"
     assert decision.veto == VETO_ALREADY_LAUNCHED
+
+
+def test_explicit_no_airdrop_vetoes_farm_to_ignore() -> None:
+    """官方明确否认空投/代币激励时，直接否决为 IGNORE 并阻断参与路径。"""
+    from app.agents.airdrop_signal import airdrop_signal_subscore
+
+    project = _strong_project(
+        has_testnet=True,
+        has_points_program=True,
+        has_task_portal=True,
+        explicit_no_airdrop=True,
+    )
+
+    # 1. 参与路径判定必须为 False
+    assert has_participation_path(project) is False
+
+    # 2. 资格门必须否决为 IGNORE
+    decision = apply_eligibility_gate(project, "FARM")
+    assert decision.label == "IGNORE"
+    assert decision.veto == VETO_EXPLICIT_NO_AIRDROP
+    assert "explicitly disclaimed" in (decision.reason or "")
+
+    # 3. 空投信号分被限制在 10.0
+    subscore = airdrop_signal_subscore(project)
+    assert subscore == 10.0
+
+
+def test_scorer_applies_explicit_no_airdrop_veto() -> None:
+    """ScorerAgent 跑完整 pipeline 时正确把官方否认项目降为 IGNORE。"""
+    project = _strong_project(
+        has_testnet=True,
+        has_points_program=True,
+        explicit_no_airdrop=True,
+    )
+    state = _state(project)
+    scorer = ScorerAgent(sector_counts={"L2": 1})
+
+    scored = asyncio.run(scorer.run(state))
+    assert scored.label == "IGNORE"
+    assert scored.veto == VETO_EXPLICIT_NO_AIRDROP
+

@@ -70,6 +70,10 @@ def airdrop_signal_subscore(project: RawProject) -> float:
     elif sources >= 2 and (has_points or no_token or task_portal):
         bonus += 3.0
 
+    # official denial of airdrop / token incentives caps subscore at 10.0
+    if getattr(project, "explicit_no_airdrop", False):
+        return 10.0
+
     # listed tokens without airdrop story stay capped. This predicate is shared
     # with ADR-015's eligibility veto so the two policy paths cannot drift.
     if is_already_launched_without_airdrop_path(project):

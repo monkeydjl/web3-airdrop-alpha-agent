@@ -343,7 +343,8 @@ class TestReportOutput:
         self, bt: Any, dataset: dict[str, Any], run_output: tuple[list[Any], dict[str, Any]]
     ) -> None:
         results, summary = run_output
-        text = bt.format_report(dataset, results, summary)
+        pending_dataset = dict(dataset, pending_expansion=True)
+        text = bt.format_report(pending_dataset, results, summary)
         assert "pending_expansion" in text
         assert "source=backtest" in text
 

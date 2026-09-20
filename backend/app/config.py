@@ -308,6 +308,10 @@ class Settings(BaseSettings):
     #   - auth_token_secret 用于签发/校验匿名 token
     auth_token_secret: str = ""  # 空 = 随机生成（重启后失效，仅适合 MVP）
     auth_token_ttl_hours: int = 72  # 匿名 token 有效期
+    # V3 JWT 鉴权配置（ADR-008）
+    jwt_secret: str = ""  # 空 = 回退至 auth_token_secret，再空 = 随机生成
+    jwt_access_token_expire_minutes: int = 15  # access token 有效期（分钟）
+    jwt_refresh_token_expire_days: int = 7  # refresh token 有效期（天）
 
     # ── LLM 配置 (ADR-001, ADR-012 分级使用) ─────
     openai_api_key: str = ""
@@ -421,6 +425,13 @@ class Settings(BaseSettings):
     # 一次分析运行本身可能占用数秒（500 条队列实测 2.8 秒），足以自造 misfire。
     # 1 小时的补跑窗口对日更/时更任务都足够，且配 coalesce=True 只补跑一次。
     scheduler_misfire_grace_seconds: int = 3600
+
+    # ── 多实例高可用与选主 (ADR-005, W12-03) ────
+    ha_enabled: bool = False
+    ha_instance_id: str = ""
+    ha_lease_ttl_seconds: int = 15
+    ha_heartbeat_interval_seconds: int = 5
+
     # 采集调度器（v2.0，ADR-012）
     collection_scheduler_enabled: bool = True
     # 采集成功后是否自动触发分析（handoff；默认关，由分析 cron / 手动 /run 消费）

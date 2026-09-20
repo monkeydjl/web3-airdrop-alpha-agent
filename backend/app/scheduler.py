@@ -22,6 +22,7 @@ Reference:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -95,9 +96,16 @@ class UnifiedScheduler:
 
     def shutdown(self, wait: bool = True) -> None:
         """停止调度器（未启动时为 no-op，避免 SchedulerNotRunningError）。"""
+        if getattr(self, "_is_shutting_down", False):
+            return
         if self.scheduler.running:
-            self.scheduler.shutdown(wait=wait)
-            self._logger.info("unified_scheduler.shutdown")
+            self._is_shutting_down = True
+            import contextlib
+            from apscheduler.schedulers.base import SchedulerNotRunningError
+
+            with contextlib.suppress(SchedulerNotRunningError):
+                self.scheduler.shutdown(wait=wait)
+                self._logger.info("unified_scheduler.shutdown")
 
     # ── 采集 job 注册 ──────────────────────────────
 
@@ -148,24 +156,27 @@ class UnifiedScheduler:
             self._logger.warning("unified_scheduler.skip_disabled", source_id=source_id)
             return
 
-        # Honor operator toggle in data_sources.enabled
         try:
             from app.db import get_connection
 
-            conn = get_connection()
-            try:
-                row = conn.execute(
-                    "SELECT enabled FROM data_sources WHERE source_id = ?",
-                    (source_id,),
-                ).fetchone()
-                if row is not None and not bool(row["enabled"]):
-                    self._logger.info(
-                        "unified_scheduler.skip_operator_disabled",
-                        source_id=source_id,
-                    )
-                    return
-            finally:
-                conn.close()
+            def _check_op() -> bool:
+                conn = get_connection()
+                try:
+                    row = conn.execute(
+                        "SELECT enabled FROM data_sources WHERE source_id = ?",
+                        (source_id,),
+                    ).fetchone()
+                    return row is None or bool(row["enabled"])
+                finally:
+                    conn.close()
+
+            # P1-4: 同步 DB 读取移出主事件循环
+            if not await asyncio.to_thread(_check_op):
+                self._logger.info(
+                    "unified_scheduler.skip_operator_disabled",
+                    source_id=source_id,
+                )
+                return
         except Exception as exc:
             self._logger.warning(
                 "unified_scheduler.operator_flag_check_failed",

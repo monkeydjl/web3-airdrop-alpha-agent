@@ -23,7 +23,7 @@ from typing import Any
 DEFAULT_USER = "default"
 
 # 允许查询的表白名单。表名会拼进 SQL，必须限定取值，不接受外部输入。
-_ALLOWED_TABLES = ("interactions", "watchlist", "feedback")
+_ALLOWED_TABLES = ("interactions", "watchlist", "feedback", "events", "project_skips")
 
 
 def _scope_clause(user_id: str) -> str:
@@ -33,7 +33,34 @@ def _scope_clause(user_id: str) -> str:
     （单用户 MVP 下这些就是用户自己的记录）；查具体用户时严格匹配，
     不把 NULL 记录算进来，避免多用户启用后跨用户串数据。
     """
-    return "(user_id = ? OR user_id IS NULL)" if user_id == DEFAULT_USER else "user_id = ?"
+    return "(user_id = ? OR user_id IS NULL)" if user_id in (DEFAULT_USER, "anonymous") else "user_id = ?"
+
+
+def build_user_scope_filter(
+    user_id: str,
+    role: str = "viewer",
+    admin_filter_user_id: str | None = None,
+    col_name: str = "user_id",
+) -> tuple[str, list[Any]]:
+    """构建行级数据隔离过滤子句与绑定参数。
+
+    - 管理员 (role == 'admin'):
+      若传入 admin_filter_user_id，则精确过滤该用户；若未传入，则不添加用户过滤条件（查看全量）。
+    - 非管理员 (analyst, viewer, anonymous 等):
+      强制按当前身份过滤。若 user_id 为 DEFAULT_USER 或 'anonymous'，包容 NULL 历史数据；
+      若为具名用户，严格匹配 `user_id = ?`。
+
+    Returns:
+        (sql_clause, params_list)
+    """
+    if role == "admin":
+        if admin_filter_user_id:
+            return f"{col_name} = ?", [admin_filter_user_id]
+        return "", []
+
+    if user_id in (DEFAULT_USER, "anonymous"):
+        return f"({col_name} = ? OR {col_name} IS NULL)", [user_id]
+    return f"{col_name} = ?", [user_id]
 
 
 def owned_project_ids(conn: Any, table: str, user_id: str) -> set[str]:

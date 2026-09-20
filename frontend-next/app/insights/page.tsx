@@ -224,7 +224,7 @@ export default function InsightsPage() {
   const loader = useCallback(
     async (signal: AbortSignal) => {
       const [all, i] = await Promise.all([
-        fetchAllProjects(signal),
+        fetchAllProjects(signal, { curated: true }),
         apiFetch<InsightsData>('/insights', { signal }),
       ]);
       return {

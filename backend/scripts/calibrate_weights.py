@@ -38,6 +38,11 @@ def main() -> int:
         help="执行权重搜索并记录候选到 weight_changelog（默认仅门禁报告）",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="强制执行搜索（即使样本数未满 200 条门槛，仅限开发/实验环境）",
+    )
+    parser.add_argument(
         "--triggered-by",
         default="human",
         help="触发者标识（human / scheduled_job）",
@@ -50,14 +55,15 @@ def main() -> int:
             conn,
             search=args.search,
             triggered_by=args.triggered_by,
+            force=args.force,
         )
     finally:
         conn.close()
 
     print(format_report(report))
 
-    # 退出码：门禁未通过返回 1，通过返回 0
-    return 0 if report.gate.passed else 1
+    # 退出码：门禁通过或使用 --force 时返回 0，未通过返回 1
+    return 0 if (report.gate.passed or args.force) else 1
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
 |---|---|
 | **语言** | Python 3.11+（后端）；TypeScript 5.x（V2 前端 Next.js） |
 | **包管理** | `pip` + `pyproject.toml`（MVP）；`npm` / `pnpm`（V2 前端） |
-| **依赖锁定** | `pyproject.toml` + `requirements.lock.txt`（由 `pip-compile` 生成，V2 引入） |
+| **依赖锁定** | `pyproject.toml` + `requirements.txt`（`==` 精确 pin，由 `test_requirements_pinning.py` 门禁约束） |
 | **环境变量** | `.env` → `pydantic-settings` 读取，`.env.example` 维护模板 |
 
 ---
@@ -409,7 +409,7 @@ def app_client(db) -> TestClient:
 
 ### 9.5 覆盖率要求
 
-- MVP：行覆盖率 ≥ 80%，关键模块（`agents/`、`scorer.py`、`orchestrator.py`、`db.py`）≥ 90%。
+- 行覆盖率 ≥ 80%（CI 与本地均以 `--cov-fail-under=80` 门禁为准，无「关键模块」分级）。
 - CI 覆盖率下降 >3% 告警（不阻断 PR，供 review）。
 
 ### 9.6 可解释性测试
@@ -659,7 +659,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 - [ ] Pydantic 模型变更时同步更新了契约测试
 - [ ] API 变更时同步更新了 API_SPEC.md
 - [ ] 环境变量变更时同步更新了 `.env.example`
-- [ ] 新增外部依赖时同步更新 `requirements.txt` + `.lock.txt`
+- [ ] 新增外部依赖时同步更新 `requirements.txt`（`==` 精确 pin）
 - [ ] `AgentError.kind` 新增枚举时同步更新了文档
 - [ ] 日志事件名遵循 `层级.动词过去式` 格式
 

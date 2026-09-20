@@ -694,6 +694,60 @@ ON opportunity_assessments(public_label, expires_at);
 
 -- PostgreSQL 将 actual_hard_cost_usd/reward_received_usd/claim_cost_usd 改为
 -- DOUBLE PRECISION；其余列保持一致。
+-- ============================================
+-- 2.22 V3 用户认证与可撤销 API Key 表（V3 起，ADR-008 & ROADMAP §25.4）
+-- ============================================
+CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    display_name    TEXT,
+    role            TEXT NOT NULL DEFAULT 'viewer',
+    is_active       INTEGER DEFAULT 1,
+    preferences     TEXT,
+    last_login_at   TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                  TEXT PRIMARY KEY,
+    user_id             TEXT NOT NULL,
+    refresh_token_hash  TEXT NOT NULL UNIQUE,
+    ip                  TEXT,
+    user_agent          TEXT,
+    expires_at          TIMESTAMP NOT NULL,
+    revoked             INTEGER DEFAULT 0,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS blacklisted_jti (
+    jti             TEXT PRIMARY KEY,
+    expires_at      TIMESTAMP NOT NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    key_hash        TEXT NOT NULL UNIQUE,
+    role            TEXT NOT NULL,
+    last_used_at    TIMESTAMP,
+    expires_at      TIMESTAMP,
+    is_revoked      INTEGER DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_blacklisted_expires ON blacklisted_jti(expires_at);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_revoked ON api_keys(is_revoked);
 ```
 
 Opportunity 证据和评估均为追加式记录；评估没有 update 路径。`interactions.wallet_cohort_id` 是本地匿名 cohort ID，不是钱包地址。系统拒绝在 cohort、用户、活动、备注或取消资格原因字段中存储钱包地址；不得存储私钥、助记词、设备身份或 KYC 数据。模型/画像版本必须通过同项目的 `opportunity_assessment_id` 关联，`realized_net_usd` 仅在响应中计算，不落库。

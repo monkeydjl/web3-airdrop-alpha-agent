@@ -25,10 +25,9 @@
 | 测试目录 | `backend/tests/agents/test_<name>.py`（现 15 个文件） |
 | 覆盖率 | CI 与本地都是 `--cov-fail-under=80`，**没有「Agent 单独 90%」这条门槛** |
 
-> **契约与路线图不一致，以代码为准。** `docs/ENGINEERING_ROADMAP.md §6.1` 里画的仍是
-> `def run(self, context: AgentContext) -> AgentResult`，那是设计阶段的形态。
-> 真实的 `AgentResult`（`agents/orchestrator.py:55`）属于另一条 LangGraph 风格编排，
-> 跟 `BaseAgent` 无关。照路线图写会直接被 `@abstractmethod` 挡下。
+> **契约以代码及路线图最新定义为准。** `BaseAgent.run(self, state: PipelineState) -> PipelineState`，
+> `AgentResult`（`agents/orchestrator.py:55`）属于另一条 LangGraph 风格编排，
+> 跟 `BaseAgent` 无关。Agent 必须实现 `run(self, state: PipelineState) -> PipelineState`。
 
 > **`run()` 约定不抛异常。** 基类 docstring 写死了 "Should NOT raise"。异常跑出去会被
 > `_run_agent`（`orchestrator_simple.py:241`）记成 `outcome="error"` 后继续往上抛给 gather，

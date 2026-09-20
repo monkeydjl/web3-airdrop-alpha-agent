@@ -5,7 +5,7 @@ import { useCallback, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
-import { formatPct, reasonTone, sourceZh, stageZh, tierZh } from '@/lib/format';
+import { formatPct, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
 
 export function ProjectCard({ project, rank }: { project: Project; rank?: number }) {
   const needsVerify = project.veto === 'no_participation_path';
@@ -107,7 +107,7 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
               return (
                 <span key={i} className="reason-chip">
                   <span className={`reason-sign reason-${tone}`}>{sign}</span>
-                  <span className="truncate min-w-0">{r}</span>
+                  <span className="truncate min-w-0">{reasonZh(r)}</span>
                 </span>
               );
             })}

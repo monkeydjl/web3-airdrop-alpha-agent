@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 Label = Literal["FARM", "WATCH", "IGNORE"]
 VETO_ALREADY_LAUNCHED = "already_launched"
 VETO_NO_PARTICIPATION_PATH = "no_participation_path"
+VETO_EXPLICIT_NO_AIRDROP = "explicit_no_airdrop"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ def has_participation_path(project: RawProject) -> bool:
     `is_already_launched_without_airdrop_path()` 先一步拦成 IGNORE ——
     那条规则在 `apply_eligibility_gate` 里排在本条之前，顺序不能调换。
     """
+    if getattr(project, "explicit_no_airdrop", False):
+        return False
+
     return bool(
         project.has_testnet
         or project.has_points_program
@@ -82,6 +86,13 @@ def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDeci
             label="IGNORE",
             veto=VETO_ALREADY_LAUNCHED,
             reason="token already launched with no verified follow-on airdrop path",
+        )
+
+    if getattr(project, "explicit_no_airdrop", False):
+        return EligibilityDecision(
+            label="IGNORE",
+            veto=VETO_EXPLICIT_NO_AIRDROP,
+            reason="team or official source explicitly disclaimed airdrop / token incentives",
         )
 
     if not has_participation_path(project):

@@ -11,8 +11,8 @@
  * 现在分两档：
  *
  * - **管理动作**（`ADMIN_PREFIXES` / `ADMIN_METHOD_RULES`，与后端
- *   `app/auth.py` 逐项对齐）→ 注入 `X-API-Key`
- * - **其余读请求** → 注入后端签发的**匿名 token**（`Bearer`）
+ *   `app/auth.py` 逐项对齐）→ 严禁代理自动代签；由客户端显式出示凭据，未带凭证交由后端阻断（401/403，修复 P1-5）
+ * - **其余公开/读取请求** → 代理注入服务端换取的**匿名 token**（`Bearer`），免去普通访客鉴权门槛
  *
  * ## 匿名 token 为什么在服务端取
  *
@@ -152,15 +152,17 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const requestHeaders = new Headers(request.headers);
-
   if (requiresAdmin(request.method, pathname)) {
-    requestHeaders.set('X-API-Key', apiKey);
-  } else {
-    const token = await getAnonymousToken(request.nextUrl.origin);
-    if (token) {
-      requestHeaders.set('Authorization', `Bearer ${token}`);
-    }
+    // P1-5 安全修复：代理严禁无条件代签管理员密钥。
+    // 管理端点必须由客户端显式出示凭据（X-API-Key 或 Authorization: Bearer <token>）。
+    // 若客户端未提供任何凭证，直接放行交由后端返回 401 UNAUTHORIZED / 403 FORBIDDEN。
+    return NextResponse.next();
+  }
+
+  const token = await getAnonymousToken(request.nextUrl.origin);
+  const requestHeaders = new Headers(request.headers);
+  if (token) {
+    requestHeaders.set('Authorization', `Bearer ${token}`);
   }
 
   return NextResponse.next({ request: { headers: requestHeaders } });

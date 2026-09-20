@@ -144,6 +144,7 @@ def to_raw_project(case: dict[str, Any], index: int) -> RawProject:
         github_stars=int(signals.get("github_stars") or 0),
         github_recent_push_days=signals.get("github_recent_push_days"),
         explicit_airdrop_mention=bool(signals.get("explicit_airdrop_mention")),
+        explicit_no_airdrop=bool(signals.get("explicit_no_airdrop")),
         tvl_usd=signals.get("tvl_usd"),
         has_task_portal=bool(signals.get("has_task_portal")),
         has_contract=bool(signals.get("has_contract")),
