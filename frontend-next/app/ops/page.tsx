@@ -6,7 +6,7 @@ import { TopBar } from '@/components/TopBar';
 import { apiFetch, fetchHealth } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
-import type { CollectionSource, CollectionSourceApi, HealthData } from '@/lib/types';
+import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData } from '@/lib/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, UploadCloud } from 'lucide-react';
 
@@ -344,17 +344,22 @@ export default function OpsPage() {
     }
   };
 
+  const [autoRun, setAutoRun] = useState(false);
+
   const trigger = async (sourceId: string) => {
     setBusy(sourceId);
     try {
-      const res = await apiFetch<{ status?: string; items_collected?: number }>(
+      const res = await apiFetch<CollectionTriggerData>(
         `/collections/${sourceId}/trigger`,
-        { method: 'POST', body: '{}' },
+        { method: 'POST', body: JSON.stringify({ auto_run: autoRun }) },
       );
-      showToast(
-        `${sourceZh(sourceId)} 完成 · 已采集 ${res.items_collected ?? '—'} 项`,
-        'success',
-      );
+      let msg = `${sourceZh(sourceId)} 完成 · 已采集 ${res.items_collected ?? '—'} 项`;
+      if (res.auto_run?.scored_count !== undefined) {
+        msg += ` · 自动评分 ${res.auto_run.scored_count} 项`;
+      } else if (res.auto_run_skipped === 'queue_drain_in_progress') {
+        msg += ' (评分队列执行中)';
+      }
+      showToast(msg, 'success');
       load();
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : `${sourceId} 失败`, 'error');
@@ -372,15 +377,26 @@ export default function OpsPage() {
     setBusy('all');
     let ok = 0;
     let fail = 0;
+    let totalScored = 0;
     for (const s of list) {
       try {
-        await apiFetch(`/collections/${s.source_id}/trigger`, { method: 'POST', body: '{}' });
+        const res = await apiFetch<CollectionTriggerData>(
+          `/collections/${s.source_id}/trigger`,
+          { method: 'POST', body: JSON.stringify({ auto_run: autoRun }) },
+        );
         ok += 1;
+        if (res.auto_run?.scored_count) {
+          totalScored += res.auto_run.scored_count;
+        }
       } catch {
         fail += 1;
       }
     }
-    showToast(`已触发 ${ok} 个源${fail ? ` · 失败 ${fail}` : ''}`, fail ? 'error' : 'success');
+    let msg = `已触发 ${ok} 个源${fail ? ` · 失败 ${fail}` : ''}`;
+    if (autoRun && totalScored > 0) {
+      msg += ` · 自动评分 ${totalScored} 项`;
+    }
+    showToast(msg, fail ? 'error' : 'success');
     setBusy(null);
     load();
   };
@@ -524,6 +540,15 @@ export default function OpsPage() {
           <HeartPulse className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">健康检查</span>
         </button>
+        <label className="flex items-center gap-1.5 text-xs text-secondary cursor-pointer select-none px-2.5 py-1.5 bg-surface-subtle/50 rounded border border-border">
+          <input
+            type="checkbox"
+            checked={autoRun}
+            onChange={(e) => setAutoRun(e.target.checked)}
+            className="rounded border-border text-primary focus:ring-0"
+          />
+          <span>自动评分出分</span>
+        </label>
         <button
           type="button"
           className="btn-primary"

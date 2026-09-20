@@ -1130,6 +1130,11 @@ curl -X POST http://localhost:8002/api/v1/run \
 > 目前**匿名身份就能调**。这是现状记录，不是推荐配置 —— 上生产前
 > 应当考虑把 `/api/v1/collections` 加入 `ADMIN_ONLY_PREFIXES`。
 
+**请求（可选入参）**：
+- Query 参数：`?auto_run=true` 或 `?auto_run=false`
+- JSON 请求体：`{"auto_run": true}`
+- 语义：是否在采集完成后自动触发评分流水线。未传（`null`）时默认遵循全局配置 `COLLECTION_AUTO_RUN_ENABLED`（默认 `false`）。
+
 **响应 200**（实测 —— **不是 202**，也**没有** `task_id`）
 
 原文把它写成「`202 Accepted` + 返回采集任务 id + 去 `/collections/logs` 查日志」，
@@ -1157,7 +1162,8 @@ curl -X POST http://localhost:8002/api/v1/run \
 > **这个端点会真的去打外部 API 并写库** —— 它同步执行完整采集，
 > 把新条目写进 `raw_projects`。不要当成「排个队而已」拿去随手试。
 > `auto_run` 为 `null` 表示没有连带触发分析（受
-> `COLLECTION_AUTO_RUN_ENABLED` 控制，实测为 `false`）。
+> `COLLECTION_AUTO_RUN_ENABLED` 或请求入参 `auto_run` 控制，默认 `false`；触发时返回分析排空结果字典）。
+> 若因已有分析任务在飞而跳过排空，`auto_run_skipped` 将标记为 `"queue_drain_in_progress"`。
 
 ---
 

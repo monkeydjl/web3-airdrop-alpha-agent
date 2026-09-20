@@ -14,7 +14,7 @@ import asyncio
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from app.collectors.base import DataCollector
@@ -42,6 +42,15 @@ class CollectionSourcesResponse(BaseModel):
 
     ok: bool = True
     data: dict[str, Any] = Field(..., description="包含 sources 列表")
+
+
+class CollectionTriggerRequest(BaseModel):
+    """手动触发采集请求参数。"""
+
+    auto_run: bool | None = Field(
+        None,
+        description="是否在采集完成后自动触发分析流水线。为 None 时遵循 COLLECTION_AUTO_RUN_ENABLED 配置",
+    )
 
 
 class CollectionTriggerResponse(BaseModel):
@@ -276,6 +285,8 @@ def patch_collection_source(
 @router.post("/collections/{source_id}/trigger", response_model=CollectionTriggerResponse)
 async def trigger_collection(
     source_id: str = Path(..., description="数据源 ID, 如 defillama"),
+    payload: CollectionTriggerRequest | None = Body(None, description="触发参数（可选）"),
+    auto_run: bool | None = Query(None, description="是否自动触发分析流水线（可选，优先级高于 body）"),
 ) -> CollectionTriggerResponse:
     """手动触发指定数据源采集。"""
     registry = _build_registry()
@@ -367,13 +378,21 @@ async def trigger_collection(
 
             await asyncio.to_thread(_persist_and_economic)
 
-            auto_run: dict[str, Any] | None = None
+            effective_auto_run: bool
+            if auto_run is not None:
+                effective_auto_run = auto_run
+            elif payload is not None and payload.auto_run is not None:
+                effective_auto_run = payload.auto_run
+            else:
+                effective_auto_run = settings.collection_auto_run_enabled
+
+            auto_run_data: dict[str, Any] | None = None
             auto_run_skipped: str | None = None
-            if settings.collection_auto_run_enabled and result.status in ("success", "partial"):
+            if effective_auto_run and result.status in ("success", "partial"):
                 from app.pipeline_run import execute_analysis_pipeline
 
                 try:
-                    auto_run = await execute_analysis_pipeline(trigger="collection_auto")
+                    auto_run_data = await execute_analysis_pipeline(trigger="collection_auto")
                 except QueueDrainInProgressError:
                     # 采集本身已成功落库，不因此报错：另一次排空正在跑，本批项目
                     # 会被后续运行取到（它们仍是 processed=0）。
@@ -389,7 +408,7 @@ async def trigger_collection(
                     "items_duplicate": result.items_duplicate,
                     "started_at": result.started_at.isoformat() if result.started_at else None,
                     "finished_at": result.finished_at.isoformat() if result.finished_at else None,
-                    "auto_run": auto_run,
+                    "auto_run": auto_run_data,
                     "auto_run_skipped": auto_run_skipped,
                 },
             )

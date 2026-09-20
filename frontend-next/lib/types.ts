@@ -165,6 +165,24 @@ export function normalizeCollectionSource(raw: CollectionSourceApi): CollectionS
   };
 }
 
+export interface CollectionTriggerData {
+  source_id: string;
+  status: string;
+  items_collected: number;
+  items_new?: number;
+  items_duplicate?: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  auto_run?: {
+    run_id?: string;
+    status?: string;
+    project_count?: number;
+    scored_count?: number;
+    top_score?: number;
+  } | null;
+  auto_run_skipped?: string | null;
+}
+
 export interface HealthData {
   ok: boolean;
   status: string;

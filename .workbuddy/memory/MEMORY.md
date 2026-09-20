@@ -160,6 +160,12 @@
   - 批量回填与存活重评：`backend/scripts/sync_defillama_raises.py`，支持 `--dry-run` 与 `--apply`，安全合并已有融资（`max(new_amount, existing_amount)`，投资人 union，最佳 Tier），自动联动 `evaluate_project_viability` 重新计算存活等级与建议；实测成功补全 Polyhedra Network（$25M -> $30M）、Grass（$4.5M -> $13.5M）、Pyth Network（升至 Tier-1）；
   - 采集器集成：`backend/app/collectors/defillama.py` 集成融资抽取，在 `_build_discovery` 注入 `funding` 块与 `RawSignal(signal_type="funding")`；
   - 单元测试与验证：`backend/tests/test_defillama_raises.py` 6 项单测全量通过，全仓无破坏性改动。
+- 采集与分析流水线自动联动（Option A，2026-09-21 落地）：
+  - 核心架构与 API 参数：`backend/app/routers/v1/collections.py` 扩展 `POST /collections/{source_id}/trigger` 支持 `auto_run: bool | None`（Query 或 JSON Body），实现 API 级灵活覆盖；保持 `COLLECTION_AUTO_RUN_ENABLED` 字段默认 `False` 满足解耦门禁；
+  - 智能排空与防并发：`backend/app/main.py` 的 `on_collection` 增加 `(result.items_new or 0) > 0` 防空转检查；并发排空冲突由 `QueueDrainInProgressError` 安全捕获并返回 `auto_run_skipped="queue_drain_in_progress"`；
+  - 统一调度器完整覆盖：`backend/app/scheduler.py` 的 `UnifiedScheduler` 补全 6 个采集源（`discord`, `reddit`, `medium`, `mirror`, `telegram`, `farcaster`），全仓 16 个源统一调度；
+  - 前端运维联动：`frontend-next/app/ops/page.tsx` 增加「自动评分出分」复选框，触发采集后实时回显采集与自动评分条数；
+  - 门禁与契约：`docs/DATA_SOURCE_STRATEGY.md` §11 与 `docs/API_SPEC.md` §21 同步更新，专项测试 `test_collection_auto_run.py` 4 项全过，全仓契约与回归测试 100% 通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 

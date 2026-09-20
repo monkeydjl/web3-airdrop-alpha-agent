@@ -639,11 +639,14 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 >
 > **2026-08-29 再移出一条**：「Discord / Medium / Mirror / Reddit collector ❌
 > 无任何代码」—— 四个 P2 源已实现（见 §2 优先级矩阵与 §3 采集器表）。
+>
+> **2026-09-21 再移出一条**：「采集完成自动触发分析 ❌
+> `COLLECTION_AUTO_RUN_ENABLED=false`」—— 已打通全链路联动：默认仍保持 `false` 以保障解耦安全，但支持配置开启或通过 `POST /collections/{source_id}/trigger` 的 `auto_run` 参数（query 或 json body）显式触发，且具备 `QueueDrainInProgressError` 并发排空互斥保护与前端一键联动开关。
 
 | 项 | 状态 |
 |---|---|
 | Twitter Filtered Stream（实时流） | ❌ 未实现（需 Pro Tier） |
-| 采集完成自动触发分析 | ❌ `COLLECTION_AUTO_RUN_ENABLED=false` |
+| 采集完成自动触发分析 | ✅ 已支持（配置开启或入参 `auto_run` 联动） |
 | `POST /re-score/{id}` 单项目重跑 | ❌ **接口不存在**（前缀在鉴权表里，会先返回 403 —— 见 §6.2） |
 | 误报率 / 漏报率 / 去重准确率统计 | ❌ 无实现 |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在 |

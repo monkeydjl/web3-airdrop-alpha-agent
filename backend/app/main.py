@@ -175,22 +175,29 @@ def create_app(
                         "success",
                         "partial",
                     ):
-                        try:
-                            await execute_analysis_pipeline(trigger="collection_auto")
-                        except QueueDrainInProgressError:
-                            # 10 个采集源各有独立 job，两个源同时完成会各自触发一次
-                            # 排空。跳过不是故障：本批项目仍是 processed=0，在飞的
-                            # 那次运行或下一次 cron 自会取到。
+                        if (result.items_new or 0) > 0:
+                            try:
+                                await execute_analysis_pipeline(trigger="collection_auto")
+                            except QueueDrainInProgressError:
+                                # 多个采集源各有独立 job，两个源同时完成会各自触发一次
+                                # 排空。跳过不是故障：本批项目仍是 processed=0，在飞的
+                                # 那次运行或下一次 cron 自会取到。
+                                logger.info(
+                                    "app.collection_auto_run_skipped",
+                                    source_id=source_id,
+                                    reason="queue_drain_in_progress",
+                                )
+                            except Exception as exc:
+                                logger.error(
+                                    "app.collection_auto_run_failed",
+                                    source_id=source_id,
+                                    error=str(exc),
+                                )
+                        else:
                             logger.info(
                                 "app.collection_auto_run_skipped",
                                 source_id=source_id,
-                                reason="queue_drain_in_progress",
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "app.collection_auto_run_failed",
-                                source_id=source_id,
-                                error=str(exc),
+                                reason="no_new_items",
                             )
                 from app.services.leader_election import LeaderElector
 
