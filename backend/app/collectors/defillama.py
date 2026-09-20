@@ -21,6 +21,7 @@ from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, Ra
 from app.collectors.noise import is_listed_brand_subproduct, is_noise_protocol
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
+from app.services.defillama_raises import fetch_protocol_funding
 from app.utils.normalize import normalize_sector
 
 logger = structlog.get_logger(__name__)
@@ -79,6 +80,16 @@ class DefiLlamaCollector(DataCollector):
                 "defillama.candidates",
                 count=len(candidates),
             )
+
+            # 针对头部候选协议抽取 DefiLlama 免费融资数据 (raises)
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                for protocol in candidates[:15]:
+                    slug = protocol.get("slug")
+                    if slug:
+                        funding_info = await fetch_protocol_funding(slug, client=client)
+                        if funding_info and funding_info.get("has_funding"):
+                            protocol["funding"] = funding_info
+                            protocol["recent_funding"] = True
 
             for protocol in candidates:
                 discovery = self._build_discovery(protocol)
@@ -306,7 +317,8 @@ class DefiLlamaCollector(DataCollector):
             "no_token_yet": no_token,
             "has_testnet": has_testnet,
             "has_points_program": False,
-            "recent_funding": False,
+            "recent_funding": bool(protocol.get("funding") or protocol.get("recent_funding")),
+            "funding": protocol.get("funding"),
         }
 
         signals = [
@@ -329,6 +341,19 @@ class DefiLlamaCollector(DataCollector):
                 signal_strength=0.8 if no_token else 0.2,
             ),
         ]
+
+        if protocol.get("funding"):
+            funding_data = protocol["funding"]
+            tier = funding_data.get("funding_tier")
+            strength = 0.9 if tier == "tier1" else 0.7 if tier == "tier2" else 0.5
+            signals.append(
+                RawSignal(
+                    signal_type="funding",
+                    signal_source=self.source_id,
+                    signal_data=funding_data,
+                    signal_strength=strength,
+                )
+            )
 
         return RawDiscovery(
             source_id=self.source_id,
