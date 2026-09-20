@@ -198,6 +198,18 @@ def generate_participation_tasks(project: dict[str, Any]) -> dict[str, Any]:
     # ── Testnet ──
     if has_testnet or stage == "testnet":
         add(
+            task_id="testnet-faucet-guide",
+            category="testnet",
+            title="领取免费测试网水龙头 (Faucet)",
+            description="通过官方或公共水龙头获取免费测试币（如 Sepolia ETH / 专属 Testnet 代币），无需充值任何真实本金即可开展全套交互。",
+            priority=1,
+            effort="low",
+            why="测试网交互核心是 0 本金获取资格，水龙头是第一步且完全免费。",
+            action_hint="优先访问官方文档中的 Faucet 链接或公共水龙头平台（如 Alchemy Faucet、Infura、QuickNode 等）",
+            link=url,
+            required=True,
+        )
+        add(
             task_id="testnet-faucet-and-tx",
             category="testnet",
             title="测试网领水并完成核心交互",

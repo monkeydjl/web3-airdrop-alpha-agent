@@ -39,6 +39,31 @@ def _sub_scores_json(state: PipelineState) -> str | None:
     return json.dumps(sub_scores, ensure_ascii=False)
 
 
+def is_zero_cost_opportunity(record: dict[str, Any]) -> bool:
+    """判断项目是否为零资金成本 / 纯测试网高性价比机会。"""
+    meta = parse_meta(record.get("meta"))
+    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+
+    has_testnet = bool(signals.get("has_testnet") or str(record.get("stage") or "").lower() == "testnet")
+    if not has_testnet:
+        return False
+
+    v_tier = meta.get("viability_tier")
+    if v_tier == "unviable":
+        return False
+
+    raw_reason = record.get("reason")
+    reasons_list = (
+        json.loads(raw_reason)
+        if isinstance(raw_reason, str) and raw_reason.startswith("[")
+        else ([str(raw_reason)] if raw_reason else [])
+    )
+    if "LOW_RUNWAY_RISK" in reasons_list or "HEAVY_CAPITAL_LOCKUP" in reasons_list:
+        return False
+
+    return True
+
+
 class ProjectRepository:
     """项目数据仓库。
 
@@ -592,6 +617,7 @@ class ProjectRepository:
         veto: str | None = None,
         skip_user_id: str | None = None,
         curated: bool = False,
+        zero_cost_only: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -605,6 +631,10 @@ class ProjectRepository:
             sort_by: 排序字段
             sort_order: 排序顺序
             auto_discovered: 仅查自动发现的项目 (True) 或手动录入 (False)
+            veto: 资格否决筛选
+            skip_user_id: 用户 ID
+            curated: 仅精选项目
+            zero_cost_only: 仅零资金成本/纯测试网项目（保本优先）
 
         Returns:
             (项目列表, 总数量)
@@ -656,6 +686,24 @@ class ProjectRepository:
                     placeholders = ",".join("?" for _ in kept_ids)
                     conditions.append(f"projects.id IN ({placeholders})")
                     params.extend(kept_ids)
+                else:
+                    conditions.append("1 = 0")
+                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+                count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
+                cursor = conn.execute(count_query, params)
+                total = int(scalar(cursor.fetchone()) or 0)
+
+            if zero_cost_only:
+                rows = conn.execute(f"SELECT projects.* FROM projects {where_clause}", params).fetchall()
+                zero_cost_ids: list[str] = []
+                for row in rows:
+                    record = dict_from_row(row)
+                    if is_zero_cost_opportunity(record):
+                        zero_cost_ids.append(str(record["id"]))
+                if zero_cost_ids:
+                    placeholders = ",".join("?" for _ in zero_cost_ids)
+                    conditions.append(f"projects.id IN ({placeholders})")
+                    params.extend(zero_cost_ids)
                 else:
                     conditions.append("1 = 0")
                 where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""

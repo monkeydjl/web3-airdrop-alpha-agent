@@ -288,6 +288,15 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
           </div>
         ) : (
           <>
+            {tasks.some((t) => t.category === 'testnet') ? (
+              <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
+                <span className="text-base">🛡️</span>
+                <p className="leading-relaxed">
+                  <strong>零资金成本提示：</strong>本项目支持免费测试网交互。请优先通过水龙头 (Faucet) 领取测试币，全程无需投入真实本金即可完成全套核心交互。
+                </p>
+              </div>
+            ) : null}
+
             {data?.tips && data.tips.length > 0 ? (
               <ul className="mb-4 space-y-1 rounded-xl border border-line/80 bg-surface-2/50 px-3 py-2.5 text-xs text-ink-muted">
                 {data.tips.map((t) => (

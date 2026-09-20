@@ -129,7 +129,14 @@
   - 决策门禁：`app/opportunity/decision.py` 在 `decide()` 实施短路拦截逻辑，纯积分盘直接定性为 `IGNORE`（`NOT_FIT`，理由码 `LOW_RUNWAY_RISK`），微额融资与跑道耗尽降级为 `WATCH`（`MONITOR`），彻底杜绝在空手套白狼或即将停服的项目上浪费 gas 与流动性；
   - 投影与数据流：`app/opportunity/models.py` 与 `workflow.py` 在 `OpportunitySummaryProjection` 注入 `viability_tier`、`viability_tier_zh` 与 `viability_advisory`；`routers/v1/projects.py` 增补 `low_runway_risk` 中文映射；
   - 前端视觉呈现：`ProjectCard.tsx` 动态展示「存活预警」徽标；`app/project/[id]/page.tsx` 顶部呈现「项目存活与跑道预警」横幅；`OpportunityWorkflowPanel.tsx` 呈现存活率徽标（资金充裕/跑道观察/存活预警）与详细评估卡片；
-  - 198 项后端契约与全套前端单测、类型检查 100% 通过。
+- 全库存活门禁批量洗牌与零成本测试网优先推荐体系（2026-09-21 落地）：
+  - 批量诊断与洗牌脚本：`backend/scripts/audit_viability.py`，全库扫描诊断 338 个项目存活率与跑道硬指标，支持 `--dry-run` 与 `--apply`，自动归类 `viable`（59）、`borderline`（271）、`unviable`（8），清洗无背书纯积分盘及跑道耗尽项目；修复 Windows 控制台 GBK 编码并统一解析 `backend/data/airdrop.db` 真实路径；
+  - 存活分档修复：`backend/app/services/viability_gate.py` 将零/未知融资且无 Tier-1/Tier-2 机构背书、未开启积分盘的早期项目准确分流至 `borderline`（跑道观察）而非误判为 `viable`；
+  - 零成本测试网推荐：`backend/app/repository.py` 新增 `is_zero_cost_opportunity()`，综合检验测试网信号、存活率等级与无重资本锁仓限制，`list_projects` 支持 `zero_cost_only: bool = False` 过滤；`routers/v1/projects.py` 暴露 `zero_cost_only` API 参数与过滤器回显；
+  - 零成本水龙头指引：`backend/app/services/participation_tasks.py` 自动为测试网项目生成 `testnet-faucet-guide` 任务（优先级 1、必须、零成本说明）；前端 `ParticipationTasks.tsx` 动态展示「零资金成本提示」横幅；
+  - 前端工作台交互：`frontend-next/app/page.tsx` 顶部工具栏增加「🛡️ 零资金成本」快速筛选 Chip，支持与「全部」互斥切换与重置；
+  - 单元测试与验证：新增 `test_audit_viability.py` 与 `test_zero_cost_priority.py`，全量测试 100% 通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
+
 

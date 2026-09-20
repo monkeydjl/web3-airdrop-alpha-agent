@@ -45,6 +45,7 @@ function DashboardContent() {
   const [keyword, setKeyword] = useState('');
   const [hideIgnore, setHideIgnore] = useState(true);
   const [hasFundingOnly, setHasFundingOnly] = useState(false);
+  const [zeroCostOnly, setZeroCostOnly] = useState(false);
   // 「分数已达 FARM 线、但缺参与路径」是库里唯一上不去的一批 —— 单独抽出来做
   // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那 86 行）。
   const [needsVerifyOnly, setNeedsVerifyOnly] = useState(false);
@@ -156,11 +157,16 @@ function DashboardContent() {
       if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
+      if (zeroCostOnly) {
+        const hasTestnet = Boolean(p.signals?.has_testnet || p.stage === 'testnet');
+        const isNotUnviable = !p.reason?.includes('LOW_RUNWAY_RISK') && !p.reason?.includes('HEAVY_CAPITAL_LOCKUP');
+        if (!hasTestnet || !isNotUnviable) return false;
+      }
       if (needsVerifyOnly && p.veto !== 'no_participation_path') return false;
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, needsVerifyOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -274,9 +280,9 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); }}
+              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); setZeroCostOnly(false); }}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                !labelFilter && !needsVerifyOnly && !hasFundingOnly
+                !labelFilter && !needsVerifyOnly && !hasFundingOnly && !zeroCostOnly
                   ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
                   : 'bg-surface-2 text-ink-muted hover:text-ink border border-line'
               }`}
@@ -315,6 +321,17 @@ function DashboardContent() {
               }`}
             >
               💰 大额融资
+            </button>
+            <button
+              type="button"
+              onClick={() => setZeroCostOnly((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                zeroCostOnly
+                  ? 'bg-emerald-400 text-slate-950 shadow-md shadow-emerald-400/20'
+                  : 'bg-surface-2 text-emerald-400 hover:bg-surface-3 border border-emerald-500/25'
+              }`}
+            >
+              🛡️ 零资金成本
             </button>
             <button
               type="button"

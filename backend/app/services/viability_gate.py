@@ -100,8 +100,10 @@ def evaluate_project_viability(
     tier: ViabilityTier
     if reasons:
         tier = "unviable"
-    elif (funding_total_usd is not None and 3_000_000 <= funding_total_usd < 5_000_000 and tier_norm != "tier1") or (
-        months_ago is not None and 12.0 <= months_ago < 18.0 and tier_norm != "tier1"
+    elif (
+        (funding_total_usd is not None and 3_000_000 <= funding_total_usd < 5_000_000 and tier_norm != "tier1")
+        or (months_ago is not None and 12.0 <= months_ago < 18.0 and tier_norm != "tier1")
+        or (has_no_funding and tier_norm not in ("tier1", "tier2"))
     ):
         tier = "borderline"
     else:

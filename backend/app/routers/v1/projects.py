@@ -208,6 +208,7 @@ def list_projects(
     ),
     user_id: str | None = Query(None, description="用户 ID（匿名时走 default）"),
     curated: bool = Query(False, description="仅返回满足精选门槛的项目（评分/置信度/近90天活动/参与路径）"),
+    zero_cost_only: bool = Query(False, description="仅返回零资金成本/纯测试网项目（保本优先）"),
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
@@ -246,6 +247,7 @@ def list_projects(
         sort_order=sort_order,
         auto_discovered=auto_discovered,
         user_id=effective_user_id,
+        zero_cost_only=zero_cost_only,
     )
 
     # Query from database
@@ -264,6 +266,7 @@ def list_projects(
             veto=veto,
             skip_user_id=effective_user_id,
             curated=curated,
+            zero_cost_only=zero_cost_only,
         )
 
         # Convert to response format — include discovery metadata for Dashboard
@@ -327,6 +330,7 @@ def list_projects(
                 "min_score": min_score,
                 "auto_discovered": auto_discovered,
                 "veto": veto,
+                "zero_cost_only": zero_cost_only,
             },
             "sort": {
                 "by": sort_by.value,
