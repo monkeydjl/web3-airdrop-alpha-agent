@@ -10,7 +10,10 @@
  * 「文件写了但没被跑」这种失败一眼看见，自动扫描漏了反而是静默的。
  */
 
-const FILES = ['./lib/download.test.ts'];
+const FILES = [
+  './lib/download.test.ts',
+  './lib/format.test.ts',
+];
 
 for (const f of FILES) {
   await import(f);
