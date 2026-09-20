@@ -140,6 +140,33 @@ def _build_discovery(payload: dict[str, Any]) -> RawDiscovery | None:
     )
 
 
+def _process_claim_watch(payload: dict[str, Any]) -> bool:
+    """匹配自有地址并入库 airdrop_candidate 事件。返回是否命中。
+
+    整个函数吞掉所有异常：领取监控是附加价值（F4），它挂掉绝不能让 webhook
+    返回非 200 —— Alchemy 对非 200 会反复重投，一个次要功能的 bug 会变成
+    持续的重投风暴，连带把主职责（RawDiscovery 入库）也一起拖垮。
+
+    这里不直接发送，只入库 pending。发送由 F1 既有的 `dispatch_pending`
+    统一做，那条路径已经有重试上限、失败记录与指标 —— 另开一条发送路径
+    等于把那些保障重写一遍。
+    """
+    try:
+        from app.db import get_connection
+        from app.services.claim_watch import evaluate_claim_candidate, record_claim_candidate
+
+        with get_connection() as conn:
+            event = evaluate_claim_candidate(conn, payload)
+            if event is None:
+                return False
+            inserted = record_claim_candidate(conn, event, settings.notify_channel)
+            conn.commit()
+        return inserted
+    except Exception as exc:
+        logger.error("webhook.alchemy.claim_watch_failed", error=str(exc), exc_info=True)
+        return False
+
+
 @router.post("/webhook/alchemy")
 async def receive_alchemy_webhook(
     request: Request,
@@ -151,7 +178,7 @@ async def receive_alchemy_webhook(
     on-chain activity as a RawDiscovery. Returns 200 even on internal
     errors — Alchemy retries on non-200 responses.
     """
-    signing_key = settings.alchemy_api_key
+    signing_key = settings.alchemy_webhook_signing_key
 
     # Webhook not configured
     if not signing_key:
@@ -194,14 +221,30 @@ async def receive_alchemy_webhook(
 
     event_id = payload.get("id", "")
 
+    # ── 领取监控（F4，ACTION_LOOP_DESIGN §5）─────────────────────
+    #
+    # 刻意放在 _build_discovery **之前**且用独立 try：这两件事职责无关 ——
+    # discovery 是"发现了一个新项目"，claim 是"我的钱包收到了东西"。同一条
+    # payload 可能只满足其中一个（自有地址收到代币时 address 多半在 noise
+    # denylist 里、discovery 会被跳过），把它们串成一条链会让先失败的那个
+    # 把后面的一起吃掉。
+    claim_matched = _process_claim_watch(payload)
+
     try:
         discovery = _build_discovery(payload)
 
         if discovery is None:
-            logger.info("webhook.alchemy.skipped", event_id=event_id)
+            logger.info("webhook.alchemy.skipped", event_id=event_id, claim_matched=claim_matched)
             return JSONResponse(
                 status_code=200,
-                content={"ok": True, "data": {"event_id": event_id, "processed": False}},
+                content={
+                    "ok": True,
+                    "data": {
+                        "event_id": event_id,
+                        "processed": False,
+                        "claim_matched": claim_matched,
+                    },
+                },
             )
 
         result = CollectorResult(
@@ -219,15 +262,24 @@ async def receive_alchemy_webhook(
             source_name="Alchemy Webhook",
         )
 
+        # 地址只记前 10 位。这里的 address 多数是别人的合约（discovery 的
+        # 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于
+        # 把自有钱包地址写进日志文件，绕过 /watched-wallets 的管理员锁
+        # （ACTION_LOOP_DESIGN §5.4.1）。分不清来源时按更严的口径处理。
+        raw_address = str(discovery.raw_data.get("address") or "")
         logger.info(
             "webhook.alchemy.processed",
             event_id=event_id,
-            address=discovery.raw_data.get("address"),
+            address_prefix=raw_address[:10],
+            claim_matched=claim_matched,
         )
 
         return JSONResponse(
             status_code=200,
-            content={"ok": True, "data": {"event_id": event_id, "processed": True}},
+            content={
+                "ok": True,
+                "data": {"event_id": event_id, "processed": True, "claim_matched": claim_matched},
+            },
         )
 
     except Exception as exc:
@@ -240,14 +292,17 @@ async def receive_alchemy_webhook(
         # Return 200 even on errors — Alchemy retries on non-200
         return JSONResponse(
             status_code=200,
-            content={"ok": True, "data": {"event_id": event_id, "processed": False}},
+            content={
+                "ok": True,
+                "data": {"event_id": event_id, "processed": False, "claim_matched": claim_matched},
+            },
         )
 
 
 @router.get("/webhook/alchemy/status")
 def alchemy_webhook_status() -> JSONResponse:
     """Health check for the Alchemy webhook endpoint."""
-    configured = bool(settings.alchemy_api_key)
+    configured = bool(settings.alchemy_webhook_signing_key)
     return JSONResponse(
         status_code=200,
         content={

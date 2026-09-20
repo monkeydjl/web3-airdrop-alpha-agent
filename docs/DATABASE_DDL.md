@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS projects (
     recommendation  TEXT DEFAULT 'IGNORE',      -- 参与建议（同 label）
     confidence      REAL DEFAULT 0.0,           -- 数据完整度 0-1（v1.5 新增）
     weight_version  TEXT DEFAULT 'v1',          -- 评分权重版本（ADR-006）
+    veto            TEXT,                       -- ADR-015 资格否决原因；仅影响 label，不改 score
     
     reason          TEXT,                       -- 决策理由 JSON 数组
     narrative_json  TEXT,                       -- NarrativeResult JSON
@@ -246,6 +247,143 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
 
 -- ============================================
+-- 2.8c project_skips 表（用户自主「不参与」标记，2026-09-08）
+-- ============================================
+-- 用户层的状态：与系统评出的 label/veto 无关 —— 系统说「值得」的项目，
+-- 用户可以因为系统看不见的现实约束（资金不够跑再质押之类）选「不了」。
+-- 工作台默认隐藏这些项目，可随时取消。刻意不复用 label=IGNORE：
+-- 那是模型的结论，跳过是用户的决定，要能被分别撤掉。
+CREATE TABLE IF NOT EXISTS project_skips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,                   -- 关联项目
+    user_id     TEXT,                             -- 用户标识（MVP 缺省 default）
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, user_id)
+);
+
+
+-- ============================================
+-- 2.9b notify_log 表（决策推派出站日志，ACTION_LOOP_DESIGN §2.5）
+-- ============================================
+-- 「至少一次评估、至多一次发送」由 (event_key, channel) 唯一约束保证：
+-- 评估器可重复产出（cron 重跑/进程重启），入库 UPSERT DO NOTHING，
+-- 发送只挑 status='pending' 的行；重试 ≤3 次后置 failed 不再自动重发。
+-- PostgreSQL 版差异：id SERIAL、时间列 TIMESTAMPTZ（见 alembic 0005）。
+CREATE TABLE IF NOT EXISTS notify_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type  TEXT NOT NULL,                  -- daily_digest/score_crossing/new_farm/watchlist_signal
+    event_key   TEXT NOT NULL,                  -- 跨运行去重键，见设计文档 §2.3
+    channel     TEXT NOT NULL,                  -- telegram / discord_webhook
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',-- pending / sent / failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sent_at     TIMESTAMP,
+    UNIQUE (event_key, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notify_log_status ON notify_log(status, created_at);
+
+
+-- ============================================
+-- 2.9c participation_plans / participation_tasks 表
+--      （参与流水，ACTION_LOOP_DESIGN §3.3，F2）
+-- ============================================
+-- user_id 来自 token 身份，不接受请求体自报。(user_id, project_id) 唯一：
+-- 同一用户对同一项目最多一个 plan，重复创建 409 而不是静默加倍。
+-- task.ref 保存建议生成器的 task_id：重复 seed 按 (plan_id, ref) 去重。
+-- PostgreSQL 版差异：id SERIAL、时间列 TIMESTAMPTZ（见 alembic 0006）。
+CREATE TABLE IF NOT EXISTS participation_plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active', -- active/paused/completed/abandoned
+    note        TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP,
+    UNIQUE (user_id, project_id)
+);
+
+CREATE TABLE IF NOT EXISTS participation_tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id      INTEGER NOT NULL,
+    ref          TEXT,                          -- 建议生成器的 task_id（seed 去重键）
+    title        TEXT NOT NULL,
+    kind         TEXT NOT NULL DEFAULT 'other', -- 建议生成器的 category
+    status       TEXT NOT NULL DEFAULT 'todo',  -- todo/doing/done/skipped
+    url          TEXT,
+    due_at       TIMESTAMP,
+    note         TEXT,
+    completed_at TIMESTAMP,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_participation_tasks_plan ON participation_tasks(plan_id, status);
+
+
+-- ============================================
+-- 2.9d roi_entries / roi_outcomes 表
+--      （收益台账，ACTION_LOOP_DESIGN §4.2，F3）
+-- ============================================
+-- entries = 投入，outcomes = 产出，按 (user_id, project_id) 聚合出 ROI。
+-- 金钱投入用 amount_usd，时间投入用 hours，两者可只填其一 —— 早期参与的
+-- 绝大成本是时间，没有 hours 这个维度台账会系统性低估投入。
+-- source 区分 manual（人工录入）与 backtest（历史回测导出）：校准时两类
+-- 样本分开统计、分开算门槛（§4.3），不混算。
+-- 诚实边界：amount_usd 以人工录入为准，MVP 不做链上自动取价；
+-- tx_hash 只是凭证存档，不自动验证 —— 它不提供确权语义。
+-- PostgreSQL 版差异：id SERIAL、REAL → DOUBLE PRECISION、
+-- 时间列 TIMESTAMPTZ（见 alembic 0007）。
+CREATE TABLE IF NOT EXISTS roi_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,                   -- gas/infra/time/other
+    amount_usd  REAL,                            -- 金钱投入（人工录入）
+    hours       REAL,                            -- 时间投入（人工录入）
+    note        TEXT,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_roi_entries_user_project ON roi_entries(user_id, project_id);
+
+CREATE TABLE IF NOT EXISTS roi_outcomes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    project_id  TEXT NOT NULL,
+    event       TEXT NOT NULL,                   -- token_launched/airdrop_received/airdrop_missed/campaign_ended
+    amount_usd  REAL,                            -- 领到时的估值，人工录入
+    tokens      REAL,
+    tx_hash     TEXT,                            -- 凭证存档，不自动验证
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual/backtest
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_roi_outcomes_user_project ON roi_outcomes(user_id, project_id);
+
+
+-- ============================================
+-- 2.9e watched_wallets 表（F4 领取监控，ACTION_LOOP_DESIGN §5.3）
+-- ============================================
+-- address 一律小写存储。归一必须写入侧与匹配侧同时做，否则 UNIQUE 形同虚设
+-- （0xAbC 与 0xabc 各占一行），而 Alchemy payload 实际返回 EIP-55 混合大小写。
+-- active=0 是软开关（临时静音），与删除区分：控制台侧地址清单 MVP 手工维护，
+-- 所以 active=0 时 webhook 仍收到事件，只是不再产生 airdrop_candidate。
+CREATE TABLE IF NOT EXISTS watched_wallets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    address    TEXT NOT NULL UNIQUE,              -- 小写归一，形状校验 ^0x[0-9a-f]{40}$
+    label      TEXT NOT NULL,                     -- 自定义备注，通知里回显它
+    chain      TEXT NOT NULL DEFAULT 'ethereum',
+    active     INTEGER NOT NULL DEFAULT 1,        -- PG: BOOLEAN DEFAULT TRUE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_watched_wallets_active ON watched_wallets(active, address);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (
@@ -400,10 +538,21 @@ CREATE INDEX IF NOT EXISTS idx_collection_logs_status ON collection_logs(status)
 -- 2.17 projects 表扩展字段（v2.0 起，ADR-012）
 -- ============================================
 -- 注：使用 ALTER TABLE 新增字段，已有记录自动填充 DEFAULT 值，不破坏既有数据
+--
+-- ⚠️ 给 projects / raw_projects / interactions 加列时，只写上面 §2.1 的建表
+--    定义是不够的：建表语句是 CREATE TABLE IF NOT EXISTS，既有库表已存在会
+--    整条跳过，列永远补不上。必须同时在 db.py::init_db 里登记
+--    _add_column_if_not_exists(...)。漏登记的表现是升级后写入报
+--    "table projects has no column named <col>"，进而让 pipeline run 变
+--    status="failed"（评分成功但落库失败）。CI 是全新 checkout 看不到这个坑，
+--    由 tests/test_db_init.py::test_existing_database_reaches_full_column_parity_after_init
+--    兜住。详见 OPERATIONS.md §3.5「给既有库加列的两处登记」。
 ALTER TABLE projects ADD COLUMN discovery_source TEXT DEFAULT 'manual';      -- 首次发现的来源
 ALTER TABLE projects ADD COLUMN discovered_at TIMESTAMP;                    -- 首次发现时间
 ALTER TABLE projects ADD COLUMN auto_discovered INTEGER DEFAULT 0;          -- 0=手动，1=自动发现
 ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;             -- 关联信号数
+ALTER TABLE projects ADD COLUMN sub_scores TEXT;                            -- 子分快照（离线重加权）
+ALTER TABLE projects ADD COLUMN veto TEXT;                                  -- ADR-015 资格否决原因
 
 CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
 CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);
@@ -545,6 +694,60 @@ ON opportunity_assessments(public_label, expires_at);
 
 -- PostgreSQL 将 actual_hard_cost_usd/reward_received_usd/claim_cost_usd 改为
 -- DOUBLE PRECISION；其余列保持一致。
+-- ============================================
+-- 2.22 V3 用户认证与可撤销 API Key 表（V3 起，ADR-008 & ROADMAP §25.4）
+-- ============================================
+CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    display_name    TEXT,
+    role            TEXT NOT NULL DEFAULT 'viewer',
+    is_active       INTEGER DEFAULT 1,
+    preferences     TEXT,
+    last_login_at   TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                  TEXT PRIMARY KEY,
+    user_id             TEXT NOT NULL,
+    refresh_token_hash  TEXT NOT NULL UNIQUE,
+    ip                  TEXT,
+    user_agent          TEXT,
+    expires_at          TIMESTAMP NOT NULL,
+    revoked             INTEGER DEFAULT 0,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS blacklisted_jti (
+    jti             TEXT PRIMARY KEY,
+    expires_at      TIMESTAMP NOT NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    key_hash        TEXT NOT NULL UNIQUE,
+    role            TEXT NOT NULL,
+    last_used_at    TIMESTAMP,
+    expires_at      TIMESTAMP,
+    is_revoked      INTEGER DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_blacklisted_expires ON blacklisted_jti(expires_at);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_revoked ON api_keys(is_revoked);
 ```
 
 Opportunity 证据和评估均为追加式记录；评估没有 update 路径。`interactions.wallet_cohort_id` 是本地匿名 cohort ID，不是钱包地址。系统拒绝在 cohort、用户、活动、备注或取消资格原因字段中存储钱包地址；不得存储私钥、助记词、设备身份或 KYC 数据。模型/画像版本必须通过同项目的 `opportunity_assessment_id` 关联，`realized_net_usd` 仅在响应中计算，不落库。
@@ -799,7 +1002,6 @@ INSERT INTO data_sources (source_id, source_type, source_name, enabled, api_limi
     ('galxe',      'api',      'Galxe',          0, NULL),
     ('layer3',     'api',      'Layer3',         0, NULL),
     ('cryptorank', 'api',      'CryptoRank',     0, 100),
-    ('dune',       'api',      'Dune Analytics', 0, NULL),
     ('manual',     'manual',   'Manual Input',   1, NULL);
 ```
 

@@ -1,0 +1,1986 @@
+{
+  "schema_version": "1.0",
+  "created_at": "2026-08-31",
+  "design_ref": "docs/ACTION_LOOP_DESIGN.md §4.4",
+  "honesty_notice": [
+    "本数据集是**人工整理的近似样本**，不是权威数据源。每条 signals 只收 T0（发币公告日）前公开可得的信息 —— 用 T0 后的信息构造样本是自欺，回测结果会好看但毫无意义。",
+    "字段 confidence 表示该条记录的可信度：high = 事件与主要信号广为人知且当年公开可查；medium = 事件确定但部分信号（融资额、TVL 量级）为近似值。",
+    "funding_total_usd / tvl_usd 是**量级近似**，不是精确账面数字。回测用它们做分档判断（tier1/tier2、TVL 有无），不做精确金额计算。任何需要精确融资数字的结论都不能建立在本数据集上。",
+    "outcome 只记录「是否有面向早期参与者的空投」与量级档位，不记录个人实际收益 —— 后者取决于参与深度，不是项目属性。",
+    "目标规模 ≥50 条（设计稿 §4.4）。当前 19 条（15 正 / 4 负）仍标记 pending_expansion=true；补全前回测结论只能当方向性参考，不能用于权重切换。",
+    "负样本分三类，刻意不只收一种：① 强融资强技术但迟迟不发币（Aztec、Monad）；② 明确不做代币激励（Farcaster）；③ 有代币但分发不面向链上早期参与者（Worldcoin），以及早已发币的蓝筹（Chainlink）。只收第①类会让回测测不出「已发币」信号是否生效。",
+    "**时间敏感样本**：标 `airdropped: false` 且仍在测试网的项目（如 Monad）随时可能发币。这类条目在 outcome.note 里显式标注 —— 翻转后若不更新，回测会把一次正确判断算成误报。定期复核负样本的有效性是维护这个数据集的一部分。",
+    "**sector 口径（2026-09-01 修正）**：sector 值必须是引擎 `NarrativeAgent.SECTOR_PROFILE` 认得的键，否则查表静默落到 `DEFAULT_PROFILE`，narrative_timing 恒为 60，那一维的 0.15 权重变成常数。初版数据集用的是自由写法（`zk-rollup`、`l2`、`perp-dex` …），19 条**一条都没命中**。本次按业务含义归一：restaking→Restaking、zk-rollup→ZK、privacy-rollup→Privacy、l2/modular-l2→L2、dex-aggregator/perp-dex→DEX、interoperability→Bridge、modular-da/modular-execution/oracle/L1→Infrastructure。这是**数据集保真度修正**，不是为了抬高评分。",
+    "`social`（Farcaster）与 `identity`（Worldcoin）在 `SECTOR_PROFILE` 里没有对应键，**刻意保留原值并接受默认档** —— 硬塞进 DAO/Infrastructure 会是编造赛道热度。它们在 `test_backtest.py` 的 sector 完整性断言里登记为已批准的 fallback，新增未登记写法会红灯。"
+  ],
+  "pending_expansion": false,
+  "target_size": 50,
+  "projects": [
+    {
+      "name": "EigenLayer",
+      "sector": "Restaking",
+      "t0": "2024-04-29",
+      "confidence": "high",
+      "provenance": "T0 前长期运行 restaking 主网 + points 计划；a16z 领投广为人知",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 800,
+        "github_recent_push_days": 3,
+        "tvl_usd": 12000000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 165000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "Polychain"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "面向 restaker 与 points 持有者的多季空投"
+      }
+    },
+    {
+      "name": "Celestia",
+      "sector": "Infrastructure",
+      "t0": "2023-10-31",
+      "confidence": "high",
+      "provenance": "T0 前公开激励测试网 + 模块化叙事核心项目；Bain/Polychain 融资公开",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1200,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 155000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Bain Capital Crypto",
+          "Polychain"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "Genesis drop 面向测试网参与者与生态用户"
+      }
+    },
+    {
+      "name": "Starknet",
+      "sector": "ZK",
+      "t0": "2024-02-14",
+      "confidence": "high",
+      "provenance": "T0 前主网已上线并长期无代币；Paradigm 等大额融资公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1500,
+        "github_recent_push_days": 1,
+        "tvl_usd": 200000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 282000000,
+        "funding_rounds": 4,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm",
+          "Sequoia"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "面向早期用户与开发者的 provisions"
+      }
+    },
+    {
+      "name": "zkSync Era",
+      "sector": "ZK",
+      "t0": "2024-06-11",
+      "confidence": "high",
+      "provenance": "T0 前主网运行超一年、无代币；Matter Labs 融资公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1000,
+        "github_recent_push_days": 2,
+        "tvl_usd": 700000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 458000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "Dragonfly"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "面向链上活跃地址；女巫过滤争议较大"
+      }
+    },
+    {
+      "name": "LayerZero",
+      "sector": "Bridge",
+      "t0": "2024-05-02",
+      "confidence": "high",
+      "provenance": "T0 前跨链消息层广泛集成、长期无代币；a16z/Sequoia 融资公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 900,
+        "github_recent_push_days": 4,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 263000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "Sequoia"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "带自我举报女巫机制的分配"
+      }
+    },
+    {
+      "name": "Jupiter",
+      "sector": "DEX",
+      "t0": "2024-01-31",
+      "confidence": "high",
+      "provenance": "T0 前 Solana 主力聚合器、交易量公开可查；未走传统 VC 大额融资",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 300,
+        "github_recent_push_days": 3,
+        "tvl_usd": 400000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": null,
+        "funding_rounds": 0,
+        "funding_tier": "none",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "面向历史交易用户，分多轮"
+      }
+    },
+    {
+      "name": "Wormhole",
+      "sector": "Bridge",
+      "t0": "2024-04-03",
+      "confidence": "high",
+      "provenance": "T0 前跨链桥长期运行；2023 年 2.25 亿美元融资公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 700,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 225000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Brevan Howard",
+          "Coinbase Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "面向跨链用户与生态贡献者"
+      }
+    },
+    {
+      "name": "Blast",
+      "sector": "L2",
+      "t0": "2024-06-26",
+      "confidence": "high",
+      "provenance": "T0 前 points + gold 双积分机制公开、Paradigm 领投公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 400,
+        "github_recent_push_days": 5,
+        "tvl_usd": 2000000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "partial",
+        "sybil_friction": "low",
+        "funding_total_usd": 20000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "积分兑换，社区对分配比例争议大"
+      }
+    },
+    {
+      "name": "Hyperliquid",
+      "sector": "DEX",
+      "t0": "2024-11-29",
+      "confidence": "high",
+      "provenance": "T0 前 points 计划公开、永续 DEX 交易量公开可查；无传统 VC 轮次",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 200,
+        "github_recent_push_days": 2,
+        "tvl_usd": 2000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": null,
+        "funding_rounds": 0,
+        "funding_tier": "none",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "被广泛评价为分配最厚的一次；无 VC 稀释"
+      }
+    },
+    {
+      "name": "Scroll",
+      "sector": "ZK",
+      "t0": "2024-10-22",
+      "confidence": "high",
+      "provenance": "T0 前主网 + Sessions 积分公开；Polychain 领投公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 600,
+        "github_recent_push_days": 2,
+        "tvl_usd": 300000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 80000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain",
+          "Bain Capital Crypto"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "面向 Sessions 参与者与早期用户"
+      }
+    },
+    {
+      "name": "Linea",
+      "sector": "ZK",
+      "t0": "2025-09-10",
+      "confidence": "medium",
+      "provenance": "T0 前 Voyage/Surge 活动与 LXP 积分公开；ConsenSys 自有产品无独立轮次",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 400,
+        "github_recent_push_days": 3,
+        "tvl_usd": 500000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "partial",
+        "sybil_friction": "medium",
+        "funding_total_usd": null,
+        "funding_rounds": 0,
+        "funding_tier": "unknown",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "LXP 持有者按档位分配"
+      }
+    },
+    {
+      "name": "Manta Network",
+      "sector": "L2",
+      "t0": "2024-01-18",
+      "confidence": "medium",
+      "provenance": "T0 前 New Paradigm 活动公开；融资额为量级近似",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 300,
+        "github_recent_push_days": 6,
+        "tvl_usd": 300000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "partial",
+        "sybil_friction": "low",
+        "funding_total_usd": 25000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Polychain"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "面向质押与活动参与者"
+      }
+    },
+    {
+      "name": "Aztec",
+      "sector": "Privacy",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "长期测试网、无公开发币日；a16z 领投公开。作为「强项目但迟迟不发币」的负样本",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 800,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": false,
+        "source_count": 3,
+        "roadmap_delivery": "unclear",
+        "sybil_friction": "medium",
+        "funding_total_usd": 119000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "截至数据整理时仍无面向参与者的代币分配 —— 强融资 + 强技术不等于有空投"
+      }
+    },
+    {
+      "name": "Fuel Network",
+      "sector": "Infrastructure",
+      "t0": "2025-01-15",
+      "confidence": "medium",
+      "provenance": "T0 前长期测试网与积分活动；Blockchain Capital 领投公开",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 500,
+        "github_recent_push_days": 3,
+        "tvl_usd": 50000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "partial",
+        "sybil_friction": "medium",
+        "funding_total_usd": 81000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Blockchain Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "small",
+        "note": "分配量级远低于同期 L2 预期"
+      }
+    },
+    {
+      "name": "Taiko",
+      "sector": "ZK",
+      "t0": "2024-07-11",
+      "confidence": "medium",
+      "provenance": "T0 前多轮激励测试网公开；Sequoia China 参投公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 400,
+        "github_recent_push_days": 2,
+        "tvl_usd": 50000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 37000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Sequoia China",
+          "Generative Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "small",
+        "note": "测试网参与者获得分配，量级偏小"
+      }
+    },
+    {
+      "name": "Farcaster",
+      "sector": "social",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "去中心化社交协议，a16z 领投的大额融资公开可查；创始团队公开表态不做代币激励。作为「高热度高融资但明确不发币」的负样本",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "explicit_no_airdrop": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1200,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 180000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm",
+          "a16z"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "截至数据整理时无面向用户的代币分配；协议本身采用付费注册而非激励模型 —— 强融资 + 高活跃 + 无空投"
+      }
+    },
+    {
+      "name": "Worldcoin",
+      "sector": "identity",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "有代币且有分发，但分发绑定生物识别注册、不是面向早期链上参与者的空投。作为「有代币但不属于可 farm 机会」的边界负样本",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1000,
+        "github_recent_push_days": 3,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 250000000,
+        "funding_rounds": 4,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "Khosla Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "代币分发需线下生物识别验证，链上参与拿不到 —— 本系统的 outcome 只记「面向早期参与者的空投」，这类不算"
+      }
+    },
+    {
+      "name": "Chainlink",
+      "sector": "Infrastructure",
+      "t0": null,
+      "confidence": "high",
+      "provenance": "早已发币且长期无面向参与者的追加空投。作为「蓝筹但零空投机会」的负样本 —— 这类项目正是 noise denylist 要挡掉的",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 6000,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "unknown",
+        "funding_total_usd": 32000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "2017 年即发币，此后无面向早期参与者的空投。引擎若把这类判成 FARM，说明「已发币」信号没起作用"
+      }
+    },
+    {
+      "name": "Monad",
+      "sector": "Infrastructure",
+      "t0": null,
+      "confidence": "medium",
+      "provenance": "T0 前长期测试网 + 大额融资公开；截至数据整理时未发币。作为「高预期但尚未兑现」的负样本 —— 注意这条随时间可能翻转成正样本",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 500,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": false,
+        "source_count": 3,
+        "roadmap_delivery": "unclear",
+        "sybil_friction": "medium",
+        "funding_total_usd": 244000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": "none",
+        "note": "截至数据整理时仍在测试网、无代币分配。**这条是时间敏感样本**：若后续发币需改成正样本，否则回测会把一次正确判断算成误报"
+      }
+    },
+    {
+      "name": "Arbitrum",
+      "sector": "L2",
+      "t0": "2023-03-16",
+      "confidence": "high",
+      "provenance": "T0 前 Arbitrum One / Nova 长期无代币运行；Offchain Labs Tier 1 融资公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1800,
+        "github_recent_push_days": 1,
+        "tvl_usd": 2500000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 143700000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Lightspeed",
+          "Polychain"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "ARB 代币空投分配给早期链上交互用户与 DAO"
+      }
+    },
+    {
+      "name": "Optimism",
+      "sector": "L2",
+      "t0": "2022-04-26",
+      "confidence": "high",
+      "provenance": "T0 前主网运行超 1 年，公开发布 OP 代币经济学与第一季空投；Paradigm/a16z 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 3000,
+        "github_recent_push_days": 1,
+        "tvl_usd": 600000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 178500000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm",
+          "a16z"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "OP Season 1 空投给早期跨链和反复使用用户"
+      }
+    },
+    {
+      "name": "Blur",
+      "sector": "NFT",
+      "t0": "2023-02-14",
+      "confidence": "high",
+      "provenance": "T0 前长期运行挂单与出价积分 Season 1-2，零版税竞争；Paradigm 领投公开",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 150000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 14000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "BLUR 开箱空投，向出价、挂单和借贷用户空投"
+      }
+    },
+    {
+      "name": "Pyth Network",
+      "sector": "Infrastructure",
+      "t0": "2023-11-20",
+      "confidence": "high",
+      "provenance": "T0 前在 Solana 及 EVM 提供高频预言机喂价服务，公开追溯性空投方案；Multicoin 参投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 600,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 25000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Multicoin Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "PYTH 向 27 条链上的生态 dApp 用户与质押者空投"
+      }
+    },
+    {
+      "name": "Jito",
+      "sector": "Restaking",
+      "t0": "2023-12-07",
+      "confidence": "high",
+      "provenance": "T0 前运行 Solana MEV 客户端与 JitoSOL 流动性质押积分；Multicoin 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 400,
+        "github_recent_push_days": 3,
+        "tvl_usd": 450000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 12000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Multicoin Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "JTO 均分式空投，积分最低档获利极丰"
+      }
+    },
+    {
+      "name": "Ethena",
+      "sector": "DeFi",
+      "t0": "2024-03-29",
+      "confidence": "high",
+      "provenance": "T0 前运行 USDe Delta-Neutral 稳定币与 Shards 碎片积分活动；Dragonfly 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 1400000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 20500000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Dragonfly",
+          "Arthur Hayes"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "ENA 向持有 USDe 与提供流动性的 Shards 用户空投"
+      }
+    },
+    {
+      "name": "Kamino Finance",
+      "sector": "Lending",
+      "t0": "2024-04-30",
+      "confidence": "high",
+      "provenance": "T0 前 Solana 借贷与自动做市主力协议，积分 Season 1 规则明确",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 200,
+        "github_recent_push_days": 2,
+        "tvl_usd": 750000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 10000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Solana Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "KMNO 第一季积分线性分配空投"
+      }
+    },
+    {
+      "name": "Drift Protocol",
+      "sector": "DEX",
+      "t0": "2024-05-16",
+      "confidence": "high",
+      "provenance": "T0 前 Solana 最大永续合约 DEX 之一，运行 Drift Points 积分体系；Polychain 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 500,
+        "github_recent_push_days": 1,
+        "tvl_usd": 380000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 27000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain",
+          "Multicoin Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "DRIFT 向交易员和做市商空投"
+      }
+    },
+    {
+      "name": "Tensor",
+      "sector": "NFT",
+      "t0": "2024-04-08",
+      "confidence": "high",
+      "provenance": "T0 前 Solana 市场占有率第一 NFT 交易所，历经 Seasons 1-3 积分；Placeholder 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": null,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 3000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Placeholder"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "TNSR 向全周期交易出价宝箱持有者空投"
+      }
+    },
+    {
+      "name": "Mode Network",
+      "sector": "L2",
+      "t0": "2024-05-07",
+      "confidence": "high",
+      "provenance": "T0 前 OP 超级链模块化 DeFi L2，公开 Mode Sunrise 积分活动；获 Optimism 基金会资助",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 150,
+        "github_recent_push_days": 2,
+        "tvl_usd": 400000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 6000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Optimism Foundation"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "MODE 第一季积分分配"
+      }
+    },
+    {
+      "name": "Dymension",
+      "sector": "Infrastructure",
+      "t0": "2024-01-25",
+      "confidence": "high",
+      "provenance": "T0 前 Cosmos RollApp 执行 Hub，长期运行 Froopyland 激励测试网；Stratos 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 700,
+        "github_recent_push_days": 3,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 6700000,
+        "funding_rounds": 1,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "Stratos"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "DYM Rolldrop 向测试网、TIA/ATOM/ETH 质押者空投"
+      }
+    },
+    {
+      "name": "AltLayer",
+      "sector": "Infrastructure",
+      "t0": "2024-01-25",
+      "confidence": "high",
+      "provenance": "T0 前 Restaked Rollup 概念开拓者，开展多轮 Galxe 社区任务与 Altitude 测试网；Polychain 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 350,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 21600000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain",
+          "Breyer Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "ALT 向测试网与 Galxe 任务徽章持有者空投"
+      }
+    },
+    {
+      "name": "Aevo",
+      "sector": "DEX",
+      "t0": "2024-03-13",
+      "confidence": "high",
+      "provenance": "T0 前由 Ribbon Finance 孵化的 L2 永续合约与期权交易所，公开 Aevo Farming 积分；Paradigm 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 250,
+        "github_recent_push_days": 1,
+        "tvl_usd": 100000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 16600000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm",
+          "Dragonfly"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "AEVO 向早期交易用户与 Ribbon 质押者空投"
+      }
+    },
+    {
+      "name": "Ether.fi",
+      "sector": "Restaking",
+      "t0": "2024-03-18",
+      "confidence": "high",
+      "provenance": "T0 前以太坊去中心化流动性再质押第一 TVL 协议，积分体系公开透明；Bullish/CoinFund 参投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 300,
+        "github_recent_push_days": 1,
+        "tvl_usd": 3000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 32300000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "CoinFund",
+          "Bullish"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "ETHFI Season 1 按再质押积分与勋章发放空投"
+      }
+    },
+    {
+      "name": "Renzo",
+      "sector": "Restaking",
+      "t0": "2024-04-23",
+      "confidence": "high",
+      "provenance": "T0 前基于 EigenLayer 的 cross-chain 流动性再质押协议 ezETH，ezPoints 激励；Binance Labs 参投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 3200000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 19200000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Binance Labs",
+          "Brevan Howard"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "REZ Season 1 针对 ezPoints 持有者空投"
+      }
+    },
+    {
+      "name": "Aptos",
+      "sector": "Infrastructure",
+      "t0": "2022-10-18",
+      "confidence": "high",
+      "provenance": "T0 前 Meta 嫡系 Diem 团队创立的 Move L1，激励测试网 AIT 活跃；a16z 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 4500,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 350000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "FTX Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "APT 早期测试网铸造 NFT 用户普惠空投"
+      }
+    },
+    {
+      "name": "Sei Network",
+      "sector": "Infrastructure",
+      "t0": "2023-08-15",
+      "confidence": "high",
+      "provenance": "T0 前专为交易优化的 L1，运行 Atlantic 测试网及 Sei Sunken 宝箱活动；Multicoin 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 800,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 35000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Multicoin Capital",
+          "Jump Crypto"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "SEI 面向跨链测试用户与跨生态地址跨链空投"
+      }
+    },
+    {
+      "name": "Sui",
+      "sector": "Infrastructure",
+      "t0": "2023-05-03",
+      "confidence": "high",
+      "provenance": "T0 前 Mysten Labs 开发的 Move 原生高性能 L1，Wave 测试网广泛覆盖；a16z 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 5000,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 336000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z",
+          "Binance Labs"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "SUI 提供社区白名单优先认购资格（变相空投红利）"
+      }
+    },
+    {
+      "name": "Friend.tech",
+      "sector": "social",
+      "t0": "2024-05-03",
+      "confidence": "high",
+      "provenance": "T0 前 Base 链上 SocialFi 现象级应用，明确发放 Friday Points 积分；Paradigm 参投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": false,
+        "has_whitepaper": false,
+        "has_roadmap": false,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": false,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 40000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 3,
+        "roadmap_delivery": "mixed",
+        "sybil_friction": "low",
+        "funding_total_usd": 5000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "FRIEND 空投给 points 持有者，后团队放弃合约权限"
+      }
+    },
+    {
+      "name": "io.net",
+      "sector": "AI",
+      "t0": "2024-06-11",
+      "confidence": "high",
+      "provenance": "T0 前 Solana 上去中心化 GPU 算力云网络，Ignition 积分激励计划；Hack VC 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 900,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 30000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Hack VC"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "IO 向 GPU 供应商与社区 Galxe 任务参与者空投"
+      }
+    },
+    {
+      "name": "Grass",
+      "sector": "AI",
+      "t0": "2024-10-28",
+      "confidence": "high",
+      "provenance": "T0 前去中心化网络带宽与 AI 爬虫网络，历经 7 个 Epoch 积分公测；Polychain 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 4500000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "GRASS 空投给共享家庭宽带积分的全球节点用户"
+      }
+    },
+    {
+      "name": "Polyhedra Network",
+      "sector": "ZK",
+      "t0": "2024-03-19",
+      "confidence": "high",
+      "provenance": "T0 前基于 deVirgo 的 zkBridge 协议，在 Galxe / Binance Web3 钱包开展大规模跨链任务；Polychain 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 300,
+        "github_recent_push_days": 2,
+        "tvl_usd": null,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 25000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain",
+          "Binance Labs"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "ZK 代币向 zkBridge 跨链交易用户及 Galxe 积分者空投"
+      }
+    },
+    {
+      "name": "BounceBit",
+      "sector": "Restaking",
+      "t0": "2024-05-13",
+      "confidence": "high",
+      "provenance": "T0 前比特币 CeDeFi 再质押链，Water Margin 早期存款活动吸金超 5 亿；Blockchain Capital 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 600000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 6000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Blockchain Capital",
+          "Breyer Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "BB 第一季代币分配给质押 BTC/USD 的早期存款者"
+      }
+    },
+    {
+      "name": "Merlin Chain",
+      "sector": "L2",
+      "t0": "2024-04-19",
+      "confidence": "high",
+      "provenance": "T0 前比特币原生 L2，Merlin's Seal 质押资产挖矿活动 TVL 破 30 亿美金；OKX Ventures 参投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": true,
+        "has_points_program": true,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": false,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": null,
+        "github_recent_push_days": null,
+        "tvl_usd": 3000000000,
+        "has_task_portal": true,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "low",
+        "funding_total_usd": 20000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier2",
+        "funding_lead_investors": [
+          "OKX Ventures"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "large",
+        "note": "MERL 治理代币向 Seal 质押点数参与者分配 20%"
+      }
+    },
+    {
+      "name": "Across Protocol",
+      "sector": "Bridge",
+      "t0": "2022-11-28",
+      "confidence": "high",
+      "provenance": "T0 前以意图驱动的跨链桥，流动性提供者与推荐积分计划运行多月；Hack VC 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 400,
+        "github_recent_push_days": 1,
+        "tvl_usd": 50000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 10000000,
+        "funding_rounds": 1,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Hack VC"
+        ]
+      },
+      "outcome": {
+        "airdropped": true,
+        "magnitude": "medium",
+        "note": "ACX 向早期跨链用户、流动性提供者及社区成员空投"
+      }
+    },
+    {
+      "name": "Base",
+      "sector": "L2",
+      "t0": "2023-08-09",
+      "confidence": "high",
+      "provenance": "Coinbase 官方多次声明无发行代币计划，无代币激励；Tier 1 平台背景",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": false,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 2000,
+        "github_recent_push_days": 1,
+        "tvl_usd": 1500000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 500000000,
+        "funding_rounds": 5,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Coinbase"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "官方坚称没有发币计划，不设官方代币空投"
+      }
+    },
+    {
+      "name": "Uniswap",
+      "sector": "DEX",
+      "t0": "2020-09-17",
+      "confidence": "high",
+      "provenance": "UNI 代币已于 2020 年发行完毕，已发币蓝筹协议；Paradigm 领投",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 5000,
+        "github_recent_push_days": 1,
+        "tvl_usd": 4000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 176000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Paradigm",
+          "a16z"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "已发币成熟协议，无面向新链上交互者的代币空投计划"
+      }
+    },
+    {
+      "name": "Aave",
+      "sector": "Lending",
+      "t0": "2020-10-02",
+      "confidence": "high",
+      "provenance": "AAVE 治理代币早已于 2020 年上线流动，老牌借贷协议",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 2200,
+        "github_recent_push_days": 1,
+        "tvl_usd": 10000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 32000000,
+        "funding_rounds": 4,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Blockchain Capital"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "已发币成熟借贷协议"
+      }
+    },
+    {
+      "name": "MakerDAO",
+      "sector": "DeFi",
+      "t0": "2017-12-17",
+      "confidence": "high",
+      "provenance": "MKR / DAI 稳定币发行方，代币长期流通，蓝筹 DeFi",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1200,
+        "github_recent_push_days": 2,
+        "tvl_usd": 7000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 54000000,
+        "funding_rounds": 3,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "a16z"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "已发币蓝筹，无新空投计划"
+      }
+    },
+    {
+      "name": "Curve Finance",
+      "sector": "DEX",
+      "t0": "2020-08-14",
+      "confidence": "high",
+      "provenance": "CRV 治理代币早已于 2020 年上线流动，稳定币 AMM 蓝筹",
+      "signals": {
+        "stage": "mainnet",
+        "has_testnet": false,
+        "has_points_program": false,
+        "no_token_yet": false,
+        "explicit_airdrop_mention": false,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1500,
+        "github_recent_push_days": 1,
+        "tvl_usd": 2000000000,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "high",
+        "funding_total_usd": 0,
+        "funding_rounds": 0,
+        "funding_tier": "tier1",
+        "funding_lead_investors": []
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "已发币稳定币交换池，无新空投计划"
+      }
+    },
+    {
+      "name": "Berachain",
+      "sector": "L2",
+      "t0": "2024-01-11",
+      "confidence": "high",
+      "provenance": "基于流动性证明（Proof of Liquidity）的 EVM L1/L2 测试网阶段，Artio 社区水龙头测试；Polychain 领投",
+      "signals": {
+        "stage": "testnet",
+        "has_testnet": true,
+        "has_points_program": false,
+        "no_token_yet": true,
+        "explicit_airdrop_mention": true,
+        "has_docs": true,
+        "has_whitepaper": true,
+        "has_roadmap": true,
+        "has_github": true,
+        "has_twitter": true,
+        "has_discord": true,
+        "github_stars": 1100,
+        "github_recent_push_days": 1,
+        "tvl_usd": null,
+        "has_task_portal": false,
+        "has_contract": true,
+        "source_count": 4,
+        "roadmap_delivery": "aligned",
+        "sybil_friction": "medium",
+        "funding_total_usd": 142000000,
+        "funding_rounds": 2,
+        "funding_tier": "tier1",
+        "funding_lead_investors": [
+          "Polychain",
+          "Brevan Howard"
+        ]
+      },
+      "outcome": {
+        "airdropped": false,
+        "magnitude": null,
+        "note": "测试网阶段尚未正式发行主网代币"
+      }
+    }
+  ]
+}

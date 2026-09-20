@@ -110,3 +110,54 @@ async def test_unclear_roadmap_hurts_execution():
     e1 = agent._calc_execution(PipelineState(project=paper, context=ctx))
     e2 = agent._calc_execution(PipelineState(project=ship, context=ctx))
     assert e2 > e1
+
+
+class TestSiteLivenessSignal:
+    """site_alive=False（官网探测到挂了）应扣执行力分；None（没探过）不加分也不加罚。"""
+
+    def test_site_down_penalizes_execution(self):
+        from app.agents.base import AgentContext, PipelineState, RawProject
+        from app.agents.scorer import ScorerAgent as Agent
+
+        ctx = AgentContext(run_id="r")
+        paper = RawProject(
+            id="p1", name="Paper", sector="DeFi", stage="mainnet",
+            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            site_alive=False,  # 探测到官网挂了
+        )
+        ship = RawProject(
+            id="p2", name="Ship", sector="DeFi", stage="mainnet",
+            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            site_alive=True,
+        )
+        unprobed = RawProject(
+            id="p3", name="Pristine", sector="DeFi", stage="mainnet",
+            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            site_alive=None,
+        )
+        agent = Agent()
+        ex_dead = agent._calc_execution(PipelineState(project=paper, context=ctx))
+        ex_alive = agent._calc_execution(PipelineState(project=ship, context=ctx))
+        ex_unprobed = agent._calc_execution(PipelineState(project=unprobed, context=ctx))
+        assert ex_dead < ex_alive
+        # 没探测过 = 无信息，跟探测到活着同样处理（不能把没探过当坏信号）
+        assert ex_unprobed == ex_alive, "site_alive=None 不应被误读成「挂了」"
+
+    @pytest.mark.asyncio
+    async def test_site_down_appears_in_reasons(self):
+        """被探测到官网挂了必须在最终 reason 里可见（是 forced 理由，
+        不能被 top-N 冲掉），否则就只是悄悄的分数惩罚。"""
+        from app.agents.base import AgentContext, PipelineState, RawProject
+        from app.agents.scorer import ScorerAgent as Agent
+
+        ctx = AgentContext(run_id="r")
+        p = RawProject(
+            id="p1", name="Dead", sector="DeFi", stage="mainnet",
+            source="defillama", site_alive=False,
+        )
+        state = PipelineState(project=p, context=ctx)
+        await Agent().run(state)
+        assert any("unreachable" in r for r in (state.reason or [])), (
+            "site_alive=False 必须在最终 reason 里可见，不能悄悄只扣了分"
+        )
+

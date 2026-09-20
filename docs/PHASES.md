@@ -67,11 +67,36 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/feedback/pending-rev
 
 **验证**：`curl -H "X-API-Key: $API_KEY" "http://localhost:8002/api/v1/action-queue?limit=5"`
 
+### ✅ 多钱包策略建议（Roadmap §12 / US-019 / W12-01）
+
+- `app/services/multi_wallet_strategy.py` — 基于 sybil_factor、阶段（主网/测试网/Perp成本分级）自适应输出推荐钱包梯度、资金与时间预估，以及 4 项防女巫隔离准则。
+- `GET /api/v1/projects/{project_id}/multi-wallet-strategy` 端点与回归测试。
+- 前端项目详情页卡片集成（`MultiWalletStrategyPanel`），含钱包数、资金区间、防女巫 checklist 与红线合规声明（纯建议性质，绝不托管私钥或自动代投）。
+
+### ✅ Memory 系统（Roadmap §24.3 / §25.5.3 / W12-02）
+
+- `app/services/project_memory.py` — 项目演化时间轴与历史指标：多快照评分走势分析（rising/falling/stable/insufficient_data）、波动率计算、部署阶段迁移（ideation → testnet → mainnet）、LLM 演化记忆上下文摘要生成。
+- `app/services/user_memory.py` — 用户偏好画像与记忆向量：从用户行为（feedback、interactions、watchlist、project_skips）多信号动态推断赛道偏好权重与风险偏好；支持基于偏好的个性化重排序与 GDPR 偏好重置。
+- 端点与契约：
+  - `GET /api/v1/projects/{project_id}/timeline`
+  - `GET /api/v1/user-profile`
+  - `DELETE /api/v1/user-profile`
+  - `GET /api/v1/projects?personalized=true`
+- 前端集成：
+  - `ProjectTimelinePanel.tsx`（详情页集成 `pd-timeline` 锚点与 CollapsibleSection），展示评分趋势、StdDev 波动率、阶段跨越里程碑与时序卡片。
+  - `frontend-next/lib/types.ts` 定义 `TimelinePoint`, `StageTransition`, `ProjectEvolution`, `UserProfileData`。
+
+### ✅ 异常检测与数据质量告警引擎（Roadmap §12 / §22 / TASK_BREAKDOWN W12-04）
+
+- `app/services/anomaly_detection.py` — 评分漂移检测（均值偏离基线 >15 分、FARM 标签比例极化、0 分集中爆发）与入库后数据质量巡检（P0 核心字段 100% 完整性、P1 关键字段 ≥80%、Quarantine 积压超限、采集源时效性超时 72h）。
+- `app/routers/v1/anomalies.py` — `GET /api/v1/anomalies` 端点，支持 `force_refresh=true` 强制全量扫描与 60s 内存缓存。
+- 前端运维集成：`frontend-next/components/AnomalyDetectionPanel.tsx` 接入 `frontend-next/app/ops/page.tsx` 运维台，支持一键触发扫描与 4 栏量化健康指标看板。
+
 ### 未开始的其余 V3 子项
 
-- [ ] 多钱包策略建议（基于风险 / Sybil 难度）
-- [ ] Memory 系统（Roadmap §24.3：项目画像、`user_profile` 偏好向量）
-- [ ] 异常检测告警（Prometheus 指标已齐，检测逻辑未做）
+- [x] 多钱包策略建议（基于风险 / Sybil 难度）
+- [x] Memory 系统（Roadmap §24.3：项目画像、`user_profile` 偏好向量）
+- [x] 异常检测告警（评分漂移检测与数据质量退化巡检引擎已落地）
 
 ---
 

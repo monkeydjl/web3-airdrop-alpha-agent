@@ -10,19 +10,88 @@ Reference:
 - ENGINEERING_ROADMAP.md §8.2 查询端点
 """
 
+import json
 from enum import StrEnum
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.auth import ROLE_ADMIN, get_current_user
 from app.openapi import ERROR_RESPONSE_EXAMPLES, PROJECTS_LIST_RESPONSE_EXAMPLE
 from app.repository import ProjectRepository
+from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["projects"])
+
+_REASONS_ZH_MAP: dict[str, str] = {
+    # Positive reasons
+    "strong airdrop signal": "明确的空投信号",
+    "clear airdrop / points path": "清晰的空投/积分路径",
+    "moderate airdrop signal": "中等强度的空投信号",
+    "explicit airdrop mention": "官方明确提及空投",
+    "verifiable task / points portal": "可验证的任务/积分门户",
+    "multi-source evidence": "多源交叉证据支撑",
+    "early narrative, high heat": "早期叙事，高热度",
+    "early narrative": "早期叙事",
+    "heated narrative, peak timing": "热门叙事，最佳时机",
+    "peak narrative": "顶级叙事热度",
+    "credible team": "团队背景可靠",
+    "low competition": "赛道竞争较低",
+    "active development / roadmap traction": "开发活跃/路线图扎实推进",
+    "roadmap delivery looks aligned with shipping": "路线图交付与产品上线吻合",
+    "strong public docs / social presence": "公开文档与社群活跃度高",
+    "on-chain product / contract signal": "有链上产品/智能合约信号",
+    "high evidence confidence": "证据置信度高",
+    "tier-1 / high-quality funding": "顶级/高质量融资背景",
+    "solid disclosed fundraising": "公开披露融资扎实",
+    "recent funding signal": "近期有融资动态",
+    "reputable vc backed": "知名风投机构参投",
+    # Negative reasons
+    "no airdrop signal": "无明显空投信号",
+    "late narrative": "叙事热度滞后",
+    "mature narrative, late timing": "叙事成熟，进入时机偏晚",
+    "team risk: anonymous or prior failure": "团队风险：匿名或过往有失败记录",
+    "elevated token structure risk": "代币经济学结构风险较高",
+    "high token unlock pressure": "代币解锁抛压偏高",
+    "high competition": "赛道竞争激烈",
+    "weak execution signals (stale repo or no roadmap)": "执行信号偏弱（代码库停滞或无路线图）",
+    "roadmap unclear vs shipping signals": "路线图交付进展不明确",
+    "low transparency (thin docs/social)": "透明度较低（文档或社群匮乏）",
+    "low data confidence": "数据置信度偏低",
+    # Fallback pool reasons
+    "airdrop signal detected": "检测到空投信号",
+    "early-stage opportunity": "早期潜力机会",
+    "mixed signals, monitor closely": "信号参差，保持密切观察",
+    "insufficient standout signals": "缺乏显著优势信号",
+    "weak overall signals": "整体信号偏弱",
+    "limited airdrop evidence": "空投相关证据有限",
+    # Eligibility gate reasons
+    "token already launched with no verified follow-on airdrop path": "已发币且无可验证的后续空投路径",
+    "team or official source explicitly disclaimed airdrop / token incentives": "团队或官方已明确否认空投/代币激励",
+    "no verified testnet, points program, task portal, or explicit airdrop mention": "暂无可验证的测试网、积分体系、任务门户或官方空投声明",
+}
+
+
+def _reason_to_zh(reason: str) -> str:
+    if not reason:
+        return ""
+    text = str(reason).strip()
+    return _REASONS_ZH_MAP.get(text.lower(), text)
+
+
+def _parse_json_field(value: Any) -> Any:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -120,6 +189,7 @@ class ProjectsResponse(BaseModel):
     ),
 )
 def list_projects(
+    req: Request,
     page: int = Query(1, ge=1, description="页码（从1开始）"),
     page_size: int = Query(20, ge=1, le=500, description="每页数量"),
     label: str | None = Query(None, description="按标签筛选 (FARM/WATCH/IGNORE)"),
@@ -129,6 +199,13 @@ def list_projects(
     sort_by: SortBy = Query(SortBy.SCORE, description="排序字段"),
     sort_order: SortOrder = Query(SortOrder.DESC, description="排序顺序"),
     auto_discovered: bool | None = Query(None, description="筛选自动发现项目 (true) 或手动录入 (false)"),
+    veto: str | None = Query(
+        None,
+        description="按资格否决筛选（no_participation_path=缺参与路径、already_launched=已发币）",
+    ),
+    user_id: str | None = Query(None, description="用户 ID（匿名时走 default）"),
+    curated: bool = Query(False, description="仅返回满足精选门槛的项目（评分/置信度/近90天活动/参与路径）"),
+    personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -145,6 +222,15 @@ def list_projects(
     Returns:
         ProjectsResponse 包含项目列表
     """
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = user_id or current_user["user_id"]
+    else:
+        uid = user_id or DEFAULT_USER
+    effective_user_id = uid.strip()
+
     logger.info(
         "api.projects.list",
         page=page,
@@ -156,6 +242,7 @@ def list_projects(
         sort_by=sort_by,
         sort_order=sort_order,
         auto_discovered=auto_discovered,
+        user_id=effective_user_id,
     )
 
     # Query from database
@@ -171,24 +258,42 @@ def list_projects(
             sort_by=sort_by.value,
             sort_order=sort_order.value,
             auto_discovered=auto_discovered,
+            veto=veto,
+            skip_user_id=effective_user_id,
+            curated=curated,
         )
 
         # Convert to response format — include discovery metadata for Dashboard
-        projects = [
-            {
-                "id": p["id"],
-                "name": p["name"],
-                "sector": p["sector"],
-                "stage": p["stage"],
-                "score": p["score"],
-                "label": p["label"],
-                "confidence": p["confidence"],
-                "discovery_source": p.get("discovery_source"),
-                "discovered_at": str(p["discovered_at"]) if p.get("discovered_at") else None,
-                "auto_discovered": bool(p.get("auto_discovered", False)),
-            }
-            for p in db_projects
-        ]
+        projects = []
+        for p in db_projects:
+            raw_reason = _parse_json_field(p.get("reason"))
+            reasons_list = raw_reason if isinstance(raw_reason, list) else ([str(raw_reason)] if raw_reason else [])
+            reasons_zh = [_reason_to_zh(r) for r in reasons_list] if reasons_list else []
+            projects.append(
+                {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "sector": p["sector"],
+                    "stage": p["stage"],
+                    "score": p["score"],
+                    "label": p["label"],
+                    "confidence": p["confidence"],
+                    "reason": reasons_list,
+                    "reason_zh": reasons_zh,
+                    "discovery_source": p.get("discovery_source"),
+                    "discovered_at": str(p["discovered_at"]) if p.get("discovered_at") else None,
+                    "auto_discovered": bool(p.get("auto_discovered", False)),
+                    "veto": p.get("veto"),
+                    "skipped": bool(p.get("skipped", False)),
+                }
+            )
+
+        if personalized and sort_by == SortBy.SCORE:
+            from app.services.user_memory import UserProfileMemoryService
+
+            user_svc = UserProfileMemoryService()
+            profile = user_svc.infer_user_profile(effective_user_id)
+            projects = user_svc.personalize_projects(projects, profile)
 
     except Exception as e:
         # 此前这里吞掉所有异常返回 projects=[], total=0 且 200 OK：调用方
@@ -218,6 +323,7 @@ def list_projects(
                 "stage": stage,
                 "min_score": min_score,
                 "auto_discovered": auto_discovered,
+                "veto": veto,
             },
             "sort": {
                 "by": sort_by.value,
@@ -333,6 +439,7 @@ def get_project(
                     "label": project.get("label"),
                     "confidence": project.get("confidence"),
                     "reason": reason or [],
+                    "reason_zh": [_reason_to_zh(r) for r in (reason or [])],
                     "narrative": narrative or {},
                     "team": team or {},
                     "risk": risk or {},
@@ -343,6 +450,14 @@ def get_project(
                     "funding_note": meta.get("funding_note"),
                     "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
                     "weight_version": weight_version or "v1.2",
+                    # 资格门否决原因（ADR-015）。不暴露的话这列就是死数据：
+                    # score 不因否决改变，只看 score/label 无法区分「分数低」与
+                    # 「被规则否决」。NULL 语义是「未经资格门评估」，不填默认值。
+                    "veto": project.get("veto"),
+                    # 用户自主「不参与」标记（get_by_id 已把 LEFT JOIN 算进来）。
+                    # 与 veto 刻意分两列：系统判断（veto）与用户决定（skipped）
+                    # 要能分别呈现/撤掉（2026-09-08，§44）。
+                    "skipped": bool(project.get("skipped", False)),
                     "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
                     "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
                 }
@@ -361,3 +476,93 @@ def get_project(
         raise HTTPException(
             status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to retrieve project"}
         ) from e
+
+
+@router.get(
+    "/projects/{project_id}/multi-wallet-strategy",
+    response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {"application/json": {"examples": {"not_found": ERROR_RESPONSE_EXAMPLES["not_found"]}}},
+        }
+    },
+    summary="获取项目多钱包参与建议",
+    description="根据项目女巫难度、阶段、成本分级与参与路径，输出多钱包参与梯度建议、资金预估与防女巫隔离规范（US-019 / W12-01）。",
+)
+def get_project_multi_wallet_strategy(
+    project_id: str = Path(..., description="项目 ID"),
+) -> dict[str, Any]:
+    """获取单项目多钱包参与建议 (US-019)."""
+    try:
+        repo = ProjectRepository()
+        project = repo.get_by_id(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+            )
+
+        from app.services.multi_wallet_strategy import generate_multi_wallet_strategy
+
+        strategy = generate_multi_wallet_strategy(project)
+        return {
+            "ok": True,
+            "data": strategy.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "api.projects.multi_wallet_strategy_failed",
+            project_id=project_id,
+            error=str(e),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to generate multi-wallet strategy"}
+        ) from e
+
+
+@router.get(
+    "/projects/{project_id}/timeline",
+    response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {"application/json": {"examples": {"not_found": ERROR_RESPONSE_EXAMPLES["not_found"]}}},
+        }
+    },
+    summary="获取项目演化时间轴与历史指标",
+    description="查询项目跨 run 演化时间序列、阶段迁移、评分走势与历史波动率指标（Roadmap §24.3 / W12-02）。",
+)
+def get_project_timeline(
+    project_id: str = Path(..., description="项目 ID"),
+    limit: int = Query(50, ge=1, le=200, description="最大快照数"),
+) -> dict[str, Any]:
+    """获取单项目演化时间轴 (Roadmap §24.3 / W12-02)."""
+    try:
+        from app.services.project_memory import ProjectEvolutionService
+
+        svc = ProjectEvolutionService()
+        evolution = svc.get_project_timeline(project_id, limit=limit)
+        if not evolution:
+            raise HTTPException(
+                status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+            )
+        return {
+            "ok": True,
+            "data": evolution.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "api.projects.timeline_failed",
+            project_id=project_id,
+            error=str(e),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to fetch project timeline"}
+        ) from e
+

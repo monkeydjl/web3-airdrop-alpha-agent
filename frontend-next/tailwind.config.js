@@ -36,6 +36,15 @@ module.exports = {
         },
         line: 'rgb(var(--line) / <alpha-value>)',
         canvas: 'rgb(var(--canvas) / <alpha-value>)',
+        cyber: {
+          bg: '#06090f',
+          panel: '#0d121c',
+          sub: '#131b28',
+          neon: '#00f5a0',
+          cyan: '#00d2ff',
+          amber: '#ffb800',
+          border: 'rgba(0, 245, 160, 0.2)',
+        },
       },
       fontFamily: {
         sans: [
@@ -55,6 +64,9 @@ module.exports = {
         lift: '0 10px 24px -8px rgba(17, 20, 44, 0.18)',
         glow: '0 0 0 1px rgb(16 185 129 / 0.12)',
         popover: '0 24px 56px -20px rgba(17, 20, 44, 0.28)',
+        'glow-neon': '0 0 20px -3px rgba(0, 245, 160, 0.25)',
+        'glow-cyan': '0 0 20px -3px rgba(0, 210, 255, 0.25)',
+        'glow-card': '0 0 0 1px rgba(0, 245, 160, 0.18), 0 8px 24px -4px rgba(0, 0, 0, 0.6)',
       },
       borderRadius: {
         sm: '4px',

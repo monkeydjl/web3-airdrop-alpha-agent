@@ -52,6 +52,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "oauth.reddit.com",  # Reddit OAuth API
         "medium.com",  # Medium RSS tag feed
         "arweave.net",  # Mirror（经 Arweave GraphQL 公开读）
+        "api.telegram.org",  # Telegram Bot API（决策推送 sendMessage，ACTION_LOOP_DESIGN §2）
         "api.openai.com",  # LLM 单接口默认 endpoint
     }
 )

@@ -62,9 +62,9 @@ def _address_activity_payload(
 
 
 class TestAlchemyWebhook:
-    def test_webhook_disabled_without_api_key(self, client: TestClient, monkeypatch) -> None:
-        """Returns 503 when alchemy_api_key is empty."""
-        monkeypatch.setattr(settings, "alchemy_api_key", "")
+    def test_webhook_disabled_without_signing_key(self, client: TestClient, monkeypatch) -> None:
+        """Returns 503 when alchemy_webhook_signing_key is empty."""
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", "")
         body = json.dumps(_address_activity_payload()).encode()
         response = client.post(
             "/api/v1/webhook/alchemy",
@@ -78,7 +78,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_invalid_signature(self, client: TestClient, monkeypatch) -> None:
         """Returns 401 when x-alchemy-signature doesn't match."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         body = json.dumps(_address_activity_payload()).encode()
         response = client.post(
             "/api/v1/webhook/alchemy",
@@ -92,7 +92,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_missing_signature(self, client: TestClient, monkeypatch) -> None:
         """Returns 401 when x-alchemy-signature header is absent."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         body = json.dumps(_address_activity_payload()).encode()
         response = client.post(
             "/api/v1/webhook/alchemy",
@@ -105,7 +105,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_valid_address_activity(self, client: TestClient, monkeypatch) -> None:
         """Valid ADDRESS_ACTIVITY webhook creates RawDiscovery and persists it."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         payload = _address_activity_payload()
         body = json.dumps(payload).encode()
         response = client.post(
@@ -134,7 +134,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_custom_type(self, client: TestClient, monkeypatch) -> None:
         """CUSTOM webhook type works."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         payload = _address_activity_payload()
         payload["type"] = "CUSTOM"
         payload["id"] = "evt_custom_001"
@@ -155,7 +155,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_noise_contract_filtered(self, client: TestClient, monkeypatch) -> None:
         """USDT/USDC addresses are filtered out."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         payload = _address_activity_payload(
             address="0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
         )
@@ -175,7 +175,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_status_endpoint(self, client: TestClient, monkeypatch) -> None:
         """GET /webhook/alchemy/status returns health info."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
         monkeypatch.setattr(settings, "alchemy_webhook_url", "https://example.com/webhook")
         response = client.get("/api/v1/webhook/alchemy/status")
         assert response.status_code == 200
@@ -188,7 +188,7 @@ class TestAlchemyWebhook:
 
     def test_webhook_error_resilience(self, client: TestClient, monkeypatch) -> None:
         """Returns 200 even on internal errors (Alchemy expects 200)."""
-        monkeypatch.setattr(settings, "alchemy_api_key", SIGNING_KEY)
+        monkeypatch.setattr(settings, "alchemy_webhook_signing_key", SIGNING_KEY)
 
         def failing_persist(self, *args, **kwargs):
             raise RuntimeError("DB connection failed")

@@ -21,6 +21,28 @@ def client():
     return TestClient(app)
 
 
+def test_curated_query_excludes_projects_without_activity_evidence(client, monkeypatch, tmp_path):
+    from app.repository import ProjectRepository
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "curated.db"))
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO projects (id, name, score, confidence, label, meta) VALUES (?, ?, ?, ?, ?, ?)",
+            ("unverified", "Unverified", 95, 0.95, "FARM", json.dumps({"signals": {"has_testnet": True}})),
+        )
+        conn.commit()
+        response = client.get("/api/v1/projects?curated=true")
+        assert response.status_code == 200
+        result = response.json()["data"]
+        assert result["projects"] == []
+        assert result["total"] == 0
+        assert ProjectRepository(conn).get_by_id("unverified") is not None
+    finally:
+        conn.close()
+
+
 class TestListProjectsEndpoint:
     """Test GET /api/v1/projects endpoint."""
 
@@ -50,6 +72,27 @@ class TestListProjectsEndpoint:
         result = data["data"]
         assert result["page"] == 2
         assert result["page_size"] == 50
+
+    def test_list_projects_with_veto_filter(self, client):
+        """按 veto 筛选（缺参与路径的人工验证清单入口），filters 回显。"""
+        response = client.get("/api/v1/projects?veto=no_participation_path")
+        assert response.status_code == 200
+
+        data = response.json()
+        result = data["data"]
+        assert result["filters"]["veto"] == "no_participation_path"
+
+    def test_list_projects_response_items_carry_veto(self, client):
+        """响应项必须带 veto 字段 —— 否则前端无法在卡片上标「待验证」，
+        只能靠名字猜。字段缺失在 `data` 为 dict 透传时不会报 500，
+        只表现为前端永远不显示徽标，所以必须显式断言。"""
+        response = client.get("/api/v1/projects?veto=no_participation_path&page_size=20")
+        assert response.status_code == 200
+
+        result = response.json()["data"]
+        for p in result["projects"]:
+            assert "veto" in p, "列表项必须带 veto 字段供前端打标"
+            assert p["veto"] == "no_participation_path"
 
     def test_list_projects_with_label_filter(self, client):
         """Test filtering by label."""
@@ -379,3 +422,106 @@ class TestLegacyRowBackfill:
         response = client.get("/api/v1/projects/legacy-2")
         team = response.json()["data"]["project"]["team"]
         assert "risk_level" not in team, "没有 team_score 就无从推导档位，不该编一个出来。"
+
+    def test_veto_reaches_the_detail_response(self, client):
+        """资格门否决必须能被读到，否则 projects.veto 就是死数据。
+
+        ADR-015 刻意让 `score` **不因否决改变**：一个被否决的项目分数照样很高。
+        所以只看 `score` 与 `label` 无法区分「模型给了低分」与「被规则否决」，
+        必须有字段承载。不暴露的话就是落了库却没人能读 —— 与
+        `team.risk_level` 当年「算了只打日志」是同一类失效。
+        """
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO projects (id, name, source, score, label, veto)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("vetoed-1", "Launched Bluechip", "seed", 69, "IGNORE", "already_launched"),
+        )
+        conn.commit()
+        conn.close()
+
+        project = client.get("/api/v1/projects/vetoed-1").json()["data"]["project"]
+        assert project["veto"] == "already_launched"
+        # 分数保持否决前的原值 —— 这正是不能靠 score 判断否决的原因。
+        assert project["score"] == 69
+
+    def test_pre_gate_rows_report_veto_as_null_not_a_default(self, client):
+        """资格门上线前写入的行，`veto` 必须是 null。
+
+        null 语义是「未经资格门评估」，不是「通过了资格门」。填一个假的
+        「无否决」会把历史行伪装成已评估过，而 ADR-015 明确历史数据不重算。
+        """
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO projects (id, name, source, score, label) VALUES (?, ?, ?, ?, ?)",
+            ("pre-gate-1", "Old Row", "seed", 72, "FARM"),
+        )
+        conn.commit()
+        conn.close()
+
+        project = client.get("/api/v1/projects/pre-gate-1").json()["data"]["project"]
+        assert project["veto"] is None
+
+
+class TestMultiWalletStrategyEndpoint:
+    """Tests for GET /api/v1/projects/{id}/multi-wallet-strategy (US-019)."""
+
+    def test_multi_wallet_strategy_returns_404_for_nonexistent_project(self, client):
+        resp = client.get("/api/v1/projects/nonexistent-xyz/multi-wallet-strategy")
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_multi_wallet_strategy_endpoint_returns_recommendations(self, client):
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, sector, stage, score, label, meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "multi-strat-1",
+                    "ClusterL2",
+                    "L2",
+                    "mainnet",
+                    82,
+                    "FARM",
+                    json.dumps({"signals": {"has_points_program": True, "sybil_friction": "medium"}}),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.get("/api/v1/projects/multi-strat-1/multi-wallet-strategy")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["project_id"] == "multi-strat-1"
+        assert data["status"] == "recommended"
+        assert data["recommended_wallets_optimal"] == 3
+        assert len(data["hygiene_guidelines"]) == 4
+
+    def test_multi_wallet_strategy_endpoint_ineligible_for_vetoed_project(self, client):
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, veto)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("multi-strat-vetoed", "DeadCoin", 68, "IGNORE", "explicit_no_airdrop"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.get("/api/v1/projects/multi-strat-vetoed/multi-wallet-strategy")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["status"] == "ineligible"
+        assert data["recommended_wallets_optimal"] == 0
+

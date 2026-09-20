@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -123,20 +124,24 @@ class CollectionScheduler:
         try:
             from app.db import get_connection
 
-            conn = get_connection()
-            try:
-                row = conn.execute(
-                    "SELECT enabled FROM data_sources WHERE source_id = ?",
-                    (source_id,),
-                ).fetchone()
-                if row is not None and not bool(row["enabled"]):
-                    self._logger.info(
-                        "collection_scheduler.skip_operator_disabled",
-                        source_id=source_id,
-                    )
-                    return
-            finally:
-                conn.close()
+            def _check_op() -> bool:
+                conn = get_connection()
+                try:
+                    row = conn.execute(
+                        "SELECT enabled FROM data_sources WHERE source_id = ?",
+                        (source_id,),
+                    ).fetchone()
+                    return row is None or bool(row["enabled"])
+                finally:
+                    conn.close()
+
+            # P1-4: 同步 DB 读取移出主事件循环
+            if not await asyncio.to_thread(_check_op):
+                self._logger.info(
+                    "collection_scheduler.skip_operator_disabled",
+                    source_id=source_id,
+                )
+                return
         except Exception as exc:
             self._logger.warning(
                 "collection_scheduler.operator_flag_check_failed",

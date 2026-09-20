@@ -21,7 +21,8 @@ import structlog
 from app.agents.base import PipelineState
 from app.db import dict_from_row, get_connection, is_postgres, scalar
 from app.opportunity.economic_evidence import replay_economic_snapshots_for_project
-from app.services.project_signals import merge_meta, parse_meta
+from app.services.project_signals import curation_reasons, merge_meta, parse_meta
+from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
@@ -97,6 +98,15 @@ class ProjectRepository:
             if existing is not None:
                 existing_meta = dict_from_row(existing).get("meta")
             meta_json = merge_meta(existing_meta, project)
+            # 精选活动证据：pipeline 已采集信号 → meta.curation_evidence。
+            # 与 signals 同一 meta 写入事务，读取方 curation_reasons 只看这里。
+            from app.services.curation_evidence import build_curation_evidence
+
+            curation_evidence = build_curation_evidence(state)
+            if curation_evidence:
+                meta = parse_meta(meta_json)
+                meta["curation_evidence"] = curation_evidence
+                meta_json = json.dumps(meta, ensure_ascii=False)
             source_count = int(getattr(project, "source_count", 1) or 1)
 
             # SQLite added DML RETURNING in 3.35; older runtimes must snapshot
@@ -111,8 +121,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -135,7 +145,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 RETURNING *
                 """
             elif sqlite3.sqlite_version_info >= (3, 24, 0):
@@ -149,8 +160,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     url = EXCLUDED.url,
@@ -173,7 +184,8 @@ class ProjectRepository:
                     auto_discovered = EXCLUDED.auto_discovered,
                     signal_count = EXCLUDED.signal_count,
                     weight_version = COALESCE(EXCLUDED.weight_version, projects.weight_version),
-                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores)
+                    sub_scores = COALESCE(EXCLUDED.sub_scores, projects.sub_scores),
+                    veto = EXCLUDED.veto
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -185,8 +197,8 @@ class ProjectRepository:
                     narrative_json, team_json, risk_json, tokenomics_json,
                     source, meta, fetched_at, updated_at,
                     discovery_source, discovered_at, auto_discovered, signal_count,
-                    weight_version, sub_scores
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weight_version, sub_scores, veto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 if sqlite_supports_returning:
                     sql += " RETURNING *"
@@ -220,6 +232,9 @@ class ProjectRepository:
                     # 而不是用空壳覆盖掉可用的历史快照。
                     getattr(state, "weight_version", None) or None,
                     _sub_scores_json(state),
+                    # Unlike score snapshots, a successful scoring pass may have no
+                    # veto and must clear a stale previous veto.
+                    getattr(state, "veto", None),
                 ),
             )
             if postgres_upsert or sqlite_supports_returning:
@@ -241,6 +256,7 @@ class ProjectRepository:
                     "sector": project.sector,
                     "source": project.source,
                     "confidence": state.confidence,
+                    "veto": getattr(state, "veto", None),
                     "reason": state.reason,
                     "narrative": state.narrative.model_dump() if state.narrative else None,
                     "team": state.team.model_dump() if state.team else None,
@@ -338,6 +354,42 @@ class ProjectRepository:
             conn.execute(
                 "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
                 (meta_json, datetime.now(UTC), project_id),
+            )
+            conn.commit()
+            d["meta"] = meta_json
+            return d
+        finally:
+            if self._should_close():
+                conn.close()
+
+    def set_meta_key(self, project_id: str, key: str, value: Any) -> dict[str, Any] | None:
+        """写 meta 顶层单键，**不推高 updated_at**。
+
+        与 update_meta_signals 的语义区分：后者表达「项目内容变了」（融资修正、
+        信号合并），必须推高 updated_at 让下游缓存失效；而写 ai_brief 这类
+        派生缓存不是内容变更 —— 若推高，任何拿 updated_at 判新鲜度的缓存都会
+        在写入瞬间满足 updated_at > generated_at，出生即过期（实测踩过）。
+        行锁 + 读改写与 update_meta_signals 同一模式，避免并发丢更新。
+        """
+        conn = self._get_conn()
+        try:
+            with suppress(Exception):
+                if hasattr(conn, "begin_serialized_write"):
+                    conn.begin_serialized_write()
+            select_sql = "SELECT * FROM projects WHERE id = ?"
+            if getattr(conn, "kind", None) == "postgres":
+                select_sql += " FOR UPDATE"
+            row = conn.execute(select_sql, (project_id,)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            d = dict_from_row(row)
+            meta = parse_meta(d.get("meta"))
+            meta[key] = value
+            meta_json = json.dumps(meta, ensure_ascii=False)
+            conn.execute(
+                "UPDATE projects SET meta = ? WHERE id = ?",
+                (meta_json, project_id),
             )
             conn.commit()
             d["meta"] = meta_json
@@ -447,6 +499,31 @@ class ProjectRepository:
             )
         return result
 
+    def canonical_sector_counts(self) -> dict[str, int]:
+        """全库 sector 计数，**按规范键折叠**（competition 分组口径）。
+
+        为什么不能复用 `global_sector_counts()`：那条路径最终走
+        `WHERE sector = ?` 精确匹配，传规范键 `"DEX"` 查不到库里存成
+        `"Dexes"` / `"dex"` / `"Derivatives"` 的行。同一逻辑赛道被拆成多组、
+        每组计数偏小，`COMPETITION_MAP` 就给出虚高的竞争度分 —— 把「赛道很挤」
+        错报成「几乎没有竞品」。
+
+        做法是一次 `GROUP BY sector` 拿到全部原始写法的分布，再在 Python 侧按
+        `canonical_sector_key()` 折叠。**这比 ADR-010 担心的 N 次 COUNT 更省**
+        （一条聚合查询 vs 每个 sector 一条），所以不额外过缓存：缓存是按单个
+        sector 键设计的，装不下"折叠后的整张分布"，硬塞会让写时失效
+        （`invalidate_sector_cache(project.sector)` 传的是原始写法）失准。
+        """
+        from app.agents.narrative import canonical_sector_key
+
+        folded: dict[str, int] = {}
+        for raw_sector, count in self.aggregate_counts("sector").items():
+            key = canonical_sector_key(raw_sector)
+            if not key:
+                continue
+            folded[key] = folded.get(key, 0) + count
+        return folded
+
     def invalidate_sector_cache(self, sector: str | None = None) -> None:
         """写时失效：写入项目后使对应 sector 缓存项失效（ADR-010）。"""
         from app.cache import get_sector_count_cache
@@ -478,11 +555,23 @@ class ProjectRepository:
             project_id: 项目 ID
 
         Returns:
-            项目字典，不存在返回 None
+            项目字典，不存在返回 None。字段里带 `skipped`（默认用户「不参与」标记，
+            由 project_skips 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
         """
+        # 与 list_projects 同一个 skipped 口径：LEFT JOIN project_skips，
+        # 按 default 用户（或未标注归属的 NULL 行）—— 单用户 MVP 的归属规则。
         conn = self._get_conn()
         try:
-            cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+            cursor = conn.execute(
+                """
+                SELECT p.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                FROM projects p
+                LEFT JOIN project_skips ps
+                  ON ps.project_id = p.id AND (ps.user_id = ? OR ps.user_id IS NULL)
+                WHERE p.id = ?
+                """,
+                (DEFAULT_USER, project_id),
+            )
             row = cursor.fetchone()
             return dict_from_row(row) if row else None
         finally:
@@ -500,6 +589,9 @@ class ProjectRepository:
         sort_by: str = "score",
         sort_order: str = "desc",
         auto_discovered: bool | None = None,
+        veto: str | None = None,
+        skip_user_id: str | None = None,
+        curated: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -543,12 +635,33 @@ class ProjectRepository:
                 conditions.append("auto_discovered = ?")
                 params.append(1 if auto_discovered else 0)
 
-            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            if veto:
+                conditions.append("veto = ?")
+                params.append(veto)
 
             # 查询总数（scalar 兼容 sqlite Row 与 Postgres dict_row）
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
             cursor = conn.execute(count_query, params)
             total = int(scalar(cursor.fetchone()) or 0)
+
+            if curated:
+                rows = conn.execute(f"SELECT projects.* FROM projects {where_clause}", params).fetchall()
+                kept_ids: list[str] = []
+                for row in rows:
+                    record = dict_from_row(row)
+                    if not curation_reasons(record):
+                        kept_ids.append(str(record["id"]))
+                if kept_ids:
+                    placeholders = ",".join("?" for _ in kept_ids)
+                    conditions.append(f"projects.id IN ({placeholders})")
+                    params.extend(kept_ids)
+                else:
+                    conditions.append("1 = 0")
+                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+                count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
+                cursor = conn.execute(count_query, params)
+                total = int(scalar(cursor.fetchone()) or 0)
 
             # 构建排序
             sort_column = {
@@ -560,15 +673,31 @@ class ProjectRepository:
             sort_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
             order_clause = f"ORDER BY {sort_column} {sort_direction}"
 
+            # skipped JOIN：把用户「不参与」标记左联进列表（项目仍在库里，
+            # 只是默认前端不再展示）。主查询逻辑不感知跳过 —— 它是展示层。
+            # skip_user_id 缺省按 default 用户口径，与路由层一致。
+            effective_skip_user = skip_user_id or DEFAULT_USER
+            join_scope = (
+                "AND (ps.user_id = ? OR ps.user_id IS NULL)"
+                if effective_skip_user == DEFAULT_USER
+                else "AND ps.user_id = ?"
+            )
+            skip_join = (
+                "LEFT JOIN project_skips ps ON ps.project_id = projects.id " + join_scope
+            )
+            skip_params = [effective_skip_user]
+
             # 分页查询
             offset = (page - 1) * page_size
             list_query = f"""
-                SELECT * FROM projects
+                SELECT projects.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                FROM projects
+                {skip_join}
                 {where_clause}
                 {order_clause}
                 LIMIT ? OFFSET ?
             """
-            cursor = conn.execute(list_query, [*params, page_size, offset])
+            cursor = conn.execute(list_query, [*skip_params, *params, page_size, offset])
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -325,43 +326,46 @@ async def trigger_collection(
         try:
             result = await collector.collect()
 
-            # 持久化到 raw_projects（request-scoped connection）
-            repo = CollectionRepository(conn)
-            repo.persist_collection_result(
-                result,
-                source_type=collector.source_type,
-                source_name=collector.source_name,
-            )
-
-            # Economic path after successful persist only; failures must not alter response.
-            try:
-                from app.opportunity.economic_evidence import EconomicEvidenceEmitter
-                from app.opportunity.economic_integration import (
-                    manual_run_id,
-                    process_persisted_collection,
-                )
-                from app.opportunity.economic_repository import EconomicSnapshotRepository
-                from app.opportunity.economic_writer import EconomicSnapshotWriter
-                from app.opportunity.repository import OpportunityRepository
-
-                snap_repo = EconomicSnapshotRepository(conn)
-                opp_repo = OpportunityRepository(conn)
-                writer = EconomicSnapshotWriter(snap_repo)
-                emitter = EconomicEvidenceEmitter(conn, snap_repo, opp_repo)
-                process_persisted_collection(
+            # 持久化到 raw_projects 与 economic 处理（P1-4: 移出主事件循环）
+            def _persist_and_economic() -> None:
+                repo = CollectionRepository(conn)
+                repo.persist_collection_result(
                     result,
-                    run_id=manual_run_id(),
-                    writer=writer,
-                    emitter=emitter,
-                    settings_obj=settings,
+                    source_type=collector.source_type,
+                    source_name=collector.source_name,
                 )
-            except Exception as exc:
-                logger.warning(
-                    "collections.economic_failed",
-                    source_id=source_id,
-                    error_type=type(exc).__name__,
-                    error=str(exc)[:200],
-                )
+
+                # Economic path after successful persist only; failures must not alter response.
+                try:
+                    from app.opportunity.economic_evidence import EconomicEvidenceEmitter
+                    from app.opportunity.economic_integration import (
+                        manual_run_id,
+                        process_persisted_collection,
+                    )
+                    from app.opportunity.economic_repository import EconomicSnapshotRepository
+                    from app.opportunity.economic_writer import EconomicSnapshotWriter
+                    from app.opportunity.repository import OpportunityRepository
+
+                    snap_repo = EconomicSnapshotRepository(conn)
+                    opp_repo = OpportunityRepository(conn)
+                    writer = EconomicSnapshotWriter(snap_repo)
+                    emitter = EconomicEvidenceEmitter(conn, snap_repo, opp_repo)
+                    process_persisted_collection(
+                        result,
+                        run_id=manual_run_id(),
+                        writer=writer,
+                        emitter=emitter,
+                        settings_obj=settings,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "collections.economic_failed",
+                        source_id=source_id,
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+
+            await asyncio.to_thread(_persist_and_economic)
 
             auto_run: dict[str, Any] | None = None
             auto_run_skipped: str | None = None

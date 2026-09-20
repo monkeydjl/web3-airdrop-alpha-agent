@@ -82,7 +82,7 @@ git commit -m "feat(scorer): add competition cache"
 - Python 3.11+，所有函数必须有类型注解
 - 使用 ruff 格式化（行宽 120）
 - Google-style docstring
-- 测试覆盖率 ≥ 80%，关键模块 ≥ 90%
+- 测试覆盖率 ≥ 80%（CI 与本地均以 `--cov-fail-under=80` 门禁为准）
 
 ---
 

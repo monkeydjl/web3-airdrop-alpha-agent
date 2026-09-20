@@ -14,3 +14,14 @@ DEFAULT_PROFILE = OpportunityProfile(
     strategy="compliant_curated_multiwallet",
     loss_preference="conservative",
 )
+
+PERP_TOLERANT_PROFILE = OpportunityProfile(
+    profile_id="perp-tolerant-v1",
+    wallet_count_min=3,
+    wallet_count_max=10,
+    hard_cost_limit_per_wallet_usd=50,
+    weekly_time_limit_hours=2,
+    horizon_months=(3, 6),
+    strategy="compliant_curated_multiwallet",
+    loss_preference="conservative",
+)

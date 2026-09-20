@@ -259,3 +259,36 @@ class TestHealthCheckCoversTheBudgetLedger:
         assert 'spend_today_usd":0' not in code, (
             "health-check.sh 在用花费是否为 0 做判断 —— 坏掉的账本和没花钱的账本都是 0，分不开。"
         )
+
+
+class TestWindowsBatchScripts:
+    """Start/Stop.bat 的门禁 —— Stop.bat 的后端停止步骤曾长期空转。
+
+    `tasklist | findstr "uvicorn"` 永远匹配不到任何进程：uvicorn 跑在
+    python.exe 里，"uvicorn" 只是命令行参数，tasklist 的映像名列看不到它。
+    后果是「重启后端」实际变成「再起一个实例绑同一个端口」，流量仍进旧
+    进程 —— 2026-09-06 排查「缓存明明写完却不生效」时实测：8002 上同时
+    挂着两个 LISTENING PID，接客的是改动**前**启动的那个。
+    """
+
+    def test_stop_bat_kills_backend_by_port(self) -> None:
+        text = _text("Stop.bat")
+        assert re.search(r'findstr ":8002"', text), (
+            'Stop.bat 必须按端口 8002 定位后端进程 —— tasklist 的映像名是 '
+            'python.exe，按 "uvicorn" 找永远匹配不到，等于从不停止后端。'
+        )
+        port_line = next(line for line in text.splitlines() if '":8002"' in line)
+        assert "LISTENING" in port_line, "按端口定位后必须过滤 LISTENING 行，别把 established 连接的 PID 也杀了。"
+        assert not re.search(r'findstr\s+/i\s+"uvicorn"', text), (
+            '按映像名 findstr "uvicorn" 的空转写法不要回归 —— 它看起来在做事，实际什么都没停。'
+        )
+
+    def test_stop_bat_does_not_kill_established_connections(self) -> None:
+        """杀 :3002 前必须过滤 LISTENING —— 否则会把持有 established 连接的
+        进程（典型：用户自己的浏览器）一起 taskkill 掉。"""
+        text = _text("Stop.bat")
+        for line in text.splitlines():
+            if '":3002"' in line:
+                assert "LISTENING" in line, (
+                    f"杀 :3002 前必须过滤 LISTENING 行。该行：{line.strip()}"
+                )

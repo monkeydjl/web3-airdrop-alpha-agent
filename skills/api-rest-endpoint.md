@@ -29,20 +29,33 @@
 - 验证：统一 `async def`（§8.1）；错误用 `HTTPException` + 语义状态码
 
 ### Step 4: 测试与版本
-- 操作：`tests/api/test_<resources>.py` 覆盖 2xx/4xx/422；如弃用旧版更新 `middleware/version_check.py`（ADR-009）
-- 验证：覆盖率 ≥ 90%，API_SPEC 与代码一致
+- 操作：`backend/tests/api/test_<resources>.py` 覆盖 2xx/4xx/422
+- 验证：整体覆盖率不低于 80%（CI `--cov-fail-under=80`），API_SPEC 与代码一致；
+  `backend/tests/api/test_openapi.py` 会拿 OpenAPI 对账
+- 版本化现状（ADR-009）：目前**只有 `/api/v1`，没有 `/api/v2`**，
+  `Deprecation` / `Sunset` / `Link` 响应头**尚未实现**，也**不存在
+  `middleware/version_check.py`** —— ADR-009 描述的是策略，不是已落地的代码。
+  同一大版本内保持向后兼容（字段仅增不减、参数仅加不改）；真要做 breaking change，
+  先按 ADR-009 起新前缀，不要在 v1 里改语义
+
+### Step 5: 登记鉴权
+- 操作：写操作或会消耗第三方配额的端点，在 `backend/app/auth.py` 的
+  `ADMIN_ONLY_PREFIXES` / `ADMIN_ONLY_METHOD_RULES` 里登记
+- 验证：默认匿名可访问，漏登记等于把写接口对外开放
 
 ## 输出
 - 文件：`backend/app/routers/v1/<resources>.py`
 - 文件：`backend/app/models.py`（更新）
-- 文件：`tests/api/test_<resources>.py`
+- 文件：`backend/tests/api/test_<resources>.py`
 - 文件：`docs/API_SPEC.md`（更新）
 
 ## 检查清单
 - [ ] 路径 `snake_case` 复数，query `snake_case`
 - [ ] 响应用 ApiResponse 包络
 - [ ] 路由 `async def`，错误用 HTTPException
-- [ ] 测试覆盖正常/错误/校验路径
+- [ ] 测试落在 `backend/tests/api/`，覆盖正常/错误/校验路径
+- [ ] 未在 v1 内引入 breaking change
+- [ ] 写操作已登记管理员白名单
 - [ ] API_SPEC.md 已同步
 
 ## 参考

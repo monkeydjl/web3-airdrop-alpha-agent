@@ -23,26 +23,35 @@
 - 操作：在 `backend/app/routers/v1/` 中创建或修改路由文件
 - 验证：函数签名包含类型注解，返回 `ApiResponse` 包络
 
-### Step 3: 添加单元测试
-- 操作：在 `tests/unit/` 中添加对应测试文件
-- 验证：测试覆盖正常路径和错误路径
+### Step 3: 添加测试
+- 操作：在 `backend/tests/api/test_<name>.py` 添加测试文件（**不存在 `tests/unit/`**，
+  端点测试统一放 `backend/tests/api/`，参照 `test_projects.py`）
+- 验证：覆盖正常路径与错误路径；跑
+  `cd backend && ./venv/Scripts/python.exe -m pytest tests/api/test_<name>.py --no-cov -p no:cacheprovider -q`
 
 ### Step 4: 更新 API 文档
 - 操作：同步更新 `docs/API_SPEC.md`
-- 验证：文档与代码一致
+- 验证：文档与代码一致。`backend/tests/api/test_openapi.py` 会拿 OpenAPI 与文档对账，
+  新端点漏写文档会在那里变红
+
+### Step 5: 确认鉴权归属
+- 操作：写操作/会消耗第三方配额的端点，需在 `backend/app/auth.py` 的
+  `ADMIN_ONLY_PREFIXES` 或 `ADMIN_ONLY_METHOD_RULES` 里登记
+- 验证：默认是**匿名可访问**，忘了登记等于把写接口开放给所有人
 
 ## 输出
 - 文件：`backend/app/routers/v1/<name>.py`
 - 文件：`backend/app/models.py`（新增模型）
-- 文件：`tests/unit/test_<name>.py`
+- 文件：`backend/tests/api/test_<name>.py`
 - 文件：`docs/API_SPEC.md`（更新）
 
 ## 检查清单
 - [ ] 请求模型有 Field 描述
 - [ ] 响应使用 ApiResponse 包络
 - [ ] 错误处理使用 HTTPException
-- [ ] 单元测试覆盖率 ≥ 90%
+- [ ] 测试落在 `backend/tests/api/`，整体覆盖率不低于 80%（CI `--cov-fail-under=80`）
 - [ ] API_SPEC.md 已同步更新
+- [ ] 写操作已登记到管理员白名单
 - [ ] 遵循 CONVENTIONS.md §8 异步规范
 
 ## 参考

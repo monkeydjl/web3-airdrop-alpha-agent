@@ -16,7 +16,16 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend-next/ .
 
-# 构建时不需要 API_PROXY_TARGET（rewrites 在生产中由 nginx 处理）
+# `next.config.js` 的 rewrites 在 **build 时**读取 API_PROXY_TARGET 并写入产物，
+# 不是运行时才解析。生产 nginx 现在将 /api 交给 Next（这样 proxy.ts 才能注入
+# 分档凭据），所以这里必须是后端容器内网地址；若漏掉，production build 得到
+# 空 rewrite，页面请求 /api 会被 Next 当作自身路由处理而 404。
+#
+# 本 Dockerfile 只给 docker-compose.prod.yml 用，那里后端服务名固定为 web:8002。
+# 运行时 compose 也重复传同一个值给 proxy.ts 的匿名 token 换取路径，但两者不能
+# 互相替代：一个决定 build 产物的 rewrite，另一个决定运行时 server-side fetch。
+ARG API_PROXY_TARGET=http://web:8002
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 

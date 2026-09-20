@@ -67,25 +67,32 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-08-24 已收紧）
+### 2.1 写操作的鉴权分布（实测，2026-09-19 随 V3 GDPR 合规更新）
 
-全仓共 **21 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **48 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 7 |
-| 无鉴权（公开） | 2 |
-| 匿名 token 可调 | 12 |
+| 管理员专用 | 11 |
+| 无鉴权（公开） | 5 |
+| 匿名 token 可调 | 32 |
 <!-- write-auth-split:end -->
 
-管理员专用的 7 个：`/run`、`/import/projects`、`/quarantine`、
-`/quarantine/release`，加上 2026-08-24 新收紧的三个 ——
+管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
+`/quarantine/release`、`/notify/test`（2026-08-31，决策推送测试发送），
+2026-08-24 新收紧的三个 ——
 `POST /collections/{source_id}/trigger`、`PATCH /collections/{source_id}`、
-`PATCH /projects/{project_id}/funding`。
+`PATCH /projects/{project_id}/funding`，
+以及 2026-09-02 领取监控的三个写端点 ——
+`POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
+`DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41）。
 
-公开的 2 个：`POST /auth/anonymous`（匿名入口本身）、
-`POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）。
+公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
+`POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
+`POST /auth/register`（用户注册入口）、
+`POST /auth/login`（用户登录入口）、
+`POST /auth/refresh`（刷新令牌入口）。
 
 #### 收紧的是哪三个，为什么
 
@@ -120,7 +127,7 @@
 
 `opportunity/evidence` 只追加证据条目，不花钱、不改评分事实。
 
-`ai-brief` 和 `opportunity/evaluate` 会走 LLM（**有额度成本**），
+`ai-brief`、`ai-chat` 和 `opportunity/evaluate` 会走 LLM（**有额度成本**），
 但刻意没有按角色锁：成本改由 `LLM_DAILY_BUDGET_USD` 的预算门统一拦截。
 理由是锁角色挡不住真实风险 —— 管理员自己刷同样会花钱。
 
@@ -177,8 +184,11 @@
 | PATCH / DELETE | `/api/v1/interactions/{interaction_id}` | v1 | V2（已实现） | 更新 / 删除单条参与记录 |
 | GET | `/api/v1/projects/{project_id}/interactions` | v1 | V2（已实现） | 某项目的参与记录 |
 | GET | `/api/v1/projects/{project_id}/participation-tasks` | v1 | V2（已实现） | 参与任务清单（**挂在项目下**，无顶层端点） |
+| GET | `/api/v1/projects/{project_id}/multi-wallet-strategy` | v1 | V3（已实现） | 多钱包防女巫与资金分配建议（US-019 / W12-01，详见 §45） |
+| GET | `/api/v1/projects/{project_id}/timeline` | v1 | V3（已实现） | 项目跨 run 演化时间序列与画像指标（Roadmap §24.3 / W12-02，详见 §46） |
 | GET / PATCH | `/api/v1/projects/{project_id}/funding` | v1 | V2（已实现） | 融资信息 / 人工修正 |
-| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | 生成 AI 简报（**GET 也是重新生成，不是读缓存**；POST 同义，无 `/regenerate`） |
+| GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | AI 简报（**GET 只读缓存，永不花钱**；POST 生成，`{"force": true}` 强制重新生成，2026-09-06 起带 meta 缓存） |
+| POST | `/api/v1/projects/{project_id}/ai-chat` | v1 | V2（已实现） | 项目追问对话（多轮问答，历史由前端持有；纯 LLM，无规则回退） |
 | GET | `/api/v1/projects/{project_id}/opportunity` | v1 | V2（已实现） | 旁路机会引擎最新快照 |
 | POST | `/api/v1/projects/{project_id}/opportunity/evaluate` | v1 | V2（已实现） | 显式执行机会评估 |
 | GET / POST | `/api/v1/projects/{project_id}/opportunity/evidence` | v1 | V2（已实现） | 证据历史 / 追加证据 |
@@ -187,14 +197,52 @@
 | POST | `/api/v1/quarantine/release` | v1 | V2（已实现） | 解除隔离（**POST release**，无 `DELETE /{id}`） |
 | GET | `/api/v1/watchlist` | v1 | V2（已实现） | 关注列表 |
 | POST / DELETE | `/api/v1/watchlist/{project_id}` | v1 | V2（已实现） | 加入 / 移出关注（项目 id 在**路径**上） |
+| POST / DELETE | `/api/v1/projects/{project_id}/skip` | v1 | V2（已实现，2026-09-08） | 用户自主「不参与」标记（§44） |
+| GET / DELETE | `/api/v1/user-profile` | v1 | V3（已实现，2026-09-19） | 用户推断偏好画像与偏好记忆重置（Roadmap §24.3 / W12-02，详见 §47） |
+| GET | `/api/v1/anomalies` | v1 | V3（已实现，2026-09-19） | 评分漂移与数据质量巡检报告（W12-04，详见 §48） |
 | GET | `/api/v1/settings/config` | v1 | V2（已实现） | 运行时配置只读快照 |
 | GET | `/api/v1/llm/status` | v1 | V2（已实现） | LLM 开关与提供方状态 |
 | GET | `/api/v1/archive/runs` | v1 | V2（已实现） | 归档运行历史（只读，详见 §37） |
 | GET | `/api/v1/scheduler/jobs` | v1 | V2（已实现） | 调度器任务表（只读，**管理员专用**，详见 §37b） |
+| POST | `/api/v1/notify/test` | v1 | F1（2026-08-31） | 发送测试推送（**管理员专用**，详见 §38） |
+| GET | `/api/v1/notify/status` | v1 | F1（2026-08-31） | 推送通道状态（**管理员专用**，详见 §38） |
+| GET | `/api/v1/notify/log` | v1 | F1（2026-08-31） | 推送发送历史（**管理员专用**，详见 §38） |
+| POST | `/api/v1/projects/{id}/participation` | v1 | F2（2026-08-31） | 创建参与 plan（匿名 token，详见 §39） |
+| GET | `/api/v1/participation` | v1 | F2（2026-08-31） | 我的参与 plan（匿名 token，详见 §39） |
+| PATCH | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 更新 plan 状态机（匿名 token，详见 §39） |
+| PATCH | `/api/v1/participation/tasks/{task_id}` | v1 | F2（2026-08-31） | 更新任务状态机（匿名 token，详见 §39） |
+| DELETE | `/api/v1/participation/{plan_id}` | v1 | F2（2026-08-31） | 删除参与 plan（匿名 token，详见 §39） |
+| POST | `/api/v1/projects/{id}/roi/entries` | v1 | F3（2026-08-31） | 记一笔投入（匿名 token，详见 §40） |
+| POST | `/api/v1/projects/{id}/roi/outcomes` | v1 | F3（2026-08-31） | 记一笔产出（匿名 token，详见 §40） |
+| GET | `/api/v1/projects/{id}/roi` | v1 | F3（2026-08-31） | 该项目的投入产出明细与小计（详见 §40） |
+| GET | `/api/v1/roi/summary` | v1 | F3（2026-08-31） | 我的收益台账总览（详见 §40） |
+| DELETE | `/api/v1/roi/entries/{entry_id}` | v1 | F3（2026-08-31） | 删除一条投入记录（匿名 token，详见 §40） |
+| DELETE | `/api/v1/roi/outcomes/{outcome_id}` | v1 | F3（2026-08-31） | 删除一条产出记录（匿名 token，详见 §40） |
+| GET | `/api/v1/watched-wallets` | v1 | F4（2026-09-02） | 自有地址清单（**管理员专用，读也锁**，详见 §41） |
+| POST | `/api/v1/watched-wallets` | v1 | F4（2026-09-02） | 登记自有地址（管理员专用，详见 §41） |
+| PATCH | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 改备注/链/启用（管理员专用，详见 §41） |
+| DELETE | `/api/v1/watched-wallets/{wallet_id}` | v1 | F4（2026-09-02） | 删除登记地址（管理员专用，详见 §41） |
+| GET | `/api/v1/public-config` | v1 | 上线前置（2026-09-03） | 评分方法论快照：8 维权重 + 标签阈值（**匿名 token 可读**，详见 §42） |
 | POST | `/api/v1/webhook/alchemy` | v1 | V2（已实现） | Alchemy 事件推送入口 |
 | GET | `/api/v1/webhook/alchemy/status` | v1 | V2（已实现） | Webhook 状态（路径含 `alchemy`） |
-| POST | `/api/v1/events` | v1 | V2（已实现） | 提交隐式行为埋点（click/expand/feedback 等） |
+| GET / POST | `/api/v1/events` | v1 | V3（已实现，2026-09-19） | 提交/查询隐式行为埋点（支持行级隔离，详见 §13 / §13b） |
 | POST | `/api/v1/auth/anonymous` | v1 | V2（已实现） | 获取匿名用户 token（Dashboard 首次访问） |
+| POST | `/api/v1/auth/register` | v1 | V3（已实现，2026-09-19） | 用户注册（W12-06，详见 §49b） |
+| POST | `/api/v1/auth/login` | v1 | V3（已实现，2026-09-19） | 用户登录（W12-06，详见 §49c） |
+| POST | `/api/v1/auth/refresh` | v1 | V3（已实现，2026-09-19） | 刷新 Access Token（W12-06，详见 §49d） |
+| POST | `/api/v1/auth/logout` | v1 | V3（已实现，2026-09-19） | 登出当前设备会话（W12-06，详见 §49e） |
+| POST | `/api/v1/auth/logout/all` | v1 | V3（已实现，2026-09-19） | 全设备登出（W12-06，详见 §49f） |
+| GET | `/api/v1/auth/me` | v1 | V3（已实现，2026-09-19） | 获取当前用户信息（W12-06，详见 §49g） |
+| GET | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 获取当前用户偏好设置（W12-08，详见 §50a） |
+| PUT | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 全量更新用户偏好设置（W12-08，详见 §50b） |
+| PATCH | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 增量合并用户偏好设置（W12-08，详见 §50c） |
+| DELETE | `/api/v1/user/preferences` | v1 | V3（已实现，2026-09-19） | 清除用户偏好设置（W12-08，详见 §50d） |
+| GET | `/api/v1/api-keys` | v1 | V3（已实现，2026-09-19） | 列出当前用户的 API Key（W12-09，详见 §51a） |
+| POST | `/api/v1/api-keys` | v1 | V3（已实现，2026-09-19） | 创建新的 API Key（W12-09，详见 §51b） |
+| DELETE | `/api/v1/api-keys/{key_id}` | v1 | V3（已实现，2026-09-19） | 撤销指定的 API Key（W12-09，详见 §51c） |
+| GET | `/api/v1/user/data` | v1 | V3（已实现，2026-09-19） | 导出用户所有数据（W12-11，详见 §52a） |
+| DELETE | `/api/v1/user/account` | v1 | V3（已实现，2026-09-19） | 注销删除用户账户（W12-11，详见 §52b） |
+| GET | `/api/v1/ha/status` | v1 | V3（已实现，2026-09-20） | 集群选主与 HA 状态查询（公开只读，W12-03，详见 §53） |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |
@@ -216,7 +264,7 @@
 | GET | `/api/v1/feedback` | 405 | 列表端点不存在；按项目查是 `GET /feedback/{project_id}` |
 | GET | `/api/v1/participation-tasks` | 404 | 挂在项目下：`/projects/{project_id}/participation-tasks` |
 | GET | `/api/v1/webhook/status` | 404 | 真实路径含 provider：`/webhook/alchemy/status` |
-| POST | `/api/v1/projects/{id}/ai-brief/regenerate` | 404 | `POST /ai-brief` 本身就是重新生成 |
+| POST | `/api/v1/projects/{id}/ai-brief/regenerate` | 404 | 强制重新生成用 `POST /ai-brief` + `{"force": true}`（2026-09-06 起） |
 | GET / PATCH | `/api/v1/quarantine/{id}` | 404 | 解除隔离是 `POST /quarantine/release` |
 | POST | `/api/v1/watchlist` | 405 | 项目 id 在路径上：`POST /watchlist/{project_id}` |
 | PUT | `/api/v1/projects/{id}/funding` | 405 | 真实动词是 **PATCH** |
@@ -708,6 +756,10 @@ curl -X POST http://localhost:8002/api/v1/run \
 - `signals`：按 signal 取值聚合的计数（如 `{"useful": 3, "wrong_label": 1}`）
 - `items`：明细列表
 
+**行级数据隔离（V3，W12-10）**：
+- 非管理员（`analyst` / `viewer` / `anonymous`）：仅能查看属于自身的反馈记录与统计计数，无法查看他人数据。
+- 管理员（`admin`）：可查看所有用户的反馈，亦可通过 `?user_id=` 过滤特定用户。
+
 ### 10.1 GET /api/v1/feedback/pending-review
 
 待复盘队列。参数：`limit`（默认 **20**）、`user_id`（可选）。
@@ -777,11 +829,52 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 ---
 
+### 13b. GET /api/v1/events
+
+查询隐式行为事件埋点列表（V3，W12-10 行级数据隔离）。
+
+**查询参数**：
+- `project_id`（可选，string）：按项目 ID 筛选
+- `event_type`（可选，string）：按事件类型筛选
+- `limit`（可选，int，默认 50，1~200）：返回条数
+- `offset`（可选，int，默认 0）：分页偏移
+- `user_id`（可选，string）：指定用户过滤（**仅管理员可用**；非管理员指定该参数无效，强制仅能查看自身事件）
+
+**隔离规则**：
+- 非管理员（`analyst`, `viewer`, `anonymous`）：仅能查看属于当前登录/Token 用户的行为事件埋点，无法查看他人事件。
+- 管理员（`admin`）：默认可查看全量用户的事件埋点；可传入 `user_id` 过滤特定用户的事件。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "project_id": "layerx-001",
+        "user_id": "usr_abc123",
+        "event_type": "expand",
+        "detail": "{\"duration_ms\":1200}",
+        "timestamp": "2026-09-19 14:30:00"
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+---
+
 ## 14. POST /api/v1/auth/anonymous
 
 签发匿名 token。前端首次访问时调用，本端点自身**无需鉴权**（在公开路径里）。
 
-**请求体**：`{}`（实测无必填字段；原文提到的 `client_id` 不在 schema 里）
+**请求体**：`{}`（无任何字段。`user_id` 一律由服务端生成为 `anon-<uuid>`
+—— 本端点在公开路径里，接受调用方自报身份等于允许冒用他人身份，
+2026-08-30 起请求体里带的 `user_id` 会被静默忽略，不再是 schema 字段）
 
 **响应 200**（实测形状 —— 注意**没有** `data` 包络）
 ```json
@@ -1071,8 +1164,16 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 **API 响应字段**（`GET /projects/{id}` → `data.project`，见 §6）：
 `id, name, url, sector, stage, score, label, confidence, reason[], sub_scores,
-weight_version, narrative, team, risk, tokenomics, funding, funding_note,
+weight_version, veto, narrative, team, risk, tokenomics, funding, funding_note,
 signals, source, created_at, updated_at`
+
+> `veto`（2026-09-01 新增，ADR-015）：资格门否决原因，取值
+> `"already_launched"` / `"no_participation_path"` / `null`。
+> **`score` 不因否决改变** —— 被否决的项目分数照样可以很高，所以只看
+> `score` 与 `label` 无法区分「模型给了低分」和「被业务规则否决」。
+> `null` 语义是「未经资格门评估」（该行在资格门上线前写入），不是
+> 「通过了资格门」；重算需显式跑 `POST /run`。
+> 人类可读的说明同时出现在 `reason[0]`，前端零改动即可显示。
 
 **数据库列名**（`projects` 表，供直查 SQL 用）：
 `narrative_json, team_json, risk_json, tokenomics_json` —— 带 `_json` 后缀的是
@@ -1442,7 +1543,9 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 
 ### 32a. GET /api/v1/projects/{project_id}/ai-brief
 
-获取项目的 AI 简报（规则生成 / 可选 LLM 增强）。
+**只读缓存**（2026-09-06 起）：返回项目的 AI 简报缓存（规则生成 / 可选 LLM 增强），
+有新鲜缓存就返回（`cached: true`），没有或已过期返回空态（`cached: false` +
+`stale` 标记）。**GET 永不触发生成、永不花 LLM 额度** —— 生成一律走 §32b 的 POST。
 
 > ⚠️ **本节此前记录的响应体是虚构的**（2026-08-24 按实测更正）。
 > 原文写的是 `{"brief": "...", "llm_available": false, "generated_at": "..."}`
@@ -1451,8 +1554,12 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 >
 > 照原文写前端会拿到 `undefined`，然后大概率被渲染成空白而不是报错 ——
 > **一个字段名写错的文档，产生的是空白页面，不是错误信息。**
+>
+> 2026-09-06 起本节语义再次变更：简报加了 meta 缓存，响应新增
+> `cached` / `stale` / `generated_at` 三个字段，`generated_at` 这次是
+> 真实存在的了；GET 从「POST 的别名（每次重新生成）」改为「只读缓存」。
 
-**响应 200**:
+**响应 200**（命中新鲜缓存）:
 ```json
 {
   "ok": true,
@@ -1462,6 +1569,9 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
     "mode": "rule",
     "llm_available": false,
     "degraded_reason": "llm_disabled",
+    "cached": true,
+    "stale": false,
+    "generated_at": "2026-09-06T08:30:00+00:00",
     "headline": "Nova Protocol 是一个 L2 扩容方案...",
     "summary": "...",
     "bullets": ["..."],
@@ -1474,6 +1584,25 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
   }
 }
 ```
+
+**响应 200**（无缓存 / 已过期 —— 同样是 200，前端按 `cached` 分支）:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "proj-001",
+    "project_name": "Nova Protocol",
+    "llm_available": false,
+    "cached": false,
+    "stale": true
+  }
+}
+```
+
+**缓存与 `stale`**：缓存存于 `projects.meta.ai_brief`，新鲜度 =
+`generated_at` 晚于/等于行的 `updated_at`。项目被重评、改融资、采集回写
+—— 任何行更新都会推高 `updated_at`，缓存自动过期（`stale: true`），
+过期解读**不会**返回，避免旧分数配新解读的误导。
 
 **`mode` 与 `degraded_reason`**：`mode` 只有 `llm` / `rule` 两个值，
 而回退到 `rule` 有四种原因，必须靠 `degraded_reason` 区分：
@@ -1502,13 +1631,24 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 > `POST /projects/{id}/ai-brief/regenerate` —— 实测 404。
 > 真实做法是对**同一个路径**发 POST。
 
-重新生成 AI 简报。响应体与 32a 完全相同。
+生成 AI 简报（无新鲜缓存时）并写入缓存。响应体结构与 32a 相同
+（外加 `cached: false`，重新生成场景可能带 `stale: true`）。
 
-> 补一条实测事实：**`GET` 并不是"读缓存"** —— 它在代码里就是
+**请求体**（可选）:
+```json
+{"force": true}
+```
+
+- `force=false`（默认，旧调用方传 `{}` 或省略 body 均兼容）：有新鲜缓存
+  直接返回（`cached: true`，**零 LLM 成本**）；无缓存或已过期才生成并写缓存。
+- `force=true`：无视缓存强制重新生成（「重新生成」按钮走这里）。
+
+> ~~补一条实测事实：**`GET` 并不是"读缓存"** —— 它在代码里就是
 > `return await project_ai_brief(project_id)`，即 POST 的别名，
-> 每次都重新生成。所以 `GET` 也会花 LLM 额度。
-> 这一点值得写清楚，因为「GET 是安全的、不产生副作用」是个很强的默认预期，
-> 而这里它不成立。
+> 每次都重新生成。所以 `GET` 也会花 LLM 额度。~~
+> **2026-09-06 起此事实失效**：GET 改为只读缓存（见 §32a），
+> 只有 POST 会触发生成。留着这段是为了让「曾经 GET 会花钱」这件事
+> 有据可查 —— 照旧文档集成 GET 的调用方，升级后只会变省钱，不会变错。
 
 ---
 
@@ -1516,7 +1656,7 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
 
 ### 33a. GET /api/v1/llm/status
 
-查询 LLM 多接口故障转移配置状态。
+查询 LLM 多接口轮询与故障转移配置状态。
 
 **响应 200**:
 ```json
@@ -1526,7 +1666,10 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
     "enabled": false,
     "provider_count": 1,
     "total_model_count": 2,
-    "failover_strategy": "sequential",
+    "candidate_count": 2,
+    "selection_strategy": "round_robin",
+    "failover_strategy": "provider_aware",
+    "strategy_note": "每次调用起点在 provider×model 组合上轮换一格；连接级失败跳过该接口剩余模型，模型级失败只跳过当前模型。轮询是进程内的，多 worker 下不保证全局严格均衡。",
     "providers": [
       {
         "name": "provider-1",
@@ -1548,6 +1691,22 @@ curl -X POST http://localhost:8002/api/v1/run -H 'Content-Type: application/json
   }
 }
 ```
+
+**调度字段（2026-09-03 新增，ADR-016）**：
+
+| 字段 | 含义 |
+| --- | --- |
+| `selection_strategy` | 每次调用**从哪个组合开始**。当前 `round_robin` |
+| `failover_strategy` | 这一次调用里**遇到失败怎么走**。当前 `provider_aware`：连接级失败跳过该接口剩余模型，模型级失败只跳当前模型 |
+| `candidate_count` | 轮询一圈的候选组合数（Σ 每接口模型数） |
+| `strategy_note` | 人类可读说明，含多 worker 公平性边界 |
+
+选择与失败刻意拆成两个字段。合成一句话时运维会把「轮询」读成
+「失败才切换」—— 那是改造前的行为，而两者对流量分布的含义完全相反。
+
+> `selection_strategy` 是**进程内**轮询：每个 worker 各持一个指针，
+> 多实例下不保证全局严格均衡（详见 `docs/OPERATIONS.md §9.5`）。
+> 别按「严格均分」验收这个字段。
 
 **预算字段（2026-08-24 新增）**：
 
@@ -1806,3 +1965,1086 @@ Alchemy webhook 回调端点（接收链上事件推送）。
 因为看到"任务不在表里"之后的下一个问题必然是"那我该开哪个开关"。
 
 注意分析任务的真实 id 是 **`analysis_run_queue`**，不是 `daily_analysis`。
+
+
+---
+
+## 38. notify（决策推送，2026-08-31 新增，管理员专用）
+
+整个 `/api/v1/notify` 前缀在 `ADMIN_ONLY_PREFIXES` 里（匿名 token 403）：
+通道配置、发送历史与测试发送都是运维情报 / 运维动作。
+事件模型与去重键见 [ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §2.3。
+
+### 38a. POST /api/v1/notify/test
+
+按当前配置向通知通道发一条测试消息。
+
+**响应 200**（通道已配置且发送成功）
+```json
+{ "ok": true, "data": { "sent": true, "channel": "telegram" } }
+```
+
+**响应 503**（通道未配置 —— fail-closed，与 webhook 未配置同口径）
+```json
+{ "ok": false, "error": { "code": "NOTIFY_NOT_CONFIGURED", "message": "…" } }
+```
+
+**响应 502**（已配置但发送失败，错误来自下游）
+
+### 38b. GET /api/v1/notify/status
+
+配置布尔回显，**不回显任何凭证值**（与 `/webhook/alchemy/status` 同一克制口径）。
+
+**响应 200**（实测形状）
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": false,
+    "channel": "telegram",
+    "telegram_configured": false,
+    "discord_configured": false,
+    "digest_cron": "0 9 * * *",
+    "max_per_run": 20
+  }
+}
+```
+
+### 38c. GET /api/v1/notify/log
+
+出站日志（新→旧），排查「为什么没收到推送」的入口。
+查询参数：`limit`（默认 50，≤200）、`status`（可选 `pending / sent / failed`，非法值 422；`failed` 表示重试 3 次全败）。
+
+**响应 200**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1, "event_type": "new_farm", "event_key": "new_farm:p-1",
+        "channel": "telegram", "title": "…", "status": "sent",
+        "attempts": 1, "last_error": null,
+        "created_at": "2026-08-31 09:00:00", "sent_at": "2026-08-31 09:00:01"
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+
+---
+
+## 39. participation（参与流水，2026-08-31 新增，匿名 token 可写）
+
+plan/task 两级状态机，按 token 身份（`get_current_user`）隔离 —— **请求体里
+没有也不认 `user_id`**（2026-08-30 审核 P1-1 的教训）。设计详见
+[ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §3。
+
+状态机（闭表，非法迁移 422 `INVALID_TRANSITION`）：
+
+- plan：`active ↔ paused`、`→ completed / abandoned`、`completed → active`
+- task：`todo ↔ doing`、`→ done / skipped`、`done → todo`（done 记
+  `completed_at`，重开清除）
+
+### 39a. POST /api/v1/projects/{id}/participation
+
+创建参与 plan；同项目重复创建 409 `ALREADY_EXISTS`；项目不存在 404。
+
+```json
+{ "seed_from_generated": true, "note": "冲积分" }
+```
+
+`seed_from_generated=true`（默认）把 §38b 的建议清单导入为任务（按生成 id 去重）。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "plan_id": 1, "project_id": "proj-1", "seeded_tasks": 6 } }
+```
+
+### 39b. GET /api/v1/participation
+
+我的全部 plan（含 tasks 数组），按创建时间倒序。
+查询参数：`status`（可选，`active / paused / completed / abandoned`）。
+
+### 39c. PATCH /api/v1/participation/{plan_id}
+
+```json
+{ "status": "paused", "note": "先等测试网" }
+```
+
+归属不是当前 token 的 plan 一律 **404**（不确认存在性）。
+
+### 39d. PATCH /api/v1/participation/tasks/{task_id}
+
+```json
+{ "status": "done", "note": "已完成交互", "due_at": "2026-09-15 00:00:00" }
+```
+
+`due_at` 传空串清除。
+
+### 39e. DELETE /api/v1/participation/{plan_id}
+
+删除 plan 并级联删任务。
+
+## 40. roi（收益台账，2026-08-31 新增，匿名 token 可写）
+
+结构化记录「投入了什么 / 拿回了什么」，给权重校准提供**真值** —— 反馈只有
+主观四档信号，校准学得到「用户觉得对不对」，学不到「最后有没有领到钱」。
+设计详见 [ACTION_LOOP_DESIGN.md](ACTION_LOOP_DESIGN.md) §4。
+
+- `roi_entries` = 投入，kind ∈ `gas / infra / time / other`
+- `roi_outcomes` = 产出，event ∈ `token_launched / airdrop_received /
+  airdrop_missed / campaign_ended`
+
+**诚实边界**（§4.2，调用方别误读）：
+
+- `amount_usd` 以人工录入为准，MVP 不做链上自动取价 —— 代币价格源是另一个工程。
+- `tx_hash` 只是凭证存档，**不自动验证**，它不提供确权语义。
+- 汇总**不给时间定价**：`hours` 原样返回，不折算成美元。折算要引入一个凭空
+  捏造的时薪，会让 ROI 看起来精确但不可信。
+- `roi_ratio` 在成本为 0 时是 `null` 而不是 `0` 或无穷大 —— 零投入下的
+  「ROI」没有定义，`0` 会被读成「没赚没赔」，`inf` 会污染下游聚合。
+
+身份：user_id 一律来自 token，**请求体自报被忽略**；归属不匹配一律 404。
+
+### 40a. POST /api/v1/projects/{id}/roi/entries
+
+```json
+{ "kind": "gas", "amount_usd": 12.5, "hours": 3, "note": "测试网交互" }
+```
+
+`amount_usd` 与 `hours` **至少要填一个**，两者都空返回 422 `MISSING_AMOUNT`；
+项目不存在 404。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "entry_id": 1, "project_id": "proj-1" } }
+```
+
+### 40b. POST /api/v1/projects/{id}/roi/outcomes
+
+```json
+{ "event": "airdrop_received", "amount_usd": 480, "tokens": 120, "tx_hash": "0x…", "source": "manual" }
+```
+
+`source` ∈ `manual / backtest`：人工录入映射为校准的 **live 桶**，
+回测导出是 **backtest 桶**，两类样本分开统计、不混算（§4.3）。
+
+**响应 200**
+```json
+{ "ok": true, "data": { "outcome_id": 1, "project_id": "proj-1" } }
+```
+
+### 40c. GET /api/v1/projects/{id}/roi
+
+该项目的 `entries` / `outcomes` 明细，加 `subtotal`（`cost_usd`、`hours`、
+`returned_usd`、`tokens`、`net_usd`、`roi_ratio`）。
+
+### 40d. GET /api/v1/roi/summary
+
+跨项目汇总：`totals`（同上六项 + `project_count`）与按项目拆开的 `items`。
+
+### 40e. DELETE /api/v1/roi/entries/{entry_id}
+
+删除一条投入记录。
+
+### 40f. DELETE /api/v1/roi/outcomes/{outcome_id}
+
+删除一条产出记录。
+
+## 41. watched-wallets（领取监控自有地址，2026-09-02 新增，**整前缀管理员锁**）
+
+F4 领取监控（[ACTION_LOOP_DESIGN §5](ACTION_LOOP_DESIGN.md#5-f4-领取监控claim-watch)）
+的自有地址清单。webhook 收到链上事件后拿它做匹配，命中就产出 `airdrop_candidate`
+事件（站内通知 + F1 推送）。
+
+**整个前缀在 `auth.ADMIN_ONLY_PREFIXES` 里，`GET` 也锁。** 与本文档其它
+"读开放写受限"的端点不同：一份「这个人有哪些钱包」的清单，配合公开的链上
+数据就能还原出完整持仓与交易史 —— 泄露风险主要在**读侧**，只锁写没有意义。
+
+三条实施约束：
+
+| 约束 | 原因 |
+| --- | --- |
+| 地址小写归一（写入侧 + 匹配侧都做） | 只做一侧则 UNIQUE 形同虚设（`0xAbC` 与 `0xabc` 各占一行），而 Alchemy payload 返回 EIP-55 混合大小写 |
+| 只校验形状 `^0x[0-9a-fA-F]{40}$`，不做 checksum | EIP-55 校验会拒绝全小写地址，而那是区块浏览器与链上工具的常见输出 |
+| 地址不可改 | 改地址等于换钱包，而历史命中按地址关联，原地改会让既有通知指向从未监控过的地址 |
+
+`chain` 是闭表：`ethereum` / `arbitrum` / `optimism` / `base` / `polygon`。
+收成闭表是因为它会进通知文案，拼写不一致（`ethereum` / `Ethereum` / `eth`）
+会让同一条链看起来像三条。
+
+### 41a. GET /api/v1/watched-wallets
+
+列出全部（含 `active=false`），按 `created_at DESC`。
+
+响应 `data`：`wallets[]`（`id` / `address` / `label` / `chain` / `active` / `created_at`）、
+`total`、`active_count`。`active` 一律是 bool —— SQLite 存 INTEGER、PG 存 BOOLEAN，
+转换统一在读取侧做。
+
+### 41b. POST /api/v1/watched-wallets
+
+登记一个地址。请求体 `address` / `label` / `chain`（默认 `ethereum`）。
+
+| 状态 | code | 触发条件 |
+| --- | --- | --- |
+| 409 | `ADDRESS_EXISTS` | 地址已登记（比较**不区分大小写**） |
+| 422 | `INVALID_ADDRESS` | 形状不合法 |
+| 422 | `UNSUPPORTED_CHAIN` | chain 不在闭表内 |
+
+### 41c. PATCH /api/v1/watched-wallets/{wallet_id}
+
+改 `label` / `chain` / `active`，三者至少给一个（否则 422 `NOTHING_TO_UPDATE`）。
+请求体里的 `address` 被忽略。
+
+`active=false` 与删除的区别：前者保留登记但停止匹配（临时静音）。Alchemy 控制台
+侧的地址清单在 MVP 是手工维护的，所以 `active=false` 时 webhook 仍会收到事件，
+只是不再产生 `airdrop_candidate`。
+
+### 41d. DELETE /api/v1/watched-wallets/{wallet_id}
+
+硬删。不存在返回 404。命中记录存在 `notify_log` 里，不依赖本表存活。
+
+### 41e. 对 POST /api/v1/webhook/alchemy 的影响
+
+响应 `data` 增加 `claim_matched`（bool）：本次事件是否命中自有地址并新入库了
+一条 `airdrop_candidate`。重投的同一事件返回 `false`（去重，`event_key` =
+`claim:{address}:{tx_hash}:{asset}`）。
+
+匹配失败**不影响** webhook 的既有职责与状态码：webhook 一律返回 200
+（非 200 会让 Alchemy 反复重投），领取监控的异常被吞掉并记
+`webhook.alchemy.claim_watch_failed`。
+
+---
+
+## 42. public-config（评分方法论快照，2026-09-03 新增，**匿名 token 可读**）
+
+### 为什么要有这个端点
+
+前端项目详情页要展示「这个分是按什么权重、什么阈值算出来的」。这两组数
+**已经被调过**（v1.1 把 FARM 从 70 下调到 65，权重随校准变动），写死在前端
+文案里的数字不会跟着改，只会静默变成错的。
+
+但不能让它去读 `GET /settings/config` —— 那个端点回显：
+
+| 字段 | 泄露什么 |
+|---|---|
+| `has_api_key`（每个源一项） | 哪些第三方密钥已配置 |
+| `base_url` | 各采集源的实际地址 |
+| `*_cron` | 全部调度表达式（可推算采集时点） |
+| `LLM_DAILY_BUDGET_USD`、`LLM_FALLBACK_PRICE_PER_1M_USD` | LLM 成本与预算 |
+| `DB_BACKEND`、`APP_ENV` | 用的哪种数据库、什么环境 |
+| `llm.providers` | LLM 提供方清单 |
+
+合起来是一份完整的基础设施画像，必须留在 `ADMIN_ONLY_PREFIXES` 后面。
+
+此前前端代理把管理员密钥**无差别注入所有 `/api/*` 请求**，于是项目详情页这种
+面向普通访客的页面也能读到那份画像。拆出本端点是把「展示评分方法论」这个真实
+需求与「读取运行时配置」这个管理动作分开 —— 前端代理才有可能只给管理动作注入
+管理员密钥（见 GO_LIVE_CHECKLIST §1c）。
+
+### 42a. GET /api/v1/public-config
+
+**鉴权**：匿名 token 或管理员密钥皆可。**注意「非管理员」不等于「免鉴权」** ——
+后端中间件在 `settings.api_key` 非空时要求任何请求都带凭据，不带任何头访问会得
+**401**（不是 200）。本端点刻意**不放进** `PUBLIC_PREFIXES`。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "weights": {
+      "WEIGHT_AIRDROP_SIGNAL": 0.18,
+      "WEIGHT_NARRATIVE_TIMING": 0.14,
+      "WEIGHT_EXECUTION": 0.14,
+      "WEIGHT_TEAM_REPUTATION": 0.13,
+      "WEIGHT_RISK": 0.13,
+      "WEIGHT_TOKENOMICS": 0.11,
+      "WEIGHT_COMPETITION": 0.09,
+      "WEIGHT_TRANSPARENCY": 0.08,
+      "weight_version": "v1.3"
+    },
+    "thresholds": {
+      "LABEL_FARM_THRESHOLD": 65.0,
+      "LABEL_WATCH_THRESHOLD": 50.0,
+      "CONFIDENCE_THRESHOLD": 0.5
+    }
+  }
+}
+```
+
+### 42b. 字段是白名单，不是「整块转发」
+
+顶层**只有** `weights` 与 `thresholds` 两块，`thresholds` 里**只有**上面那三项。
+
+`/settings/config` 的同名 `thresholds` 块混着 `LLM_DAILY_BUDGET_USD`、
+`LLM_FALLBACK_PRICE_PER_1M_USD`、`LLM_TEMPERATURE` 等成本与调参项，
+所以这里逐个列出要暴露的键，而不是把那一块整体转发过来 ——
+将来给 `/settings/config` 加字段时，本端点不会跟着漏。
+
+`tests/api/test_public_config.py` 用**精确相等**（而非「包含」）断言顶层键集合
+与 `thresholds` 键集合，并逐项检查响应体不含 `has_api_key` / `base_url` /
+`cron` / `DB_BACKEND` / `APP_ENV` / `BUDGET` / `PRICE` / `providers` 等子串。
+
+### 42c. 阈值真值只有一处
+
+`LABEL_FARM_THRESHOLD` / `LABEL_WATCH_THRESHOLD` 来自
+`app.agents.scorer.LABEL_THRESHOLDS`，本端点**复用** `settings.py` 的
+`_label_threshold()` 查表函数而不是抄第三份 —— 两个端点报不同的 FARM 阈值
+比报错更坏。回归 `test_thresholds_match_settings_config_exactly`。
+
+> 实施记录：第一版抄了一份查表逻辑，凭印象写成 `LABEL_THRESHOLDS.get(label, 0)`，
+> 而它是 `list[tuple[int, str]]` 而非 dict，直接 AttributeError。这恰好印证了
+> 原注释里那句「抄一份就意味着下次再调时有两个地方要改」。
+
+## 43. ai-chat（项目追问对话，2026-09-05 新增）
+
+### 43a. POST /api/v1/projects/{project_id}/ai-chat
+
+针对单个项目的多轮追问问答，是 §32a AI 简报（单向独白）的补充：用户追问
+「为什么是这个分」「参与的主要风险」这类静态面板答不了的问题。回答基于
+系统注入的项目快照（评分因子 / narrative / team / risk / tokenomics / 融资 /
+规则简报 bullets），数据里没有的字段模型被要求明确说没有、不许编造。
+
+**请求体**:
+```json
+{
+  "messages": [
+    {"role": "user", "content": "为什么是这个评分？"},
+    {"role": "assistant", "content": "……"},
+    {"role": "user", "content": "参与的主要风险是什么？"}
+  ]
+}
+```
+
+- `role` 只允许 `user` / `assistant`；**最后一条必须是 `user`**。
+- 会话历史由**前端持有**、随请求全量传入，服务端无状态、不落库；
+  后端只把最近 12 条发给模型，并以此兜底截断。
+- 校验（违反返回 **400**，`code: "INVALID_MESSAGES"`）：非空、≤ 20 条、
+  单条 ≤ 2000 字、非空白、末条为 user。校验先于查库执行。
+- 项目不存在返回 **404**（与 §32a 同风格）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "proj-001",
+    "project_name": "Nova Protocol",
+    "reply": "评分低主要因为团队信息不足……",
+    "degraded_reason": null,
+    "llm_available": true
+  }
+}
+```
+
+**与 §32a 的关键差异**：本端点**没有规则引擎可回退**（自由问答无法用模板
+拼），所以不存在 `mode` 字段；降级时 `reply` 为 `null`，`degraded_reason`
+只有三态：
+
+| `degraded_reason` | 含义 | 该怎么办 |
+| --- | --- | --- |
+| `llm_disabled` | 没配 `OPENAI_API_KEY` 或开关关着 | 配密钥 |
+| `budget_exceeded` | **当日 LLM 预算已用完** | UTC 零点自动恢复；要立即恢复就调大 `LLM_DAILY_BUDGET_USD` 并重启 |
+| `llm_error` | 所有接口都失败了 | 稍后重试 / 查 `ai_chat.llm_failed` 日志 |
+
+> 预算口径与 §32a 相同：走 `llm_chat` 的日预算闸门，**请求发出之前**检查。
+> 注意对话每轮都携带完整项目快照 + 历史，单轮成本高于一次 `ai-brief`；
+> 前端输入限 500 字 / 6 轮上下文，就是为了压这个成本。
+
+回归测试：`backend/tests/test_ai_chat.py`（service 降级语义与上下文截断、
+路由校验与字段透传，全部 mock `llm_chat`，不联网）。
+
+
+## 44. project-skips（用户自主「不参与」，2026-09-08 新增）
+
+用户层状态：与系统评分 / veto 无关 —— 系统说「值得」的项目，用户可以因为
+系统看不见的现实约束（没资金跑某个赛道）选「不参与」。工作台默认隐藏这些
+项目，可随时用「显示不参与」开关再看回来或取消。**刻意不复用
+label="IGNORE"** —— 那是模型的结论，跳过是用户的决定，要能被分别撤掉。
+
+### 44a. POST /api/v1/projects/{project_id}/skip
+
+标记项目为「不参与」。幂等：重复标记返回 `already: true`，不产生多行。
+
+**请求体**（可选）: `{"user_id": "default"}`
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": { "project_id": "...", "user_id": "default", "skipped": true, "already": false }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+### 44b. DELETE /api/v1/projects/{project_id}/skip
+
+取消「不参与」。项目没被标记过时返回 404（`NOT_SKIPPED`）。
+
+### 44c. 列表响应的 skip 联动（/projects 同一路由）
+
+响应项新增 `skipped: bool`，由 `project_skips` 左联得出，按默认匿名用户
+口径（`user_id='default'` 匹配或 user_id IS NULL 归属未标注记录），
+与 interactions / watchlist 的用户隔离规则一致。新增查询参数
+`user_id`：换用户视角看自己的跳过清单时用。
+
+校验组对齐：这组端点是匿名可写 —— 与 watchlist / feedback 同一口径，
+在 `test_admin_only_rules.py::ANON_WRITABLE` 里登记了理由。
+回归测试：`backend/tests/api/test_skip.py`（幂等、404、用户隔离、列表联动）。
+
+
+## 45. multi-wallet-strategy（多钱包防女巫与资金策略，US-019 / W12-01）
+
+根据项目女巫审查难度（sybil_factor）、部署阶段（mainnet/testnet）、Perp 成本画像及参与路径，输出多钱包参与梯度建议、资金预估与 4 项防女巫隔离准则。严格遵守纯建议红线，严禁且不提供任何私钥托管或自动化脚本。
+
+### 45a. GET /api/v1/projects/{project_id}/multi-wallet-strategy
+
+获取指定项目的多钱包参与建议（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "test-project",
+    "project_name": "Test Project",
+    "status": "recommended",
+    "recommended_wallets_min": 1,
+    "recommended_wallets_max": 5,
+    "recommended_wallets_optimal": 3,
+    "tier": "small_cluster",
+    "tier_zh": "精品小集群（3-5号）",
+    "strategy_summary": "该项目女巫难度中等，建议采用小规模精品集群参与...",
+    "capital_per_wallet_usd_min": 50.0,
+    "capital_per_wallet_usd_max": 200.0,
+    "total_capital_usd_min": 150.0,
+    "total_capital_usd_max": 1000.0,
+    "capital_notes": "主网交互需预留 Gas 与交互流动性",
+    "weekly_hours_per_wallet": 0.5,
+    "total_weekly_hours": 1.5,
+    "hygiene_guidelines": [
+      {
+        "rule_id": "zero_wallet_transfer",
+        "title": "严禁钱包互转（资金零关联）",
+        "description": "所有参与钱包之间绝对不要在链上有直接资金往来。提币必须经由中心化交易所不同子账号独立出金。",
+        "severity": "critical"
+      }
+    ],
+    "risk_warnings": []
+  }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+回归测试：`backend/tests/test_multi_wallet_strategy.py`、`backend/tests/api/test_projects.py`。
+
+
+## 46. project-timeline（项目演化时间轴与历史指标，Roadmap §24.3 / W12-02）
+
+从 `project_history` 表重构项目跨 run 演化时间序列、阶段跃迁、评分走势与波动率指标。
+
+### 46a. GET /api/v1/projects/{project_id}/timeline
+
+获取项目的演化历史时间轴（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "test-project",
+    "project_name": "Test Project",
+    "score_trend": "rising",
+    "score_volatility": 4.5,
+    "stage_progression": ["testnet", "mainnet"],
+    "stage_transitions": [
+      {
+        "from_stage": "testnet",
+        "to_stage": "mainnet",
+        "timestamp": "2026-09-01T00:00:00Z"
+      }
+    ],
+    "label_history": ["WATCH", "FARM"],
+    "timeline": [
+      {
+        "snapshot_id": 1,
+        "run_id": "run-001",
+        "score": 68,
+        "label": "WATCH",
+        "stage": "testnet",
+        "weight_version": "v1.2",
+        "created_at": "2026-08-01T00:00:00Z",
+        "diff_from_previous_score": 0
+      },
+      {
+        "snapshot_id": 2,
+        "run_id": "run-002",
+        "score": 82,
+        "label": "FARM",
+        "stage": "mainnet",
+        "weight_version": "v1.2",
+        "created_at": "2026-09-01T00:00:00Z",
+        "diff_from_previous_score": 14
+      }
+    ],
+    "first_seen_at": "2026-08-01T00:00:00Z",
+    "latest_snapshot_at": "2026-09-01T00:00:00Z",
+    "snapshot_count": 2,
+    "llm_context_summary": "【项目演化画像】项目 Test Project..."
+  }
+}
+```
+项目不存在 → 404（`NOT_FOUND`）。
+
+回归测试：`backend/tests/test_project_memory.py`、`backend/tests/api/test_memory_endpoints.py`。
+
+
+## 47. user-profile（用户偏好画像与记忆向量，Roadmap §24.3 / W12-02）
+
+从用户自主行为（反馈 feedback、流水 interactions、关注 watchlist、跳过 project_skips）动态推断偏好向量，支持个性化加权排序与 GDPR 隐私一键重置。
+
+### 47a. GET /api/v1/user-profile
+
+获取当前用户的推断偏好画像与赛道亲和度向量（匿名 token 可读）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "default",
+    "sector_affinity": {
+      "AI": 1.45,
+      "L2": 1.2
+    },
+    "risk_tolerance": "moderate",
+    "favorite_sectors": ["AI", "L2"],
+    "engagement_summary": {
+      "feedback_count": 5,
+      "interaction_count": 2,
+      "watchlist_count": 3,
+      "skip_count": 1,
+      "total_signals": 11
+    },
+    "inferred_at": "2026-09-19T01:00:00Z",
+    "is_cleared": false
+  }
+}
+```
+
+### 47b. DELETE /api/v1/user-profile
+
+一键重置当前用户的偏好记忆向量（匿名 token 可写，隐私与 GDPR 合规）。
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "default",
+    "sector_affinity": {},
+    "risk_tolerance": "moderate",
+    "favorite_sectors": [],
+    "engagement_summary": {
+      "total_signals": 0
+    },
+    "inferred_at": "2026-09-19T01:00:00Z",
+    "is_cleared": true
+  }
+}
+```
+
+回归测试：`backend/tests/test_user_memory.py`、`backend/tests/api/test_memory_endpoints.py`。
+
+---
+
+## 48. anomalies
+
+### 48a. GET /api/v1/anomalies
+
+主动扫描全仓评分分布（均值漂移、标签分布偏斜、0分爆发）与数据质量指标（P0/P1 字段完整性、采集时效性、隔离区积压）（W12-04 / DATA_QUALITY.md §4）。
+
+**权限**: 匿名 token / 管理员 API Key 均可（只读诊断）
+
+**查询参数**:
+- `force_refresh` (bool, optional, 默认 false): 是否跳过 60 秒内存缓存并强制重新全量巡检
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "overall_status": "healthy",
+    "checked_at": "2026-09-19T10:00:00Z",
+    "total_anomalies": 0,
+    "critical_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "drift_summary": {
+      "total_projects": 50,
+      "mean_score": 52.4,
+      "median_score": 53.0,
+      "stddev_score": 14.2,
+      "zero_score_count": 1,
+      "zero_score_ratio": 0.02,
+      "label_counts": {
+        "FARM": 12,
+        "WATCH": 28,
+        "IGNORE": 10
+      },
+      "label_ratios": {
+        "FARM": 0.24,
+        "WATCH": 0.56,
+        "IGNORE": 0.2
+      },
+      "baseline_mean": 50.0,
+      "mean_drift": 2.4,
+      "out_of_bounds_count": 0
+    },
+    "quality_summary": {
+      "p0_completeness": 1.0,
+      "p1_completeness": 0.94,
+      "p0_missing_count": 0,
+      "p1_missing_count": 3,
+      "quarantine_pending": 0,
+      "stale_sources": [],
+      "total_sources_monitored": 5
+    },
+    "anomalies": []
+  }
+}
+```
+
+回归测试：`backend/tests/test_anomaly_detection.py`、`backend/tests/api/test_anomaly_endpoints.py`。
+
+---
+
+## 49. auth (用户认证与会话管理)
+
+### 49a. POST /api/v1/auth/anonymous
+
+签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证（V2 兼容）。
+
+**权限**: 无需认证（公开）
+
+**响应 200**:
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "token_type": "Bearer",
+  "expires_in": 259200,
+  "user_id": "anon-3b7c8e9f1a2d"
+}
+```
+
+### 49b. POST /api/v1/auth/register
+
+用户注册端点。创建新用户并返回 JWT Access Token 与 Refresh Token。首位注册用户自举为 admin，后续用户默认 viewer。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123",
+  "display_name": "Alpha Hunter"
+}
+```
+
+**响应 200**:
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "refresh_token": "eyJhbGciOi...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "usr_9f1a2d3b4c5e",
+    "email": "user@example.com",
+    "display_name": "Alpha Hunter",
+    "role": "admin",
+    "is_active": true,
+    "created_at": "2026-09-19T10:00:00Z"
+  }
+}
+```
+
+### 49c. POST /api/v1/auth/login
+
+用户登录端点。验证邮箱与密码，成功后返回 JWT 与 Refresh Token，并创建持久化 Session。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123"
+}
+```
+
+**响应 200**: 同注册响应。
+
+### 49d. POST /api/v1/auth/refresh
+
+使用 Refresh Token 刷新 Access Token。校验 Token 签名、过期与 sessions 表有效性。
+
+**权限**: 无需认证（公开）
+
+**请求体**:
+```json
+{
+  "refresh_token": "eyJhbGciOi..."
+}
+```
+
+**响应 200**: 同注册响应。
+
+### 49e. POST /api/v1/auth/logout
+
+登出当前设备会话。将当前 Access Token 的 JTI 记入黑名单，并撤销对应 Session。
+
+**权限**: JWT 认证
+
+**请求体** (可选):
+```json
+{
+  "refresh_token": "eyJhbGciOi..."
+}
+```
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "Logged out successfully"
+  }
+}
+```
+
+### 49f. POST /api/v1/auth/logout/all
+
+全设备登出端点。将当前 Access Token 记入黑名单，并撤销该用户的所有设备 Sessions。
+
+**权限**: JWT 认证
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "All sessions revoked",
+    "revoked_sessions": 3
+  }
+}
+```
+
+### 49g. GET /api/v1/auth/me
+
+获取当前登录用户的个人基本信息与角色。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "id": "usr_9f1a2d3b4c5e",
+  "email": "user@example.com",
+  "display_name": "Alpha Hunter",
+  "role": "admin",
+  "is_active": true,
+  "created_at": "2026-09-19T10:00:00Z"
+}
+```
+
+回归测试：`backend/tests/test_auth_jwt.py`、`backend/tests/api/test_auth_endpoints.py`。
+
+---
+
+## 50. user-preferences (用户偏好设置，W12-08)
+
+### 50a. GET /api/v1/user/preferences
+
+获取当前登录用户的偏好配置（赛道偏好权重、风险偏好、偏好阶段、通知与界面主题等）。若尚未设置则返回默认配置。
+
+**权限**: JWT 认证或管理员 API Key（匿名 Token 返回 401）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "sector_preferences": {
+      "L2": 1.2,
+      "Restaking": 0.8,
+      "GameFi": 0.5
+    },
+    "risk_tolerance": 0.7,
+    "preferred_stage": ["testnet"],
+    "notifications": {
+      "telegram": "username_or_chatid",
+      "new_farm_alert": true,
+      "daily_digest": true
+    },
+    "language": "zh",
+    "theme": "dark"
+  }
+}
+```
+
+### 50b. PUT /api/v1/user/preferences
+
+全量更新当前登录用户的偏好配置并持久化入库。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体**:
+```json
+{
+  "sector_preferences": {
+    "L2": 1.2,
+    "Restaking": 0.8
+  },
+  "risk_tolerance": 0.6,
+  "preferred_stage": ["testnet", "mainnet"],
+  "notifications": {
+    "daily_digest": true
+  },
+  "language": "en",
+  "theme": "light"
+}
+```
+
+**响应 200**: 同 GET 响应结构。
+
+### 50c. PATCH /api/v1/user/preferences
+
+增量合并更新当前登录用户的偏好配置（字段级覆盖，字典级浅合并）。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体** (所有字段可选):
+```json
+{
+  "risk_tolerance": 0.8,
+  "theme": "dark"
+}
+```
+
+**响应 200**: 同 GET 响应结构。
+
+### 50d. DELETE /api/v1/user/preferences
+
+清除当前登录用户的偏好配置，重置为默认值（GDPR §25.9 隐私合规）。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "sector_preferences": {},
+    "risk_tolerance": 0.5,
+    "preferred_stage": [],
+    "notifications": {},
+    "language": "zh",
+    "theme": "dark"
+  }
+}
+```
+
+回归测试：`backend/tests/test_user_preferences.py`、`backend/tests/api/test_user_preferences_endpoints.py`。
+
+---
+
+## 51. api-keys (API Key 管理与认证，W12-09)
+
+### 51a. GET /api/v1/api-keys
+
+列出当前登录用户的 API Key 列表（脱敏显示，不包含原始密钥）。admin 用户可通过 `?all=true` 查询全仓 Key。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "key_1a2b3c4d5e6f7081",
+      "user_id": "usr_9f1a2d3b4c5e",
+      "name": "CI Pipeline Key",
+      "role": "analyst",
+      "last_used_at": "2026-09-19T10:30:00Z",
+      "expires_at": "2027-09-19T10:00:00Z",
+      "is_revoked": false,
+      "created_at": "2026-09-19T10:00:00Z"
+    }
+  ]
+}
+```
+
+### 51b. POST /api/v1/api-keys
+
+创建新的可撤销 API Key。生成的明文 `raw_key` 仅在本次响应中返回一次，数据库仅存储其不可逆 bcrypt 哈希。非 admin 用户不可越权授予高于自身角色的权限。
+
+**权限**: JWT 认证或管理员 API Key
+
+**请求体**:
+```json
+{
+  "name": "Trading Bot Key",
+  "role": "analyst",
+  "expires_in_days": 90
+}
+```
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "key": {
+      "id": "key_1a2b3c4d5e6f7081",
+      "user_id": "usr_9f1a2d3b4c5e",
+      "name": "Trading Bot Key",
+      "role": "analyst",
+      "last_used_at": null,
+      "expires_at": "2026-12-18T10:00:00Z",
+      "is_revoked": false,
+      "created_at": "2026-09-19T10:00:00Z"
+    },
+    "raw_key": "ak_1a2b3c4d5e6f7081_random_high_entropy_secret_string_here"
+  }
+}
+```
+
+### 51c. DELETE /api/v1/api-keys/{key_id}
+
+撤销指定的 API Key。撤销后使用该 Key 进行鉴权将立即被拒绝（HTTP 401）。非 admin 用户仅可撤销归属于自身的 Key。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "message": "API key revoked successfully",
+    "key_id": "key_1a2b3c4d5e6f7081"
+  }
+}
+```
+
+回归测试：`backend/tests/test_api_keys.py`、`backend/tests/api/test_api_keys_endpoints.py`。
+
+---
+
+## 52. user-data (GDPR 数据可携带权与账户注销，W12-11)
+
+### 52a. GET /api/v1/user/data
+
+导出当前登录用户的所有个人数据（反馈、events、偏好、关注、交互流水、参与计划、ROI 台账、API Keys 元数据等）为结构化 JSON（GDPR §25.9 数据可携带权 / ADR-008 §6）。敏感字段（`password_hash`、`key_hash`）绝不导出。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "exported_at": "2026-09-19T14:30:00Z",
+    "user": {
+      "id": "usr_9f1a2d3b4c5e",
+      "email": "alice@example.com",
+      "display_name": "Alice",
+      "role": "analyst",
+      "is_active": true,
+      "last_login_at": "2026-09-19T14:00:00Z",
+      "created_at": "2026-09-19T10:00:00Z",
+      "updated_at": "2026-09-19T14:00:00Z"
+    },
+    "preferences": {
+      "sector_preferences": {"L2": 1.2},
+      "risk_tolerance": 0.7,
+      "language": "zh",
+      "theme": "dark"
+    },
+    "feedback": [],
+    "events": [],
+    "watchlist": [],
+    "project_skips": [],
+    "interactions": [],
+    "participation_plans": [],
+    "participation_tasks": [],
+    "roi_entries": [],
+    "roi_outcomes": [],
+    "api_keys": []
+  }
+}
+```
+
+### 52b. DELETE /api/v1/user/account
+
+彻底注销当前登录用户账户（GDPR §25.9 被遗忘权 / ADR-008 §6）：
+1. **反馈去标识化**：`feedback.user_id` 置 `NULL`，切断身份关联的同时保留校准样本供模型训练；
+2. **私有数据硬删除**：物理删除 `events`（行为遥测）、`watchlist`、`project_skips`、`interactions`、`notification_reads` 等；
+3. **凭据销毁**：当前 JWT JTI 记入黑名单，物理清理 `sessions` 与 `api_keys`；
+4. **释放邮箱**：删除 `users` 记录，原邮箱可重新注册。
+
+**权限**: JWT 认证或管理员 API Key
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "user_id": "usr_9f1a2d3b4c5e",
+    "status": "deleted",
+    "message": "Account successfully deleted and data de-identified/erased",
+    "deidentified_feedback_count": 3,
+    "deleted_events_count": 12
+  }
+}
+```
+
+回归测试：`backend/tests/test_gdpr.py`、`backend/tests/api/test_gdpr_endpoints.py`。
+
+---
+
+## 53. ha (高可用与选主状态，W12-03)
+
+### 53a. GET /api/v1/ha/status
+
+查询当前节点的集群高可用（HA）与分布式选主状态（ADR-008 §4 / W12-03）。
+包含当前实例是否为 Leader、当前有效 Leader 的实例标识、租约到期时间、心跳周期以及当前节点运行时选主状态。
+该端点为公开只读端点，用于负载均衡健康探测、网关调度路由及多实例运维监控。
+
+**权限**: 公开只读（无需凭据）
+
+**响应 200**:
+```json
+{
+  "ok": true,
+  "data": {
+    "ha_enabled": true,
+    "instance_id": "inst-a1b2c3d4",
+    "is_leader": true,
+    "current_leader": "inst-a1b2c3d4",
+    "lease_expires_at": "2026-09-20T10:15:30Z",
+    "heartbeat_interval_seconds": 3,
+    "lease_ttl_seconds": 10,
+    "status": "leader"
+  }
+}
+```
+
+当 HA 未启用 (`ha_enabled=false`) 时，所有实例均独立运行调度器，`is_leader` 默认为 `true`，`status` 为 `"standalone"`。
+
+回归测试：`backend/tests/test_leader_election.py`、`backend/tests/api/test_ha_endpoints.py`。

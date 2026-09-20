@@ -30,7 +30,22 @@
 #   ├── review-code-review.md             # ✅ 代码审查
 #   └── architecture-adr-decision.md      # ✅ 架构决策
 #
-# 注：✅ 表示该 Skill 已有实际文件（共 21 个）
+# 注：✅ 表示该 Skill 已有实际文件（共 22 个，与 `ls skills/*.md` 减去本文件一致）
+#
+# 本目录于 2026-09-04 做过一轮「与代码现状对齐」的清理：修掉了 `frontend/`（实际
+# `frontend-next/`）、`tests/unit/`、`tests/contracts/`、`tests/perf/`、
+# `backend/app/middleware/`、`backend/app/agents/prompts/`、`evaluation/experiments/`、
+# `requirements.lock.txt`、`.gitleaks.toml`、`docs/DESIGN_GAP_ANALYSIS.md` 等
+# **一批指向不存在路径的引用**，以及 React Testing Library 测试方案（项目根本没装）。
+#
+# 同一轮里还订正了三处「写法和代码对不上」的契约/命令：
+#   - `BaseAgent.run()` 实为 `(self, state: PipelineState) -> PipelineState`，不是
+#     `(context) -> AgentResult`（`backend-agent-implementation.md`）
+#   - 日志事件前缀没有 `db.*`；`api.*` 真实存在但来自 `main.py`（`debug-log-trace.md`）
+#   - 覆盖率只有 80% 一条线，没有「关键模块 ≥ 90%」；mypy 只跑 `app` 且非 `--strict`；
+#     依赖没有 `.lock` 文件，门禁是 `test_requirements_pinning.py`（`review-code-review.md`）
+#
+# 再改这些文档时，请先用 `git ls-files` 确认路径真实存在，别凭印象写。
 # ──────────────────────────────────────────────
 
 ---
@@ -99,8 +114,6 @@ Skill 是 AI Agent 的可复用行为模块，包含：
 | **Database** | `sqlite-setup` | 配置 SQLite 连接与建表 | MVP |
 | | `alembic-migration` | 创建 Alembic 迁移 | V2 |
 | **Testing** | `unit-test` | 编写 pytest 单元测试 | MVP |
-| | `contract-test` | 编写契约测试 | MVP |
-| | `golden-regression` | 维护 golden 回归集 | MVP |
 | **Security** | `api-auth` | 实现 API 鉴权 | V2 |
 | | `secret-scan` | 密钥扫描配置 | MVP |
 | **Performance** | `query-optimize` | SQL 查询优化 | V2 |
@@ -110,11 +123,15 @@ Skill 是 AI Agent 的可复用行为模块，包含：
 | **API** | `rest-endpoint` | 设计/实现 REST 端点 | MVP |
 | **LLM** | `llm-integration` | LLM 集成与降级 | V2 |
 | **Prompt** | `prompt-template` | 编写 Prompt 模板 | V2 |
-| **Evaluation** | `ab-test` | A/B 测试配置 | V2 |
+| **Evaluation** | `ab-test` | 权重校准与效果评估 | V2 |
 | **Debug** | `log-trace` | 日志追踪分析 | MVP |
 | **Refactor** | `code-refactor` | 代码重构 | V2 |
 | **Review** | `code-review` | 代码审查 | MVP |
 | **Architecture** | `adr-decision` | 架构决策 | MVP |
+
+> 契约测试与 golden 回归**没有独立 Skill 文件**：契约断言写在所属模块的测试里
+> （见 `backend-pydantic-model.md`），golden 回归见
+> `backend/tests/golden/test_golden_cases.py` 与 `refactor-code-refactor.md`。
 
 ---
 
@@ -143,4 +160,26 @@ Skill 是 AI Agent 的可复用行为模块，包含：
 
 ---
 
-_文档版本：v1.0 · 2026-07-08_
+## 7. 维护约定
+
+Skill 文档的价值全在**路径与命令是否真的能跑**。一条指向不存在目录的
+"操作"比没有文档更糟：照着它写出来的代码会落在一个不被构建、不被测试的位置，
+而且不报错。
+
+改 Skill 前的三件事：
+
+1. `git ls-files --full-name <路径>` 确认引用的文件/目录真实存在
+2. 涉及命令的，实际跑一遍（后端统一用 `backend/venv/Scripts/python.exe -m ...`）
+3. 涉及"项目有没有装某个工具"的，读 `package.json` / `requirements*.txt`，别凭印象
+
+改完跑：
+
+```bash
+cd backend && ./venv/Scripts/python.exe -m pytest \
+  tests/test_check_terminology.py tests/test_encoding_mojibake.py \
+  --no-cov -p no:cacheprovider -q
+```
+
+---
+
+_文档版本：v1.1 · 2026-09-04（路径对齐清理）_

@@ -1,6 +1,6 @@
 # 外部 API 知识：数据源接口
 
-> 引用键：`KN:api:defillama` / `KN:api:cryptorank` / `KN:api:twitter` / `KN:api:dune`
+> 引用键：`KN:api:defillama` / `KN:api:cryptorank` / `KN:api:twitter`
 > 来源：`docs/ENGINEERING_ROADMAP.md §10`、`backend/app/fetcher.py`
 > 更新：2026-07-08
 
@@ -16,7 +16,7 @@
 | DefiLlama | TVL / 协议列表 | 无 | 宽松 | 4xx 不重试；5xx 退避重试 |
 | CryptoRank | 新项目发现 | API Key | 中 | 429 → 退避 |
 | Twitter / X | 社区情绪 | OAuth2 | 严格 | 401/403 标记并跳过 |
-| Dune | 链上分析 | API Key | 中 | 超时 → 规则引擎降级 |
+| ~~Dune~~ | 链上分析 | — | — | **未接入**：无 collector，配置键已于 2026-09-03 删除 |
 
 ## 调用约定
 

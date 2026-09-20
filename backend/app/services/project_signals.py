@@ -7,7 +7,10 @@ without requiring a wide column migration.
 from __future__ import annotations
 
 import json
+import math
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.agents.base import RawProject
 
@@ -26,8 +29,12 @@ SIGNAL_KEYS = (
     "github_stars",
     "github_recent_push_days",
     "explicit_airdrop_mention",
+    "explicit_no_airdrop",
     "tvl_usd",
     "description",
+    "site_alive",
+    "site_checked_at",
+    "site_http_status",
     "has_task_portal",
     "has_contract",
     "source_count",
@@ -171,6 +178,85 @@ def signals_view(project: Any) -> dict[str, Any]:
         if base.get(key) is None:
             base[key] = value
     return base
+
+
+def evidence_time(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def valid_evidence_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password
+    except ValueError:
+        return False
+
+
+def curation_reasons(project: Any, now: datetime | None = None) -> list[str]:
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(days=90)
+    p = signals_view(project)
+    reasons: list[str] = []
+    for key, minimum, maximum in (("score", 75, 100), ("confidence", 0.8, 1)):
+        value = p.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not minimum <= value <= maximum
+        ):
+            reasons.append(f"insufficient_{key}")
+    if p.get("veto") or p.get("label") != "FARM":
+        reasons.append("ineligible")
+    if p.get("site_alive") is False:
+        reasons.append("site_unavailable")
+    evidence = p.get("curation_evidence")
+    # meta 顶层的 curation_evidence 优先于嵌套（repository.save 把证据写在
+    # meta 顶层；signals_view 只展平 signals 子树，不覆盖 meta 顶层键）
+    if not isinstance(evidence, list):
+        meta = parse_meta(p.get("meta") if "meta" in p else p)
+        evidence = meta.get("curation_evidence")
+    items = evidence if isinstance(evidence, list) else []
+    active = False
+    participation = False
+    for item in items:
+        if not isinstance(item, dict) or not valid_evidence_url(item.get("url")):
+            continue
+        source = item.get("source")
+        if source not in ("github", "galxe", "layer3", "manual"):
+            continue
+        occurred = evidence_time(item.get("occurred_at"))
+        if occurred is not None and cutoff <= occurred <= now:
+            if item.get("kind") == "development" and source in ("github", "manual"):
+                active = True
+            if item.get("kind") == "campaign" and source in ("galxe", "layer3", "manual"):
+                active = True
+        checked = evidence_time(item.get("checked_at"))
+        starts = evidence_time(item.get("starts_at"))
+        ends = evidence_time(item.get("ends_at"))
+        if (
+            item.get("kind") == "campaign"
+            and source in ("galxe", "layer3", "manual")
+            and item.get("status") == "active"
+            and checked is not None
+            and cutoff <= checked <= now
+            and (not item.get("starts_at") or (starts is not None and starts <= now))
+            and (not item.get("ends_at") or (ends is not None and now < ends))
+        ):
+            participation = True
+    if not active:
+        reasons.append("missing_recent_activity")
+    if not participation:
+        reasons.append("missing_current_participation")
+    return reasons
 
 
 def funding_public_view(meta: Any) -> dict[str, Any]:

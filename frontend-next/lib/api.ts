@@ -28,13 +28,39 @@ export function isAbortError(err: unknown): boolean {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   let res: Response;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // 客户端凭据自动附加（支持 localStorage / sessionStorage）
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    const apiKey = localStorage.getItem('api_key') || sessionStorage.getItem('api_key');
+    if (apiKey) {
+      headers['X-API-Key'] = apiKey;
+    } else if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [k, v] of init.headers) {
+        headers[k] = v;
+      }
+    } else {
+      Object.assign(headers, init.headers);
+    }
+  }
+
   try {
     res = await fetch(url, {
       ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init?.headers || {}),
-      },
+      headers,
     });
   } catch (cause) {
     // 主动取消不是故障，原样抛出让调用方识别
@@ -64,7 +90,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!res.ok || json.ok === false) {
-    const fallback = `Request failed: ${res.status}`;
+    const fallback = `请求失败：${res.status}`;
     if (Array.isArray(json.detail)) {
       throw new Error(
         json.detail.map((d: { msg?: string }) => d.msg).join('; ') || fallback,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import pytest
 
@@ -918,6 +919,108 @@ class TestProductionConfigCannotBeBypassed:
                 cors_origins="https://app.example.com",
             )
 
+
+class TestProductionRejectsWeakDatabasePasswords:
+    """生产环境 PostgreSQL 弱密码必须拒绝启动（2026-09-03 补）。
+
+    此前生产自检校验 `API_KEY` 长度、`AUTH_TOKEN_SECRET`、CORS，
+    **完全不看 DB 密码**。而 `postgres_password` 的字段默认值就是
+    `airdrop_test`，`docker-compose.yml` 的 `:-` 兜底值也是它，
+    同一个文件里 `APP_ENV` 默认是 **production** ——
+    `docker compose up` + `DB_BACKEND=postgres` 会以生产身份带着一个
+    公开写在仓库里的密码静默跑起来，没有任何警告。
+
+    两条激活路径都必须覆盖（见 `_resolve_db_backend`）：分项 `POSTGRES_*`
+    组装、或直接给 `DATABASE_URL`。只查字段会漏掉后者，而把密码写在连接串里
+    是生产上更常见的配法。
+    """
+
+    _BASE: ClassVar[dict[str, str]] = {
+        "app_env": "production",
+        "api_key": "a" * 40,
+        "auth_token_secret": "b" * 48,
+        "cors_origins": "https://app.example.com",
+    }
+    _STRONG = "Xk9mQ2vL7pR4nT8wZ3yB6c"  # 22 位，非弱口令表成员
+
+    def test_sqlite_production_does_not_check_pg_password(self):
+        """SQLite 部署不该被 PG 密码规则误伤 —— 那时 POSTGRES_* 完全不参与。
+
+        默认值 `airdrop_test` 仍在字段上，若无条件校验，所有 SQLite 生产部署
+        都会启动失败。
+        """
+        s = Settings(_env_file=None, **self._BASE, db_backend="sqlite")
+        assert s.db_backend == "sqlite"
+
+    @pytest.mark.parametrize("weak", ["airdrop_test", "airdrop", "postgres", "changeme", "admin"])
+    def test_weak_password_rejected_via_field(self, weak):
+        with pytest.raises(ValueError, match=r"弱口令|占位符"):
+            Settings(_env_file=None, **self._BASE, db_backend="postgres", postgres_password=weak)
+
+    def test_long_placeholder_is_rejected_even_though_it_passes_length(self):
+        """`change-me-in-production` 有 23 位，能过任何长度检查。
+
+        这就是为什么要维护 `_WEAK_DB_PASSWORDS` 而不只看长度 —— 文档模板里的
+        占位符属于"看起来配过了但等于没配"。
+        """
+        with pytest.raises(ValueError, match=r"弱口令|占位符"):
+            Settings(
+                _env_file=None,
+                **self._BASE,
+                db_backend="postgres",
+                postgres_password="change-me-in-production",
+            )
+
+    def test_short_password_rejected(self):
+        with pytest.raises(ValueError, match="密码长度"):
+            Settings(_env_file=None, **self._BASE, db_backend="postgres", postgres_password="abc123")
+
+    def test_empty_password_rejected(self):
+        with pytest.raises(ValueError, match="必须设置密码"):
+            Settings(_env_file=None, **self._BASE, db_backend="postgres", postgres_password="")
+
+    def test_strong_password_passes(self):
+        s = Settings(_env_file=None, **self._BASE, db_backend="postgres", postgres_password=self._STRONG)
+        assert s.db_backend == "postgres"
+
+    def test_weak_password_hidden_in_database_url_is_rejected(self):
+        """把弱密码藏在连接串里同样要拦 —— 这是只查字段会漏掉的那条路径。"""
+        with pytest.raises(ValueError, match=r"弱口令|占位符"):
+            Settings(
+                _env_file=None,
+                **self._BASE,
+                database_url="postgresql://airdrop:airdrop_test@db:5432/airdrop",
+            )
+
+    def test_strong_password_in_database_url_passes(self):
+        s = Settings(
+            _env_file=None,
+            **self._BASE,
+            database_url=f"postgresql://airdrop:{self._STRONG}@db:5432/airdrop",
+        )
+        assert s.db_backend == "postgres", "DATABASE_URL 指向 PG 时应反向修正 db_backend"
+
+    def test_percent_encoded_password_is_decoded_before_checking(self):
+        """`p%40ss…` 的真实密码是 `p@ss…`，长度与字面值都必须按解码后算。
+
+        手写 `split("@")` 会在这里切错位置（密码里的 `@` 必须百分号编码），
+        所以 `_extract_db_password` 用 `urlsplit` + `unquote`。
+        """
+        s = Settings(
+            _env_file=None,
+            **self._BASE,
+            database_url="postgresql://u:p%40ssword-strong-1@db:5432/d",
+        )
+        assert s.db_backend == "postgres"
+        # 反面：解码后仍是弱口令则照样拒绝
+        with pytest.raises(ValueError, match=r"弱口令|占位符"):
+            Settings(_env_file=None, **self._BASE, database_url="postgresql://u:airdrop%5Ftest@db:5432/d")
+
+    def test_non_production_keeps_the_weak_default_usable(self):
+        """本地开发必须继续开箱可用 —— 闸门只在生产生效。"""
+        s = Settings(_env_file=None, app_env="development", db_backend="postgres", postgres_password="airdrop_test")
+        assert s.postgres_password == "airdrop_test"
+
     @pytest.mark.parametrize(
         "origins",
         [
@@ -986,6 +1089,79 @@ class TestRateLimiting:
         with TestClient(create_app()) as client:
             codes = {client.get("/health").status_code for _ in range(6)}
         assert 429 not in codes, "探针路径被限流会造成健康检查误判"
+
+
+class TestTrustedProxyCountPicksTheRightHop:
+    """`TRUSTED_PROXY_COUNT > 0` 时 `_client_ip` 必须取对那一跳（2026-09-03 补）。
+
+    此前只有 `trusted_proxy_count = 0` 的绕过测试
+    （`test_forged_forwarded_for_cannot_evade_the_rate_limit`），
+    **N > 0 的取值正确性零覆盖** —— 而生产必须设 N > 0：反代拓扑下
+    `request.client.host` 是 nginx 容器 IP，所有外部客户端会共享同一个限流桶
+    （100 req/60s 全站共用），要么全被限、要么等于没限流。
+
+    索引语义（`parts[-trusted]`）的推导，基于本仓 nginx.conf 用的
+    `$proxy_add_x_forwarded_for` = 客户端自带 XFF + "," + `$remote_addr`：
+
+    - 1 层（nginx → web）：XFF 末位是 nginx 看到的对端，即真实客户端 → `parts[-1]`
+    - 2 层（TLS 反代 → nginx → web）：外层追加真实客户端、nginx 再追加反代 IP，
+      末位是反代 IP、倒数第二位才是客户端 → `parts[-2]`
+
+    数错一位的后果是静默的：取到反代 IP 就退化成全站共用一个桶，取到客户端
+    自带的伪造段就等于没限流。两种都不报错，所以必须有测试钉住。
+    """
+
+    def _ip(self, monkeypatch, trusted, forwarded, peer="203.0.113.9"):
+        from starlette.requests import Request
+
+        from app.config import settings
+        from app.rate_limit import _client_ip
+
+        monkeypatch.setattr(settings, "trusted_proxy_count", trusted)
+        headers = []
+        if forwarded is not None:
+            headers.append((b"x-forwarded-for", forwarded.encode()))
+        scope = {
+            "type": "http",
+            "headers": headers,
+            "client": (peer, 12345) if peer else None,
+        }
+        return _client_ip(Request(scope))
+
+    def test_one_proxy_layer_takes_the_last_hop(self, monkeypatch):
+        """1 层反代：末位是 nginx 看到的真实客户端。"""
+        assert self._ip(monkeypatch, 1, "198.51.100.7") == "198.51.100.7"
+
+    def test_one_layer_ignores_client_supplied_prefix(self, monkeypatch):
+        """客户端伪造的前缀段必须被忽略 —— 这是 trusted_proxy_count 的全部意义。"""
+        got = self._ip(monkeypatch, 1, "1.2.3.4, 5.6.7.8, 198.51.100.7")
+        assert got == "198.51.100.7", f"取到了可伪造的段：{got}"
+
+    def test_two_proxy_layers_take_the_second_to_last_hop(self, monkeypatch):
+        """2 层反代：末位是内层反代 IP，客户端在倒数第二位。"""
+        got = self._ip(monkeypatch, 2, "9.9.9.9, 198.51.100.7, 10.0.0.2")
+        assert got == "198.51.100.7", f"数错了跳数：{got}"
+
+    def test_falls_back_to_peer_when_header_is_missing(self, monkeypatch):
+        """配了 N 但请求没带 XFF（比如直连绕过反代）→ 退回真实对端，不能崩。"""
+        assert self._ip(monkeypatch, 1, None, peer="203.0.113.9") == "203.0.113.9"
+
+    def test_falls_back_when_chain_is_shorter_than_configured(self, monkeypatch):
+        """链比配置的层数短 → 退回对端，而不是索引越界或取到伪造段。
+
+        这种情况意味着请求没走完预期的代理链（配置错了或有人直连内网端口）。
+        退回对端是安全的一侧：宁可把同一反代的请求归到一个桶，也不能采信短链里
+        客户端可控的那一段。
+        """
+        assert self._ip(monkeypatch, 3, "1.2.3.4, 5.6.7.8", peer="203.0.113.9") == "203.0.113.9"
+
+    def test_zero_never_reads_the_header(self, monkeypatch):
+        """N=0（默认）时完全不看 XFF —— 与既有的绕过测试同源，这里钉的是取值。"""
+        assert self._ip(monkeypatch, 0, "1.2.3.4", peer="203.0.113.9") == "203.0.113.9"
+
+    def test_unknown_when_there_is_no_peer_either(self, monkeypatch):
+        """连对端都取不到时返回 "unknown"，不能抛 AttributeError 把请求打挂。"""
+        assert self._ip(monkeypatch, 0, None, peer=None) == "unknown"
 
 
 class TestInputBounds:

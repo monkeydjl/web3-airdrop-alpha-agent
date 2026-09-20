@@ -69,6 +69,41 @@ _INSUFFICIENT_ACTION = "Collect the missing critical evidence before participati
 _NOT_FIT_ACTION = "Do not allocate time or funds under the current profile."
 _BLOCKED_ACTION = "Do not interact until credible remediation evidence is verified."
 
+WATCH_REASON_ACTIONS_ZH = {
+    "WAIT_TASK_OPEN": "等待官方参与通道开启后再行评估。",
+    "WAIT_RULES": "等待官方资格与多钱包规则明朗后再行评估。",
+    "WAIT_CATALYST": "关注 3-6 个月内的官方分发催化剂。",
+    "WAIT_COST_DROP": "等待推荐硬性成本回落至画像限额内。",
+    "WAIT_MORE_EVIDENCE": "针对未达标的 FARM 门槛收集更有力的独立证据。",
+    "WAIT_EARLY_ENTRY": "观察可参与的时间窗口或更清晰的资格路径。",
+    "REWARD_TOO_UNCERTAIN": "在参与前先核验保守收益预期。",
+    "SINGLE_WALLET_ONLY": "若官方规则允许，使用兼容的单钱包画像参与。",
+}
+
+IGNORE_REASON_ACTIONS_ZH = {
+    "NEGATIVE_EXPECTED_VALUE": "在基准预期净收益为负时切勿参与。",
+    "DUST_REWARD": "在乐观预估收益仍微不足道时不建议参与。",
+    "TOO_EXPENSIVE": "当最低硬性成本超出当前画像承受能力时不参与。",
+    "TOO_TIME_INTENSIVE": "当最低维护时间超出当前画像设定时不参与。",
+    "TOO_LATE": "资格准入窗口关闭后切勿参与。",
+    "NO_AIRDROP_CASE": "在缺乏可行分发依据时不建议参与。",
+    "PROJECT_INACTIVE": "项目已确认处于非活跃状态，切勿参与。",
+    "PROFILE_MISMATCH": "在当前用户画像下不建议参与。",
+}
+
+BLOCK_REASON_ACTIONS_ZH = {
+    "SAFETY_BLOCK": "在可信整改证据核实前切勿交互。",
+    "INTEGRITY_BLOCK": "在可信整改证据核实前切勿交互。",
+    "RULE_BLOCK": "在官方规则明朗或完成整改前切勿交互。",
+}
+
+ACTION_RECOMMENDATIONS_ZH = {
+    _ACTIONABLE_ACTION: "建议先运行 1-2 个钱包，记录实际成本与时间，再评估是否扩容。",
+    _INSUFFICIENT_ACTION: "在参与前先补齐缺失的关键证据。",
+    _NOT_FIT_ACTION: "在当前画像下切勿投入时间或资金。",
+    _BLOCKED_ACTION: "在可信整改证据核实前切勿交互。",
+}
+
 
 def decide(
     *,

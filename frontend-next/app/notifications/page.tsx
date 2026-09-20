@@ -3,6 +3,7 @@
 import {
   Bell,
   CheckCheck,
+  Coins,
   Inbox,
   Radio,
   Sparkles,
@@ -18,15 +19,13 @@ import { relativeTime } from '@/lib/format';
 /**
  * 通知类型。
  *
- * **只列后端真的会产出的类型**：`app/routers/v1/notifications.py` 聚合三类——
- * `new_project`（今日新建且 FARM/WATCH）、`score`（最新两条评分有变化）、
+ * **只列后端真的会产出的类型**：`app/routers/v1/notifications.py` 聚合四类——
+ * `airdrop_candidate`（F4 领取监控：自有地址命中代币转入）、
+ * `new_project`（今日新建且 FARM/WATCH）、
+ * `score`（最新两条评分有变化）、
  * `collector`（今日采集失败）。
- *
- * 此前这里还有 `deadline` / `funding` / `ai` 三种，后端从不产出，于是侧栏
- * 常驻三个永远显示 0 的分类入口——点进去永远是空列表。一个永远为空的入口
- * 不是"暂时没数据"，而是在承诺一个不存在的功能。
  */
-type NtfType = 'all' | 'new_project' | 'score' | 'collector';
+type NtfType = 'all' | 'airdrop_candidate' | 'new_project' | 'score' | 'collector';
 type DotTone = 'info' | 'success' | 'warning' | 'error' | 'brand';
 
 interface NotificationItem {
@@ -67,12 +66,14 @@ interface MarkReadData {
 }
 
 const TYPE_DOT: Record<string, DotTone> = {
+  airdrop_candidate: 'brand',
   new_project: 'success',
   score: 'success',
   collector: 'error',
 };
 
 const TYPE_TAG: Record<string, string> = {
+  airdrop_candidate: '疑似空投到账',
   new_project: '新机会',
   score: '评分变化',
   collector: '采集器告警',
@@ -102,6 +103,7 @@ function mapApiItem(item: ApiNotification): NotificationItem {
 
 const NAV_ITEMS: { key: NtfType; label: string; icon: typeof Inbox }[] = [
   { key: 'all', label: '全部', icon: Inbox },
+  { key: 'airdrop_candidate', label: '疑似到账', icon: Coins },
   { key: 'new_project', label: '新机会', icon: Sparkles },
   { key: 'score', label: '评分变化', icon: TrendingUp },
   { key: 'collector', label: '采集器', icon: Radio },

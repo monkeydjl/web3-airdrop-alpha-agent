@@ -135,19 +135,22 @@ class TestProjectRepository:
         repo = ProjectRepository(db_conn)
 
         # First save
+        sample_state.veto = "already_launched"
         repo.save(sample_state)
 
-        # Update and save again
+        # A successful rescore without a veto must clear stale policy state.
         sample_state.score = 90
         sample_state.label = "WATCH"
+        sample_state.veto = None
         repo.save(sample_state)
 
         # Verify updated
-        cursor = db_conn.execute("SELECT score, label FROM projects WHERE id = ?", (sample_state.project.id,))
+        cursor = db_conn.execute("SELECT score, label, veto FROM projects WHERE id = ?", (sample_state.project.id,))
         row = cursor.fetchone()
 
         assert row["score"] == 90
         assert row["label"] == "WATCH"
+        assert row["veto"] is None
 
     def test_save_batch(self, db_conn, sample_state):
         """Test batch saving projects."""
@@ -473,6 +476,49 @@ class TestProjectRepository:
         projects, total = repo.list_projects(page=2, page_size=5)
         assert len(projects) == 5
         assert total == 10
+
+    def test_list_projects_filter_by_veto_no_participation_path(self, db_conn, sample_state):
+        """按 veto 过滤：高分但缺参与路径的项目是被压回 WATCH 的关键一批，
+        工作台要用它作为「人工验证」清单的 entry point。"""
+        repo = ProjectRepository(db_conn)
+
+        cases = [
+            ("p1", "no_participation_path"),
+            ("p2", "already_launched"),
+            ("p3", "no_participation_path"),
+            ("p4", None),
+        ]
+        for pid, veto in cases:
+            state = PipelineState(
+                project=RawProject(id=pid, name=f"P-{pid}", source="test"),
+                context=AgentContext(run_id="r"),
+                score=70,
+                label="WATCH",
+                confidence=0.5,
+                reason=[],
+            )
+            state.veto = veto
+            repo.save(state)
+
+        projects, total = repo.list_projects(veto="no_participation_path")
+        assert total == 2
+        assert {p["name"] for p in projects} == {"P-p1", "P-p3"}
+
+    def test_list_projects_filter_by_veto_none_not_implied(self, db_conn, sample_state):
+        """传 None 等价于不过滤，避免前端传空被误当 veto='' 匹配。"""
+        repo = ProjectRepository(db_conn)
+        for pid in ("a", "b"):
+            state = PipelineState(
+                project=RawProject(id=pid, name=pid, source="test"),
+                context=AgentContext(run_id="r"),
+                score=60,
+                label="WATCH",
+                confidence=0.5,
+                reason=[],
+            )
+            repo.save(state)
+        _projects, total = repo.list_projects()
+        assert total == 2
 
     def test_list_projects_filter_by_label(self, db_conn, sample_state):
         """Test filtering by label."""

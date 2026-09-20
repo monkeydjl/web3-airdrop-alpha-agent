@@ -26,7 +26,7 @@ from app.agents.base import (
     PipelineState,
     RawProject,
 )
-from app.agents.narrative import NarrativeAgent
+from app.agents.narrative import NarrativeAgent, canonical_sector_key
 from app.agents.risk import RiskAgent
 from app.agents.scorer import ScorerAgent
 from app.agents.team import TeamAgent
@@ -101,9 +101,14 @@ class SimpleOrchestrator:
         if save_to_db:
             try:
                 repo = ProjectRepository()
-                global_counts = repo.global_sector_counts(sectors={s for s in sector_counts if s})
+                # 用折叠后的全库分布，而不是按规范键去查 `WHERE sector = ?`：
+                # 库里存的是原始写法，拿 "DEX" 查不到存成 "Dexes" 的行。
+                global_counts = repo.canonical_sector_counts()
+                wanted = {s for s in sector_counts if s}
                 # 合并：DB 全库计数 + 当前批次 = 竞争度基准
                 for sector, db_count in global_counts.items():
+                    if sector not in wanted:
+                        continue
                     sector_counts[sector] = sector_counts.get(sector, 0) + db_count
             except Exception as e:
                 logger.warning(
@@ -416,9 +421,17 @@ class SimpleOrchestrator:
         """
         counts: dict[str, int] = {}
 
+        # 按**规范键**分组，不按原始写法。同一逻辑赛道在真实采集里有多种写法
+        # （DefiLlama 给 "Dexes"、CryptoRank 给 "DEX"、github 推断给 "dex"），
+        # 按原始写法分组会把一个赛道拆成好几组，每组计数偏小 → COMPETITION_MAP
+        # 给出虚高的竞争度分。实测 12 个 DEX 项目分裂成 4 组后，competition
+        # 从应有的 55 变成 75~100，等于把"赛道很挤"错报成"几乎没有竞品"。
+        #
+        # 只影响分组口径，不改写 project.sector（那个值参与确定性 ID）。
         for project in projects:
-            if project.sector:
-                counts[project.sector] = counts.get(project.sector, 0) + 1
+            key = canonical_sector_key(project.sector)
+            if key:
+                counts[key] = counts.get(key, 0) + 1
 
         logger.info(
             "orchestrator.sector_counts_calculated",

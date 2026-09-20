@@ -75,8 +75,16 @@ class RawProject:
     github_stars: int = 0
     github_recent_push_days: int | None = None  # days since last push; None = unknown
     explicit_airdrop_mention: bool = False  # "airdrop confirmed" / official wording
+    explicit_no_airdrop: bool = False  # official statement disclaiming token / airdrop
     tvl_usd: float | None = None
     description: str | None = None
+
+    # 站点活性信号（2026-09-08，vitals 探测器写入）：
+    # site_alive=None 表示「还没探测过」，与「探测到挂了」严格区分 ——
+    # 避免第一周采集前就把灰色惩罚打到所有项目上。
+    site_alive: bool | None = None
+    site_checked_at: str | None = None  # ISO 时间戳（探测发生时间）
+    site_http_status: int | None = None  # 最近的 HTTP 状态码（连接错误/超时为 None）
 
     # v1.3 evidence / verifiable path / delivery
     has_task_portal: bool = False  # Galxe / Layer3 / quest / points portal
@@ -126,6 +134,7 @@ class RawProject:
             "github_stars": self.github_stars,
             "github_recent_push_days": self.github_recent_push_days,
             "explicit_airdrop_mention": self.explicit_airdrop_mention,
+            "explicit_no_airdrop": self.explicit_no_airdrop,
             "tvl_usd": self.tvl_usd,
             "description": self.description,
             "has_task_portal": self.has_task_portal,
@@ -192,6 +201,7 @@ class PipelineState:
     score: int | None = None
     label: str | None = None  # "FARM", "WATCH", "IGNORE"
     confidence: float | None = None
+    veto: str | None = None
     reason: list[str] = field(default_factory=list)
     # 子分快照与生效权重版本：WEIGHT_CALIBRATION §4.3 step 1 的离线重加权需要
     # 子分快照，§1.2 要求每条分数带 weight_version；此前二者都未落到 state/DB，
@@ -232,6 +242,7 @@ class PipelineState:
             "score": self.score,
             "label": self.label,
             "confidence": self.confidence,
+            "veto": self.veto,
             "reason": self.reason,
             "errors": [e.to_dict() for e in self.errors],
             "started_at": self.started_at.isoformat(),

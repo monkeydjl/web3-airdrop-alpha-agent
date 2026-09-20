@@ -92,6 +92,21 @@ Collector 从各源采集的未加工证据：`has_points`（是否有点积分�
 ### recommendation（参与建议）
 `projects` 表与 `ScoreResult` 中 `recommendation` 字段当前与 `label` **恒等**（FARM→FARM / WATCH→WATCH / IGNORE→IGNORE），属冗余存储，保留是为 API 语义完整与 V3 个性化预留：V3 引入用户偏好/多钱包策略后，`recommendation` 可能偏离 `label`（如 label=FARM 但因用户风险偏好给出 WATCH 级建议）。MVP/V2 实现中二者始终相等，测试不得假设其分离。
 
+### 决策推送（Outbound Notifier）`设计稿`
+把系统内的评分决策变化与每日摘要经出站通道（Telegram Bot API / Discord Webhook）推送给用户的子系统。详见 ACTION_LOOP_DESIGN.md §2。
+
+### 参与流水（Participation Tracker）`设计稿`
+记录用户对每个项目「做到哪一步」的服务端任务状态机（plan + task 两级，按 `user_id` 隔离），替代前端的 localStorage 勾选。详见 ACTION_LOOP_DESIGN.md §3。
+
+### 收益台账（ROI Ledger）`设计稿`
+按项目记录参与投入（gas / 基础设施 / 时间）与产出（空投到账 / 未领取）的结构化账本；`airdrop_received` / `airdrop_missed` 事件作为权重校准的真值来源（`source=live|backtest` 分桶，不混算）。详见 ACTION_LOOP_DESIGN.md §4。
+
+### 历史回测（Backtest）`设计稿`
+把已知历史空投项目在「发币公告日 T0」**之前**公开可得的信息灌入评分决策引擎（规则引擎路径），检验当年是否会给出 FARM；用于引导权重校准的样本积累。用 T0 后信息构造样本视为无效。详见 ACTION_LOOP_DESIGN.md §4.4。
+
+### 领取监控（Claim Watch）`设计稿`
+对用户登记的自有钱包地址（admin-only）做链上事件匹配，命中且疑似代币到账时经决策推送提醒。启发式提示，不做金额确权。详见 ACTION_LOOP_DESIGN.md §5。
+
 ---
 
 ## 2. 技术术语（架构/工程）

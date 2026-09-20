@@ -8,6 +8,15 @@
 # ── 环境变量 & 密钥 ───────────────────────────
 .env
 .env.*
+# `.env` 的副本：资源管理器「复制」出的 `.env copy` / `.env copy 2`、
+# 编辑器留下的 `.env backup` 等。
+#
+# 上面两条**够不到它们**：`.env` 是精确匹配，`.env.*` 要求紧跟一个点号，
+# 而这些文件名是空格 + 后缀。2026-09-03 实测工作区里的 `.env copy`
+# `git check-ignore` 返回 1（未忽略）—— 也就是说它一直在 `git add .`
+# 的射程内，一次手滑就把真实密钥推上去了。
+# 密钥泄露不可撤销：即使随后 force push 重写历史，也必须假定已泄露并轮换。
+.env[ _-]*
 !.env.example
 *.pem
 *.key
@@ -89,8 +98,17 @@ Desktop.ini
 data/*.db
 data/*.sqlite
 data/*.sqlite3
-backend/data/
+# 注意这里不能写 `backend/data/`（带尾斜杠）：那样 git 会整个目录不再进入，
+# 后面的 `!` 例外全部失效。用 `backend/data/*` 逐项排除，才能对子目录开白名单。
+backend/data/*
 !data/.gitkeep
+# 回测数据集是源码级资产，不是运行时数据：它是 run_backtest.py 的必要输入，
+# 缺了脚本直接报错。不加这条例外的话，clone 下来的仓库跑不了回测。
+# 用白名单而不是 git add -f —— 强推进去的文件仍是 ignored 状态，
+# 后续改动不会出现在 git status 里，改了也不知道。
+!backend/data/backtest/
+backend/data/backtest/*
+!backend/data/backtest/*.json
 
 # ── Logs ─────────────────────────────────────
 logs/
@@ -108,6 +126,9 @@ data/pytest_tmp/
 backend/.pytest_tmp/
 # fetcher 磁盘缓存（§10.1）
 backend/cache/
+# 测试专用的 fetcher 缓存目录（conftest 用 FETCHER_CACHE_DIR 隔离到这里，
+# 避免测试写进 backend/cache/ 那个生产目录后残留污染后续用例）
+data/pytest_cache_dir/
 backups/
 !backups/.gitkeep
 

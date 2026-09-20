@@ -366,7 +366,25 @@ class TestFetcherMetrics:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(side_effect=slow_request)
             task = asyncio.create_task(fetch("https://example.com/slow"))
 
-            await started.wait()
+            # 必须带超时：裸 `await started.wait()` 在请求根本没发出时会**永久挂起**，
+            # 把「这条用例失败」放大成「整个套件卡死」——实测全量 pytest 因此从
+            # 45 分钟涨到 2 小时仍不结束，且 `--durations` 对挂起用例完全无效
+            # （只统计已完成的），根因极难定位。
+            #
+            # 超时后要把 task 的异常翻出来：请求没发出必定是 fetch() 内部抛了东西
+            # （历史实例：磁盘缓存读坏后 unlink 失败，OSError 一路穿出 fetch），
+            # 直接报 "started 未被 set" 会把真正的错因藏起来。
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+            except TimeoutError:
+                proceed.set()  # 别让 slow_request 悬着
+                if task.done() and task.exception() is not None:
+                    raise AssertionError(f"请求未发出，fetch() 抛了异常：{task.exception()!r}") from task.exception()
+                task.cancel()
+                raise AssertionError(
+                    "5s 内 slow_request 未被调用，且 fetch() 未抛异常 —— mock 链路或信号量逻辑有变化"
+                ) from None
+
             # While request is in flight, gauge should be 1
             assert metric_sample_value(FETCHER_SEMAPHORE_USAGE) == 1.0
 

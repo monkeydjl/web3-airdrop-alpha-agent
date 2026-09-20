@@ -8,6 +8,456 @@
 
 ## [Unreleased]
 
+### Added — 官网活性探测（vitals scanner，2026-09-08）
+
+用户看到的症状：库里躺着一堆 X 账号停更、官网打不开的「僵尸项目」（举例
+Goose），分数却根本没吃到这个信号 —— 系统只看了「有没有测试网/积分」，从没
+探过「官网还能不能打开」。
+
+- **新增 `services/vitals.py`**：纯 stdlib + httpx 探测，HEAD 优先、405 落 GET、
+  跟随重定向，超时 5s。400/410 算挂，401/403 只是反爬不算。重点是
+  `site_alive=False` 只写进真打出去过并得到否定结果的行 —— 没探过的行绝不背锅。
+- **写入策略**：状态变了才写 meta.signals，不变就不动（这是为了不让每次探测
+  推高 updated_at，顺带冲掉 AI 简报缓存——那个竞态两周前刚修复过）。
+- **评分**：`_calc_execution` 里官网挂了（site_alive=False）减 12 分，并作为
+  forced reason 打出来（「official site unreachable (vitals probe)」)，
+  详情页的「可核验信号」新增一行「官网可访问 / 不可达」，工作台卡片同步一个
+  灰色警示徽标。
+- **调度**：`vitals_probe` job（默认每日 04:30，排在归档之后、采集之前）；
+  运营开关 `VITALS_SCHEDULER_ENABLED` / `VITALS_CRON`。
+- **实测**：对线上库 237 个有官网的项目跑了一轮，探测到 45 个「官网挂了」
+  （连接超时/4xx/5xx）。例子里提到的 Goose 的 URL 是 DefiLlama 的项目页 —
+— 探测集成测试用真实网络时一次拿到传输错误（`http_status=None`)、下一轮
+  重探又能拿到 200，说明探测本身正常。这类偶发挂不会影响评分，只有**连续**
+  被探挂才值得警惕。这个数字系统给出的是「还活着」的证据链，起的是筛查
+  第一道嫌疑的作用，不是判死刑。
+- **不做的**:X(Twitter）账号最近发推探测 —— 那需要 X API 的 Bearer Token
+  （免费层级里连读都是付费的），要做的话先把 `TWITTER_BEARER_TOKEN` 配上就行，
+  但这一步当前不在本次范围内。
+
+### Added — 「不参与」用户级标记（2026-09-08）
+
+系统说「值得」的项目，用户可能因系统看不见的现实约束（没资金跑再质押、
+不想碰某个赛道）选择不参与 —— 这类决定不属于模型，但不能每次重列工作台
+都见到同一个不想再看的项目。
+
+- **底层**：新表 `project_skips`（双方言 DDL + alembic 0010，刻意不设外键）。
+  刻意不复用 `label="IGNORE"`：那是模型的结论，`skip` 是用户的决定，要能被
+  分别撤掉。
+- **API**（§44）：匿名可写，与 watchlist/feedback 同一口径，写请求登记进
+  `ANON_WRITABLE` 门禁。`POST /projects/{id}/skip` 幂等（重复标点回到原地、
+  不多产一行）；`DELETE` 取消（没标过才 404）;`GET /projects` 多一个
+  `skipped` 字段 + 可选 `user_id` 参数；详情页 `GET /projects/{id}` 同样带
+  `skipped` 字段，点开按下去就是切换。
+- **前端**：详情页评分操作的同一排加「不参与 / 取消不参与」按钮；工作台
+  筛选区加「显示不参与」复选框（默认关：被跳过的项目从列表消失，这是这个
+  功能的全部意义），勾选后那些项目以「不参与」徽标可见、可恢复。
+  拆了 ProjectCard 的外层链接包覆，免得和按钮点击钻跳。
+
+### Added — 侧栏「不参与」页（2026-09-08，承接上一条）
+
+跳出列表的漏冷点：被「不参与」挡下来的项目在工作台看不到了，但要后悔时没有
+入口——只能去详情页取消，还得记得它是哪一个。新增：
+
+- **侧栏「不参与」导航项**（/skipped)：集中列出你跳过的所有项目
+  （名称/评分/阶段/来源 + 每个一条「恢复」按钮，点一下就从列表回到工作台）。
+- 空态放一条引导，与「收藏关注」页同款（还没跳过任何项目时该页是引导页）。
+- 前端至此闭环：加 → 工作台消失 → 左侧栏集中管理 → 恢复回原位。
+
+### Added — 「待验证参与路径」卡片的人工核验按钮（2026-09-08）
+
+上一项把 86 个「分数够 FARM 线但缺参与路径」的项目做成了清单，但清单本身
+不产生样本 —— 校准门禁（200 条）还是零。本次在待验证卡片上加两个按钮：
+「有路径 → 升 FARM」「没路径 → 维持观察」，点击走现有的 `POST /api/v1/feedback`
+（`wrong_label` + note=正确标签），产出正是 `calibration.extract_samples`
+识别的样本形态。卡片按钮不再是链接套链接（ProjectCard 外层改为 div，
+详情跳转由内部 Link 承担），校验按钮点击不穿透进详情页。核验后的卡片
+原位变对勾不再打扰。
+
+### Added — 「待验证参与路径」人工验证清单(2026-09-08)
+
+数据分析盘出的事实：库里 score ≥65 的 108 个项目里 **86 个**全被
+`veto=no_participation_path` 从 FARM 压回 WATCH —— 不是质量不行，只是系统没有
+quest 数据源(Galxe/Layer3 都要 key)，找不到测试网/积分/任务入口。这批本来
+会永久卡在中间态。本次把这批从「看不见的死水」变成「可勾选执行的清单」：
+
+- **后端**:`GET /api/v1/projects` 新增 `veto` 查询参数，响应项透出 `veto`
+  字段；repository 同步支持（纯只读筛选，不动 updated_at）。
+- **前端**：工作台筛选条新增「待验证参与路径」复选框；项目卡片对这类项目打
+  「待验证路径」徽标（悬停说明：分数够、缺路径、去官网/Twitter 看一眼）。
+- 实测线上：`?veto=no_participation_path` 返回 86 行，头部即 Set Protocol /
+  Symbiotic —— 本来就该人工去看的项目。
+- 门禁:repository/API/前端结构/编码全部过；评分逻辑与权重一个字符没动
+  （需要 200 条反馈样本才能谈校准，没凑够之前凭感觉调权重是假精准）。
+
+### Added — 详情页项目切换栏（2026-09-08）
+
+详情页此前没有横向切换能力：看完一个项目要回工作台才能进下一个。
+
+- **`ProjectSwitcher`**（挂在 masthead 上方）：`‹ 上一个 / 下拉跳选 / 下一个 ›`
+  + 键盘 ←/→（输入控件聚焦时不抢键）。排序与工作台同口径（score 降序）。
+- **邻接在前端算**：项目列表接口 page_size≤500，一次拉齐后求前后邻 ——
+  不为切换器单开「neighbors」端点，少一份鉴权/文档成本；列表失败时
+  切换栏静默收起，不挡详情本体。
+
+### Fixed — 已发币品牌子产品绕过过滤（Plume Vaults 案例，2026-09-06）
+
+用户报告：Plume 早已 TGE、币价不温不火，"Plume Vaults" 却以 WATCH 65 出现在
+扫描结果。三层归因、三层修复（A 修信号源头 + B 清存量）：
+
+- **信号源头**：DefiLlama 采集器 `_is_unlisted` 把「子产品自己没有 symbol /
+  gecko_id」当成「未发币、有潜在空投」—— Plume Vaults 因此携带
+  `no_token_yet=True`。而已发币过滤第一行就是「no_token_yet=True → 放行」，
+  输入错，过滤器只能放行。实测 DefiLlama 语料：Plume Vaults 的
+  parentProtocol 为 **null**，与母条目 Plume Mainnet（symbol=PLUME）互不为
+  名字前缀 —— 既有的 `_is_facet_of_listed` 前缀规则（"Zircuit Staking" ⊂
+  "Zircuit"）接不住。
+- **A（防新增）**：`_is_facet_of_listed` 加品牌首词兜底规则 —— 首词命中
+  `KNOWN_LISTED_BRANDS` 注册表（plume/zksync/berachain/scroll/celestia/
+  pyth/layerzero/eigenlayer/hyperliquid，只收有公开 TGE 证据的品牌）即判为
+  品牌子产品。防误伤三重约束：只匹配**首词**（Mystic Finance myPLUME 的
+  myplume 不算）、通用词停用（mainnet/finance/vaults…）、最短 4 字符
+  （避免 "SX"）。
+- **B（清存量）**：`scripts/backfill_listed_subproducts.py`（dry-run 默认、
+  `--apply` 写库）对 projects 全量追溯：品牌命中且无自有空投信号的行降级
+  IGNORE、reason 留痕、meta.signals.no_token_yet 修正为 False（与未来
+  rescore 的 veto 一致）。有自有信号（points 等）的行不动，seed 行不动，
+  幂等可重复运行。实测：215 行扫出 1 行（Plume Vaults），已降级。
+- **运维坑（记两个）**：① 这些信号只存在 meta.signals，行上独立列为
+  None —— 只读列会漏判；② DB_PATH 相对路径按 CWD 解析，脚本必须与后端
+  同 CWD（backend/）运行才命中同一库文件。
+- 回归：`tests/collectors/test_noise.py` 品牌匹配 6 条、
+  `tests/collectors/test_defillama.py` 候选过滤 2 条、
+  `tests/scripts/test_backfill_listed_subproducts.py` 追溯 6 条。
+
+### Fixed — Stop.bat 的后端停止步骤从未生效过（2026-09-06）
+
+`Stop.bat` 用 `tasklist | findstr "uvicorn"` 找后端进程，但 tasklist 的映像名
+是 `python.exe`，"uvicorn" 只是命令行参数、tasklist 根本不显示 —— 该步骤
+**从未杀掉过任何后端进程**，而 `[OK] Backend service stopped` 是无条件打印的。
+后果：用户的「重启后端」实际是「再起一个实例绑同一个端口」，Windows 下新旧
+两个实例同时 LISTENING，流量仍进改动**前**启动的旧进程。2026-09-06 排查
+「AI 简报缓存明明实现完却不生效」时实测：8002 上挂着两个 PID，接客的是
+9/5 启动的旧实例（新代码全在，只是没被加载）。修复手段与「重启 ritual 正确
+但工具骗了人」这件事的教训：
+
+- **Stop.bat 改为按端口 8002 的 LISTENING 行定位后端**（与前端步骤同一模式），
+  `taskkill /F /T` 连子进程树一起杀。
+- 前端步骤补 `LISTENING` 过滤：此前按 `:3002` 的**所有** netstat 行杀 PID，
+  established 连接行的 PID 是连接另一端 —— 典型就是用户自己的浏览器，
+  运行 Stop.bat 有把浏览器杀掉的隐患。
+- 新增门禁 `test_shell_scripts.py::TestWindowsBatchScripts`：断言 Stop.bat
+  按端口定位、过滤 LISTENING，且按映像名找 "uvicorn" 的空转写法不得回归。
+  另：手编含中文的 .bat 必须保留 UTF-8 BOM（`test_repo_windows_scripts_all_have_bom`
+  当场抓到编辑弄丢 BOM —— 门禁系统自身按设计工作了）。
+
+### Added — 采集入库门槛：静态过滤死项目（2026-09-15）
+
+用户点名：Goose 这类已经死了的项目不该被扫描进库 —— 官网没了、X 停更，
+表面上是活项目，实际不能参与也没法跟进，在采集里整条算法应被剔除。
+
+两条路径分离看空间情况：
+
+- 有官网 / 有 GitHub 里非测试网的项目本来就该留着。单条 URL 占位（聚合
+  站链接本身）不够下令，特点是第一条话》（DefiLlama place url 肯定不出现）
+  + GitHub repo 早已停更（最近 push 超过 365 天）。这两个条件同时为真时才
+  把项目拦在采集门外。层级不命中，不算视它畏死。数据测试（用户 brochure
+  不误伤、不抢匀体积安静赔钱的拦截。
+- 基于现有防呆：itNoise / 已发币品牌脚本的逻辑没动，这个规则参照起来
+  是机械的工作。
+- 日志再留点新动：`defillama.zombie_skipped` 计数事件一个处长评估机器
+  的代理数。另一个思想加热，不动 `defillama.noise_skipped` 老伙伴。
+
+### Added — AI 简报缓存（2026-09-06）
+
+此前 `POST /projects/{id}/ai-brief` 每次调用都完整重新生成，GET 还是 POST
+的别名 —— 「进详情页看一眼」就是烧一次 LLM 预算，前端也因此只能把简报
+做成纯手动触发。本改动让生成的简报可缓存、可复用：
+
+- **存储**：`projects.meta.ai_brief`，走新增的 `ProjectRepository.set_meta_key`
+  （**不建新表**）。写缓存刻意**不推高** `updated_at`：初版走
+  `update_meta_signals`，它写行时把 `updated_at` 推到几微秒后的「现在」，
+  于是 `updated_at > generated_at` 当场成立、缓存**出生即过期** —— 症状是
+  每次打开详情页都要重新点生成。单测全 mock 写入路径抓不到这种竞态，
+  靠真库往返测试（`test_store_then_read_roundtrip_is_fresh`）定位。
+  `merge_meta` 保留未知键，重评/采集回写不会冲掉缓存
+  （回归钉：`test_meta_ai_brief_key_survives_rescore`）。
+- **新鲜度**：缓存的 `generated_at` 晚于/等于行 `updated_at` 即新鲜；
+  重评、改融资、采集回写都会推高 `updated_at` → 缓存自动过期，
+  无需失效钩子。缺时间戳的缓存视为不存在（宁可重生成，不让旧解读配新分数）。
+- **API 语义**（API_SPEC §32 同步改写）：`GET` 从「POST 别名（每次重新
+  生成、花 LLM 额度）」改为**只读缓存**，永不触发生成；`POST` 增加可选
+  `{"force": true}`，默认先查缓存。响应新增 `cached` / `stale` /
+  `generated_at`。
+- **前端**：进详情页自动 GET 零成本展示缓存解读（「缓存 · x 分钟前」角标），
+  无缓存/过期显示空态与引导按钮（过期提示「评分已更新」）；
+  「重新生成」= force=true。
+- 回归：`test_ai_brief.py` 19 条（缓存命中不调 LLM、过期重生成、force
+  强制、GET 只读、meta 存续钉）。
+
+### Changed — 项目详情页信息架构重排（2026-09-06）
+
+详情页此前 11 个区块平铺，「简报」沉在第 7 屏、两块纯明细（四路分析 /
+8 维子分）占着第 2、3 屏，首屏看不到解读。按「决策 → 行动 → 个人 → 明细」
+四层重排：
+
+- **新顺序**：为何是这个标签 → 简报 → AI 追问 → 可核验信号 → 参与清单 →
+  Opportunity 行动流 → 我的投入 → 校正这条判断 → 融资 → 四路分析 → 8 维子分；
+  右栏锚点导航同步。
+- **四个区块默认折叠**（`CollapsibleSection` 新组件）：Opportunity 行动流、
+  融资、四路分析、8 维子分。头部整行可点（`aria-expanded`），折叠时子树
+  不挂载。用受控 button 而非原生 `<details>`：React 对 details 的 open
+  属性是受控语义，重渲染会把用户手动展开的状态打回去。
+- **简报改手动生成**：`autoLoad={false}`，进页面不再自动调 LLM（此前每次
+  进详情页都烧一次预算），面板内已有「生成解读」按钮承担触发。
+
+### Fixed — 本地 .env 的 SEED_FALLBACK_ENABLED 泄进测试环境（2026-09-05）
+
+`tests/conftest.py` 的测试隔离清单（APP_ENV / API_KEY / HOST / DB_PATH）漏了
+种子开关。开发者本地 `.env` 按生产加固清单把 `SEED_FALLBACK_ENABLED` 写成
+false 后，pydantic-settings 在 import 期读入，§10.2 的 seed fallback 在本机
+测试里永不触发：`test_seed_fallback.py` 两条流水线用例 CI 全绿、本机稳定红
+（`assert 0 > 0`，与代码改动毫无关系，极难归因）。
+
+- conftest 改为强制 `os.environ["SEED_FALLBACK_ENABLED"] = "true"`，与本文件
+  既有条目同一哲学：**测试环境要的是与本地 .env 无关的确定性**。
+- 生产侧断言不受影响：`test_production_hardening.py` 用 init kwargs 显式构造
+  Settings（优先级高于环境变量），且生产自检本身无条件覆盖该字段；
+  test_pipeline_run / api/test_collections 需要的「关」都是 settings 对象上
+  显式 monkeypatch 的。
+- 实测：4 个引用该开关的测试文件 117 条全过。此前全量套件 7 条失败中，5 条为
+  ai-chat 功能引入的门禁问题、2 条即本条 —— 七条均已逐条修复并单独复跑验证。
+
+### Added — 项目详情页 AI 追问对话（2026-09-05）
+
+详情页此前只有「智能解读」一次性独白（`POST /projects/{id}/ai-brief`），
+用户对「为什么是这个分」「参与的主要风险」这类追问没有出口。本功能补上
+多轮对话：
+
+- **`POST /api/v1/projects/{project_id}/ai-chat`**（`routers/v1/ai_chat.py`
+  + `services/ai_chat.py`）：会话历史由前端持有、随请求传入，服务端无状态。
+  system prompt 注入项目快照（评分因子 / narrative / team / risk /
+  tokenomics / 融资 / 规则简报 bullets），数据里没有的字段要求模型明说没有。
+- **鉴权归属**：与 ai-brief 同口径进 `ANON_WRITABLE`（写一句理由）—— 会走
+  LLM 但由 `LLM_DAILY_BUDGET_USD` 预算门统一拦成本，不按角色锁。
+- **无规则回退**：自由问答无法用模板拼，降级只有 `llm_disabled` /
+  `budget_exceeded` / `llm_error` 三态，`reply` 为 null 并透传原因，前端按
+  原因给处置提示（口径对齐 API_SPEC §43a）。
+- **成本控制**：服务端只发最近 12 条历史（6 轮）、单条 ≤2000 字、请求 ≤20
+  条；前端输入限 500 字，预算闸门在 `llm_chat` 内、请求发出前检查。
+- **前端 `AiChatPanel`**：详情页新增「AI 追问」section（`pd-chat`，同步右栏
+  锚点导航），预设问题 chips 引导高价值提问，Enter 发送 / 失败把话还给输入框。
+- 回归：`backend/tests/test_ai_chat.py` 15 条（降级语义、上下文截断与接地、
+  路由校验与字段透传，全部 mock `llm_chat` 不联网）；全量套件 3403 通过、
+  覆盖率 89%。
+
+### Fixed — CI 整套后端测试因传递依赖漂移而收集失败（2026-09-04）
+
+`anyio` 与 `starlette` 是 fastapi 的传递依赖，此前没有写进
+`backend/requirements.txt`。后果是本机 venv 停在旧版、CI 每次全新安装拉最新版，
+**两边跑的不是同一个依赖组合**。当 anyio 4.15.0 把 `anyio.abc.BlockingPortal`
+变成弃用别名、而 starlette 的 testclient 仍用该别名做类型注解时，CI 的
+`-W error::DeprecationWarning` 把它升级成错误：32 个导入 TestClient 的测试文件
+在**收集阶段**全部报错，整套测试 exit code 2、一个用例都没跑
+（run 33883265813）。本机因为装着 anyio 4.14.2，同一条命令全绿，看不到问题。
+
+- 锁定 `anyio==4.14.2`、`starlette==1.3.1`（本机实测通过的组合）。弃用发生在
+  第三方库内部、项目代码改不动；放宽 `-W error` 等于放弃提前发现依赖弃用的能力，
+  所以锁版本是唯一正确的修法。
+- 新增门禁 `backend/tests/test_requirements_pinning.py`（3 条）：断言这两个
+  传递依赖必须显式 `==` 锁定，且 `requirements.txt` 每一行都不得使用区间约束。
+  刻意不断言具体版本号 —— 门禁要约束「必须锁」而非「锁在某个值」，否则每次合法
+  升级都会无意义变红。反向验证：删掉两行后精确红 1 条，其余 2 条仍过。
+- 遗留观察：starlette 已在提示 `Using httpx with starlette.testclient is
+  deprecated; install httpx2 instead`。该警告类型不继承 `DeprecationWarning`
+  故当前不致命，但升级 httpx 时需一并处理。
+
+### Fixed — 公网上线路径的四条静默阻塞（2026-09-03）
+
+四条缺陷各自都能让公网部署整站不可用或不安全，但**没有一条会在本地开发中暴露**，
+因为它们都只发生在"nginx + 容器 + 生产环境变量"这条本地跑不到的路径上。
+
+- **生产 nginx 把 `/api/` 直连后端，绕过了 Next 的凭据注入**
+  （`docker/nginx/nginx-http.conf`）。浏览器不持有任何后端凭据，凭据由
+  `frontend-next/proxy.ts` 在服务端按路径分档注入。`proxy_pass` 指向 backend
+  时那段代码根本不执行 → `API_KEY` 非空即全站 401、页面空白。改为指向
+  `frontend`。已确认这一跳不影响限流：Next 的 httpxy `setupOutgoing` 原样复制
+  请求头且未启用 `xfwd`，XFF 段数不变，`TRUSTED_PROXY_COUNT` 仍按 nginx 算 1。
+- **前端容器拿不到 `BACKEND_API_KEY`**（`docker-compose.prod.yml`）。
+  `proxy.ts` 在密钥缺失时按"MVP 无鉴权模式"放行且不注入任何凭据 ——
+  于是同样 401，而前端日志里没有任何异常。改用 `${VAR:?}` 让它缺失即启动失败。
+- **生产 compose 不强制 `APP_ENV=production`**。它靠 `env_file` 继承 `.env`，
+  而模板值是 `development` → `config.py` 的生产自检（API_KEY 长度、
+  `AUTH_TOKEN_SECRET`、CORS localhost、PG 弱口令）**全部跳过**，容器照样变绿。
+  改为在 compose 里显式钉死，不信任 `.env`。同时把 `API_KEY` 从裸 `${VAR}` 改成
+  `${VAR:?}`：`environment` 的插值即便展开成空串也会**覆盖** `env_file` 的正确值，
+  裸写法只给一个 warning，后端却变成"API_KEY 为空 = 鉴权中间件短路"。
+- **前端构建期缺 `API_PROXY_TARGET`**（`frontend-next/Dockerfile`）。
+  `next.config.js` 的 rewrites 在 **build 时**读取它并写进产物，不是运行时解析；
+  漏掉则 production 构建得到空 rewrite，`/api` 被 Next 当自身路由处理而 404。
+
+另外三处顺带修掉：
+
+- **`/metrics` 经生产 nginx 公开暴露**。它在后端 `PUBLIC_PREFIXES` 里，
+  **到哪儿就在哪儿免鉴权**，从公网转发过来等于公开项目数、pipeline 成败、
+  LLM 花费与各采集源错误率。而 Prometheus 走 `backend` 网络直连容器，从不经
+  nginx。改为直接 `return 403` —— 刻意**不用** `allow` 网段白名单：Docker
+  userland-proxy 会把外部客户端源地址改写成 `172.17.0.1`，正好落进
+  `172.16.0.0/12`，那种"只放行内网"的规则会对全体外部访客放行。
+  一条看起来收紧了、实际什么都没挡住的规则比没有规则更糟。
+- **`proxy.ts` 换匿名 token 走公网回环**：原先用 `request.nextUrl.origin`
+  （来自浏览器 Host，即公网域名），容器内 fetch 它要走 DNS → 外网 → 回环穿
+  nginx，任一环节不通就 catch 返 null → 请求裸奔后端拿 401。改为直连
+  `API_PROXY_TARGET` 内网地址，开发未配置时回退 origin。
+- **README 与 DEPLOYMENT 的生产命令指向错误的 compose 文件**。
+  `docker compose --profile production up` 作用于 `docker-compose.yml`，
+  而该文件**没有前端服务**，挂的是根 `nginx.conf`（整站反代到后端的纯 API 入口）
+  → 起来只有裸 API、没有 UI。前端只存在于 `docker-compose.prod.yml`，须用 `-f`。
+  README 里那张端口表描述的本来就是后者的拓扑，两处早已不自洽。
+
+通用教训：**"本地能跑"对部署配置几乎没有证明力。** 上面每一条在
+`npm run dev` + `uvicorn` 下都完全正常，因为那条路径上没有 nginx、没有容器边界、
+也没有生产环境变量校验。配置类缺陷要靠"照文档从零走一遍"来发现，
+而不是靠功能测试。
+
+### Added — M3/F4 领取监控（2026-09-02，按 ACTION_LOOP_DESIGN §5 实施）
+
+补上了执行闭环的最后一环。此前 M1 推送、F2 参与流水、F3 ROI 都已交付，评分决策
+引擎也修到 recall 1.000，但**空投真开领的时候没人提醒** —— 前面所有 FARM 决策的
+价值在最后一步漏掉。
+
+- **`watched_wallets` 表**（迁移 `0009`，四处同落：db.py 双方言 DDL + alembic +
+  DATABASE_DDL §2.9e）。`address` 小写归一 + UNIQUE，`active` 为软开关
+  （临时静音，与删除区分）。
+- **4 个端点整前缀管理员锁**（`GET` 也锁）：`/api/v1/watched-wallets` 的
+  CRUD。与本仓其它"读开放写受限"的端点不同 —— 一份「这个人有哪些钱包」的清单，
+  配合公开链上数据就能还原完整持仓与交易史，**泄露风险主要在读侧**。
+- **webhook 地址匹配**（`services/claim_watch.py`）：签名校验通过后匹配
+  `event.data.to` ∈ active 自有地址，且 `category=erc20`、`asset≠ETH` →
+  产出 `airdrop_candidate` 事件 → 站内通知 + F1 推送（复用既有
+  `dispatch_pending`，不另开发送路径）。
+
+三个刻意的设计取舍：
+
+- **地址归一在写入侧与匹配侧同时做**。只做一侧不会报错：漏写入侧则 UNIQUE 形同
+  虚设（`0xAbC` 与 `0xabc` 各占一行），漏匹配侧则永远匹配不上、静默什么都不发生。
+  Alchemy payload 实际返回 EIP-55 混合大小写。**与 `competition` 分组是同一类
+  教训**：同一实体的多种写法必须在唯一入口归一。
+- **`event_key` = `claim:{address}:{tx_hash}:{asset}`，三段都必须在**。只用
+  address 则同一钱包第二次收到空投被去重吃掉；只用 tx_hash 则一笔交易转给多个
+  自有地址时只提示一个（批量领取常见）；不含 asset 则同一交易内多种代币只提示一种。
+  缺 `tx_hash` 时**不发事件**而非用时间戳兜底 —— 不可追溯的提示对用户没用，
+  且时间戳会让 Alchemy 重投（at-least-once）时重复推送。
+- **脱敏做在事件构造侧，不是 API 响应层**。通知只含 `label` + 地址前 10 位：
+  推送目的地（Telegram/Discord）不受本系统控制，管理员锁护不住已经发出去的消息。
+  事件一旦带完整地址进了 `notify_log`，任何 sender 都会原样发出去。
+
+### Fixed — 一处既有日志泄露与一处过时文档（2026-09-02）
+
+- **`webhook.alchemy.processed` 原先记完整钱包地址**。该字段多数是别人的合约
+  （discovery 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于
+  把自有钱包地址写进日志文件，绕过 `/watched-wallets` 的管理员锁。改为
+  `address_prefix` 前 10 位：分不清来源时按更严的口径处理。
+- **`OBSERVABILITY.md` 写着"事件总数没有门禁保护"，实测不对**。
+  `test_documented_event_counts_match_reality` 会逐一比对总数与命名空间数，
+  加 F4 的 8 个 `claim_watch.*` 时它当场就红了。已就地修正并更新数字
+  （319 → 328 个事件、65 → 66 个命名空间）。
+- **`test_alembic_version_recorded` 的 head 版本号改为从 `_REVISION_ORDER[-1]`
+  推导**，不再硬编码。原先写死数字，每加一个迁移都要改两处，漏改的表现是这条
+  测试红 —— 一个信息量为零的红灯只会训练人把它当噪音顺手改掉。现在漏登记
+  `_REVISION_TABLES` 才会红，而那正是真正需要人确认的地方。
+- **`PATCH /watched-wallets/{id}` 用固定 SQL + `COALESCE(?, col)`** 而非按字段拼
+  SET 子句（拼接版本触发 ruff S608）。这里的片段确实都是字面量、注入不了，但把
+  安全建立在"凑巧没有用户输入流进拼接串"上是脆的：下一个人加字段时很自然会写成
+  `updates.append(f"{col} = ?")`，那一步就真开口子了。
+
+### Fixed — 术语门禁在 CI 上只覆盖了 backend 子树（2026-09-02）
+
+**这道闸门此前在 CI 上基本锁错了地方。** 症状是本机 `--all` 报 4 处术语回退，
+同样的内容在 CI 上一路绿灯。
+
+根因在两处叠加，单看任何一处都像是对的：
+
+1. `git ls-files` 返回的路径**相对 cwd**，且**只列 cwd 子树**。CI 里 pytest 的
+   `working-directory` 是 `backend/`（ci.yml §31），于是 `iter_tracked_files()`
+   只枚举到 314 个 backend 文件。
+2. `test_repo_wide_terminology_is_clean` 里有一句 `if path.is_file():` 跳过。
+   从 backend/ 跑时它拿到 `app/db.py`，拼成 `REPO_ROOT/app/db.py` 并不存在，
+   于是**每个文件都被静默跳过** —— 这条测试实际扫了零个文件，却因为 `files`
+   列表非空而通过。
+
+合计 **223 个待检文件从未被扫过**，其中包括 `docs/` 的全部 69 个文档、仓库根的
+`CHANGELOG.md`、`frontend-next/` 的 35 个源文件 —— 而术语约定主要就是给文档用的。
+
+修复：
+
+- `iter_tracked_files()` 加 `--full-name` **且** `cwd=REPO_ROOT`。两个都要：
+  只加 `--full-name` 仍然只列 cwd 子树；只改 `cwd` 则调用方拿到的相对路径与
+  自己的 cwd 不一致。
+- 那句 `if path.is_file()` 改为收集到 `missing` 列表后**断言为空**。路径不存在
+  是环境异常，必须报错而不是跳过 —— 静默跳过正是这次失效能潜伏这么久的原因。
+- 补 2 条回归（`test_tracked_paths_are_repo_root_relative_regardless_of_cwd`、
+  `test_scan_covers_docs_and_repo_root_files`），都用 `monkeypatch.chdir` 刻意
+  从 `backend/` 下跑。反向验证：把脚本改回旧写法，这 3 条精确变红。
+- 顺带修好被这个缺陷放过去的 4 处术语回退（`CHANGELOG.md`、`docs/OPERATIONS.md`、
+  `backend/scripts/run_backtest.py`、`.workbuddy/memory/MEMORY.md`）。
+
+教训与 `competition` 分组、地址归一同源：**「跳过异常输入」和「处理异常输入」
+长得很像，但前者会把 bug 变成沉默。** 断言不该建立在"列表非空"这种间接信号上。
+
+### Added — M1 执行闭环：决策推送 + 参与流水（2026-08-31，按 ACTION_LOOP_DESIGN 实施）
+
+- **F1 决策推送**：pipeline 收尾钩子评估跨线（65 上穿 FARM / 50 下穿）、新 FARM、
+  观察列表强信号，每日摘要 cron（`NOTIFY_DIGEST_CRON`，默认 09:00 UTC）汇总；
+  Telegram Bot API / Discord Webhook 双通道。出站一律经新增 `fetcher.post()`
+  （域名白名单 fail-closed 生效、不缓存、不解析响应体 —— Discord 204 空体）。
+  「至少一次评估、至多一次发送」由 `notify_log(event_key, channel)` 唯一约束保证；
+  重试 ≤3 次后 failed 落库可查（`GET /notify/log`，管理员专用）。
+  `NOTIFY_ENABLED` 默认 false：关开关 ≠ 停审计，评估照常留痕。
+- **F2 参与流水**：`participation_plans` / `participation_tasks` 服务端状态机
+  （plan 四态 / task 四态，迁移闭表非法即 422），按 token 身份隔离 —— **请求体
+  自报 user_id 被忽略**。建议清单可一键 seed 为任务（按生成 id 去重）；前端
+  ParticipationTasks 接服务端，本机勾选一次性迁移后清除。
+- 新表：`notify_log`（迁移 0005）、`participation_plans` / `participation_tasks`
+  （迁移 0006），SQLite/PG 双方言。API_SPEC §38/§39、OPERATIONS §7.4、
+  OBSERVABILITY（指标 48→51）、SECURITY §10.2（+api.telegram.org）同步。
+- 写端点分布 21→26：管理员 8 / 公开 2 / 匿名 token 16。
+
+
+### Added — 执行闭环设计稿（2026-08-30，V3 规划）
+
+- **`docs/ACTION_LOOP_DESIGN.md`**：四个后续子系统的设计文档（均为设计稿，未实现）——
+  决策推送（Telegram/Discord 出站）、参与流水（服务端任务状态机，替代 localStorage）、
+  收益台账与历史回测（为权重校准提供真值与引导样本）、领取监控（自有钱包到账提醒）。
+  含数据模型、API、配置、指标/日志、门禁同步清单与 M1–M3 任务拆解。
+- 5 个新术语收编 GLOSSARY §1（标注「设计稿」）；00_index §16 登记。
+
+### Security / Fixed — 全项目审核修复三连（2026-08-30，独立审核 P1）
+
+- **匿名 token 不再接受调用方自报身份**：`POST /auth/anonymous` 此前接受
+  请求体里的 `user_id` 并直接写进 token —— 而端点在公开路径里，等于任何人
+  都能给别人的 user_id 签 token，读写按 user_id 隔离的 watchlist / feedback /
+  interactions。现在 `user_id` 一律服务端生成（`anon-<uuid>`），请求字段从
+  schema 中删除（带该字段的调用方不受影响，值被忽略）。见 API_SPEC §14。
+- **分析队列中毒防护**：一条损坏的 `raw_data` / `discovered_at` 曾让整批
+  `collect_from_repository` 抛异常，且该行 `processed=0` + 按分数倒序每轮
+  重新被取到，流水线永久卡死（只能手工修库）。现在坏行隔离（quarantine）
+  + 跳过，批次继续；顺手把三处几乎相同的隔离块抽成 `_quarantine_row()`
+  （日志事件名微调：隔离失败事件改为 `<成功事件>.quarantine_failed`，新增
+  `collector.corrupt_raw_data` / `collector.corrupt_discovered_at` /
+  `collector.quarantine_mark_failed`，无监控依赖）。
+- **Alchemy webhook 签名密钥独立成键**：`ALCHEMY_API_KEY` 重命名为
+  `ALCHEMY_WEBHOOK_SIGNING_KEY` —— 它本来就只被 `POST /webhook/alchemy`
+  的 HMAC 校验读取，却顶着「API key」的名字；拿 Data APIs 的 API key 填
+  旧键时合法回调永远 401，webhook 实际不可用。**升级注意**：`.env` 里如配了
+  `ALCHEMY_API_KEY` 需改名为 `ALCHEMY_WEBHOOK_SIGNING_KEY`（值不变）。
+  同步 `.env.example` / 日志脱敏清单 / DATA_SOURCE_STRATEGY §8。
+- **Release 流水线加测试门禁**：tag push 不触发 CI（ci.yml 只匹配分支），
+  发布镜像的 commit 可能从未通过任何测试；且发布构建吃 gha 缓存，会把带
+  已知 CVE 的旧基础层带进镜像（security.yml 已因此改 no-cache，release 漏
+  同步）。现在 release 前置 `Release Test Gate`（ruff + mypy strict + 全量
+  pytest），构建改 `no-cache: true`。
+
 ### Security — 三个安全缺口全堵上（2026-08-29，档1）
 
 - **LLM 输出泄漏过滤**：LLM 返回文本在下游使用前做一次敏感信息清扫

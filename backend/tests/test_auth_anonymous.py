@@ -59,10 +59,9 @@ def open_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def _get_anon_token(client: TestClient, user_id: str | None = None) -> str:
+def _get_anon_token(client: TestClient) -> str:
     """Helper: issue an anonymous token via the API."""
-    payload = {"user_id": user_id} if user_id else None
-    r = client.post("/api/v1/auth/anonymous", json=payload)
+    r = client.post("/api/v1/auth/anonymous")
     assert r.status_code == 200, f"Token issuance failed: {r.json()}"
     return r.json()["access_token"]
 
@@ -85,14 +84,32 @@ class TestAnonymousTokenIssuance:
         assert data["expires_in"] == 72 * 3600
         assert data["user_id"].startswith("anon-")
 
-    def test_issue_with_custom_user_id(self, auth_client):
-        """Caller can specify a custom user_id."""
+    def test_client_user_id_is_ignored(self, auth_client):
+        """调用方自报的 user_id 必须被忽略，身份一律服务端生成。
+
+        本端点在公开路径里 —— 若接受客户端指定 user_id，任何人都能给
+        别人的 user_id 签 token，从而读写按 user_id 隔离的 watchlist /
+        feedback / interactions 数据（2026-08-30 安全审核修复）。
+        """
         r = auth_client.post(
             "/api/v1/auth/anonymous",
             json={"user_id": "dashboard-user-42"},
         )
         assert r.status_code == 200
-        assert r.json()["user_id"] == "dashboard-user-42"
+        issued = r.json()["user_id"]
+        assert issued.startswith("anon-")
+        assert issued != "dashboard-user-42"
+
+        # 两次签发必须拿到不同身份 —— 服务端生成，不是调用方可控的固定值
+        r2 = auth_client.post("/api/v1/auth/anonymous")
+        assert r2.status_code == 200
+        assert r2.json()["user_id"] != issued
+
+    def test_request_body_is_optional(self, auth_client):
+        """无请求体、空 JSON、带未知字段都应 200（请求体无任何字段）。"""
+        assert auth_client.post("/api/v1/auth/anonymous").status_code == 200
+        assert auth_client.post("/api/v1/auth/anonymous", json={}).status_code == 200
+        assert auth_client.post("/api/v1/auth/anonymous", json={"user_id": "x"}).status_code == 200
 
     def test_issue_works_in_mvp_mode(self, open_client):
         """Token issuance works even when API_KEY is empty."""
@@ -102,10 +119,10 @@ class TestAnonymousTokenIssuance:
 
     def test_issued_token_is_verifiable(self, auth_client):
         """Token returned by the endpoint passes verify_token()."""
-        token = _get_anon_token(auth_client, user_id="verify-test")
+        token = _get_anon_token(auth_client)
         payload = verify_token(token)
         assert payload is not None
-        assert payload["user_id"] == "verify-test"
+        assert payload["user_id"].startswith("anon-")
         assert payload["role"] == "anonymous"
 
 
@@ -208,7 +225,7 @@ class TestAuthMiddleware:
         assert r.status_code == 200
 
     def test_anon_token_allows_feedback(self, auth_client):
-        token = _get_anon_token(auth_client, user_id="feedback-tester")
+        token = _get_anon_token(auth_client)
         r = auth_client.post(
             "/api/v1/feedback",
             json={"project_id": "test-proj-1", "signal": "useful"},
@@ -478,8 +495,12 @@ class TestUserIdPropagation:
         assert user["role"] == "anonymous"
 
     def test_anon_user_id_in_feedback(self, auth_client):
-        """Feedback submitted with an anonymous token records the user_id."""
-        token = _get_anon_token(auth_client, user_id="feedback-user-99")
+        """Feedback submitted with an anonymous token records the user_id.
+
+        user_id 由服务端签发（`anon-<hex>`）并写进 token；feedback 存储
+        的是 token 里的身份，而不是调用方自报的字符串。
+        """
+        token = _get_anon_token(auth_client)
         r = auth_client.post(
             "/api/v1/feedback",
             json={"project_id": "proj-99", "signal": "useful"},

@@ -414,32 +414,32 @@ feedback/events 表、backtest.py、权重灰度发布机制。
 
 | ID | 任务 | 描述 | 验收标准 | 依赖 | 工时 |
 |---|---|---|---|---|---|
-| W12-01 | 多钱包策略 | 基于 risk.sybil_difficulty + farming_cost 输出多钱包参与建议 | 策略可运行 | W11-05 | 6h |
-| W12-02 | Memory 系统 | project_history 时间序列查询；user_profile 偏好向量（从 feedback 推断） | Memory 可读取 | W11-05 | 8h |
-| W12-03 | 多实例 HA | APScheduler → Celery/RQ；leader election（PG  advisory lock） | 多实例可运行 | W11-05 | 8h |
-| W12-04 | 异常检测 | 评分漂移检测（score 分布突变）；数据质量退化告警 | 异常可检测 | W11-05 | 6h |
-| W12-05 | V3 集成测试 | 全链路：多钱包 + memory + 多实例 + 异常检测 | 集成测试通过 | W12-01~04 | 4h |
+| W12-01 | 多钱包策略 | 基于 risk.sybil_difficulty + farming_cost 输出多钱包参与建议 | ✅ 策略可运行（US-019） | W11-05 | 6h |
+| W12-02 | Memory 系统 | project_history 时间序列查询；user_profile 偏好向量（从 feedback 推断） | ✅ Memory 可读取与偏好重排 | W11-05 | 8h |
+| W12-03 | 多实例 HA | APScheduler → Celery/RQ；leader election（PG  advisory lock） | ✅ 多实例可运行（W12-03） | W11-05 | 8h |
+| W12-04 | 异常检测 | 评分漂移检测（score 分布突变）；数据质量退化告警 | ✅ 异常可检测与巡检（W12-04） | W11-05 | 6h |
+| W12-05 | V3 集成测试 | 全链路：多钱包 + memory + 多实例 + 异常检测 | ✅ 全链路集成测试与边界测试通过（W12-05） | W12-01~04 | 4h |
 
 ### 用户系统（V3 子项目）
 
 | ID | 任务 | 描述 | 验收标准 | 依赖 | 工时 |
 |---|---|---|---|---|---|
-| W12-06 | 用户认证 | JWT 签发/校验、bcrypt 密码、refresh token、JWT 吊销、匿名 token 兼容 | 注册/登录/刷新/登出/吊销全流程测试通过 | — | 6h |
-| W12-07 | RBAC 中间件 | admin/analyst/viewer 角色鉴权；端点权限表；角色越界返回 403 | 三角色各端点权限测试通过 | W12-06 | 4h |
-| W12-08 | 用户偏好 API | GET/PUT/PATCH user_preferences；JSON 格式持久化 | 偏好 CRUD 测试通过 | W12-06 | 2h |
-| W12-09 | API Key 管理 | 创建/列出/撤销 API Key；Key 用于鉴权 | API Key 全生命周期测试通过 | W12-06, W12-07 | 3h |
-| W12-10 | 行级数据隔离 | feedback/events 按 user_id 过滤；admin 可查看全部；projects 全局共享 | 隔离测试：A 用户看不到 B 用户的反馈 | W12-07 | 3h |
-| W12-11 | GDPR 合规 | 数据导出（JSON）、账户删除（去标识化反馈+删除 events）、全设备登出 | 导出完整；删除后可重新注册；原反馈不关联原 user_id | W12-06, W12-10 | 4h |
-| W12-12 | 用户系统集成测试 | 全链路：注册→登录→偏好→反馈→数据导出→账户删除 | 全链路测试通过 | W12-06~11 | 4h |
+| W12-06 | 用户认证 | JWT 签发/校验、bcrypt 密码、refresh token、JWT 吊销、匿名 token 兼容 | ✅ 注册/登录/刷新/登出/吊销全流程测试通过（W12-06） | — | 6h |
+| W12-07 | RBAC 中间件 | admin/analyst/viewer 角色鉴权；端点权限表；角色越界返回 403 | ✅ 三角色各端点权限测试通过（W12-07） | W12-06 | 4h |
+| W12-08 | 用户偏好 API | GET/PUT/PATCH/DELETE user_preferences；JSON 格式持久化 | ✅ 偏好 CRUD 与 GDPR 重置测试通过（W12-08） | W12-06 | 2h |
+| W12-09 | API Key 管理 | 创建/列出/撤销 API Key；Key 用于鉴权 | ✅ API Key 全生命周期测试通过（W12-09） | W12-06, W12-07 | 3h |
+| W12-10 | 行级数据隔离 | feedback/events 按 user_id 过滤；admin 可查看全部；projects 全局共享 | ✅ 隔离测试：A 用户看不到 B 用户的反馈与埋点（W12-10） | W12-07 | 3h |
+| W12-11 | GDPR 合规 | 数据导出（JSON）、账户删除（去标识化反馈+删除 events）、全设备登出 | ✅ 数据导出/删除与去标识化测试通过（W12-11） | W12-06, W12-10 | 4h |
+| W12-12 | 用户系统集成测试 | 全链路：注册→登录→偏好→反馈→数据导出→账户删除 | ✅ 全链路测试通过（W12-12） | W12-06~11 | 4h |
 
 ### 验收门
-- [ ] JWT 签发/校验/吊销全流程通过
-- [ ] RBAC 三角色权限测试通过
-- [ ] 行级隔离测试通过
-- [ ] GDPR 数据导出/删除测试通过
-- [ ] 按子项目单独验收
-- [ ] Memory 系统冷启动：V2 采集期数据 ≥3 个月
-- [ ] 多实例 HA：leader 故障自动切换
+- [x] JWT 签发/校验/吊销全流程通过
+- [x] RBAC 三角色权限测试通过
+- [x] 行级隔离测试通过
+- [x] GDPR 数据导出/删除测试通过
+- [x] 按子项目单独验收（用户系统 W12-06~W12-12 全链路集成测试通过）
+- [x] Memory 系统冷启动：V2 采集期数据 ≥3 个月（含单快照回退与时序演化上下文）
+- [x] 多实例 HA：leader 故障自动切换
 
 ### 风险缓解
 - W12-02 Memory 冷启动：V2 采集期提前埋点（§24.1），保证 3-6 个月数据量

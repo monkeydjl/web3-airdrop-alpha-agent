@@ -210,11 +210,12 @@ class TestJobsArePresentedUsefully:
         assert [job["id"] for job in data["jobs"]] == ["active", "paused"]
 
     def test_switches_report_real_config(self, client, monkeypatch):
-        """四个开关的值必须来自 settings，不是写死的。"""
+        """全部开关的值必须来自 settings，不是写死的。"""
         monkeypatch.setattr(settings, "scheduler_enabled", False)
         monkeypatch.setattr(settings, "collection_scheduler_enabled", True)
         monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
         monkeypatch.setattr(settings, "collection_auto_run_enabled", True)
+        monkeypatch.setattr(settings, "notify_enabled", False)
 
         data = _data(client.get(ENDPOINT))
         assert data["switches"] == {
@@ -222,6 +223,7 @@ class TestJobsArePresentedUsefully:
             "COLLECTION_SCHEDULER_ENABLED": True,
             "ARCHIVE_SCHEDULER_ENABLED": False,
             "COLLECTION_AUTO_RUN_ENABLED": True,
+            "NOTIFY_ENABLED": False,
         }
 
     def test_timezone_is_reported(self, client):

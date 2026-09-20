@@ -1,6 +1,7 @@
 'use client';
 
 import { EmptyState, Switch, Toast } from '@/components/ui';
+import { AnomalyDetectionPanel } from '@/components/AnomalyDetectionPanel';
 import { TopBar } from '@/components/TopBar';
 import { apiFetch, fetchHealth } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
@@ -351,7 +352,7 @@ export default function OpsPage() {
         { method: 'POST', body: '{}' },
       );
       showToast(
-        `${sourceZh(sourceId)} 完成 · ${res.items_collected ?? '—'} items`,
+        `${sourceZh(sourceId)} 完成 · 已采集 ${res.items_collected ?? '—'} 项`,
         'success',
       );
       load();
@@ -552,7 +553,7 @@ export default function OpsPage() {
       ) : null}
 
       {/* 4 metrics like design */}
-      <div className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4 min-[1600px]:grid-cols-6">
         <Metric
           label="采集源"
           value={loading ? '—' : sources.length}
@@ -560,7 +561,7 @@ export default function OpsPage() {
         />
         <Metric
           label="健康"
-          value={health == null ? '…' : health.ok ? 'OK' : 'DOWN'}
+          value={health == null ? '…' : health.ok ? '正常' : '不可用'}
           hint={health?.db_backend || health?.status || '—'}
           tone={health?.ok ? 'farm' : 'default'}
         />
@@ -576,6 +577,11 @@ export default function OpsPage() {
           hint={`${ixSummary?.total ?? 0} 条记录`}
           tone={net < 0 ? 'watch' : 'farm'}
         />
+      </div>
+
+      {/* 异常检测与质量告警巡检 (W12-04) */}
+      <div className="mt-5">
+        <AnomalyDetectionPanel />
       </div>
 
       {/* main grid: sources | cost + health */}
@@ -689,7 +695,7 @@ export default function OpsPage() {
                       : 'bg-surface-3 text-ink-muted'
                   }`}
                 >
-                  {health?.status || (health?.ok ? 'healthy' : '—')}
+                  {health?.ok ? '健康' : health?.status || '—'}
                 </span>
               }
             />
@@ -704,7 +710,7 @@ export default function OpsPage() {
       {/* quarantine table full width */}
       <section className="mt-3 ops-card">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-          <h2 className="text-sm font-semibold text-ink">隔离区 Quarantine</h2>
+          <h2 className="text-sm font-semibold text-ink">隔离区</h2>
           <span className="font-mono text-[11px] text-ink-faint">
             {qCount < 0 ? '加载失败' : `${qCount} 条`}
           </span>

@@ -135,8 +135,24 @@ def build_action_queue(
         if label not in ACTIONABLE_LABELS:
             continue
 
+        # 精选门槛：未达标项目（评分/置信度/近90天活动/参与路径任一不满足）
+        # 不进行动队列。用户诉求（2026-09-17）：全部不达标时清单应为空，
+        # 而不是退而推荐次优 —— 行动建议是强推荐位。
+        # 信号在 meta.signals，curation_reasons 内部走 signals_view 展平，
+        # 此处直接传原始行即可。
+        from app.services.project_signals import curation_reasons as _curation_reasons
+
+        if _curation_reasons(row):
+            continue
+
         pid = str(row.get("id") or "")
         if not pid:
+            continue
+
+        # 用户标记「不参与」的项目不得出现在这里：工作台列表会把它隐藏，
+        # 行动队列再把它递上来，就是「跳过」这个决定在坑用户。
+        # skipped 由 list_projects 左联 project_skips 注入。
+        if row.get("skipped"):
             continue
 
         is_engaged = pid in engaged

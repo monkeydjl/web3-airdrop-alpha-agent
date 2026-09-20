@@ -157,15 +157,69 @@ def test_repo_wide_terminology_is_clean(checker):
 
     等于让 CI 也守住这道闸门（此前只有 pre-commit 钩子守，绕过 `--no-verify`
     就失效了）。
+
+    注意这里**不再**写 `if path.is_file(): ...` 跳过不存在的路径 —— 那个
+    写法是 2026-09-02 那次门禁失效的直接成因：CI 的 cwd 是 `backend/`
+    （ci.yml §31），旧 `iter_tracked_files()` 返回相对 cwd 的 `app/db.py`，
+    拼成 `REPO_ROOT/app/db.py` 并不存在，于是**每个文件都被静默跳过**，
+    这条测试扫了零个文件还一路绿灯。路径不存在是环境异常，必须报错而非跳过。
     """
     files = [f for f in checker.iter_tracked_files() if checker.should_scan(f)]
     assert files, "git ls-files 返回空，测试环境异常"
     violations: list[str] = []
+    missing: list[str] = []
     for rel in files:
         path = REPO_ROOT / rel
-        if path.is_file():
-            violations.extend(checker.check_file(str(path)))
+        if not path.is_file():
+            missing.append(rel)  # 可能是 symlink 或已删未提交，需人看一眼
+            continue
+        violations.extend(checker.check_file(str(path)))
+    assert not missing, (
+        f"{len(missing)} 个 tracked 路径在 REPO_ROOT 下不存在，"
+        f"iter_tracked_files 的路径基准可能又退回相对 cwd：{missing[:5]}"
+    )
     assert not violations, "发现术语回退：\n" + "\n".join(violations[:10])
+
+
+# ── 扫描范围不得因 cwd 而缩水（2026-09-02 回归） ─────────────
+
+
+def test_tracked_paths_are_repo_root_relative_regardless_of_cwd(checker, tmp_path, monkeypatch):
+    """`iter_tracked_files()` 的路径基准必须是仓库根，与 cwd 无关。
+
+    裸 `git ls-files` 返回相对 cwd 的路径且只列 cwd 子树。CI 在 `backend/`
+    下跑 pytest，导致这道闸门实际只覆盖 backend 一个子树 —— `docs/` 的 69 个
+    文档、根目录 CHANGELOG.md、frontend-next/ 合计 223 个待检文件从未被扫过，
+    而术语约定主要就是给文档用的。修法是 `--full-name` + `cwd=REPO_ROOT`
+    两个都加（缺一不可，理由见脚本 docstring）。
+    """
+    monkeypatch.chdir(REPO_ROOT / "backend")
+    from_backend = checker.iter_tracked_files()
+    monkeypatch.chdir(REPO_ROOT)
+    from_root = checker.iter_tracked_files()
+
+    assert from_backend == from_root, "换个 cwd 就返回不同清单，说明路径基准仍依赖 cwd"
+    # backend/ 下的文件必须带前缀出现，否则就是又退回了子树相对路径
+    assert "backend/app/db.py" in from_backend
+
+
+def test_scan_covers_docs_and_repo_root_files(checker, monkeypatch):
+    """闸门必须覆盖 backend/ 之外的目录 —— 尤其 docs/。
+
+    这条是上一条的语义化补充：即便路径基准对了，若哪天有人给
+    `iter_tracked_files` 加上 `backend/` 之类的路径参数来"提速"，
+    覆盖面同样会缩水，而症状依旧是静默的（门禁绿，但什么都没守住）。
+    """
+    monkeypatch.chdir(REPO_ROOT / "backend")  # 刻意从子目录跑
+    files = [f for f in checker.iter_tracked_files() if checker.should_scan(f)]
+
+    assert any(f.startswith("docs/") for f in files), "docs/ 未被扫描"
+    assert "CHANGELOG.md" in files, "仓库根的 CHANGELOG.md 未被扫描"
+    assert any(f.startswith("frontend-next/") for f in files), "frontend-next/ 未被扫描"
+
+    outside_backend = [f for f in files if not f.startswith("backend/")]
+    # 实测 223 个；给足余量，只防"缩水到个位数"这种量级的回归
+    assert len(outside_backend) > 150, f"backend/ 之外只扫到 {len(outside_backend)} 个文件，扫描范围疑似缩水"
 
 
 def test_this_test_file_passes_the_gate(checker):

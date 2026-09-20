@@ -44,14 +44,18 @@ setup_tracing()
 logger = structlog.get_logger(__name__)
 
 
-def create_app(db_override: DbConnection | None = None) -> FastAPI:
+def create_app(
+    db_override: DbConnection | None = None,
+    leader_elector: Any | None = None,
+) -> FastAPI:
     """应用工厂函数。
 
     创建并配置 FastAPI 应用实例。
-    支持 db_override 参数用于测试注入。
+    支持 db_override 与 leader_elector 参数用于测试注入。
 
     Args:
         db_override: 测试时注入的数据库连接
+        leader_elector: 测试时注入的 LeaderElector 实例
 
     Returns:
         配置好的 FastAPI 实例
@@ -188,22 +192,58 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
                                 source_id=source_id,
                                 error=str(exc),
                             )
+                from app.services.leader_election import LeaderElector
 
                 unified_scheduler = UnifiedScheduler(
                     registry,
                     on_collection=on_collection,
                 )
-                unified_scheduler.start()
+
+                async def on_promoted() -> None:
+                    logger.info("app.ha_promoted_starting_scheduler")
+                    unified_scheduler.start()
+
+                async def on_demoted() -> None:
+                    logger.info("app.ha_demoted_stopping_scheduler")
+                    unified_scheduler.shutdown(wait=False)
+
+                active_elector = leader_elector or getattr(application.state, "leader_elector", None)
+                if active_elector is None:
+                    active_elector = LeaderElector(
+                        conn_factory=(lambda: db_override) if db_override is not None else get_connection,
+                        on_promoted=on_promoted,
+                        on_demoted=on_demoted,
+                        enabled=settings.ha_enabled,
+                    )
+                else:
+                    active_elector.on_promoted = on_promoted
+                    active_elector.on_demoted = on_demoted
+                await active_elector.start()
 
                 application.state.collector_registry = registry
                 application.state.unified_scheduler = unified_scheduler
+                application.state.leader_elector = active_elector
             else:
                 application.state.collector_registry = None
                 application.state.unified_scheduler = None
+                application.state.leader_elector = None
 
             yield
         finally:
             logger.info("app.shutdown")
+            leader_elector_to_stop = cast(
+                Any,
+                getattr(application.state, "leader_elector", None),
+            )
+            if leader_elector_to_stop is not None:
+                try:
+                    await leader_elector_to_stop.stop()
+                except Exception as exc:
+                    logger.error(
+                        "app.shutdown.leader_elector_error",
+                        component="leader_elector",
+                        error=str(exc),
+                    )
             scheduler_to_shutdown = cast(
                 UnifiedScheduler | None,
                 getattr(application.state, "unified_scheduler", None),
@@ -481,6 +521,9 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     from app.routers.v1 import (
         action_queue,
         ai_brief,
+        ai_chat,
+        anomalies,
+        api_keys,
         archive,
         auth,
         collections,
@@ -488,15 +531,24 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
         export_import,
         feedback,
         funding,
+        ha,
         insights,
         interactions,
         llm,
         notifications,
+        notify,
         opportunity,
         participation,
         projects,
+        public_config,
         quarantine,
+        roi,
         run,
+        skip,
+        user_profile,
+        user_preferences,
+        user_data,
+        watched_wallets,
         watchlist,
         webhook,
     )
@@ -518,7 +570,9 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(insights.router, prefix="/api/v1", tags=["v1"])
     app.include_router(quarantine.router, prefix="/api/v1", tags=["v1"])
     app.include_router(ai_brief.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(ai_chat.router, prefix="/api/v1", tags=["v1"])
     app.include_router(auth.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(api_keys.router, prefix="/api/v1", tags=["v1"])
     app.include_router(interactions.router, prefix="/api/v1", tags=["v1"])
     app.include_router(participation.router, prefix="/api/v1", tags=["v1"])
     app.include_router(action_queue.router, prefix="/api/v1", tags=["v1"])
@@ -531,7 +585,19 @@ def create_app(db_override: DbConnection | None = None) -> FastAPI:
     app.include_router(watchlist.router, prefix="/api/v1", tags=["v1"])
     app.include_router(dashboard.router, prefix="/api/v1", tags=["v1"])
     app.include_router(notifications.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(notify.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(roi.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(watched_wallets.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(skip.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(user_profile.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(user_preferences.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(user_data.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(anomalies.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(ha.router, prefix="/api/v1", tags=["v1"])
     app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
+    # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
+    # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
+    app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])
 
     # 所有路由 + 中间件注册完毕后，挂载 FastAPI 请求级 span instrumentation
     instrument_fastapi_app(app)

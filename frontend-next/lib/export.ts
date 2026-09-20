@@ -16,18 +16,18 @@ function csvCell(value: unknown): string {
 
 export function exportProjectsCsv(projects: Project[]): void {
   const headers = [
-    'Name',
-    'Sector',
-    'Stage',
-    'Score',
-    'Label',
-    'Confidence',
-    'Funding Total USD',
-    'Funding Tier',
-    'Funding Quality',
-    'Funding Rounds',
-    'URL',
-    'Source',
+    '名称',
+    '赛道',
+    '阶段',
+    '评分',
+    '标签',
+    '置信度',
+    '累计融资（USD）',
+    '融资档位',
+    '融资质量',
+    '融资轮次',
+    '链接',
+    '来源',
   ];
   const rows = projects.map((p) => {
     const quality = p.funding?.funding_quality;

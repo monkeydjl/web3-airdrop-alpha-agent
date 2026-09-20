@@ -32,17 +32,21 @@
 ### 3.1 密钥清单
 | 变量 | 用途 | 必填阶段 | 轮换周期 |
 | --- | --- | --- | --- |
-| `OPENAI_API_KEY` | LLM 调用 | V2（可选） | 90 天 |
-| `CRYPTORANK_API_KEY` | CryptoRank 项目库 | V2 | 90 天 |
-| `TWITTER_BEARER` | Twitter API v2 | V2 | 90 天 |
-| `DUNE_API_KEY` | Dune 查询 | V2 | 90 天 |
-| `API_KEY` | API 鉴权（V2） | V2 | 90 天 |
-| `DATABASE_URL` | PG 连接串（V2） | V2 | 按需 |
+| `OPENAI_API_KEY` | LLM 调用（可选） | 生产（可选） | 90 天 |
+| `CRYPTORANK_API_KEY` | CryptoRank 项目库（可选） | 生产（可选） | 90 天 |
+| `TWITTER_BEARER_TOKEN` | Twitter/X API v2（可选） | 生产（可选） | 90 天 |
+| `API_KEY` | 后端管理员鉴权；前端 `BACKEND_API_KEY` 必须与它同值 | 生产必填 | 90 天 |
+| `AUTH_TOKEN_SECRET` | 匿名 Bearer token 的 HMAC 签名；变更会使旧匿名 token 失效 | 生产必填 | 90 天 |
+| `POSTGRES_PASSWORD` | PostgreSQL 数据库密码（也会进入 `DATABASE_URL`） | 使用 PostgreSQL 时必填 | 90 天 |
+| `GRAFANA_PASSWORD` | Grafana 管理员初始密码 | 启用 production observability 时必填 | 90 天 |
+| `DATABASE_URL` | 直接指定 PG 连接串的替代路径；与 `POSTGRES_*` 二选一 | 按需 | 随其中的数据库凭据轮换 |
 
 ### 3.2 注入方式
-- **MVP**：`.env` 文件（`.gitignore`）+ `pydantic-settings` 加载。
-- **V2 容器**：`docker run -e` 或 compose `env_file`。
-- **V2+ 推荐**：docker secret / k8s secret，避免明文 env 在 `docker inspect` 中可见。
+- `.env` 文件（`.gitignore`）+  `pydantic-settings` 加载。
+- **生产容器**：docker `env_file` 或 `environment -e` 注入。见 `docker-compose.prod.yml`
+  （它先显式 `APP_ENV=production`，再用 `${VAR:?}` 强制要求 PG/API 密钥非空）。
+  `docker-compose.yml` 的 `--profile production` **不是**生产命令，见 DEPLOYMENT.md。
+- **推荐**：docker secret / k8s secret，避免明文 env 在 `docker inspect` 中可见。
 - **禁止**：密钥写入 Dockerfile、代码、README、commit message、日志。
 
 ### 3.3 防泄漏
@@ -302,11 +306,12 @@
 | `oauth.reddit.com` | Reddit OAuth 搜索 | P2 | ✅ `collectors/reddit.py` |
 | `medium.com` | Medium RSS tag feed | P2 | ✅ `collectors/medium.py` |
 | `arweave.net` | Mirror（经 Arweave GraphQL 公开读） | P2 | ✅ `collectors/mirror.py` |
+| `api.telegram.org` | Telegram Bot API（决策推送 sendMessage） | F1 | ✅ `notify/senders.py`（经 `fetcher.post` 出站校验） |
 | `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
 | `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
 | ~~`dashboard.alchemy.com`~~ | Alchemy webhook | — | ❌ **代码里 0 处**，无此集成 |
 | ~~`api.galxe.com`~~ | （错的主机名） | — | ❌ **不存在**，见上面 `graphigo.prd.galaxy.eco` |
-| `api.dune.com` | Dune Analytics | V2（可选） | ❌ 未接入（`DUNE_API_KEY` 是装饰性配置项） |
+| `api.dune.com` | Dune Analytics | V2（可选） | ❌ 未接入（无 collector；`DUNE_API_KEY` 配置字段已于 2026-09-03 删除） |
 <!-- domain-whitelist:end -->
 
 > ✅ **2026-08-29 起，这张表成了运行时约束**（此前只是设计意图）。

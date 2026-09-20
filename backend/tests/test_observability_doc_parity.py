@@ -244,6 +244,36 @@ class TestDocumentedEventsExist:
             "按不存在的事件名写 Loki 查询会永远返回空。"
         )
 
+    def test_documented_event_counts_match_reality(self):
+        """§2.2 的「N 个事件名 / M 个命名空间」必须与实测一致。
+
+        这两个数字此前**没有任何门禁**，结果一路腐化到 309/64（实际 317/65）——
+        加 roi.* 时才发现文档已经落后了一整批事件。
+
+        统计数字过时的坏处不只是"不准"：读者会拿它判断"我要找的事件在不在这
+        份文档里"，数字偏小就会误以为文档是全的、从而信任那份不完整的清单。
+
+        本条只钉总数，不钉每个命名空间的明细表 —— 明细表是给人看趋势的，
+        每次加事件都要求同步会让人干脆不加日志。
+        """
+        text = _doc_text()
+        real = _real_log_events()
+        real_namespaces = {e.split(".")[0] for e in real}
+
+        m_events = re.search(r"全仓共 \*\*(\d+) 个不同事件名\*\*", text)
+        m_ns = re.search(r"\*\*(\d+) 个命名空间\*\*", text)
+        assert m_events and m_ns, (
+            "§2.2 里解析不到「全仓共 **N 个不同事件名**」或「**M 个命名空间**」—— "
+            "文档措辞变了，先修这里的正则，否则断言空转。"
+        )
+        assert int(m_events.group(1)) == len(real), (
+            f"§2.2 说有 {m_events.group(1)} 个事件名，实测 {len(real)} 个。"
+            "改动日志事件后请重算这个数字（文档里附了命令）。"
+        )
+        assert int(m_ns.group(1)) == len(real_namespaces), (
+            f"§2.2 说有 {m_ns.group(1)} 个命名空间，实测 {len(real_namespaces)} 个。"
+        )
+
 
 class TestDocumentedSpansExist:
     """文档引用的 span 名必须真实存在。

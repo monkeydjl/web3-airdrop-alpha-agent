@@ -14,7 +14,7 @@ import time
 import structlog
 
 from app.agents.airdrop_signal import airdrop_signal_subscore
-from app.agents.base import AgentError, BaseAgent, PipelineState
+from app.agents.base import AgentError, BaseAgent, PipelineState, RawProject
 from app.models import RiskResult
 
 logger = structlog.get_logger(__name__)
@@ -29,6 +29,31 @@ STAGE_RISK_FACTOR: dict[str, float] = {
 
 # Default stage factor for unknown stages
 DEFAULT_STAGE_FACTOR = 0.40
+
+
+def is_perp_dex(project: RawProject) -> bool:
+    """Detect if project is a perpetual DEX or derivative protocol.
+
+    Checks sector and description for perp / perpetual / derivative keywords.
+    Note: does not match purely on project name to avoid false positives.
+    """
+    sector = (project.sector or "").lower()
+    if any(k in sector for k in ("perp", "derivative", "perpetual")):
+        return True
+    desc = (project.description or "").lower()
+    return any(k in desc for k in ("perpetual", "perp dex", "derivative"))
+
+
+def classify_perp_cost_tier(project: RawProject) -> str | None:
+    """Classify Perp DEX into cost tiers: 'high' (mainnet trading) or 'low' (testnet).
+
+    Returns None if project is not a Perp DEX.
+    """
+    if not is_perp_dex(project):
+        return None
+    if project.stage == "mainnet":
+        return "high"
+    return "low"
 
 
 def calculate_airdrop_signal_subscore(project: "RawProject") -> float:

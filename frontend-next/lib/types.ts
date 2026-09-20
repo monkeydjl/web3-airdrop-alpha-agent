@@ -19,9 +19,16 @@ export interface Project {
   score: number;
   label: Label;
   confidence: number;
+  /** 资格否决:no_participation_path = 分数够但缺参与路径（被从 FARM 压回 WATCH,
+      需要人工验证官网/Twitter 找任务入口）。响应里仅在后端甄别过时出现。 */
+  veto?: string | null;
+  /** 用户自主「不参与」标记（veto 是系统判断，这个是自己点的）。
+      与 label=IGNORE 刻意分开：模型结论与用户决定要能被分别撤掉。 */
+  skipped?: boolean;
   url?: string | null;
   source?: string | null;
   reason?: string[];
+  reason_zh?: string[];
   narrative?: Record<string, unknown> | null;
   team?: Record<string, unknown> | null;
   risk?: Record<string, unknown> | null;
@@ -233,6 +240,7 @@ export interface OpportunitySummaryProjection {
   status: DecisionStatus;
   public_label: Label;
   recommended_action: string;
+  recommended_action_zh?: string;
   blocker_codes: string[];
   watch_reason_codes: string[];
   ignore_reason_codes: string[];
@@ -274,13 +282,17 @@ export interface ActionPlanItem {
 
 export interface BlockerProjection {
   code: string;
+  code_zh?: string;
   severity: string;
+  severity_zh?: string;
   message: string;
+  message_zh?: string;
 }
 
 export interface UpgradeConditionProjection {
   code: string;
   message: string;
+  message_zh?: string;
 }
 
 export interface WorkflowSection {
@@ -294,17 +306,21 @@ export interface WorkflowSection {
 export interface EvidenceItemProjection {
   evidence_id: string | null;
   factor_key: string;
+  factor_key_zh?: string;
   value: unknown;
   value_type: string;
   observation_type: string;
   source_url: string;
   source_type: string;
+  source_type_zh?: string;
   source_grade: SourceGrade;
   verification_status: string;
+  verification_status_zh?: string;
   observed_at: string;
   effective_at: string | null;
   expires_at: string | null;
   freshness: EvidenceFreshness;
+  freshness_zh?: string;
   age_days: number;
 }
 
@@ -398,3 +414,150 @@ export interface DiscoveriesResponse {
   page: number;
   page_size: number;
 }
+
+/** 多钱包防女巫与资金分配建议 (US-019 / W12-01). */
+export interface MultiWalletHygieneRule {
+  rule_id: string;
+  title: string;
+  description: string;
+  severity: 'critical' | 'warning' | 'tip';
+}
+
+export interface MultiWalletStrategy {
+  project_id: string;
+  project_name: string;
+  status: 'recommended' | 'selective' | 'ineligible';
+  recommended_wallets_min: number;
+  recommended_wallets_max: number;
+  recommended_wallets_optimal: number;
+  tier: 'not_recommended' | 'single_curated' | 'small_cluster' | 'medium_scale';
+  tier_zh: string;
+  strategy_summary: string;
+  capital_per_wallet_usd_min: number;
+  capital_per_wallet_usd_max: number;
+  total_capital_usd_min: number;
+  total_capital_usd_max: number;
+  capital_notes: string;
+  weekly_hours_per_wallet: number;
+  total_weekly_hours: number;
+  hygiene_guidelines: MultiWalletHygieneRule[];
+  risk_warnings: string[];
+}
+
+/** 项目演化时间轴与历史指标 (Roadmap §24.3 / W12-02). */
+export interface TimelinePoint {
+  snapshot_id: number;
+  run_id: string;
+  score: number | null;
+  label: string | null;
+  stage: string | null;
+  weight_version: string | null;
+  created_at: string;
+  diff_from_previous_score?: number | null;
+}
+
+export interface StageTransition {
+  from_stage: string;
+  to_stage: string;
+  timestamp: string;
+}
+
+export interface ProjectEvolution {
+  project_id: string;
+  project_name: string;
+  score_trend: 'rising' | 'falling' | 'stable' | 'insufficient_data';
+  score_volatility: number;
+  stage_progression: string[];
+  stage_transitions: StageTransition[];
+  label_history: string[];
+  timeline: TimelinePoint[];
+  first_seen_at: string | null;
+  latest_snapshot_at: string | null;
+  snapshot_count: number;
+  llm_context_summary: string;
+}
+
+/** 用户偏好画像与记忆向量 (Roadmap §24.3 / §25.5.3 / W12-02). */
+export interface UserProfileData {
+  user_id: string;
+  sector_affinity: Record<string, number>;
+  risk_tolerance: 'conservative' | 'moderate' | 'aggressive';
+  favorite_sectors: string[];
+  engagement_summary: {
+    feedback_count?: number;
+    interaction_count?: number;
+    watchlist_count?: number;
+    skip_count?: number;
+    total_signals: number;
+  };
+  inferred_at: string;
+  is_cleared: boolean;
+}
+
+/** 异常检测与质量告警 (W12-04 / DATA_QUALITY.md §4). */
+export type AnomalySeverity = 'info' | 'warning' | 'critical';
+
+export interface AnomalyItem {
+  id: string;
+  type: string;
+  severity: AnomalySeverity;
+  title: string;
+  description: string;
+  metric_name: string;
+  metric_value: number | string;
+  threshold: number | string;
+  details?: Record<string, unknown>;
+}
+
+export interface ScoreDriftSummary {
+  total_projects: number;
+  mean_score: number;
+  median_score: number;
+  stddev_score: number;
+  zero_score_count: number;
+  zero_score_ratio: number;
+  label_counts: Record<string, number>;
+  label_ratios: Record<string, number>;
+  baseline_mean: number;
+  mean_drift: number;
+  out_of_bounds_count: number;
+}
+
+export interface DataQualitySummary {
+  p0_completeness: number;
+  p1_completeness: number;
+  p0_missing_count: number;
+  p1_missing_count: number;
+  quarantine_pending: number;
+  stale_sources: string[];
+  total_sources_monitored: number;
+}
+
+export interface AnomalyReport {
+  overall_status: 'healthy' | 'warning' | 'critical';
+  checked_at: string;
+  total_anomalies: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  drift_summary: ScoreDriftSummary;
+  quality_summary: DataQualitySummary;
+  anomalies: AnomalyItem[];
+}
+
+export interface WatchedWallet {
+  id: number;
+  address: string;
+  label: string;
+  chain: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface WatchedWalletsResponse {
+  wallets: WatchedWallet[];
+  total: number;
+  active_count: number;
+}
+
+

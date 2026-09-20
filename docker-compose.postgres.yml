@@ -5,6 +5,15 @@
 #
 # 主机端口默认 5433（避开常见 5432 与其他项目冲突）
 # 连接串见下方 environment / .env.example
+#
+# ⚠️ 本文件**刻意保留** `airdrop_test` 这个弱默认密码，别照抄到生产：
+# 它只跑一个 PG 容器、不含任何应用服务、库名就叫 airdrop_test，用途是让
+# `pytest -m pg` 和本地调试开箱即用。要求这里必填密码会白白打断测试流程。
+#
+# 生产路径（docker-compose.yml / docker-compose.prod.yml）已经堵上：
+# compose 侧 `POSTGRES_PASSWORD` 无默认值、缺失即报错，应用侧 config.py
+# 的生产自检拒绝弱口令与占位符（`_WEAK_DB_PASSWORDS` 里就包含 airdrop_test）。
+# 也就是说即便有人把这份测试配置的密码搬到生产，启动时也会被拦下。
 
 services:
   postgres:

@@ -343,13 +343,24 @@ export default function DiscoveriesPage() {
                           <ShieldOff className="h-3.5 w-3.5" strokeWidth={2} />
                           <span>{quarantining === item.raw_id ? '…' : '隔离'}</span>
                         </button>
-                        {item.project_id && (
-                          <Link
-                            href={`/project/${item.project_id}`}
-                            className="disc-text-link"
+                        {item.processed ? (
+                          item.project_id && (
+                            <Link
+                              href={`/project/${item.project_id}`}
+                              className="disc-text-link"
+                            >
+                              查看项目
+                            </Link>
+                          )
+                        ) : (
+                          /* 待评分的 raw 条目在 projects 表里还不存在，链接只会
+                             得到 404 —— 评分流水线处理后这里才会变成可点链接 */
+                          <span
+                            className="text-xs text-ink-faint"
+                            title="评分流水线处理后可查看详情"
                           >
-                            查看项目
-                          </Link>
+                            待评分
+                          </span>
                         )}
                       </div>
                     </td>

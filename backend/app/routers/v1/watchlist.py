@@ -13,9 +13,10 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
+from app.auth import ROLE_ADMIN, get_current_user
 from app.db import get_connection
 
 logger = structlog.get_logger(__name__)
@@ -66,10 +67,17 @@ class ErrorResponse(BaseModel):
 )
 def add_to_watchlist(
     body: WatchlistAddRequest,
+    req: Request,
     project_id: str = Path(..., description="项目 ID"),
 ) -> WatchlistResponse:
     """添加项目到 Watchlist。"""
-    uid = body.user_id or _DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = body.user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else _DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = body.user_id or _DEFAULT_USER
 
     try:
         with get_connection() as conn:
@@ -134,11 +142,18 @@ def add_to_watchlist(
     description="将指定项目从用户的关注列表中移除。",
 )
 def remove_from_watchlist(
+    req: Request,
     project_id: str = Path(..., description="项目 ID"),
-    user_id: str | None = Query(None, description="用户标识（可选）"),
+    user_id: str | None = Query(None, description="用户标识（仅管理员可指定）"),
 ) -> WatchlistResponse:
     """从 Watchlist 移除项目。"""
-    uid = user_id or _DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else _DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = user_id or _DEFAULT_USER
 
     try:
         with get_connection() as conn:
@@ -180,15 +195,22 @@ def remove_from_watchlist(
     "/watchlist",
     response_model=WatchlistResponse,
     summary="查询 Watchlist",
-    description="返回用户关注的项目列表，包含项目评分信息。",
+    description="返回用户关注的项目列表，包含项目评分信息（非管理员仅返回自身关注，管理员可查看全部或按用户过滤）。",
 )
 def list_watchlist(
+    req: Request,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=200, description="每页数量"),
-    user_id: str | None = Query(None, description="用户标识（可选）"),
+    user_id: str | None = Query(None, description="用户标识（仅管理员可指定）"),
 ) -> WatchlistResponse:
     """查询 Watchlist 列表。"""
-    uid = user_id or _DEFAULT_USER
+    current_user = get_current_user(req)
+    if current_user["role"] == ROLE_ADMIN:
+        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else _DEFAULT_USER)
+    elif current_user["user_id"] != "anonymous":
+        uid = current_user["user_id"]
+    else:
+        uid = user_id or _DEFAULT_USER
 
     try:
         with get_connection() as conn:

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { BackToTop } from '@/components/BackToTop';
 import { Nav } from '@/components/Nav';
 import { ThemeProvider } from '@/components/ThemeProvider';
 
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span>数据不构成投资建议 · score-v1.4</span>
             </footer>
           </div>
+          <BackToTop />
         </ThemeProvider>
       </body>
     </html>

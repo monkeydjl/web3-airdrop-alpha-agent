@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
-import { LABEL_ORDER, LABEL_ZH, sortProjects, stageZh } from '@/lib/format';
+import { LABEL_ORDER, sortProjects, stageZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSourceApi, Label, Project } from '@/lib/types';
@@ -45,6 +45,12 @@ function DashboardContent() {
   const [keyword, setKeyword] = useState('');
   const [hideIgnore, setHideIgnore] = useState(true);
   const [hasFundingOnly, setHasFundingOnly] = useState(false);
+  // 「分数已达 FARM 线、但缺参与路径」是库里唯一上不去的一批 —— 单独抽出来做
+  // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那 86 行）。
+  const [needsVerifyOnly, setNeedsVerifyOnly] = useState(false);
+  // 「不参与」默认从工作台隐藏（这是它的主要用途：说不要了就别天天出现），
+  // 可以从「显示不参与」开关找回 —— 找回入口必须存在，否则就是单向墙。
+  const [showSkipped, setShowSkipped] = useState(false);
   const [stageFilter, setStageFilter] = useState('');
   const [minScore, setMinScore] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('score');
@@ -52,6 +58,7 @@ function DashboardContent() {
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState('');
   const [view, setView] = useState<ViewMode>('grid');
+  const [showCharts, setShowCharts] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // 顶栏搜索 → ?keyword=xxx → 同步到本地筛选
@@ -68,12 +75,19 @@ function DashboardContent() {
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
-  const loader = useCallback(async (signal: AbortSignal) => {
-    const all = await fetchAllProjects(signal);
-    return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
-  }, []);
+  const [curatedOnly, setCuratedOnly] = useState(true);
+  // 工作台默认精选模式：后端已按评分/置信度/近90天活动/参与路径过滤。
+  // 关掉「精选模式」开关即可查看后台候选池（未达标项目不删除，只是不上首页）。
 
-  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, []);
+  const loader = useCallback(
+    async (signal: AbortSignal) => {
+      const all = await fetchAllProjects(signal, { curated: curatedOnly });
+      return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
+    },
+    [curatedOnly],
+  );
+
+  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly]);
   const projects: Project[] = useMemo(() => data?.projects ?? [], [data]);
   const truncated = data?.truncated ?? false;
 
@@ -135,16 +149,18 @@ function DashboardContent() {
   const filtered = useMemo(() => {
     const list = projects.filter((p) => {
       if (hideIgnore && !labelFilter && p.label === 'IGNORE') return false;
+      if (!showSkipped && p.skipped) return false;
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;
       if (stageFilter && p.stage !== stageFilter) return false;
       if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
+      if (needsVerifyOnly && p.veto !== 'no_participation_path') return false;
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -183,116 +199,265 @@ function DashboardContent() {
         <StatCard label="平均分" value={stats.avg} accent="brand" hint={`共 ${stats.total} 个项目`} />
       </div>
 
-      {/* Charts */}
+      {/* 今日焦点行动与流水线动态：高优先级首屏置顶 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="dash-card p-5 lg:col-span-5">
-          <h2 className="mb-4 text-sm font-semibold text-ink">标签分布</h2>
-          <LabelDoughnut counts={stats.counts} />
-          <div className="mt-4 flex flex-wrap justify-center gap-3">
-            {LABEL_ORDER.map((l) => (
-              <button key={l} type="button" onClick={() => setLabelFilter((cur) => (cur === l ? '' : l))}
-                className={`transition ${labelFilter === l ? 'scale-105' : 'opacity-80 hover:opacity-100'}`}>
-                <LabelBadge label={l} />
-                <span className="ml-1 text-xs text-ink-muted">{stats.counts[l]}</span>
+        <div className="lg:col-span-8">
+          <ActionQueue limit={5} onDone={showToast} />
+        </div>
+        <div className="lg:col-span-4">
+          <div className="dash-card p-5 h-full flex flex-col justify-between">
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-bold text-ink flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-farm animate-ping" />
+                  今日流水线动态
+                </h2>
+                <span className="font-mono text-[10px] text-ink-faint uppercase tracking-wider">Agent Stream</span>
+              </div>
+              <ul className="pipeline-list space-y-2.5 text-xs">
+                <li className="pipeline-row flex items-center justify-between p-2.5 rounded-lg bg-surface-2/60 border border-line/60">
+                  <span className="font-mono text-[11px] font-semibold text-farm px-1.5 py-0.5 rounded bg-farm/10">采集引擎</span>
+                  <span className="pipeline-text font-mono">
+                    运行 <strong>{overviewRuns.total ?? 0}</strong> 次
+                    {overviewRuns.success ? <span className="text-farm"> · 成功 {overviewRuns.success}</span> : ''}
+                    {overviewRuns.failed ? <span className="text-watch"> · 失败 {overviewRuns.failed}</span> : ''}
+                  </span>
+                </li>
+                <li className="pipeline-row flex items-center justify-between p-2.5 rounded-lg bg-surface-2/60 border border-line/60">
+                  <span className="font-mono text-[11px] font-semibold text-cyan-400 px-1.5 py-0.5 rounded bg-cyan-400/10">新增项目</span>
+                  <span className="pipeline-text font-mono">
+                    今日发现 <strong>{overview?.today?.new_projects ?? 0}</strong> 个
+                    {overview?.today?.new_farm_projects ? <span className="text-farm font-bold"> · FARM {overview.today.new_farm_projects}</span> : ''}
+                  </span>
+                </li>
+                <li className="pipeline-row flex items-center justify-between p-2.5 rounded-lg bg-surface-2/60 border border-line/60">
+                  <span className="font-mono text-[11px] font-semibold text-indigo-400 px-1.5 py-0.5 rounded bg-indigo-400/10">影子评估</span>
+                  <span className="pipeline-text font-mono">
+                    评估 <strong>{overviewSavedToday}</strong> · FARM <strong className="text-farm">{overviewFarm}</strong>
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <div className="pt-3.5 border-t border-line/60 mt-3 flex items-center justify-between text-xs">
+              <span className="text-ink-muted">
+                待处理发现 <strong className="text-ink font-mono">{pendingDiscoveries}</strong> 条
+                <span className="text-ink-faint"> (今日新入 {todayNew})</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => router.push('/discoveries')}
+                className="font-semibold text-farm hover:underline whitespace-nowrap transition flex items-center gap-1"
+              >
+                进入队列 →
               </button>
-            ))}
+            </div>
           </div>
-        </div>
-        <div className="dash-card p-5 lg:col-span-4">
-          <h2 className="mb-2 text-sm font-semibold text-ink">赛道分布（前 8）</h2>
-          <SectorBars sectors={sectors} />
-        </div>
-        <div className="dash-card p-4 lg:col-span-3">
-          <h2 className="mb-3 text-sm font-semibold text-ink">今日流水线</h2>
-          <ul className="pipeline-list">
-            <li className="pipeline-row">
-              <span className="pipeline-time">采集</span>
-              <span className="pipeline-text">
-                运行 <strong>{overviewRuns.total ?? 0}</strong> 次
-                {overviewRuns.success ? ` · 成功 ${overviewRuns.success}` : ''}
-                {overviewRuns.failed ? <span className="text-watch"> · 失败 {overviewRuns.failed}</span> : ''}
-              </span>
-            </li>
-            <li className="pipeline-row">
-              <span className="pipeline-time">新增</span>
-              <span className="pipeline-text">
-                今日新建 <strong>{overview?.today?.new_projects ?? 0}</strong> 个
-                {overview?.today?.new_farm_projects ? ` · FARM ${overview.today.new_farm_projects}` : ''}
-              </span>
-            </li>
-            <li className="pipeline-row">
-              <span className="mini-chip">影子</span>
-              <span className="pipeline-text">
-                今日评估 <strong>{overviewSavedToday}</strong> · FARM <strong>{overviewFarm}</strong>
-              </span>
-            </li>
-            <li className="pipeline-row pipeline-row-cta">
-              <span className="pipeline-text">
-                今日发现 <strong>{todayNew}</strong> 条
-                <span className="text-ink-faint"> · 待处理 {pendingDiscoveries}</span>
-              </span>
-              <button type="button" onClick={() => router.push('/discoveries')} className="text-xs font-medium text-farm hover:text-farm-dark whitespace-nowrap transition">
-                前往发现队列 →
-              </button>
-            </li>
-          </ul>
         </div>
       </div>
 
-      {/* 今日行动：把 FARM/WATCH 的参与清单跨项目聚合成「今天做这几件事」 */}
-      <ActionQueue limit={5} onDone={showToast} />
-
-      {/* Toolbar */}
-      <div className="dash-card p-3">
-        <div className="toolbar">
-          <select className="select" value={labelFilter} onChange={(e) => setLabelFilter(e.target.value as Label | '')}>
-            <option value="">全部标签</option>
-            {LABEL_ORDER.map((l) => <option key={l} value={l}>{LABEL_ZH[l]}</option>)}
-          </select>
-          <select className="select" value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)}>
-            <option value="">全部赛道</option>
-            {sectors.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.count})</option>)}
-          </select>
-          <select className="select" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-            <option value="">全部阶段</option>
-            {stages.map((s) => <option key={s.name} value={s.name}>{stageZh(s.name)} ({s.count})</option>)}
-          </select>
-          <input className="select w-20 font-mono tabular-nums text-center" type="number" min="0" max="100" placeholder="≥0" value={minScore} onChange={(e) => setMinScore(e.target.value)} aria-label="最低分" />
-          <select className="select" value={`${sortBy}-${sortOrder}`} onChange={(e) => {
-            const [b, o] = e.target.value.split('-') as [SortBy, 'asc' | 'desc'];
-            setSortBy(b); setSortOrder(o);
-          }}>
-            <option value="score-desc">评分从高到低</option>
-            <option value="score-asc">评分从低到高</option>
-            <option value="confidence-desc">置信度从高到低</option>
-            <option value="name-asc">名称排序</option>
-          </select>
-          <input className="input flex-1 min-w-[200px]" placeholder="搜索项目名称…" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted">
-            <input type="checkbox" className="rounded border-line text-farm focus:ring-farm/30" checked={hideIgnore} onChange={(e) => setHideIgnore(e.target.checked)} />
-            隐藏「忽略」
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted">
-            <input type="checkbox" className="rounded border-line text-farm focus:ring-farm/30" checked={hasFundingOnly} onChange={(e) => setHasFundingOnly(e.target.checked)} />
-            有融资信号
-          </label>
-          <div className="toolbar-actions">
-            <button type="button" className="btn-secondary btn-sm" disabled={filtered.length === 0} onClick={() => exportProjectsCsv(filtered)}>
-              导出 CSV ({filtered.length})
+      {/* Modern Cyber Toolbar */}
+      <div className="dash-card p-4 space-y-3.5">
+        {/* Row 1: Fast Filter Pills + Search + Sort + Actions */}
+        <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+          {/* Quick Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCuratedOnly((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                curatedOnly
+                  ? 'bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/20'
+                  : 'bg-surface-2 text-cyan-300 hover:bg-surface-3 border border-cyan-500/25'
+              }`}
+            >
+              ✨ 精选模式
             </button>
-            <div className="seg">
+            <button
+              type="button"
+              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                !labelFilter && !needsVerifyOnly && !hasFundingOnly
+                  ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
+                  : 'bg-surface-2 text-ink-muted hover:text-ink border border-line'
+              }`}
+            >
+              全部 ({projects.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => { setLabelFilter('FARM'); setNeedsVerifyOnly(false); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                labelFilter === 'FARM'
+                  ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
+                  : 'bg-surface-2 text-emerald-400 hover:bg-surface-3 border border-emerald-500/25'
+              }`}
+            >
+              重点 FARM ({stats.counts.FARM})
+            </button>
+            <button
+              type="button"
+              onClick={() => { setLabelFilter('WATCH'); setNeedsVerifyOnly(false); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                labelFilter === 'WATCH' && !needsVerifyOnly
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'bg-surface-2 text-amber-400 hover:bg-surface-3 border border-amber-500/25'
+              }`}
+            >
+              观察 WATCH ({stats.counts.WATCH})
+            </button>
+            <button
+              type="button"
+              onClick={() => setHasFundingOnly((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                hasFundingOnly
+                  ? 'bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/20'
+                  : 'bg-surface-2 text-cyan-300 hover:bg-surface-3 border border-cyan-500/25'
+              }`}
+            >
+              💰 大额融资
+            </button>
+            <button
+              type="button"
+              onClick={() => { setNeedsVerifyOnly((prev) => !prev); if (!needsVerifyOnly) setLabelFilter(''); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                needsVerifyOnly
+                  ? 'bg-watch text-slate-950 shadow-md shadow-watch/20'
+                  : 'bg-surface-2 text-watch hover:bg-surface-3 border border-watch/30'
+              }`}
+            >
+              ⚠️ 待验证路径
+            </button>
+          </div>
+
+          {/* Search, Sort & Export */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <input
+                className="input !h-9 !py-1.5 !text-xs font-mono"
+                placeholder="搜索项目名称…"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+              {keyword && (
+                <button
+                  type="button"
+                  onClick={() => setKeyword('')}
+                  className="absolute right-2.5 top-2 text-xs text-ink-faint hover:text-ink"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <select
+              className="select !h-9 !py-1.5 !text-xs font-mono"
+              value={`${sortBy}-${sortOrder}`}
+              onChange={(e) => {
+                const [b, o] = e.target.value.split('-') as [SortBy, 'asc' | 'desc'];
+                setSortBy(b);
+                setSortOrder(o);
+              }}
+            >
+              <option value="score-desc">评分 ↓ (最高优先)</option>
+              <option value="score-asc">评分 ↑ (从低到高)</option>
+              <option value="confidence-desc">置信度优先</option>
+              <option value="name-asc">名称排序 A-Z</option>
+            </select>
+
+            <button
+              type="button"
+              className="btn-secondary !h-9 !py-1.5 !text-xs"
+              disabled={filtered.length === 0}
+              onClick={() => exportProjectsCsv(filtered)}
+            >
+              导出 CSV
+            </button>
+
+            {/* View Mode Toggle */}
+            <div className="seg !h-9">
               {(['grid', 'table'] as const).map((v) => (
-                <button key={v} type="button" onClick={() => setView(v)} aria-pressed={view === v}
-                  className={`seg-item ${view === v ? 'active' : ''}`}>
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={`seg-item !py-1 !text-xs ${view === v ? 'active' : ''}`}
+                >
                   {v === 'grid' ? '卡片' : '表格'}
                 </button>
               ))}
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-between text-xs text-ink-faint mt-2">
-          <span>当前显示 {filtered.length} / 共 {projects.length} 个</span>
-          {truncated && <span className="text-watch">数据量超出加载上限</span>}
+
+        {/* Row 2: Secondary refinement filters */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-line/60 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-ink-muted">
+            <select
+              className="select !h-8 !py-1 !text-xs !w-auto"
+              value={sectorFilter}
+              onChange={(e) => setSectorFilter(e.target.value)}
+            >
+              <option value="">全部赛道</option>
+              {sectors.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name} ({s.count})
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="select !h-8 !py-1 !text-xs !w-auto"
+              value={stageFilter}
+              onChange={(e) => setStageFilter(e.target.value)}
+            >
+              <option value="">全部阶段</option>
+              {stages.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {stageZh(s.name)} ({s.count})
+                </option>
+              ))}
+            </select>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-ink-faint">最低分:</span>
+              <input
+                className="select !h-8 !py-1 !text-xs w-16 font-mono text-center"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="≥0"
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                aria-label="最低分"
+              />
+            </div>
+
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition">
+              <input
+                type="checkbox"
+                className="rounded border-line text-farm focus:ring-farm/30"
+                checked={hideIgnore}
+                onChange={(e) => setHideIgnore(e.target.checked)}
+              />
+              隐藏「忽略」
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition">
+              <input
+                type="checkbox"
+                className="rounded border-line text-ink-muted focus:ring-ink-muted/30"
+                checked={showSkipped}
+                onChange={(e) => setShowSkipped(e.target.checked)}
+              />
+              显示不参与
+            </label>
+          </div>
+
+          <div className="flex items-center gap-3 text-ink-faint font-mono text-[11px] ml-auto">
+            <span>显示 {filtered.length} / 共 {projects.length} 项</span>
+            {truncated && <span className="text-watch">超过上限</span>}
+          </div>
         </div>
       </div>
 
@@ -308,7 +473,7 @@ function DashboardContent() {
           )}
         />
       ) : view === 'grid' ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">
           {filtered.map((p, i) => <ProjectCard key={p.id} project={p} rank={i + 1} />)}
         </div>
       ) : (
@@ -335,6 +500,70 @@ function DashboardContent() {
           </div>
         </div>
       )}
+
+      {/* 宏观生态洞察与赛道分布：低频参考内容折叠后置 */}
+      <div className="dash-card p-4 transition-all duration-200">
+        <button
+          type="button"
+          onClick={() => setShowCharts((v) => !v)}
+          className="w-full flex items-center justify-between text-left group cursor-pointer select-none"
+          aria-expanded={showCharts}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-2 border border-line text-sm text-farm">
+              📊
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-ink group-hover:text-farm transition-colors">
+                  宏观生态分布与赛道洞察
+                </h3>
+                <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-surface-2 text-ink-faint border border-line">
+                  {showCharts ? '已展开' : '已折叠'}
+                </span>
+              </div>
+              <p className="text-xs text-ink-muted mt-0.5">
+                包含标签分布（FARM/WATCH/IGNORE 权重）与前 8 热门赛道项目占比
+              </p>
+            </div>
+          </div>
+          <div className="btn-secondary !py-1 !px-3 text-xs flex items-center gap-1.5 shrink-0 ml-3">
+            <span>{showCharts ? '收起图表' : '展开图表分析'}</span>
+            <span className={`transition-transform duration-200 ${showCharts ? 'rotate-180' : ''}`}>▼</span>
+          </div>
+        </button>
+
+        {showCharts && (
+          <div className="mt-4 pt-4 border-t border-line/60 grid grid-cols-1 gap-5 lg:grid-cols-12 animate-fade-in">
+            <div className="p-4 rounded-xl bg-surface-2/40 border border-line/60 lg:col-span-6">
+              <h4 className="mb-3 text-xs font-semibold text-ink uppercase tracking-wider flex items-center justify-between">
+                <span>标签分布</span>
+                <span className="text-[10px] text-ink-faint font-mono">点击标签快速筛选</span>
+              </h4>
+              <LabelDoughnut counts={stats.counts} />
+              <div className="mt-4 flex flex-wrap justify-center gap-2.5">
+                {LABEL_ORDER.map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setLabelFilter((cur) => (cur === l ? '' : l))}
+                    className={`transition ${labelFilter === l ? 'scale-105 ring-2 ring-farm' : 'opacity-85 hover:opacity-100'}`}
+                  >
+                    <LabelBadge label={l} />
+                    <span className="ml-1 text-xs text-ink-muted font-mono">{stats.counts[l]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 rounded-xl bg-surface-2/40 border border-line/60 lg:col-span-6">
+              <h4 className="mb-3 text-xs font-semibold text-ink uppercase tracking-wider">
+                赛道分布（前 8）
+              </h4>
+              <SectorBars sectors={sectors} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
     </>
   );

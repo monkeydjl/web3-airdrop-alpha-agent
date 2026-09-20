@@ -70,19 +70,66 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/notifications/read"): "把自己的通知标记已读，只影响自己的未读状态。",
     ("POST", "/api/v1/watchlist/{project_id}"): "把项目加进自己的关注列表，按 user_id 隔离。",
     ("DELETE", "/api/v1/watchlist/{project_id}"): "从自己的关注列表里移除，按 user_id 隔离。",
-    # ⚠️ 下面两条**消耗 LLM 额度**，属于"会花钱"那一类，但本轮刻意没有锁：
+    ("POST", "/api/v1/projects/{project_id}/skip"): "用户层「不参与」标记，按 user_id 隔离，不改项目评分。",
+    ("DELETE", "/api/v1/projects/{project_id}/skip"): "取消「不参与」，同上。",
+    # ⚠️ 下面三条**消耗 LLM 额度**，属于"会花钱"那一类，但本轮刻意没有锁：
     # 所有者已决定给 LLM_DAILY_BUDGET_USD 实现真正的拦截，届时成本由预算门
     # 统一挡住，比按角色锁更贴合真实风险（管理员刷同样会花钱）。
-    # 这两行留在这里是为了让"它们没被锁"成为一个**显式的、写着理由的决定**，
+    # 这几行留在这里是为了让"它们没被锁"成为一个**显式的、写着理由的决定**，
     # 而不是又一个没人注意到的口子。
     ("POST", "/api/v1/projects/{project_id}/ai-brief"): (
         "会走 LLM（有额度成本）。刻意不按角色锁：改由 LLM 每日预算门统一拦截，"
         "见 LLM_DAILY_BUDGET_USD。锁角色挡不住管理员自己刷爆额度。"
     ),
+    ("POST", "/api/v1/projects/{project_id}/ai-chat"): (
+        "项目追问对话，会走 LLM（有额度成本）。与 ai-brief 同口径："
+        "由预算门而非角色控制成本，锁角色挡不住管理员自己刷爆额度。"
+    ),
     ("POST", "/api/v1/projects/{project_id}/opportunity/evaluate"): (
         "同上 —— 旁路机会引擎评估会走 LLM，由预算门而非角色控制成本。"
     ),
     ("POST", "/api/v1/projects/{project_id}/opportunity/evidence"): "只追加证据条目，不花钱、不改评分事实。",
+    # ── 参与流水（F2，ACTION_LOOP_DESIGN §3，2026-08-31）──
+    # 与 feedback / watchlist 同一设计意图：参与记录本来就要让普通使用者写。
+    # user_id 一律来自 token（get_current_user），请求体自报被忽略；
+    # 归属不匹配的资源按 404 处理，不确认存在性。
+    (
+        "POST",
+        "/api/v1/projects/{project_id}/participation",
+    ): "创建自己的参与 plan，按 token 身份隔离，请求体自报 user_id 被忽略。",
+    ("PATCH", "/api/v1/participation/{plan_id}"): "改自己的参与 plan（状态机闭表迁移），跨 token 一律 404。",
+    ("PATCH", "/api/v1/participation/tasks/{task_id}"): "改自己 plan 下的任务状态，归属校验同 plan。",
+    ("DELETE", "/api/v1/participation/{plan_id}"): "删自己的参与 plan（级联删任务），跨 token 一律 404。",
+    # ── 收益台账（F3，ACTION_LOOP_DESIGN §4，2026-08-31）──
+    # 与 feedback / watchlist 同一设计意图：台账记的是「我自己投了多少、拿回
+    # 多少」，本来就要让普通使用者写。录入只是留痕，不触发任何花钱动作
+    # （没有链上取价、没有代签），也不改系统行为 —— 唯一影响是校准样本池。
+    (
+        "POST",
+        "/api/v1/projects/{project_id}/roi/entries",
+    ): "记自己的投入（gas/时间），按 token 身份隔离，请求体自报 user_id 被忽略。",
+    (
+        "POST",
+        "/api/v1/projects/{project_id}/roi/outcomes",
+    ): "记自己的产出（空投到账/未领），同上隔离；是校准正负样本的来源。",
+    ("DELETE", "/api/v1/roi/entries/{entry_id}"): "删错记的投入，跨 token 一律 404。",
+    ("DELETE", "/api/v1/roi/outcomes/{outcome_id}"): "删错记的产出，跨 token 一律 404。",
+    ("DELETE", "/api/v1/user-profile"): "清除自己的偏好画像记忆，按 user_id 隔离，符合 GDPR 隐私遗忘权。",
+    # ── 用户认证（W12-06，ADR-008 §V3，2026-09-19）──
+    ("POST", "/api/v1/auth/register"): "用户注册入口，未登录用户创建账户并获取令牌。",
+    ("POST", "/api/v1/auth/login"): "用户登录入口，凭账号密码凭证获取 JWT 与 Refresh Token。",
+    ("POST", "/api/v1/auth/refresh"): "使用 refresh token 刷新 access token，无需管理员权限。",
+    ("POST", "/api/v1/auth/logout"): "登录用户登出当前会话并吊销 token，仅影响自身会话。",
+    ("POST", "/api/v1/auth/logout/all"): "登录用户登出所有设备会话，仅影响自身全部会话。",
+    # ── 用户偏好（W12-08，ROADMAP §25.6 / §25.10，2026-09-19）──
+    ("PUT", "/api/v1/user/preferences"): "全量更新登录用户自身偏好设置，按 token 身份隔离。",
+    ("PATCH", "/api/v1/user/preferences"): "增量合并登录用户自身偏好设置，按 token 身份隔离。",
+    ("DELETE", "/api/v1/user/preferences"): "清除登录用户自身偏好设置，重置为默认值，符合 GDPR 隐私遗忘权。",
+    # ── API Key 管理（W12-09，ROADMAP §25.3.3 / §25.10，2026-09-19）──
+    ("POST", "/api/v1/api-keys"): "创建登录用户自身 API Key，返回一次性明文凭证，按 token 身份隔离。",
+    ("DELETE", "/api/v1/api-keys/{key_id}"): "撤销登录用户自身 API Key，按 token 身份隔离。",
+    # ── GDPR 合规（W12-11，ROADMAP §25.9 / §25.10，2026-09-19）──
+    ("DELETE", "/api/v1/user/account"): "用户注销删除自身账户与去标识化反馈（GDPR §25.9 / ADR-008 §6）。",
 }
 
 

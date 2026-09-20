@@ -38,6 +38,12 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
+# 本文件位于 <repo>/scripts/，故仓库根是上一级。
+# 不用 `git rev-parse --show-toplevel`：那还得先起一个子进程，而这个路径
+# 关系是仓库结构的一部分，挪动 scripts/ 目录本来就该改这里。
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # (禁用模式, 正确写法提示)
 FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
@@ -57,21 +63,36 @@ EXEMPT_BASENAMES = {"check_terminology.py"}
 
 
 def iter_tracked_files() -> list[str]:
-    """--all 模式：列出 git 跟踪的待检文件。
+    """--all 模式：列出 git 跟踪的待检文件，路径一律相对**仓库根**。
 
     用 shutil.which 解析 git 全路径，避免依赖 PATH 查找顺序（ruff S607）。
+
+    `--full-name` 与 `cwd=REPO_ROOT` 两个都要，缺一不可：
+
+    - 裸 `git ls-files` 返回的是相对 **cwd** 的路径，且**只列 cwd 子树**。
+      CI 里 pytest 的 `working-directory` 是 `backend/`（ci.yml §31），
+      于是这道闸门在 CI 上只扫到 314 个 backend 文件，而 `docs/` 的 69 个
+      文档、根目录 CHANGELOG.md、frontend-next/ 全部 223 个待检文件从未被扫过
+      —— 而术语约定主要就是给文档用的，等于锁错了地方
+      （2026-09-02 实测发现：本机 `--all` 报 4 处回退，同样的内容在 CI 上全绿）。
+    - `--full-name` 让输出始终相对仓库根，`cwd` 让 git 从根开始枚举。
+      只加 `--full-name` 仍然只列 cwd 子树，只改 `cwd` 则调用方拿到的
+      相对路径会与自己的 cwd 不一致。
+
+    调用方需自行把返回的相对路径拼到 REPO_ROOT 上（`check_file` 收绝对路径）。
     """
     git = shutil.which("git")
     if git is None:
         print("[check_terminology] 找不到 git，退回空列表", file=sys.stderr)
         return []
     out = subprocess.run(
-        [git, "ls-files"],
+        [git, "ls-files", "--full-name"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         check=False,
+        cwd=REPO_ROOT,
     )
     if out.returncode != 0:
         print("[check_terminology] git ls-files 失败，退回空列表", file=sys.stderr)
@@ -108,8 +129,11 @@ def check_file(path: str) -> list[str]:
 
 def main(argv: list[str]) -> int:
     if "--all" in argv:
-        files = [f for f in iter_tracked_files() if should_scan(f)]
+        # iter_tracked_files 返回相对仓库根的路径，必须拼成绝对路径 ——
+        # 否则从 backend/ 调用时会去 backend/docs/... 找文件，全部读取失败。
+        files = [str(REPO_ROOT / f) for f in iter_tracked_files() if should_scan(f)]
     else:
+        # pre-commit 传入的路径相对 cwd（钩子在仓库根执行），原样使用。
         files = [f for f in argv[1:] if should_scan(f)]
 
     all_violations: list[str] = []

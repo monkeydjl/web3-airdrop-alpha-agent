@@ -17,20 +17,23 @@
 ## 执行步骤
 
 ### Step 1: 编号与命名
-- 操作：取下一个 `ADR-0XX`，文件名 `ADR-0XX-<kebab-slug>.md`
-- 验证：slug 简述决策主题，与既有编号不冲突
+- 操作：取下一个编号，文件名 `docs/adr/ADR-0XX-<kebab-slug>.md`
+- 验证：现有编号连续到 **ADR-016**（`ADR-016-llm-provider-round-robin.md`），
+  新 ADR 应为 `ADR-017`；slug 简述决策主题，与既有编号不冲突
 
 ### Step 2: 套用模板
-- 操作：复制 `TEMPLATE.md` 结构：状态 / 背景 / 决策驱动因素 / 选项 / 决策 / 后果 / 参考
+- 操作：复制 `docs/adr/TEMPLATE.md` 结构：状态 / 背景 / 决策驱动因素 / 选项 / 决策 / 后果 / 参考
 - 验证：背景说明"为什么现在决策"，后果含正反两面
 
 ### Step 3: 交叉引用
-- 操作：在文中引用相关 ADR（如 ADR-004、ADR-007），并在 `ADR_CROSS_REFERENCE.md` 登记关系
+- 操作：在文中引用相关 ADR（如 ADR-004、ADR-007），并在
+  `docs/adr/ADR_CROSS_REFERENCE.md` 登记关系
 - 验证：被取代的 ADR 标记为 `Superseded by ADR-0XX`
 
 ### Step 4: 登记索引
 - 操作：在 `docs/adr/README.md` 增加条目，摘要一句话
-- 验证：索引与文件一致
+- 验证：索引与文件一致。文档里的枚举值/事件标识**不要用反引号包裹**（本仓文档约定），
+  链接要能过 Docs Link Check workflow
 
 ## 输出
 - 文件：`docs/adr/ADR-0XX-<slug>.md`

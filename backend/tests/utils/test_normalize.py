@@ -414,3 +414,56 @@ class TestMergeRawRecords:
         ]
         merged = merge_raw_records(records)
         assert merged["discovered_at"] == t1
+
+
+class TestNoTokenYetMergeSemantics:
+    """no_token_yet 按 AND 合并：任一 token 状态源看到代币即判已发币（2026-09 修复）。
+
+    此前它混在 _MERGE_BOOL_OR 里，defillama 子条目的"没看到代币"
+    （no_token_yet=True）会覆盖 coingecko 的已上市确认，让已发币项目以
+    pre-TGE 身份绕过 eligibility veto。
+    """
+
+    def test_token_status_source_confirms_listed_wins(self):
+        records = [
+            {"name": "X", "source": "defillama", "no_token_yet": True},
+            {"name": "X", "source": "coingecko", "no_token_yet": False},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["no_token_yet"] is False
+
+    def test_all_token_status_sources_agree_pre_tge(self):
+        records = [
+            {"name": "X", "source": "defillama", "no_token_yet": True},
+            {"name": "X", "source": "rootdata", "no_token_yet": True},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["no_token_yet"] is True
+
+    def test_text_sources_are_neutral(self):
+        """文本类来源的 no_token_yet 是"正文没提"翻平出的缺省值，不参与投票。"""
+        records = [
+            {"name": "X", "source": "defillama", "no_token_yet": True},
+            {"name": "X", "source": "medium", "no_token_yet": False},
+            {"name": "X", "source": "twitter", "no_token_yet": False},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["no_token_yet"] is True
+
+    def test_manual_assertion_still_overrides(self):
+        records = [
+            {"name": "X", "source": "coingecko", "no_token_yet": False},
+            {"name": "X", "source": "manual", "no_token_yet": True},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["no_token_yet"] is True
+
+    def test_no_token_status_sources_keeps_primary(self):
+        """没有 token 状态源投票时，保持 primary 记录的取值。"""
+        records = [
+            {"name": "X", "source": "medium", "no_token_yet": True},
+            {"name": "X", "source": "twitter", "no_token_yet": False},
+        ]
+        merged = merge_raw_records(records)
+        # primary 是优先级最高的 medium；无投票 → 不改写
+        assert merged["no_token_yet"] is True

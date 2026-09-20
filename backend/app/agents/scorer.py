@@ -15,6 +15,8 @@ import structlog
 
 from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState
+from app.agents.eligibility import apply_eligibility_gate
+from app.agents.narrative import canonical_sector_key
 from app.config import settings
 from app.models import ScoreResult
 
@@ -105,14 +107,30 @@ class ScorerAgent(BaseAgent):
             # Calculate weighted total score
             total_score = self._calculate_total_score(subscores)
 
-            # Determine label from score
+            # Map the weighted score first, then apply deterministic eligibility vetoes.
+            # The veto never changes total_score: score means project quality, label
+            # means whether a currently actionable airdrop path exists (ADR-015).
             label = self._score_to_label(total_score)
+            eligibility = apply_eligibility_gate(state.project, label)
+            label = eligibility.label
+
+            if eligibility.veto:
+                logger.info(
+                    "scorer.veto_applied",
+                    project_id=state.project.id,
+                    veto=eligibility.veto,
+                    original_label=self._score_to_label(total_score),
+                    final_label=label,
+                )
 
             # Apply confidence degradation if needed
             label = self._apply_confidence_degradation(label, confidence)
 
-            # Generate reasons
+            # Generate reasons. A veto explanation deliberately comes first so a
+            # downgraded label is never presented as an unexplained score anomaly.
             reasons = self._generate_reasons(state, subscores, confidence, label)
+            if eligibility.reason:
+                reasons = [eligibility.reason, *reasons][:6]
 
             # Create result
             result = ScoreResult(
@@ -122,12 +140,14 @@ class ScorerAgent(BaseAgent):
                 reason=reasons,
                 sub_scores=subscores,
                 weight_version=WEIGHT_VERSION,
+                veto=eligibility.veto,
             )
 
             # Update state
             state.score = result.score
             state.label = result.label
             state.confidence = result.confidence
+            state.veto = result.veto
             state.reason = result.reason
             # 供 Repository 持久化到 projects.weight_version / raw_signals
             state.sub_scores = result.sub_scores
@@ -226,6 +246,15 @@ class ScorerAgent(BaseAgent):
             score += 7.0
         if getattr(p, "has_contract", False):
             score += 10.0  # product/contracts actually exist
+
+        # 官网活性信号（2026-09-08，vitals 探测）。site_alive=False 意味
+        # 「我们打过去过，官网真挂了」（连接错/超时/410 截断都算凉透）。
+        # 用户看着一个 65+ 分项目的第一个问题往往是「官网呢」，这信号
+        # 不言不语就把坑踩掉，必须扣分。None（没探过）则不处理 ——
+        # 探测是新增能力，存量不应因此被误判。
+        site_alive = getattr(p, "site_alive", None)
+        if site_alive is False:
+            score -= 12.0
 
         tvl = getattr(p, "tvl_usd", None)
         if tvl is not None:
@@ -413,10 +442,22 @@ class ScorerAgent(BaseAgent):
         - n > 15: 40
 
         Fallback: 50 (neutral) if sector missing or not in counts.
+
+        查 counts 用**规范键**（`canonical_sector_key`），与
+        `_calculate_sector_counts()` 的分组口径必须一致 —— 一边按规范键计数、
+        一边按原始写法查，会全部 miss 然后静默退到中性 50 分。
         """
-        sector = state.project.sector
-        if not sector or sector not in self.sector_counts:
+        sector = canonical_sector_key(state.project.sector)
+        if not sector:
             return 50.0
+
+        if sector not in self.sector_counts:
+            # 兼容调用方直接以原始写法构造 sector_counts 的老路径（含既有测试）。
+            raw = state.project.sector
+            if raw and raw in self.sector_counts:
+                sector = raw
+            else:
+                return 50.0
 
         count = self.sector_counts[sector]
 
@@ -583,6 +624,10 @@ class ScorerAgent(BaseAgent):
             candidates.append(("roadmap unclear vs shipping signals", 18, False))
         if getattr(state.project, "has_contract", False):
             candidates.append(("on-chain product / contract signal", 16, False))
+        site_alive = getattr(state.project, "site_alive", None)
+        if site_alive is False:
+            # 官网挂到连不上/摘牌是确定性事故：理由必须看得见，而不仅仅影响分数
+            candidates.append(("official site unreachable (vitals probe)", 18, True))
 
         # Transparency (v1.2/v1.3)
         tr_score = subscores.get("transparency", 50)
