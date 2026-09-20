@@ -38,6 +38,7 @@ class TestKnownDomains:
             "oauth.reddit.com",
             "medium.com",
             "arweave.net",
+            "t.me",
         ):
             assert host in _KNOWN_DOMAINS
 

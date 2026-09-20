@@ -250,6 +250,7 @@ SOURCE_PRIORITY = {
     "reddit": 8,
     "medium": 8,
     "mirror": 8,
+    "telegram": 8,
     "twitter": 9,  # Generic twitter fallback
     "unknown": 99,
 }

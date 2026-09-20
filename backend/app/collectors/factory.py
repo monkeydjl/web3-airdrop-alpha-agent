@@ -25,6 +25,7 @@ from app.collectors.mirror import MirrorCollector
 from app.collectors.reddit import RedditCollector
 from app.collectors.registry import CollectorRegistry
 from app.collectors.rootdata import RootDataCollector
+from app.collectors.telegram import TelegramChannelCollector
 from app.collectors.twitter import TwitterKeywordCollector, TwitterKolCollector
 
 _registry: CollectorRegistry | None = None
@@ -49,6 +50,7 @@ def build_default_registry() -> CollectorRegistry:
         RedditCollector(),
         MediumCollector(),
         MirrorCollector(),
+        TelegramChannelCollector(),
     ):
         registry.register(collector)
     return registry

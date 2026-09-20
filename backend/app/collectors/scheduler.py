@@ -79,6 +79,7 @@ class CollectionScheduler:
             "reddit": settings.reddit_cron,
             "medium": settings.medium_cron,
             "mirror": settings.mirror_cron,
+            "telegram": settings.telegram_cron,
         }
 
         for source_id, cron in cron_map.items():

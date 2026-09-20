@@ -113,6 +113,12 @@
   - 投影与通知：`app/opportunity/workflow.py` 在 `OpportunitySummaryProjection` 注入中英文分析，`app/notify/evaluator.py` 联动生成 `exit_advisory` 紧急预警事件；
   - 前端视觉呈现：`ProjectCard.tsx` 动态呈现「零资金成本」「PUA预警」「建议撤退」徽标；`app/project/[id]/page.tsx` 顶部显示撤退与疲劳警示横幅；`OpportunityWorkflowPanel.tsx` 嵌入撤退预警框与摩擦等级；
   - 1,079 项全栈单元、契约与前端规范测试 100% 通过。
+- 零成本 Telegram 免费公开频道采集器（2026-09-20 落地）：
+  - 核心设计：基于 Telegram 官方公开免鉴权 Web 预览端点（`https://t.me/s/{channel}`）抓取最新消息，无需 API Key、无需手机号/Bot 登录，彻底规避商业 API 高昂费用与封号风险；
+  - 轻量解析：使用 Python 标准库 `html.parser.HTMLParser`（`TelegramWebParser`）解析，不引入新依赖，严格遵守版本锁定门禁；
+  - 信号与控费：复用 `content_signals.py` 提取早期空投信号（`testnet`、`points`、`funding`、`tge`、`airdrop` 等）；遵照 P2 内容源规范，`discovery_score` 封顶于 0.28（低于 0.30 LLM 触发阈值），只存 `project_signals`，不消耗 LLM 预算；
+  - 全流程接轨：`backend/app/config.py` 登记配置；`scheduler.py` 登记 cron（`0 */4 * * *`）；`rate_limiter.py` 登记 0.5 req/s、burst 2；`factory.py` 注册 `TelegramChannelCollector`；`normalize.py` 设置 `SOURCE_PRIORITY["telegram"] = 8`；`domain_allowlist.py` 登记 `t.me`；
+  - 文档与契约：`docs/DATA_SOURCE_STRATEGY.md` 与 `test_data_source_strategy_parity.py` 100% 同步，85 项后端测试与前端类型检查全部通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 

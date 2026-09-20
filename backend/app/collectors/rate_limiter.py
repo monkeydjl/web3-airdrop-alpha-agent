@@ -56,6 +56,7 @@ class TokenBucketRateLimiter:
         "reddit": RateLimitConfig(requests_per_second=0.5, burst=2),
         "medium": RateLimitConfig(requests_per_second=0.5, burst=2),
         "mirror": RateLimitConfig(requests_per_second=0.5, burst=2),
+        "telegram": RateLimitConfig(requests_per_second=0.5, burst=2),
     }
 
     def __init__(self, source_id: str, config: RateLimitConfig | None = None) -> None:

@@ -550,6 +550,11 @@ class Settings(BaseSettings):
     mirror_timeout: int = 30
     mirror_retry: int = 3
     mirror_cron: str = "30 */6 * * *"
+    telegram_enabled: bool = True
+    telegram_channels: str = "airdropinspect,cryptorank_airdrops,airdrops_tech,AirdropAlert"
+    telegram_timeout: int = 30
+    telegram_retry: int = 3
+    telegram_cron: str = "0 */4 * * *"
 
     # ── Feature Flags ─────────────────────────────
     enable_llm_enhancement: bool = False
