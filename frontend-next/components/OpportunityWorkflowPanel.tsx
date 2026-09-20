@@ -671,7 +671,7 @@ function OpportunityAssessmentSummary({
             {opportunity.model_version} / {opportunity.profile_version}
             {opportunity.assessment_id ? ` · id ${opportunity.assessment_id}` : ''}
           </p>
-          {(opportunity.capital_friction_tier_zh || opportunity.fatigue_index != null) && (
+          {(opportunity.capital_friction_tier_zh || opportunity.fatigue_index != null || opportunity.viability_tier_zh) && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {opportunity.capital_friction_tier_zh ? (
                 <span
@@ -698,6 +698,19 @@ function OpportunityAssessmentSummary({
                   {opportunity.fatigue_level_zh ? ` (${opportunity.fatigue_level_zh})` : ''}
                 </span>
               ) : null}
+              {opportunity.viability_tier_zh ? (
+                <span
+                  className={`badge text-xs ${
+                    opportunity.viability_tier === 'unviable'
+                      ? 'border border-rose-500/40 bg-rose-500/20 text-rose-800 dark:text-rose-300 font-semibold'
+                      : opportunity.viability_tier === 'borderline'
+                      ? 'border border-amber-500/40 bg-amber-500/20 text-amber-800 dark:text-amber-300 font-medium'
+                      : 'border border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-medium'
+                  }`}
+                >
+                  存活率: {opportunity.viability_tier_zh}
+                </span>
+              ) : null}
             </div>
           )}
           {opportunity.exit_advisory?.active ? (
@@ -712,6 +725,24 @@ function OpportunityAssessmentSummary({
               {opportunity.exit_advisory.reasons_zh?.length ? (
                 <ul className="mt-1 list-inside list-disc text-[11px] opacity-90">
                   {opportunity.exit_advisory.reasons_zh.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          {opportunity.viability_advisory && opportunity.viability_advisory.tier !== 'viable' ? (
+            <div className="mt-3 rounded-lg border border-rose-500/50 bg-rose-500/10 p-2.5 text-rose-700 dark:text-rose-300">
+              <div className="flex items-center gap-1.5 font-bold text-xs">
+                <span>🛡️ 存活率与跑道评估 (Viability Gate)</span>
+                <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px]">
+                  {opportunity.viability_advisory.tier === 'unviable' ? '不可行 / 预警' : '临界观察'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs">{opportunity.viability_advisory.recommendation_zh}</p>
+              {opportunity.viability_advisory.reasons_zh?.length ? (
+                <ul className="mt-1 list-inside list-disc text-[11px] opacity-90">
+                  {opportunity.viability_advisory.reasons_zh.map((r, i) => (
                     <li key={i}>{r}</li>
                   ))}
                 </ul>

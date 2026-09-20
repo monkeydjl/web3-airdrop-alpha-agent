@@ -14,6 +14,7 @@ from app.opportunity.models import (
 PUA_FATIGUE_WARNING = "PUA_FATIGUE_WARNING"
 HEAVY_CAPITAL_LOCKUP = "HEAVY_CAPITAL_LOCKUP"
 EXIT_RECOMMENDED = "EXIT_RECOMMENDED"
+LOW_RUNWAY_RISK = "LOW_RUNWAY_RISK"
 
 WATCH_REASON_ACTIONS = {
     "WAIT_TASK_OPEN": "Wait for official participation to open, then reassess.",
@@ -25,6 +26,7 @@ WATCH_REASON_ACTIONS = {
     "REWARD_TOO_UNCERTAIN": "Validate conservative reward economics before participating.",
     "SINGLE_WALLET_ONLY": "Use a compatible single-wallet profile if official rules permit it.",
     PUA_FATIGUE_WARNING: "Hold off on depositing further capital due to prolonged points inflation or multiple seasons.",
+    LOW_RUNWAY_RISK: "Do not allocate significant capital or time: project has insufficient funding or runway to survive until TGE.",
 }
 
 IGNORE_REASON_ACTIONS = {
@@ -38,6 +40,7 @@ IGNORE_REASON_ACTIONS = {
     "PROFILE_MISMATCH": "Do not participate under this user profile.",
     HEAVY_CAPITAL_LOCKUP: "Do not participate under current profile due to excessive capital lockup or high friction.",
     EXIT_RECOMMENDED: "Do not participate or hold assets: project exhibits severe deterioration or inactivity.",
+    LOW_RUNWAY_RISK: "Do not participate: project has insufficient funding or depleted runway in bear market.",
 }
 
 BLOCK_REASON_ACTIONS = {
@@ -86,6 +89,7 @@ WATCH_REASON_ACTIONS_ZH = {
     "REWARD_TOO_UNCERTAIN": "在参与前先核验保守收益预期。",
     "SINGLE_WALLET_ONLY": "若官方规则允许，使用兼容的单钱包画像参与。",
     "PUA_FATIGUE_WARNING": "积分周期过长或多季稀释严重，存在明显 PUA 风险，建议暂停追加资金沉淀。",
+    "LOW_RUNWAY_RISK": "项目融资规模过小或缺乏知名机构背书，在低迷行情下存活至发币概率极低，建议规避。",
 }
 
 IGNORE_REASON_ACTIONS_ZH = {
@@ -99,6 +103,7 @@ IGNORE_REASON_ACTIONS_ZH = {
     "PROFILE_MISMATCH": "在当前用户画像下不建议参与。",
     "HEAVY_CAPITAL_LOCKUP": "资金沉淀要求过高或摩擦损耗过大，不符合低成本/保本画像。",
     "EXIT_RECOMMENDED": "项目出现显著恶化或停摆迹象，建议立即撤出资金并停止交互。",
+    "LOW_RUNWAY_RISK": "项目融资过小或缺乏知名机构支持，存活概率极低，不建议参与。",
 }
 
 BLOCK_REASON_ACTIONS_ZH = {
@@ -148,6 +153,13 @@ def decide(
     # 止损撤退判定：若项目检测到恶化/停摆迹象，直接触发撤退
     if inputs.exit_advisory and inputs.exit_advisory.get("active"):
         return _not_fit("EXIT_RECOMMENDED", now, inputs)
+
+    # 存活率与跑道硬检验：若项目触发低迷行情严重存活风险，直接拦截
+    if inputs.viability_advisory and inputs.viability_advisory.get("tier") == "unviable":
+        reasons = inputs.viability_advisory.get("reasons") or ()
+        if "UNBACKED_POINTS_MACHINE" in reasons:
+            return _not_fit("LOW_RUNWAY_RISK", now, inputs)
+        return _monitor(("LOW_RUNWAY_RISK",), now, inputs)
 
     # 已确知为"不符合画像"的硬约束必须先于"证据不足"判定。
     # 超预算成本会让 _derive_eligibility 返回 None（probability.py:115），进而把
@@ -420,6 +432,8 @@ def _actionable(now: datetime, inputs: OpportunityInputs | None = None) -> Decis
         exit_advisory=inputs.exit_advisory if inputs else None,
         fatigue_index=inputs.fatigue_index if inputs else None,
         capital_friction_tier=inputs.capital_friction_tier if inputs else None,
+        viability_tier=inputs.viability_tier if inputs else None,
+        viability_advisory=inputs.viability_advisory if inputs else None,
     )
 
 
@@ -435,6 +449,8 @@ def _monitor(codes: tuple[str, ...], now: datetime, inputs: OpportunityInputs | 
         exit_advisory=inputs.exit_advisory if inputs else None,
         fatigue_index=inputs.fatigue_index if inputs else None,
         capital_friction_tier=inputs.capital_friction_tier if inputs else None,
+        viability_tier=inputs.viability_tier if inputs else None,
+        viability_advisory=inputs.viability_advisory if inputs else None,
     )
 
 
@@ -450,6 +466,8 @@ def _insufficient(codes: tuple[str, ...], now: datetime, inputs: OpportunityInpu
         exit_advisory=inputs.exit_advisory if inputs else None,
         fatigue_index=inputs.fatigue_index if inputs else None,
         capital_friction_tier=inputs.capital_friction_tier if inputs else None,
+        viability_tier=inputs.viability_tier if inputs else None,
+        viability_advisory=inputs.viability_advisory if inputs else None,
     )
 
 
@@ -465,6 +483,8 @@ def _not_fit(code: str, now: datetime, inputs: OpportunityInputs | None = None) 
         exit_advisory=inputs.exit_advisory if inputs else None,
         fatigue_index=inputs.fatigue_index if inputs else None,
         capital_friction_tier=inputs.capital_friction_tier if inputs else None,
+        viability_tier=inputs.viability_tier if inputs else None,
+        viability_advisory=inputs.viability_advisory if inputs else None,
     )
 
 
@@ -481,4 +501,6 @@ def _blocked(code: str, now: datetime, inputs: OpportunityInputs | None = None) 
         exit_advisory=inputs.exit_advisory if inputs else None,
         fatigue_index=inputs.fatigue_index if inputs else None,
         capital_friction_tier=inputs.capital_friction_tier if inputs else None,
+        viability_tier=inputs.viability_tier if inputs else None,
+        viability_advisory=inputs.viability_advisory if inputs else None,
     )

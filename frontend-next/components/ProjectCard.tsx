@@ -91,6 +91,14 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
                   建议撤退
                 </span>
               ) : null}
+              {project.reason?.includes('LOW_RUNWAY_RISK') ? (
+                <span
+                  className="badge bg-rose-500/20 text-rose-400 border border-rose-500/40 text-[10px] font-semibold"
+                  title="存活率预警：项目融资微薄、跑道耗尽或缺乏机构背书，面临极高停服或归零风险"
+                >
+                  存活预警
+                </span>
+              ) : null}
               {project.signals?.site_alive === false ? (
                 <span
                   className="badge bg-red-500/15 text-red-400 border border-red-500/30 text-[10px]"

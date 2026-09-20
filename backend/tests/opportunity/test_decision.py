@@ -680,6 +680,7 @@ def test_now_must_be_timezone_aware(passing_case):
                 "REWARD_TOO_UNCERTAIN",
                 "SINGLE_WALLET_ONLY",
                 "PUA_FATIGUE_WARNING",
+                "LOW_RUNWAY_RISK",
             },
         ),
         (
@@ -695,6 +696,7 @@ def test_now_must_be_timezone_aware(passing_case):
                 "PROFILE_MISMATCH",
                 "HEAVY_CAPITAL_LOCKUP",
                 "EXIT_RECOMMENDED",
+                "LOW_RUNWAY_RISK",
             },
         ),
         (BLOCK_REASON_ACTIONS, {"SAFETY_BLOCK", "INTEGRITY_BLOCK", "RULE_BLOCK"}),

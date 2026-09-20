@@ -124,6 +124,12 @@
   - 协议解析：解析 Farcaster Epoch 秒数偏移、从 `castAddBody.text` 与 `embeds` 提取正文与项目链接，复用 `content_signals.py` 识别空投/Alpha 信号并限制 `discovery_score <= 0.28`，不消耗 LLM 预算；
   - 全流程接轨：`config.py` 登记配置、`scheduler.py` 登记 cron（`0 */4 * * *`）、`rate_limiter.py` 登记 0.5 req/s、burst 2、`factory.py` 注册 `FarcasterCollector`、`normalize.py` 设置 `SOURCE_PRIORITY["farcaster"] = 8`、`domain_allowlist.py` 登记 `hub.pinata.cloud`；
   - 文档与契约：`docs/DATA_SOURCE_STRATEGY.md` 与 `test_data_source_strategy_parity.py` 100% 同步，94 项后端测试与前端类型检查全部通过。
+- 项目存活率与融资硬检验门禁（Runway & Viability Gate，2026-09-21 落地）：
+  - 核心算法：`backend/app/services/viability_gate.py` 纯确定性评估服务，识别三类致命风险：`UNBACKED_POINTS_MACHINE`（零融资且无背书的纯积分盘）、`LOW_FUNDING_UNVIABLE`（公开融资 < $3M 且无 Tier-1/Tier-2 机构背书）、`RUNWAY_DEPLETED`（小额融资已超 18 个月且代码/TVL 停摆）；Tier-1 VC（Paradigm、a16z、Polychain 等）背书可豁免小额融资限制；
+  - 决策门禁：`app/opportunity/decision.py` 在 `decide()` 实施短路拦截逻辑，纯积分盘直接定性为 `IGNORE`（`NOT_FIT`，理由码 `LOW_RUNWAY_RISK`），微额融资与跑道耗尽降级为 `WATCH`（`MONITOR`），彻底杜绝在空手套白狼或即将停服的项目上浪费 gas 与流动性；
+  - 投影与数据流：`app/opportunity/models.py` 与 `workflow.py` 在 `OpportunitySummaryProjection` 注入 `viability_tier`、`viability_tier_zh` 与 `viability_advisory`；`routers/v1/projects.py` 增补 `low_runway_risk` 中文映射；
+  - 前端视觉呈现：`ProjectCard.tsx` 动态展示「存活预警」徽标；`app/project/[id]/page.tsx` 顶部呈现「项目存活与跑道预警」横幅；`OpportunityWorkflowPanel.tsx` 呈现存活率徽标（资金充裕/跑道观察/存活预警）与详细评估卡片；
+  - 198 项后端契约与全套前端单测、类型检查 100% 通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 

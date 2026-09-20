@@ -73,6 +73,9 @@ _REASONS_ZH_MAP: dict[str, str] = {
     "token already launched with no verified follow-on airdrop path": "已发币且无可验证的后续空投路径",
     "team or official source explicitly disclaimed airdrop / token incentives": "团队或官方已明确否认空投/代币激励",
     "no verified testnet, points program, task portal, or explicit airdrop mention": "暂无可验证的测试网、积分体系、任务门户或官方空投声明",
+    # Viability & Runway gate reasons
+    "low_runway_risk": "存活率与跑道预警（极低存活率）",
+    "low runway risk": "存活率与跑道预警（极低存活率）",
 }
 
 

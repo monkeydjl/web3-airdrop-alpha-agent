@@ -212,6 +212,9 @@ class OpportunitySummaryProjection(BaseModel):
     capital_friction_tier: str | None = None
     capital_friction_tier_zh: str | None = None
     exit_advisory: dict[str, Any] | None = None
+    viability_tier: str | None = None
+    viability_tier_zh: str | None = None
+    viability_advisory: dict[str, Any] | None = None
 
 
 class NextActionProjection(BaseModel):
@@ -455,6 +458,11 @@ def _project_opportunity(
     friction_tier = assessment.capital_friction_tier
     friction_tier_zh = FRICTION_TIER_ZH.get(friction_tier) if friction_tier else None
 
+    from app.services.viability_gate import VIABILITY_TIER_ZH
+
+    viability_tier = assessment.viability_tier
+    viability_tier_zh = VIABILITY_TIER_ZH.get(viability_tier) if viability_tier else None
+
     return OpportunitySummaryProjection(
         assessment_id=assessment.assessment_id,
         model_version=assessment.model_version,
@@ -485,6 +493,9 @@ def _project_opportunity(
         capital_friction_tier=friction_tier,
         capital_friction_tier_zh=friction_tier_zh,
         exit_advisory=assessment.exit_advisory,
+        viability_tier=viability_tier,
+        viability_tier_zh=viability_tier_zh,
+        viability_advisory=assessment.viability_advisory,
     )
 
 

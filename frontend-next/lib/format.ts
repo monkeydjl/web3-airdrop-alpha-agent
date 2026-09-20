@@ -318,6 +318,12 @@ const REASONS_ZH_MAP: Record<string, string> = {
   'token already launched with no verified follow-on airdrop path': '已发币且无可验证的后续空投路径',
   'team or official source explicitly disclaimed airdrop / token incentives': '团队或官方已明确否认空投/代币激励',
   'no verified testnet, points program, task portal, or explicit airdrop mention': '暂无可验证的测试网、积分体系、任务门户或官方空投声明',
+
+  // Viability and Runway gate reasons
+  'low_runway_risk': '存活跑道风险：融资过小或缺乏知名机构支持',
+  'low_funding_unviable': '公开融资 < $3M 且缺乏顶级机构背书，低迷行情下极易倒闭',
+  'runway_depleted': '距离上次小额融资已超 18 个月且开发停摆，跑道资金基本耗尽',
+  'unbacked_points_machine': '零融资/未知背景却开启积分盘，无实质 TVL 支撑，归零风险极高',
 };
 
 export function reasonZh(r: string): string {
@@ -508,5 +514,16 @@ const FRICTION_TIER_ZH: Record<string, string> = {
 export function capitalFrictionTierZh(tier?: string | null): string {
   if (!tier) return '';
   return FRICTION_TIER_ZH[tier.toLowerCase()] || tier;
+}
+
+const VIABILITY_TIER_ZH: Record<string, string> = {
+  viable: '资金充裕',
+  borderline: '跑道观察',
+  unviable: '存活预警',
+};
+
+export function viabilityTierZh(tier?: string | null): string {
+  if (!tier) return '';
+  return VIABILITY_TIER_ZH[tier.toLowerCase()] || tier;
 }
 

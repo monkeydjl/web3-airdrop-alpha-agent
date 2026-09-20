@@ -243,6 +243,15 @@ export interface ExitAdvisory {
   recommendation_zh: string;
 }
 
+export type ViabilityTier = 'viable' | 'borderline' | 'unviable';
+
+export interface ViabilityAdvisory {
+  tier: ViabilityTier;
+  reasons: string[];
+  reasons_zh: string[];
+  recommendation_zh: string;
+}
+
 export interface OpportunitySummaryProjection {
   shadow: true;
   assessment_id: string | null;
@@ -275,6 +284,9 @@ export interface OpportunitySummaryProjection {
   capital_friction_tier?: FrictionTier | null;
   capital_friction_tier_zh?: string | null;
   exit_advisory?: ExitAdvisory | null;
+  viability_tier?: ViabilityTier | null;
+  viability_tier_zh?: string | null;
+  viability_advisory?: ViabilityAdvisory | null;
 }
 
 export interface NextActionProjection {
@@ -400,6 +412,9 @@ export interface OpportunityWorkflowProjection {
   capital_friction_tier?: FrictionTier | null;
   capital_friction_tier_zh?: string | null;
   exit_advisory?: ExitAdvisory | null;
+  viability_tier?: ViabilityTier | null;
+  viability_tier_zh?: string | null;
+  viability_advisory?: ViabilityAdvisory | null;
 }
 
 export interface InteractionCreatePayload {

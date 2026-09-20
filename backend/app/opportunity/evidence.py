@@ -581,6 +581,7 @@ def build_inputs(
         classify_capital_friction_tier,
         evaluate_exit_advisory,
     )
+    from app.services.viability_gate import evaluate_project_viability
 
     has_points = bool(project_row.get("has_points_program"))
     desc = (str(project_row.get("description") or "") + " " + str(project_row.get("sector") or "")).lower()
@@ -617,6 +618,19 @@ def build_inputs(
     exit_adv = evaluate_exit_advisory(
         github_inactive_days=project_row.get("github_recent_push_days"),
         site_alive=project_row.get("site_alive"),
+    )
+
+    viability_adv = evaluate_project_viability(
+        funding_total_usd=project_row.get("funding_total_usd"),
+        funding_tier=project_row.get("funding_tier"),
+        funding_rounds=int(project_row.get("funding_rounds") or 0),
+        funding_last_date=project_row.get("funding_last_date"),
+        funding_lead_investors=list(project_row.get("funding_lead_investors") or []),
+        github_inactive_days=project_row.get("github_recent_push_days"),
+        tvl_usd=project_row.get("tvl_usd"),
+        has_points_program=has_points,
+        stage=str(project_row.get("stage") or "ideation"),
+        now=now,
     )
 
     return OpportunityInputs(
@@ -669,4 +683,6 @@ def build_inputs(
         fatigue_index=fatigue_idx,
         capital_friction_tier=friction_tier,
         exit_advisory=exit_adv,
+        viability_tier=viability_adv["tier"],
+        viability_advisory=viability_adv,
     )

@@ -231,6 +231,8 @@ class DecisionResult(BaseModel):
     exit_advisory: dict[str, Any] | None = None
     fatigue_index: float | None = None
     capital_friction_tier: str | None = None
+    viability_tier: str | None = None
+    viability_advisory: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def remediation_matches_status(self) -> Self:
@@ -299,6 +301,8 @@ class OpportunityInputs(BaseModel):
     fatigue_index: float | None = None
     capital_friction_tier: str | None = None
     exit_advisory: dict[str, Any] | None = None
+    viability_tier: str | None = None
+    viability_advisory: dict[str, Any] | None = None
 
 
 class OpportunityAssessment(BaseModel):
@@ -337,6 +341,8 @@ class OpportunityAssessment(BaseModel):
     fatigue_index: float | None = None
     capital_friction_tier: str | None = None
     exit_advisory: dict[str, Any] | None = None
+    viability_tier: str | None = None
+    viability_advisory: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def remediation_matches_status(self) -> Self:

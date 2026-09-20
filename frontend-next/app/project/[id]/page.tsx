@@ -486,6 +486,21 @@ export default function ProjectPage() {
         </div>
       )}
 
+      {/* 存活率与跑道硬检验预警横幅 */}
+      {reasons.includes('LOW_RUNWAY_RISK') && (
+        <div className="mb-6 rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-rose-300">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">🛡️</span>
+            <div className="space-y-1">
+              <h3 className="font-semibold text-rose-200">项目存活与跑道预警 (Viability & Runway Advisory)</h3>
+              <p className="text-xs leading-relaxed text-rose-300/90">
+                该项目公开融资微薄（&lt;$3M 且无主流机构背书）、跑道耗尽或属于无背书纯积分盘。在当前低迷行情下极难撑至发币，已被系统门禁拦截降级，严防虚耗交互资金与精力。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* masthead */}
       <header className="mb-9 grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
