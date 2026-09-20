@@ -291,6 +291,7 @@ def list_projects(
                     "auto_discovered": bool(p.get("auto_discovered", False)),
                     "veto": p.get("veto"),
                     "skipped": bool(p.get("skipped", False)),
+                    "signal_consensus": p.get("signal_consensus"),
                 }
             )
 
@@ -465,6 +466,7 @@ def get_project(
                     # 与 veto 刻意分两列：系统判断（veto）与用户决定（skipped）
                     # 要能分别呈现/撤掉（2026-09-08，§44）。
                     "skipped": bool(project.get("skipped", False)),
+                    "signal_consensus": project.get("signal_consensus"),
                     "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
                     "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
                 }
@@ -572,4 +574,43 @@ def get_project_timeline(
         raise HTTPException(
             status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to fetch project timeline"}
         ) from e
+
+
+@router.get(
+    "/projects/{project_id}/signals-consensus",
+    summary="获取项目多源信号交叉印证与共识",
+    description="聚合 Telegram、Farcaster、GitHub、RSS 等免费源，计算 14 天信号共识度与免 Token 推荐加成。",
+)
+def get_project_signals_consensus(
+    project_id: str = Path(..., description="项目 ID"),
+    window_days: int = Query(14, ge=1, le=90, description="时间窗口（天）"),
+) -> dict[str, Any]:
+    """获取项目多源信号交叉印证与共识度."""
+    try:
+        repo = ProjectRepository()
+        project = repo.get_by_id(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+            )
+        from app.services.signal_correlation import correlate_signals_for_project
+
+        conn = repo._get_conn()
+        try:
+            consensus = correlate_signals_for_project(conn, project_id, window_days=window_days)
+        finally:
+            if repo._should_close():
+                conn.close()
+        return {
+            "ok": True,
+            "data": consensus,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("api.projects.signals_consensus_failed", project_id=project_id, error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to get signals consensus"}
+        ) from e
+
 

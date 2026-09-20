@@ -160,6 +160,8 @@ export function sourceZh(source?: string | null): string {
     reddit: 'Reddit',
     medium: 'Medium',
     mirror: 'Mirror',
+    telegram: 'Telegram 频道',
+    farcaster: 'Farcaster 社区',
     seed: '种子数据',
     import: '文件导入',
   };

@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-09-19 随 V3 GDPR 合规更新）
+### 2.1 写操作的鉴权分布（实测，2026-09-21 随零成本增强更新）
 
-全仓共 **48 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **51 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 11 |
 | 无鉴权（公开） | 5 |
-| 匿名 token 可调 | 32 |
+| 匿名 token 可调 | 35 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -243,6 +243,11 @@
 | GET | `/api/v1/user/data` | v1 | V3（已实现，2026-09-19） | 导出用户所有数据（W12-11，详见 §52a） |
 | DELETE | `/api/v1/user/account` | v1 | V3（已实现，2026-09-19） | 注销删除用户账户（W12-11，详见 §52b） |
 | GET | `/api/v1/ha/status` | v1 | V3（已实现，2026-09-20） | 集群选主与 HA 状态查询（公开只读，W12-03，详见 §53） |
+| GET | `/api/v1/projects/{project_id}/signals-consensus` | v1 | 零成本增强（2026-09-21） | 多免费源信号交叉印证与共识度 |
+| GET | `/api/v1/onchain/chains` | v1 | 零成本增强（2026-09-21） | 支持的免 Key 公共 RPC 链列表 |
+| POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
+| GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |
+| POST / DELETE | `/api/v1/faucets/{faucet_id}/claim` | v1 | 零成本增强（2026-09-21） | 打卡标记水龙头已领取 / 重置冷却 |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |

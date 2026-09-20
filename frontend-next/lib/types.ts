@@ -35,11 +35,23 @@ export interface Project {
   tokenomics?: Record<string, unknown> | null;
   funding?: FundingInfo | null;
   signals?: Record<string, unknown> | null;
+  signal_consensus?: SignalConsensus | null;
   funding_note?: string | null;
   sub_scores?: Record<string, number> | null;
   weight_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface SignalConsensus {
+  source_count: number;
+  sources: string[];
+  signal_types: string[];
+  total_signals: number;
+  consensus_tier: 'high' | 'medium' | 'single' | 'none';
+  consensus_tier_zh: string;
+  has_testnet_consensus: boolean;
+  free_alpha_boost: number;
 }
 
 export interface ProjectsResponse {

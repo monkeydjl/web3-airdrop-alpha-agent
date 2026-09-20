@@ -262,7 +262,7 @@ class AnomalyDetectionService:
                         title="0 分项目爆发式增多",
                         description=(
                             f"当前有 {zero_score_count} 个项目（{zero_score_ratio * 100:.1f}%）"
-                            "评分为 0，超出 30% 告警阈值，可能存在评分引擎未启动或数据大面积损坏。"
+                            "评分为 0，超出 30% 告警阈值，可能存在评分决策引擎未启动或数据大面积损坏。"
                         ),
                         metric_name="airdrop_zero_score_ratio",
                         metric_value=zero_score_ratio,

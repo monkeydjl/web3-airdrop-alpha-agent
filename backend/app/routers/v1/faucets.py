@@ -1,0 +1,107 @@
+"""Testnet faucets tracking and cooldown API router."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Path, Query, Request
+
+from app.auth import get_current_user
+from app.services.user_scope import DEFAULT_USER
+from app.services.faucet_registry import (
+    FREE_FAUCETS,
+    list_faucets_with_status,
+    record_faucet_claim,
+    reset_faucet_claim,
+)
+
+router = APIRouter(tags=["faucets"])
+
+
+@router.get(
+    "/faucets",
+    summary="获取测试网水龙头列表与冷却状态",
+    description="返回系统精选的免费测试网水龙头列表，含实时 24h 冷却倒计时与领取指引。",
+)
+def get_faucets(
+    req: Request,
+    chain: str | None = Query(None, description="按链代号筛选 (如 sepolia, berachain_bartio)"),
+) -> dict[str, Any]:
+    user = get_current_user(req)
+    uid = user.get("user_id") or DEFAULT_USER
+    if uid == "anonymous":
+        uid = DEFAULT_USER
+
+    items = list_faucets_with_status(user_id=uid)
+    if chain:
+        chain_lower = chain.strip().lower()
+        items = [f for f in items if f.get("chain", "").lower() == chain_lower]
+
+    ready_count = sum(1 for f in items if f.get("status") == "ready")
+    cooling_count = sum(1 for f in items if f.get("status") == "cooling")
+
+    return {
+        "ok": True,
+        "data": {
+            "faucets": items,
+            "total": len(items),
+            "ready_count": ready_count,
+            "cooling_count": cooling_count,
+        },
+    }
+
+
+@router.post(
+    "/faucets/{faucet_id}/claim",
+    summary="打卡标记水龙头已领取",
+    description="标记当前用户已从指定水龙头领水，自动开启 24 小时冷却倒计时。",
+)
+def claim_faucet(
+    req: Request,
+    faucet_id: str = Path(..., description="水龙头 ID (如 sepolia-pow)"),
+) -> dict[str, Any]:
+    faucet = next((f for f in FREE_FAUCETS if f["id"] == faucet_id), None)
+    if not faucet:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "FAUCET_NOT_FOUND", "message": f"Faucet '{faucet_id}' not found"},
+        )
+
+    user = get_current_user(req)
+    uid = user.get("user_id") or DEFAULT_USER
+    if uid == "anonymous":
+        uid = DEFAULT_USER
+
+    updated = record_faucet_claim(user_id=uid, faucet_id=faucet_id)
+    return {
+        "ok": True,
+        "data": updated,
+    }
+
+
+@router.delete(
+    "/faucets/{faucet_id}/claim",
+    summary="重置水龙头冷却状态",
+    description="清除水龙头领取记录，将状态重置为「可领取」。",
+)
+def reset_faucet(
+    req: Request,
+    faucet_id: str = Path(..., description="水龙头 ID (如 sepolia-pow)"),
+) -> dict[str, Any]:
+    faucet = next((f for f in FREE_FAUCETS if f["id"] == faucet_id), None)
+    if not faucet:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "FAUCET_NOT_FOUND", "message": f"Faucet '{faucet_id}' not found"},
+        )
+
+    user = get_current_user(req)
+    uid = user.get("user_id") or DEFAULT_USER
+    if uid == "anonymous":
+        uid = DEFAULT_USER
+
+    reset_faucet_claim(user_id=uid, faucet_id=faucet_id)
+    return {
+        "ok": True,
+        "message": f"Faucet {faucet_id} cooldown reset to ready",
+    }

@@ -107,6 +107,21 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
                   官网不可达
                 </span>
               ) : null}
+              {project.signal_consensus?.consensus_tier === 'high' ? (
+                <span
+                  className="badge bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-semibold"
+                  title={`多源高度共识：由 ${project.signal_consensus.sources?.join('、')} 等 ${project.signal_consensus.source_count} 个独立公开源共同验证`}
+                >
+                  🎯 {project.signal_consensus.source_count}源共识
+                </span>
+              ) : project.signal_consensus?.consensus_tier === 'medium' ? (
+                <span
+                  className="badge bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 text-[10px] font-medium"
+                  title={`双源交叉印证：由 ${project.signal_consensus.sources?.join(' 与 ')} 共同验证`}
+                >
+                  🔗 双源印证
+                </span>
+              ) : null}
               {project.skipped ? (
                 <span
                   className="badge bg-surface-3 text-ink-faint line-through border border-line text-[10px]"

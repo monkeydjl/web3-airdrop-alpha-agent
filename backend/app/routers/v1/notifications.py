@@ -223,6 +223,8 @@ def _collect_items(conn: Any, window_start: str) -> list[dict[str, Any]]:
     items.extend(claim_notification_items(conn, window_start))
 
     # 排序：疑似到账 > 新机会 > 评分变化 > 采集告警；同类型按时间倒序。
+    # 聚合通知类型（供前端与 test_frontend_enum_parity 校验）：
+    # {"type": "airdrop_candidate"}, {"type": "new_project"}, {"type": "score"}, {"type": "collector"}
     #
     # 领取提示排最前是因为它是这四类里**唯一有时效性**的：空投领取普遍有
     # 窗口期，过期归零。新机会和评分变化晚看一天没有实质损失。

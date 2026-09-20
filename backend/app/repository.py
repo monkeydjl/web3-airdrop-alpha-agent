@@ -598,7 +598,13 @@ class ProjectRepository:
                 (DEFAULT_USER, project_id),
             )
             row = cursor.fetchone()
-            return dict_from_row(row) if row else None
+            if not row:
+                return None
+            record = dict_from_row(row)
+            from app.services.signal_correlation import correlate_signals_for_project
+
+            record["signal_consensus"] = correlate_signals_for_project(conn, project_id)
+            return record
         finally:
             if self._should_close():
                 conn.close()
@@ -749,6 +755,10 @@ class ProjectRepository:
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]
+            from app.services.signal_correlation import correlate_signals_for_project
+
+            for p in projects:
+                p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
 
             logger.info(
                 "repository.project.listed",

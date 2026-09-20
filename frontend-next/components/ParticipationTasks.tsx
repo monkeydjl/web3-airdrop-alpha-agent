@@ -4,6 +4,7 @@ import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check } from 'lucide-react';
+import { FaucetTrackerPanel } from '@/components/FaucetTrackerPanel';
 
 export interface ParticipationTask {
   id: string;
@@ -85,6 +86,7 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
   const [done, setDone] = useState<Record<string, boolean>>({});
   const [planBusy, setPlanBusy] = useState(false);
   const [filter, setFilter] = useState<string>('all');
+  const [showFaucetHub, setShowFaucetHub] = useState(false);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -289,11 +291,27 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
         ) : (
           <>
             {tasks.some((t) => t.category === 'testnet') ? (
-              <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
-                <span className="text-base">🛡️</span>
-                <p className="leading-relaxed">
-                  <strong>零资金成本提示：</strong>本项目支持免费测试网交互。请优先通过水龙头 (Faucet) 领取测试币，全程无需投入真实本金即可完成全套核心交互。
-                </p>
+              <div className="mb-4 space-y-2">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-800 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-start gap-2 max-w-xl">
+                    <span className="text-base">🛡️</span>
+                    <p className="leading-relaxed">
+                      <strong>零资金成本提示：</strong>本项目支持免费测试网交互。请优先通过水龙头 (Faucet) 领取测试币，全程无需投入真实本金即可完成全套核心交互。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFaucetHub((prev) => !prev)}
+                    className="shrink-0 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition-colors"
+                  >
+                    {showFaucetHub ? '收起水龙头' : '🚰 水龙头中心'}
+                  </button>
+                </div>
+                {showFaucetHub ? (
+                  <div className="mt-2">
+                    <FaucetTrackerPanel />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

@@ -136,7 +136,13 @@
   - 零成本水龙头指引：`backend/app/services/participation_tasks.py` 自动为测试网项目生成 `testnet-faucet-guide` 任务（优先级 1、必须、零成本说明）；前端 `ParticipationTasks.tsx` 动态展示「零资金成本提示」横幅；
   - 前端工作台交互：`frontend-next/app/page.tsx` 顶部工具栏增加「🛡️ 零资金成本」快速筛选 Chip，支持与「全部」互斥切换与重置；
   - 单元测试与验证：新增 `test_audit_viability.py` 与 `test_zero_cost_priority.py`，全量测试 100% 通过。
+- 零成本三大核心基础设施引擎（2026-09-21 落地）：
+  - 多免费源信号交叉印证与共识引擎：`backend/app/services/signal_correlation.py` 纯确定性聚合 Telegram、Farcaster、GitHub、RSS、CoinGecko 信号，计算 14 天共识等级（high/medium/single/none）并赋予免 Token 加成；`repository.py` 自动装配，`routers/v1/projects.py` 开放 `GET /api/v1/projects/{id}/signals-consensus`；`ProjectCard.tsx` 呈现「🎯 3源共识」与「🔗 双源印证」徽标；
+  - 免 Key 公共 EVM RPC 探测器：`backend/app/services/public_rpc_verifier.py` 接入 Sepolia、Arbitrum、Base、Optimism、Polygon、Berachain、Ethereum Mainnet 公共节点，通过 `eth_getCode` 与 `eth_getTransactionCount` 探测合约真实部署与活跃度；开放 `GET /api/v1/onchain/chains` 与 `POST /api/v1/onchain/verify`，并提供 `backend/scripts/verify_onchain_liveness.py` CLI 工具；
+  - 测试网水龙头 24h 冷却与任务日历：`backend/app/services/faucet_registry.py` 收录主流免 Key 优质水龙头，`faucet_claims` 本地表追踪打卡与倒计时；开放 `GET /api/v1/faucets`、`POST/DELETE /api/v1/faucets/{id}/claim`；前端交付 `FaucetTrackerPanel.tsx`，并在 `ParticipationTasks.tsx` 测试网横幅提供快捷入口；
+  - 门禁与契约：`docs/API_SPEC.md` 对齐 51 个写端点（35 匿名可调），`test_admin_only_rules.py`、`test_api_spec_parity.py`、`test_frontend_enum_parity.py`、`test_check_terminology.py` 187 项全仓测试 100% 通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
+
 
 

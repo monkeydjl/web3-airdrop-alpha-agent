@@ -130,6 +130,10 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ("DELETE", "/api/v1/api-keys/{key_id}"): "撤销登录用户自身 API Key，按 token 身份隔离。",
     # ── GDPR 合规（W12-11，ROADMAP §25.9 / §25.10，2026-09-19）──
     ("DELETE", "/api/v1/user/account"): "用户注销删除自身账户与去标识化反馈（GDPR §25.9 / ADR-008 §6）。",
+    # ── 零成本增强（2026-09-21）──
+    ("POST", "/api/v1/onchain/verify"): "免 Key 公共 RPC 探测合约存活性，只读查询链上状态，不修改系统数据。",
+    ("POST", "/api/v1/faucets/{faucet_id}/claim"): "用户标记测试网水龙头已领取，按 user_id 隔离。",
+    ("DELETE", "/api/v1/faucets/{faucet_id}/claim"): "重置测试网水龙头冷却状态，按 user_id 隔离。",
 }
 
 
