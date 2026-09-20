@@ -146,6 +146,10 @@
   - 全局主导航：`frontend-next/components/Nav.tsx` 引入 `Droplets` 图标，新增「水龙头」(`/faucets`) 入口；
   - 详情页多源共识卡片：`frontend-next/app/project/[id]/page.tsx` 新增多源共识视觉卡片，展示共识等级、测试网印证、Alpha 确定性加成比例、独立来源与信号类型；
   - 验证：前端 `npm run typecheck`、`npm test` (20/20)、后端 4 大门禁与功能测试（69 passed）全部通过，远程已推送至 `ede0a92`。
+- 免 Key 公共 RPC 链上存活性探测器全前端集成（2026-09-21 落地）：
+  - 核心组件：`frontend-next/components/OnChainVerifierPanel.tsx`，免 Key 支持 7 大网络（Sepolia/Arbitrum/Base/Optimism/Polygon/Berachain/Ethereum），输入 EVM 地址一键探测合约/EOA 状态、字节码大小、Nonce 与 RPC 延迟；内置 Uniswap V3 与 WETH9 体验样本；
+  - 双端集成：升级 `/faucets` 页面为「测试网水龙头与链上中心」，并在 `/project/[id]` 详情页接入 `pd-onchain` 折叠面板与右侧锚点导航；
+  - 验证：前端 `typecheck`、`test` (20/20)、后端 46 项 RPC 探测与门禁测试全部通过，远程已推送至 `0380ca3`。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 
