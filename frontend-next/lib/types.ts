@@ -54,6 +54,25 @@ export interface SignalConsensus {
   free_alpha_boost: number;
 }
 
+export interface SupportedChain {
+  key: string;
+  name: string;
+  type: 'testnet' | 'mainnet' | string;
+  chain_id: number;
+  endpoint_count: number;
+}
+
+export interface OnChainVerificationResult {
+  address: string;
+  chain: string;
+  is_contract: boolean;
+  bytecode_length: number;
+  nonce: number;
+  latency_ms: number;
+  verified_at: string;
+  rpc_endpoint: string;
+}
+
 export interface ProjectsResponse {
   projects: Project[];
   total: number;

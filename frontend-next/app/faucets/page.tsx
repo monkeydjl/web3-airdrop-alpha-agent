@@ -1,6 +1,7 @@
 'use client';
 
 import { FaucetTrackerPanel } from '@/components/FaucetTrackerPanel';
+import { OnChainVerifierPanel } from '@/components/OnChainVerifierPanel';
 import { ShieldCheck, Sparkles, Zap } from 'lucide-react';
 
 export default function FaucetsPage() {
@@ -10,14 +11,14 @@ export default function FaucetsPage() {
         <header className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-ink">
-              测试网水龙头中心 (Faucet Hub)
+              测试网水龙头与链上中心 (Faucet & On-Chain Hub)
             </h1>
             <span className="badge bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs">
               0 本金 · 0 Gas · 0 商业 API
             </span>
           </div>
           <p className="text-xs text-ink-muted">
-            全网主流免费测试网领水通道集合，支持 24 小时冷却倒计时追踪与一键打卡。保本零成本交互，从每日领水开始。
+            全网主流免费测试网领水通道集合与免 Key 公共 RPC 存活性探测。保本零成本交互，从每日领水与链上检验开始。
           </p>
         </header>
 
@@ -62,6 +63,12 @@ export default function FaucetsPage() {
 
         {/* Faucet Tracker Panel */}
         <FaucetTrackerPanel />
+
+        {/* On-Chain Contract Liveness Verifier */}
+        <OnChainVerifierPanel
+          title="免 Key 测试网链上存活性探测器 (On-Chain Contract Verifier)"
+          subtitle="通过免费公共 RPC 节点一键检验 Sepolia / Arbitrum / Base / Polygon / Berachain 真实合约字节码与交互 Nonce"
+        />
       </div>
     </div>
   );

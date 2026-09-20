@@ -9,6 +9,7 @@ import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
 import { ParticipationTasks } from '@/components/ParticipationTasks';
 import { MultiWalletStrategyPanel } from '@/components/MultiWalletStrategyPanel';
+import { OnChainVerifierPanel } from '@/components/OnChainVerifierPanel';
 import { ProjectTimelinePanel } from '@/components/ProjectTimelinePanel';
 import { TopBar } from '@/components/TopBar';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
@@ -67,6 +68,7 @@ const PAGE_SECTIONS = [
   { id: 'pd-timeline', label: '演化时间轴' },
   { id: 'pd-opportunity', label: 'Opportunity 行动流' },
   { id: 'pd-interactions', label: '我的投入' },
+  { id: 'pd-onchain', label: '链上存活性探测' },
   { id: 'pd-feedback', label: '校正这条判断' },
   { id: 'pd-funding', label: '融资' },
   { id: 'pd-agents', label: '四路分析' },
@@ -783,6 +785,15 @@ export default function ProjectPage() {
             <SecHead title="我的投入" />
             <InteractionPanel projectId={project.id} />
           </section>
+
+          {/* on-chain contract liveness verifier */}
+          <CollapsibleSection id="pd-onchain" title="链上存活性即时探测" meta="免 Key 公共 RPC · 字节码与活跃度">
+            <OnChainVerifierPanel
+              initialAddress={typeof signals.contract_address === 'string' ? signals.contract_address : ''}
+              title={`「${project.name}」链上存活性探测`}
+              subtitle="输入合约地址或使用免 Key 公共 RPC 快速检验项目部署状态与交互计数"
+            />
+          </CollapsibleSection>
 
           {/* feedback */}
           <section id="pd-feedback" className="scroll-mt-[4.5rem] border-t border-line py-5">
