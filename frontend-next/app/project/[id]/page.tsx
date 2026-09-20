@@ -61,7 +61,7 @@ const PAGE_SECTIONS = [
   { id: 'pd-reasons', label: '为何是这个标签' },
   { id: 'pd-brief', label: '简报' },
   { id: 'pd-chat', label: 'AI 追问' },
-  { id: 'pd-signals', label: '可核验信号' },
+  { id: 'pd-signals', label: '多源共识与信号' },
   { id: 'pd-participation', label: '参与清单' },
   { id: 'pd-multi-wallet', label: '多钱包策略' },
   { id: 'pd-timeline', label: '演化时间轴' },
@@ -645,9 +645,79 @@ export default function ProjectPage() {
             <AiChatPanel projectId={project.id} />
           </section>
 
-          {/* signals */}
+          {/* signals & multi-source consensus */}
           <section id="pd-signals" className="scroll-mt-[4.5rem] border-t border-line py-5">
-            <SecHead title="可核验信号" />
+            <SecHead title="多源共识与可核验信号" meta="零成本公开情报印证" />
+
+            {/* 多源共识与交叉印证卡片 */}
+            {project.signal_consensus ? (
+              <div className="mb-5 rounded-lg border border-line bg-surface-1 p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded px-2.5 py-0.5 text-xs font-semibold ${
+                        project.signal_consensus.consensus_tier === 'high'
+                          ? 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                          : project.signal_consensus.consensus_tier === 'medium'
+                            ? 'border border-cyan-500/30 bg-cyan-500/15 text-cyan-600 dark:text-cyan-400'
+                            : project.signal_consensus.consensus_tier === 'single'
+                              ? 'border border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              : 'border border-line bg-surface-2 text-ink-muted'
+                      }`}
+                    >
+                      {project.signal_consensus.consensus_tier === 'high' && '🎯 '}
+                      {project.signal_consensus.consensus_tier === 'medium' && '⚡ '}
+                      {project.signal_consensus.consensus_tier_zh}
+                    </span>
+                    {project.signal_consensus.has_testnet_consensus && (
+                      <span className="inline-flex items-center gap-1 rounded border border-indigo-500/30 bg-indigo-500/15 px-2 py-0.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                        🧪 测试网已印证
+                      </span>
+                    )}
+                    {project.signal_consensus.free_alpha_boost > 0 && (
+                      <span className="font-mono text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        +{Math.round(project.signal_consensus.free_alpha_boost * 100)}% 确定性加成
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono text-[11px] text-ink-faint">
+                    捕获 {project.signal_consensus.total_signals} 条公开信号
+                  </span>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 text-xs">
+                  <div>
+                    <span className="text-ink-muted">独立情报来源 ({project.signal_consensus.source_count} 个)：</span>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {project.signal_consensus.sources.length > 0 ? (
+                        project.signal_consensus.sources.map((s) => (
+                          <span key={s} className="rounded bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-ink">
+                            {sourceZh(s)}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-ink-faint">暂无外部信号源</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-ink-muted">信号涵盖类型：</span>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {project.signal_consensus.signal_types.length > 0 ? (
+                        project.signal_consensus.signal_types.map((st) => (
+                          <span key={st} className="rounded border border-line px-2 py-0.5 font-mono text-[11px] text-ink-muted">
+                            {st}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-ink-faint">常规元数据</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid gap-x-6 sm:grid-cols-2 min-[1600px]:grid-cols-3">
               {SIGNAL_CHECKS.map(({ key, label }) => {
                 const on = Boolean(signals[key]);
