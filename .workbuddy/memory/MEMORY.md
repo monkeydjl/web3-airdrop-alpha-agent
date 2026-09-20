@@ -150,6 +150,10 @@
   - 核心组件：`frontend-next/components/OnChainVerifierPanel.tsx`，免 Key 支持 7 大网络（Sepolia/Arbitrum/Base/Optimism/Polygon/Berachain/Ethereum），输入 EVM 地址一键探测合约/EOA 状态、字节码大小、Nonce 与 RPC 延迟；内置 Uniswap V3 与 WETH9 体验样本；
   - 双端集成：升级 `/faucets` 页面为「测试网水龙头与链上中心」，并在 `/project/[id]` 详情页接入 `pd-onchain` 折叠面板与右侧锚点导航；
   - 验证：前端 `typecheck`、`test` (20/20)、后端 46 项 RPC 探测与门禁测试全部通过，远程已推送至 `0380ca3`。
+- 前端格式化与零成本数据源单元测试补全（2026-09-21 落地）：
+  - 单元测试：`frontend-next/lib/format.test.ts`，涵盖 `labelZh`、`stageZh`、`lifecycleStageZh`、`timingZh`、`sourceZh`（重点覆盖 Telegram 与 Farcaster 零成本渠道）、`riskLevelZh`、`teamTypeZh`、`tierZh`、`reasonZh`（存活率与决策理由）、`viabilityTierZh` 与 `capitalFrictionTierZh`；
+  - 测试执行器：`test.mjs` 引入 `format.test.ts`，Node 24 原生支持无需子进程，全量 34 项前端单测全绿；
+  - 验证：前端 `typecheck`、`test` (34 passed)、后端 72 项术语与编码测试全部通过，远程已推送至 `c44aff2`。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 
