@@ -154,6 +154,12 @@
   - 单元测试：`frontend-next/lib/format.test.ts`，涵盖 `labelZh`、`stageZh`、`lifecycleStageZh`、`timingZh`、`sourceZh`（重点覆盖 Telegram 与 Farcaster 零成本渠道）、`riskLevelZh`、`teamTypeZh`、`tierZh`、`reasonZh`（存活率与决策理由）、`viabilityTierZh` 与 `capitalFrictionTierZh`；
   - 测试执行器：`test.mjs` 引入 `format.test.ts`，Node 24 原生支持无需子进程，全量 34 项前端单测全绿；
   - 验证：前端 `typecheck`、`test` (34 passed)、后端 72 项术语与编码测试全部通过，远程已推送至 `c44aff2`。
+- DefiLlama 免费融资库深度挖掘与存活率联动（2026-09-21 落地）：
+  - 402 付费门槛绕过方案：DefiLlama 全局 `/raises` 端点已变更为付费 402，但协议详情端点 `https://api.llama.fi/protocol/{slug}` 依然 100% 开放、免 Key，且完整返回历史各轮次 `raises` 数组；采用「8,300+ 协议索引匹配 + 详情端点按需抽取」架构，100% 零商业 API 成本；
+  - 核心服务：`backend/app/services/defillama_raises.py`，实现 `parse_defillama_raises`（解析累加融资金额、投资人列表、匹配 Tier-1/Tier-2 机构），`build_protocols_slug_map` / `match_protocol_slug`（协议名归一化与匹配），`fetch_protocol_funding`（异步抓取协议详情中的融资信息）；
+  - 批量回填与存活重评：`backend/scripts/sync_defillama_raises.py`，支持 `--dry-run` 与 `--apply`，安全合并已有融资（`max(new_amount, existing_amount)`，投资人 union，最佳 Tier），自动联动 `evaluate_project_viability` 重新计算存活等级与建议；实测成功补全 Polyhedra Network（$25M -> $30M）、Grass（$4.5M -> $13.5M）、Pyth Network（升至 Tier-1）；
+  - 采集器集成：`backend/app/collectors/defillama.py` 集成融资抽取，在 `_build_discovery` 注入 `funding` 块与 `RawSignal(signal_type="funding")`；
+  - 单元测试与验证：`backend/tests/test_defillama_raises.py` 6 项单测全量通过，全仓无破坏性改动。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 
