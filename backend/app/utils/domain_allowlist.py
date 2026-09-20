@@ -53,6 +53,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "medium.com",  # Medium RSS tag feed
         "arweave.net",  # Mirror（经 Arweave GraphQL 公开读）
         "t.me",  # Telegram 公开频道 Web 预览（DATA_SOURCE_STRATEGY §2）
+        "hub.pinata.cloud",  # Farcaster 公开 Hubble HTTP 节点（DATA_SOURCE_STRATEGY §2）
         "api.telegram.org",  # Telegram Bot API（决策推送 sendMessage，ACTION_LOOP_DESIGN §2）
         "api.openai.com",  # LLM 单接口默认 endpoint
     }

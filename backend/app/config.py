@@ -555,6 +555,12 @@ class Settings(BaseSettings):
     telegram_timeout: int = 30
     telegram_retry: int = 3
     telegram_cron: str = "0 */4 * * *"
+    farcaster_enabled: bool = True
+    farcaster_hub_url: str = "https://hub.pinata.cloud"
+    farcaster_channels: str = "airdrop,airdrops,testnet"
+    farcaster_timeout: int = 30
+    farcaster_retry: int = 3
+    farcaster_cron: str = "0 */4 * * *"
 
     # ── Feature Flags ─────────────────────────────
     enable_llm_enhancement: bool = False

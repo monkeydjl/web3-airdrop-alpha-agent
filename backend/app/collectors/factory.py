@@ -17,6 +17,7 @@ from app.collectors.cryptorank import CryptoRankCollector
 from app.collectors.defillama import DefiLlamaCollector
 from app.collectors.discord import DiscordCollector
 from app.collectors.etherscan import EtherscanCollector
+from app.collectors.farcaster import FarcasterCollector
 from app.collectors.galxe import GalxeCollector
 from app.collectors.github import GitHubCollector
 from app.collectors.layer3 import Layer3Collector
@@ -51,6 +52,7 @@ def build_default_registry() -> CollectorRegistry:
         MediumCollector(),
         MirrorCollector(),
         TelegramChannelCollector(),
+        FarcasterCollector(),
     ):
         registry.register(collector)
     return registry

@@ -80,6 +80,7 @@ class CollectionScheduler:
             "medium": settings.medium_cron,
             "mirror": settings.mirror_cron,
             "telegram": settings.telegram_cron,
+            "farcaster": settings.farcaster_cron,
         }
 
         for source_id, cron in cron_map.items():

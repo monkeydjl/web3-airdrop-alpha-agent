@@ -169,6 +169,7 @@ def _real_cron() -> dict[str, str]:
         "medium": settings.medium_cron,
         "mirror": settings.mirror_cron,
         "telegram": settings.telegram_cron,
+        "farcaster": settings.farcaster_cron,
     }
     assert all(mapping.values()), f"有采集源的 cron 是空值：{mapping}"
     return mapping
@@ -378,9 +379,9 @@ class TestDistortionListIsHonest:
         assert not existing, f"§12.1/§12.5 说这些路径不存在，但它们现在存在了：{existing}"
 
     def test_p2_sources_have_collectors(self):
-        """Discord / Medium / Mirror / Reddit / Telegram 在 §2 里应是 ✅ 且已注册。"""
+        """Discord / Medium / Mirror / Reddit / Telegram / Farcaster 在 §2 里应是 ✅ 且已注册。"""
         registered = set(_real_collectors())
-        p2 = {"discord", "medium", "mirror", "reddit", "telegram"}
+        p2 = {"discord", "medium", "mirror", "reddit", "telegram", "farcaster"}
         missing = sorted(p2 - registered)
         assert not missing, f"§12.9 已改写为「P2 源已实现」，但这些源没注册进 registry：{missing}"
 

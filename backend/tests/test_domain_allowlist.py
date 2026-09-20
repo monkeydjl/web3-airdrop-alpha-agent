@@ -39,6 +39,7 @@ class TestKnownDomains:
             "medium.com",
             "arweave.net",
             "t.me",
+            "hub.pinata.cloud",
         ):
             assert host in _KNOWN_DOMAINS
 

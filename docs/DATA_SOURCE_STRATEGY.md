@@ -54,8 +54,8 @@
 
 | 事实 | 数字 |
 |---|---|
-| 已注册采集器 | **15 个**（加入 `discord` `reddit` `medium` `mirror` 与 `telegram` 等 P2 源） |
-| `.env` 开关 + Key 都就绪（`config_ready=true`） | **8 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan` + P2 的 `medium` `mirror` `telegram` 无需 Key 默认开） |
+| 已注册采集器 | **16 个**（加入 `discord` `reddit` `medium` `mirror` `telegram` 与 `farcaster` 等 P2 源） |
+| `.env` 开关 + Key 都就绪（`config_ready=true`） | **9 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan` + P2 的 `medium` `mirror` `telegram` `farcaster` 无需 Key 默认开） |
 | `data_sources` 表有记录的源 | **5 个**（`defillama` `github` `coingecko` `cryptorank` `etherscan`） |
 | `raw_projects` 累计 | **615 行**，dedup_key 全部互不重复 |
 | `project_signals` 累计 | **2261 行** |
@@ -88,21 +88,22 @@
 | **Medium** | P2 | ✅ | 自动采集（RSS tag feed） | 路线图、公告 | 免费，无需 Key |
 | **Mirror** | P2 | ✅ | 自动采集（Arweave GraphQL） | 路线图、公告 | 免费，无需 Key |
 | **Telegram** | P2 | ✅ | 自动采集（免登录 Web 预览端点频道抓取） | 早期信号、空投公告、测试网、积分 | 免费，无需 Key |
+| **Farcaster** | P2 | ✅ | 自动采集（免鉴权公共 Hubble 节点 casts 抓取） | 早期信号、创始人/Dev Alpha、测试网、积分 | 免费，无需 Key |
 | **手动录入 / CSV 导入** | — | ✅ | `POST /api/v1/run`、`POST /api/v1/import/projects` | 覆盖采集盲区 | 免费 |
 | **seed 策展** | — | ✅ | `scripts/seed.py` | 演示 / 测试基线 | 免费 |
 
-> **P2 五个源（Discord / Reddit / Medium / Mirror / Telegram）**，
+> **P2 六个源（Discord / Reddit / Medium / Mirror / Telegram / Farcaster）**，
 > 都是「内容里提到某项目」的二阶信号源，`discovery_score` 上限刻意压在
 > 0.28（分析阈值 0.3 之下），只贡献 `project_signals`、不触发 LLM 分析。
 > Discord 需 Bot Token、Reddit 需 OAuth App，都默认关闭；
-> Medium（RSS）/ Mirror（Arweave 公开读）/ Telegram（Web 预览）无需 Key、默认开启。
+> Medium（RSS）/ Mirror（Arweave 公开读）/ Telegram（Web 预览）/ Farcaster（公共 Hubble）无需 Key、默认开启。
 > **Alchemy Webhook 标「半」的含义**：接收端点、签名校验、状态查询都在
 > （`/api/v1/webhook/alchemy` + `/status`），但它是被动接收，
 > 不在 registry 里、不参与采集调度、`data_sources` 表里也没有它的记录。
 
 ---
 
-## 3. 15 个采集器的真实落点
+## 3. 16 个采集器的真实落点
 
 **上一版这张表的 10 个路径全是错的**（都写成
 `{source}_collector.py` 并标「计划实现位置」）。真实文件与类名：
@@ -126,6 +127,7 @@
 | `medium` | `backend/app/collectors/medium.py` | `MediumCollector` |
 | `mirror` | `backend/app/collectors/mirror.py` | `MirrorCollector` |
 | `telegram` | `backend/app/collectors/telegram.py` | `TelegramChannelCollector` |
+| `farcaster` | `backend/app/collectors/farcaster.py` | `FarcasterCollector` |
 
 <!-- collector-files:end -->
 
@@ -179,9 +181,9 @@
 `defillama` `github` `coingecko` `cryptorank` `etherscan`。
 （P2 的 `medium` `mirror` 无需 Key，`config_ready` 恒为 true，不算"配了 Key"。）
 
-**代码默认值（完全不给 `.env`）下只有 6 个为 true**：
-`defillama` `github` `coingecko` `medium` `mirror` `telegram` —— 这六个的 `*_ENABLED`
-默认是 `true`（前三个免费 P0，后三个免费 P2），其余 9 个默认 `false`
+**代码默认值（完全不给 `.env`）下只有 7 个为 true**：
+`defillama` `github` `coingecko` `medium` `mirror` `telegram` `farcaster` —— 这七个的 `*_ENABLED`
+默认是 `true`（前三个免费 P0，后四个免费 P2），其余 9 个默认 `false`
 （都需 Key 或付费）。
 
 ---
@@ -234,7 +236,7 @@
 | 5 | `github`、`rootdata` |
 | 6 | `cryptorank`、`galxe`、`layer3`、`etherscan` |
 | 7 | `twitter_kol` |
-| 8 | `twitter_keyword`、`discord`、`reddit`、`medium`、`mirror`、`telegram` |
+| 8 | `twitter_keyword`、`discord`、`reddit`、`medium`、`mirror`、`telegram`、`farcaster` |
 | 9 | `twitter` |
 | 99 | `unknown`（以及任何未登记的来源名） |
 
@@ -288,6 +290,7 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | `twitter_kol` | 来源权重 0.3 + 信号类型权重 + 互动量 × 0.25 | 1.0 |
 | `twitter_keyword` | 来源权重 0.1 + 信号类型权重 + 互动量 × 0.25 | 1.0 |
 | `telegram` | 信号类型基准 [0.05, 0.13]，刻意封顶 | `MAX_DISCOVERY_SCORE = 0.28` |
+| `farcaster` | 信号类型基准 [0.05, 0.13]，刻意封顶 | `MAX_DISCOVERY_SCORE = 0.28` |
 
 <!-- discovery-formula:end -->
 
@@ -358,6 +361,7 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | `medium` | `0 */6 * * *` | 每 6 小时 |
 | `mirror` | `30 */6 * * *` | 每 6 小时 30 分 |
 | `telegram` | `0 */4 * * *` | 每 4 小时 |
+| `farcaster` | `0 */4 * * *` | 每 4 小时 |
 
 <!-- collection-cron:end -->
 
@@ -495,6 +499,7 @@ discovery_score = 0.4 × tvl_score + 0.3 × github_score
 | `medium` | 0.5 | 2 | 无 |
 | `mirror` | 0.5 | 2 | 无 |
 | `telegram` | 0.5 | 2 | 无 |
+| `farcaster` | 0.5 | 2 | 无 |
 
 <!-- rate-limits:end -->
 

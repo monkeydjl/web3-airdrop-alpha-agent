@@ -119,6 +119,11 @@
   - 信号与控费：复用 `content_signals.py` 提取早期空投信号（`testnet`、`points`、`funding`、`tge`、`airdrop` 等）；遵照 P2 内容源规范，`discovery_score` 封顶于 0.28（低于 0.30 LLM 触发阈值），只存 `project_signals`，不消耗 LLM 预算；
   - 全流程接轨：`backend/app/config.py` 登记配置；`scheduler.py` 登记 cron（`0 */4 * * *`）；`rate_limiter.py` 登记 0.5 req/s、burst 2；`factory.py` 注册 `TelegramChannelCollector`；`normalize.py` 设置 `SOURCE_PRIORITY["telegram"] = 8`；`domain_allowlist.py` 登记 `t.me`；
   - 文档与契约：`docs/DATA_SOURCE_STRATEGY.md` 与 `test_data_source_strategy_parity.py` 100% 同步，85 项后端测试与前端类型检查全部通过。
+- 零成本 Farcaster 公开免费 Hub 采集器（2026-09-20 落地）：
+  - 核心设计：基于 Farcaster 开放协议公共 Hubble 节点（`https://hub.pinata.cloud/v1/castsByParent`）读取频道的最新 Casts，无需 API Key、无需账号登录或 Signer 私钥，零 API 成本捕获海外真实 Founder/Dev 高信噪比早期 Alpha；
+  - 协议解析：解析 Farcaster Epoch 秒数偏移、从 `castAddBody.text` 与 `embeds` 提取正文与项目链接，复用 `content_signals.py` 识别空投/Alpha 信号并限制 `discovery_score <= 0.28`，不消耗 LLM 预算；
+  - 全流程接轨：`config.py` 登记配置、`scheduler.py` 登记 cron（`0 */4 * * *`）、`rate_limiter.py` 登记 0.5 req/s、burst 2、`factory.py` 注册 `FarcasterCollector`、`normalize.py` 设置 `SOURCE_PRIORITY["farcaster"] = 8`、`domain_allowlist.py` 登记 `hub.pinata.cloud`；
+  - 文档与契约：`docs/DATA_SOURCE_STRATEGY.md` 与 `test_data_source_strategy_parity.py` 100% 同步，94 项后端测试与前端类型检查全部通过。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 
