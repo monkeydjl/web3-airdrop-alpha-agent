@@ -141,6 +141,11 @@
   - 免 Key 公共 EVM RPC 探测器：`backend/app/services/public_rpc_verifier.py` 接入 Sepolia、Arbitrum、Base、Optimism、Polygon、Berachain、Ethereum Mainnet 公共节点，通过 `eth_getCode` 与 `eth_getTransactionCount` 探测合约真实部署与活跃度；开放 `GET /api/v1/onchain/chains` 与 `POST /api/v1/onchain/verify`，并提供 `backend/scripts/verify_onchain_liveness.py` CLI 工具；
   - 测试网水龙头 24h 冷却与任务日历：`backend/app/services/faucet_registry.py` 收录主流免 Key 优质水龙头，`faucet_claims` 本地表追踪打卡与倒计时；开放 `GET /api/v1/faucets`、`POST/DELETE /api/v1/faucets/{id}/claim`；前端交付 `FaucetTrackerPanel.tsx`，并在 `ParticipationTasks.tsx` 测试网横幅提供快捷入口；
   - 门禁与契约：`docs/API_SPEC.md` 对齐 51 个写端点（35 匿名可调），`test_admin_only_rules.py`、`test_api_spec_parity.py`、`test_frontend_enum_parity.py`、`test_check_terminology.py` 187 项全仓测试 100% 通过。
+- 测试网水龙头独立专页与项目详情多源共识卡片闭环（2026-09-21 落地）：
+  - 独立水龙头中心页面：`frontend-next/app/faucets/page.tsx`，设立零成本交互三大法则看板，全屏集成 `FaucetTrackerPanel`，支持网络过滤、倒计时与一键打卡；
+  - 全局主导航：`frontend-next/components/Nav.tsx` 引入 `Droplets` 图标，新增「水龙头」(`/faucets`) 入口；
+  - 详情页多源共识卡片：`frontend-next/app/project/[id]/page.tsx` 新增多源共识视觉卡片，展示共识等级、测试网印证、Alpha 确定性加成比例、独立来源与信号类型；
+  - 验证：前端 `npm run typecheck`、`npm test` (20/20)、后端 4 大门禁与功能测试（69 passed）全部通过，远程已推送至 `ede0a92`。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 
