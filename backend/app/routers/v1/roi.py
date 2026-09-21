@@ -27,6 +27,8 @@ Reference:
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
@@ -34,7 +36,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
-from app.db import get_connection
+from app.db import dict_from_row, get_connection
+from app.services.project_signals import parse_meta
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["roi"])
@@ -219,6 +222,45 @@ def create_roi_outcome(
             ),
         ).fetchone()
         outcome_id = int(row["id"])
+
+        if body.event in ("airdrop_received", "token_launched", "campaign_ended"):
+            p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if p_row:
+                p_dict = dict_from_row(p_row)
+                p_meta = parse_meta(p_dict.get("meta"))
+                p_meta["outcome"] = "airdropped" if body.event == "airdrop_received" else body.event
+                p_meta["ended_at"] = datetime.now(UTC).isoformat()
+
+                raw_reason = p_dict.get("reason")
+                reasons_list: list[str] = []
+                if raw_reason:
+                    try:
+                        parsed = json.loads(raw_reason)
+                        reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                    except Exception:
+                        reasons_list = [str(raw_reason)]
+                note_msg = (
+                    "收益台账记录：空投到账 / 阶段已结束"
+                    if body.event == "airdrop_received"
+                    else f"收益台账记录：{body.event}"
+                )
+                if note_msg not in reasons_list:
+                    reasons_list.insert(0, note_msg)
+
+                conn.execute(
+                    """
+                    UPDATE projects
+                    SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        json.dumps(p_meta, ensure_ascii=False),
+                        json.dumps(reasons_list, ensure_ascii=False),
+                        datetime.now(UTC),
+                        project_id,
+                    ),
+                )
+
         conn.commit()
 
     # ⚠️ 字段名叫 outcome_event 而不是 event：structlog 的调用签名是

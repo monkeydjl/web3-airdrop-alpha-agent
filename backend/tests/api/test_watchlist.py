@@ -140,3 +140,24 @@ class TestListWatchlist:
         data = resp.json()["data"]
         assert len(data["items"]) == 3
         assert data["total"] >= 5
+
+
+class TestWatchlistProjectFlagIntegration:
+    def test_project_detail_and_list_include_watchlisted_flag(self, client, sample_project):
+        """验证 projects 详情和列表接口中的 watchlisted 标识联动。"""
+        # 初始未收藏
+        resp = client.get(f"/api/v1/projects/{sample_project}")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["project"]["watchlisted"] is False
+
+        # 加入收藏
+        client.post(f"/api/v1/watchlist/{sample_project}", json={})
+        resp = client.get(f"/api/v1/projects/{sample_project}")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["project"]["watchlisted"] is True
+
+        # 取消收藏
+        client.delete(f"/api/v1/watchlist/{sample_project}")
+        resp = client.get(f"/api/v1/projects/{sample_project}")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["project"]["watchlisted"] is False

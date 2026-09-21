@@ -586,13 +586,17 @@ class ProjectRepository:
         try:
             cursor = conn.execute(
                 """
-                SELECT p.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                SELECT p.*,
+                       CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped,
+                       CASE WHEN wl.id IS NULL THEN 0 ELSE 1 END AS watchlisted
                 FROM projects p
                 LEFT JOIN project_skips ps
                   ON ps.project_id = p.id AND (ps.user_id = ? OR ps.user_id IS NULL)
+                LEFT JOIN watchlist wl
+                  ON wl.project_id = p.id AND (wl.user_id = ? OR wl.user_id IS NULL)
                 WHERE p.id = ?
                 """,
-                (DEFAULT_USER, project_id),
+                (DEFAULT_USER, DEFAULT_USER, project_id),
             )
             row = cursor.fetchone()
             if not row:
@@ -741,19 +745,31 @@ class ProjectRepository:
             skip_join = (
                 "LEFT JOIN project_skips ps ON ps.project_id = projects.id " + join_scope
             )
+            wl_scope = (
+                "AND (wl.user_id = ? OR wl.user_id IS NULL)"
+                if effective_skip_user == DEFAULT_USER
+                else "AND wl.user_id = ?"
+            )
+            wl_join = (
+                "LEFT JOIN watchlist wl ON wl.project_id = projects.id " + wl_scope
+            )
             skip_params = [effective_skip_user]
+            wl_params = [effective_skip_user]
 
             # 分页查询
             offset = (page - 1) * page_size
             list_query = f"""
-                SELECT projects.*, CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped
+                SELECT projects.*,
+                       CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped,
+                       CASE WHEN wl.id IS NULL THEN 0 ELSE 1 END AS watchlisted
                 FROM projects
                 {skip_join}
+                {wl_join}
                 {where_clause}
                 {order_clause}
                 LIMIT ? OFFSET ?
             """
-            cursor = conn.execute(list_query, [*skip_params, *params, page_size, offset])
+            cursor = conn.execute(list_query, [*skip_params, *wl_params, *params, page_size, offset])
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]

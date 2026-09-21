@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Star } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
@@ -22,12 +23,40 @@ export function ProjectCard({
   const [verdict, setVerdict] = useState<'FARM' | 'WATCH' | null>(null);
   const [sending, setSending] = useState(false);
   const [verifyErr, setVerifyErr] = useState('');
+  const [isWatchlisted, setIsWatchlisted] = useState(Boolean(project.watchlisted));
+  const [watchlistBusy, setWatchlistBusy] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
     setCurrentVeto(project.veto);
     setCurrentReason(project.reason);
-  }, [project.label, project.veto, project.reason]);
+    setIsWatchlisted(Boolean(project.watchlisted));
+  }, [project.label, project.veto, project.reason, project.watchlisted]);
+
+  const toggleWatchlist = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (watchlistBusy) return;
+    setWatchlistBusy(true);
+    const nextState = !isWatchlisted;
+    setIsWatchlisted(nextState);
+    try {
+      if (nextState) {
+        await apiFetch(`/watchlist/${encodeURIComponent(project.id)}`, {
+          method: 'POST',
+          body: JSON.stringify({ note: '' }),
+        });
+      } else {
+        await apiFetch(`/watchlist/${encodeURIComponent(project.id)}`, {
+          method: 'DELETE',
+        });
+      }
+    } catch {
+      setIsWatchlisted(!nextState);
+    } finally {
+      setWatchlistBusy(false);
+    }
+  };
 
   const needsVerify = currentVeto === 'no_participation_path';
 
@@ -187,7 +216,23 @@ export function ProjectCard({
               {project.source ? <span className="text-ink-faint">· {sourceZh(project.source)}</span> : ''}
             </p>
           </div>
-          <ScoreRing score={project.score ?? 0} size={64} label={currentLabel} />
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={toggleWatchlist}
+              disabled={watchlistBusy}
+              className={`p-1 -mr-1 -mt-1 rounded-md transition-colors ${
+                isWatchlisted
+                  ? 'text-amber-400 hover:text-amber-300'
+                  : 'text-ink-faint hover:text-amber-400 opacity-60 hover:opacity-100'
+              }`}
+              title={isWatchlisted ? '已在关注列表中，点击取消' : '点击加入关注列表'}
+              aria-label={isWatchlisted ? '取消关注' : '加入关注'}
+            >
+              <Star className={`h-4 w-4 ${isWatchlisted ? 'fill-amber-400 text-amber-400' : ''}`} />
+            </button>
+            <ScoreRing score={project.score ?? 0} size={64} label={currentLabel} />
+          </div>
         </div>
 
         <div className="mt-3.5">

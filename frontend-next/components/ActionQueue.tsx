@@ -46,7 +46,7 @@ interface ActionQueueData {
 
 interface Props {
   limit?: number;
-  onDone?: (message: string, type: 'success' | 'error') => void;
+  onDone?: (message: string, type: 'success' | 'error', projectId?: string) => void;
 }
 
 export function ActionQueue({ limit = 5, onDone }: Props) {
@@ -80,7 +80,7 @@ export function ActionQueue({ limit = 5, onDone }: Props) {
           outcome: 'pending',
         }),
       });
-      onDone?.(`已记录：${item.project_name ?? item.project_id} · ${item.title}`, 'success');
+      onDone?.(`已记录：${item.project_name ?? item.project_id} · ${item.title}`, 'success', item.project_id);
       // 重新拉取补位：该项目已有交互记录，后端会把它整体排除并让出名额，
       // 于是列表长度保持稳定、新候选顶上来。
       // 刻意不用「本地隐藏」表达已完成——那样清单会随着标记逐条变短直到空掉，
@@ -89,7 +89,7 @@ export function ActionQueue({ limit = 5, onDone }: Props) {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '标记失败';
       setMarkError(msg);
-      onDone?.(msg, 'error');
+      onDone?.(msg, 'error', item.project_id);
     } finally {
       setMarking(null);
     }

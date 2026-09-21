@@ -148,6 +148,21 @@ function DashboardContent() {
     [],
   );
 
+  const handleActionQueueDone = useCallback(
+    (message: string, type: 'success' | 'error', projectId?: string) => {
+      showToast(message, type);
+      if (type === 'success' && projectId) {
+        handleProjectUpdate({
+          id: projectId,
+          label: 'FARM',
+          veto: null,
+        });
+        loadProjects();
+      }
+    },
+    [showToast, handleProjectUpdate, loadProjects],
+  );
+
   const stats = useMemo(() => {
     const counts: Record<Label, number> = { FARM: 0, WATCH: 0, IGNORE: 0 };
     let sum = 0;
@@ -229,7 +244,7 @@ function DashboardContent() {
       {/* 今日焦点行动与流水线动态：高优先级首屏置顶 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-8">
-          <ActionQueue limit={5} onDone={showToast} />
+          <ActionQueue limit={5} onDone={handleActionQueueDone} />
         </div>
         <div className="lg:col-span-4">
           <div className="dash-card p-5 h-full flex flex-col justify-between">

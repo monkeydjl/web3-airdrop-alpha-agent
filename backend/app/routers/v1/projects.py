@@ -146,6 +146,7 @@ def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
         "weight_version": weight_version or "v1.2",
         "veto": project.get("veto"),
         "skipped": bool(project.get("skipped", False)),
+        "watchlisted": bool(project.get("watchlisted", False)),
         "signal_consensus": project.get("signal_consensus"),
         "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
         "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,

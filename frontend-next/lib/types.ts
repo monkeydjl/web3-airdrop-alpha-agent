@@ -25,6 +25,8 @@ export interface Project {
   /** 用户自主「不参与」标记（veto 是系统判断，这个是自己点的）。
       与 label=IGNORE 刻意分开：模型结论与用户决定要能被分别撤掉。 */
   skipped?: boolean;
+  /** 用户自主「收藏关注」标记（来自 watchlist）。 */
+  watchlisted?: boolean;
   url?: string | null;
   source?: string | null;
   reason?: string[];

@@ -15,7 +15,7 @@ import { TopBar } from '@/components/TopBar';
 import { AlphaDossierModal, type AlphaDossierData } from '@/components/AlphaDossierModal';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
-import { ArrowLeft, FileText, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, FileText, Plus, RefreshCw, Star } from 'lucide-react';
 import {
   formatPct,
   lifecycleStageZh,
@@ -328,6 +328,41 @@ export default function ProjectPage() {
     }
   };
 
+  const [isWatchlisted, setIsWatchlisted] = useState(false);
+  const [watchlistBusy, setWatchlistBusy] = useState(false);
+
+  useEffect(() => {
+    if (project) {
+      setIsWatchlisted(Boolean(project.watchlisted));
+    }
+  }, [project]);
+
+  const toggleWatchlist = async () => {
+    if (!project || watchlistBusy) return;
+    setWatchlistBusy(true);
+    const nextState = !isWatchlisted;
+    setIsWatchlisted(nextState);
+    try {
+      if (nextState) {
+        await apiFetch(`/watchlist/${encodeURIComponent(project.id)}`, {
+          method: 'POST',
+          body: JSON.stringify({ note: '' }),
+        });
+        showToast('已加入关注列表', 'success');
+      } else {
+        await apiFetch(`/watchlist/${encodeURIComponent(project.id)}`, {
+          method: 'DELETE',
+        });
+        showToast('已取消关注', 'info');
+      }
+    } catch (e: unknown) {
+      setIsWatchlisted(!nextState);
+      showToast(e instanceof Error ? e.message : '关注操作失败', 'error');
+    } finally {
+      setWatchlistBusy(false);
+    }
+  };
+
   const sendFeedback = async () => {
     if (!project) return;
     if (!selectedSignal) {
@@ -507,6 +542,18 @@ export default function ProjectPage() {
           <FileText className={`h-4 w-4 ${generatingDossier ? 'animate-pulse text-brand' : ''}`} strokeWidth={2} />
           <span className="hidden sm:inline">{generatingDossier ? '生成中…' : 'Alpha 研报'}</span>
         </button>
+        <button
+          type="button"
+          className={`btn-secondary inline-flex items-center gap-1.5 ${
+            isWatchlisted ? 'border-amber-400/40 bg-amber-400/10 text-amber-400' : ''
+          }`}
+          disabled={watchlistBusy}
+          onClick={toggleWatchlist}
+          title={isWatchlisted ? '已在关注列表中，点击取消' : '点击加入关注列表'}
+        >
+          <Star className={`h-4 w-4 ${isWatchlisted ? 'fill-amber-400 text-amber-400' : ''}`} strokeWidth={2} />
+          <span className="hidden sm:inline">{isWatchlisted ? '已关注' : '关注'}</span>
+        </button>
         <Link
           href="/"
           className="btn-secondary"
@@ -680,6 +727,20 @@ export default function ProjectPage() {
               }
             >
               {skipping ? '…' : project.skipped ? '取消不参与' : '不参与'}
+            </button>
+            <button
+              type="button"
+              className={`min-h-9 rounded-lg border px-3 py-1.5 text-xs transition-colors inline-flex items-center gap-1.5 ${
+                isWatchlisted
+                  ? 'border-amber-400/40 bg-amber-400/15 text-amber-400 font-medium'
+                  : 'border-line text-ink-muted hover:border-ink-muted hover:text-ink'
+              }`}
+              disabled={watchlistBusy}
+              onClick={toggleWatchlist}
+              title={isWatchlisted ? '已在关注列表中，点击取消' : '点击加入关注列表'}
+            >
+              <Star className={`h-3.5 w-3.5 ${isWatchlisted ? 'fill-amber-400 text-amber-400' : ''}`} />
+              <span>{isWatchlisted ? '已关注' : '关注收藏'}</span>
             </button>
             {site ? (
               <a

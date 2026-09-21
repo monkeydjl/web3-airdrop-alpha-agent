@@ -130,6 +130,11 @@ class TestRecordOutcome:
         assert outcome["source"] == "manual"
         assert outcome["tx_hash"] == "0xabc"
 
+        # 验证关联的项目主表是否原子联动为 ended / already_launched
+        proj = client.get("/api/v1/projects/proj-1", headers=_auth(token_a)).json()["data"]["project"]
+        assert proj["stage"] == "ended"
+        assert proj["veto"] == "already_launched"
+
     @pytest.mark.parametrize("event", ["token_launched", "airdrop_missed", "campaign_ended"])
     def test_all_outcome_events_accepted(self, authed, event):
         client, token_a, _ = authed
