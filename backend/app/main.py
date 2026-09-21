@@ -560,6 +560,7 @@ def create_app(
         webhook,
         onchain,
         faucets,
+        ops,
     )
 
     # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`
@@ -606,6 +607,7 @@ def create_app(
     app.include_router(settings_router.router, prefix="/api/v1", tags=["v1"])
     app.include_router(onchain.router, prefix="/api/v1", tags=["v1"])
     app.include_router(faucets.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(ops.router, prefix="/api/v1", tags=["v1"])
     # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
     # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
     app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])

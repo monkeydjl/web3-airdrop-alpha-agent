@@ -8,7 +8,7 @@ import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData } from '@/lib/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, UploadCloud } from 'lucide-react';
+import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, RefreshCw, UploadCloud } from 'lucide-react';
 
 interface QuarantineItem {
   raw_id: string;
@@ -251,9 +251,65 @@ export default function OpsPage() {
     null,
   );
 
+  const [opsBusy, setOpsBusy] = useState<string | null>(null);
+  const [opsDryRun, setOpsDryRun] = useState<boolean>(true);
+  const [opsSummary, setOpsSummary] = useState<{ title: string; data: any } | null>(null);
+
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const runSyncFunding = async () => {
+    setOpsBusy('sync-funding');
+    try {
+      const res = await apiFetch<{ ok: boolean; data: any }>('/ops/sync-funding', {
+        method: 'POST',
+        body: JSON.stringify({ apply_changes: !opsDryRun, limit: 0 }),
+      });
+      if (res.ok) {
+        showToast(
+          opsDryRun
+            ? `预览成功：可富化 ${res.data.enriched_funding_count} 个项目融资`
+            : `落地成功：已更新 ${res.data.enriched_funding_count} 个项目融资`,
+          'success',
+        );
+        setOpsSummary({
+          title: opsDryRun ? 'DefiLlama 融资同步 (仅预览诊断)' : 'DefiLlama 融资同步 (已Commit落地)',
+          data: res.data,
+        });
+      }
+    } catch (e: any) {
+      showToast(e.message || 'DefiLlama 融资同步失败', 'error');
+    } finally {
+      setOpsBusy(null);
+    }
+  };
+
+  const runAuditViability = async () => {
+    setOpsBusy('audit-viability');
+    try {
+      const res = await apiFetch<{ ok: boolean; data: any }>('/ops/audit-viability', {
+        method: 'POST',
+        body: JSON.stringify({ apply_changes: !opsDryRun }),
+      });
+      if (res.ok) {
+        showToast(
+          opsDryRun
+            ? `审计完成：诊断到 ${res.data.downgraded_count} 个待降级/预警项目`
+            : `洗牌成功：已执行 ${res.data.downgraded_count} 个项目降级`,
+          'success',
+        );
+        setOpsSummary({
+          title: opsDryRun ? '全库存活率与跑道硬检验审计 (仅预览报告)' : '全库存活率与跑道硬检验审计 (已更新落地)',
+          data: res.data,
+        });
+      }
+    } catch (e: any) {
+      showToast(e.message || '全库存活率审计失败', 'error');
+    } finally {
+      setOpsBusy(null);
+    }
   };
 
   const load = useCallback(async () => {
@@ -607,6 +663,115 @@ export default function OpsPage() {
       {/* 异常检测与质量告警巡检 (W12-04) */}
       <div className="mt-5">
         <AnomalyDetectionPanel />
+      </div>
+
+      {/* 全库数据清洗与批量维护中心 */}
+      <div className="mt-5 ops-card p-4 sm:p-5 border border-brand-500/20 bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-ink">🛠️ 全库数据清洗与批量维护中心</h2>
+              <span className="rounded bg-brand-500/10 px-2 py-0.5 text-[10px] font-semibold text-brand-600 dark:text-brand-400">
+                Admin 专属运维
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-ink-muted">
+              直接在运维台对全库项目执行 DefiLlama 免费融资深度匹配或存活率硬门禁审计，彻底告别后台终端脚本。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-ink cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={opsDryRun}
+                onChange={(e) => setOpsDryRun(e.target.checked)}
+                className="rounded border-line"
+              />
+              <span className="font-medium text-ink-muted">仅预览诊断 (Dry-Run)</span>
+            </label>
+            <button
+              type="button"
+              onClick={runSyncFunding}
+              disabled={opsBusy !== null}
+              className="btn-secondary !py-1.5 !px-3 text-xs flex items-center gap-1.5"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${opsBusy === 'sync-funding' ? 'animate-spin' : ''}`} />
+              <span>{opsBusy === 'sync-funding' ? '同步抓取中…' : 'DefiLlama 融资全库同步'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={runAuditViability}
+              disabled={opsBusy !== null}
+              className="btn-secondary !py-1.5 !px-3 text-xs border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-1.5"
+            >
+              <HeartPulse className={`h-3.5 w-3.5 ${opsBusy === 'audit-viability' ? 'animate-spin' : ''}`} />
+              <span>{opsBusy === 'audit-viability' ? '审计诊断中…' : '全库存活率与跑道审计'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 审计与同步结果卡片展示 */}
+        {opsSummary ? (
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3.5 text-xs animate-in fade-in duration-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-semibold text-ink">{opsSummary.title}</span>
+              <button
+                type="button"
+                onClick={() => setOpsSummary(null)}
+                className="text-ink-faint hover:text-ink text-xs underline"
+              >
+                收起结果
+              </button>
+            </div>
+            {opsSummary.data.tier_counts ? (
+              /* Viability Audit result */
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">扫描项目数</span>
+                  <span className="font-mono font-semibold text-ink">{opsSummary.data.total_scanned}</span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">稳健项目 (Viable)</span>
+                  <span className="font-mono font-semibold text-farm">{opsSummary.data.tier_counts.viable}</span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">跑道观察 (Borderline)</span>
+                  <span className="font-mono font-semibold text-watch">{opsSummary.data.tier_counts.borderline}</span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">存活预警 (Unviable)</span>
+                  <span className="font-mono font-semibold text-red-500">
+                    {opsSummary.data.tier_counts.unviable} (降级 {opsSummary.data.downgraded_count})
+                  </span>
+                </div>
+              </div>
+            ) : (
+              /* Funding sync result */
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">扫描项目数</span>
+                  <span className="font-mono font-semibold text-ink">{opsSummary.data.total_scanned}</span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">匹配协议数</span>
+                  <span className="font-mono font-semibold text-brand-600 dark:text-brand-400">
+                    {opsSummary.data.matched_protocols}
+                  </span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">富化融资信息</span>
+                  <span className="font-mono font-semibold text-farm">{opsSummary.data.enriched_funding_count}</span>
+                </div>
+                <div className="p-2 rounded bg-surface border border-line/60">
+                  <span className="text-ink-faint block">存活等级跃升</span>
+                  <span className="font-mono font-semibold text-farm">
+                    +{opsSummary.data.viability_upgraded_count}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* main grid: sources | cost + health */}

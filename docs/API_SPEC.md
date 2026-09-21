@@ -69,12 +69,12 @@
 
 ### 2.1 写操作的鉴权分布（实测，2026-09-21 随零成本增强更新）
 
-全仓共 **52 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **54 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 11 |
+| 管理员专用 | 13 |
 | 无鉴权（公开） | 5 |
 | 匿名 token 可调 | 36 |
 <!-- write-auth-split:end -->
@@ -246,6 +246,9 @@
 | GET | `/api/v1/projects/{project_id}/signals-consensus` | v1 | 零成本增强（2026-09-21） | 多免费源信号交叉印证与共识度 |
 | POST | `/api/v1/projects/{project_id}/evaluate` | v1 | 零成本增强（2026-09-21） | 单项目即时全链路重新评估（8 维重评/存活门禁/防 PUA/决策流） |
 | GET | `/api/v1/projects/{project_id}/dossier` | v1 | 零成本增强（2026-09-21） | 项目 Alpha 深度投研研报一键生成（Markdown + 核心指标摘要） |
+| GET | `/api/v1/projects/digest` | v1 | 投研周报增强（2026-09-21） | 生成每日/每周 Alpha 投研周报合辑 |
+| POST | `/api/v1/ops/sync-funding` | v1 | 运维增强（2026-09-21） | 批量同步全库 DefiLlama 免费融资数据（管理员专用） |
+| POST | `/api/v1/ops/audit-viability` | v1 | 运维增强（2026-09-21） | 全库存活率与跑道硬检验批量审计（管理员专用） |
 | GET | `/api/v1/onchain/chains` | v1 | 零成本增强（2026-09-21） | 支持的免 Key 公共 RPC 链列表 |
 | POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
 | GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |

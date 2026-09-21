@@ -14,6 +14,7 @@ import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { ProjectCard } from '@/components/ProjectCard';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/components/ui';
+import { AlphaDigestModal } from '@/components/AlphaDigestModal';
 
 type SortBy = 'score' | 'name' | 'confidence';
 type ViewMode = 'grid' | 'table';
@@ -60,6 +61,7 @@ function DashboardContent() {
   const [runStatus, setRunStatus] = useState('');
   const [view, setView] = useState<ViewMode>('grid');
   const [showCharts, setShowCharts] = useState(false);
+  const [showDigestModal, setShowDigestModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // 顶栏搜索 → ?keyword=xxx → 同步到本地筛选
@@ -390,6 +392,16 @@ function DashboardContent() {
               导出 CSV
             </button>
 
+            <button
+              type="button"
+              className="btn-secondary !h-9 !py-1.5 !text-xs border-brand-500/30 text-brand-600 dark:text-brand-400 hover:bg-brand-500/10 flex items-center gap-1.5 font-semibold"
+              onClick={() => setShowDigestModal(true)}
+              title="生成每日/每周 Alpha 投研周报合辑"
+            >
+              <span>📰</span>
+              <span>Alpha 投研周报</span>
+            </button>
+
             {/* View Mode Toggle */}
             <div className="seg !h-9">
               {(['grid', 'table'] as const).map((v) => (
@@ -582,6 +594,7 @@ function DashboardContent() {
         )}
       </div>
     </div>
+    <AlphaDigestModal isOpen={showDigestModal} onClose={() => setShowDigestModal(false)} />
     </>
   );
 }

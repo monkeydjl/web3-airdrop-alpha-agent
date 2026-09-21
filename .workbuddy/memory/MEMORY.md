@@ -171,7 +171,11 @@
   - 深度研报引擎：`backend/app/services/alpha_dossier.py` 纯确定性、零 Token 聚合 6 大核心模块（项目定位与叙事周期、VC 融资跑道存活门禁、防 PUA 疲劳指数与磨损建议、多源免费情报共识印证、多钱包防女巫指南、保姆级交互清单与测试网水龙头指引），输出 Markdown 研报与核心指标摘要 JSON；
   - RESTful API：开放 `POST /api/v1/projects/{id}/evaluate` 与 `GET /api/v1/projects/{id}/dossier`；写端点总数增至 52（36 匿名），与 `docs/API_SPEC.md` §3 及 `test_admin_only_rules.py` 精确对齐；
   - 前端呈现与模态框：`frontend-next/components/AlphaDossierModal.tsx` 交付 Markdown 预览与一键复制；`frontend-next/app/project/[id]/page.tsx` 集成 TopBar 与 Masthead 重新评估按钮与研报弹窗，状态局部热更新免刷新；
-  - 门禁与契约：`test_project_evaluation_dossier.py`（4 passed）、`test_operations_doc_parity.py`（46 passed）、`test_observability_doc_parity.py`（18 passed）、`test_api_spec_parity.py`（13 passed）、`test_admin_only_rules.py`（31 passed）共 112 项门禁与测试 100% 通过；前端 `npm run typecheck` 0 错误、34 项单测全绿。
+- 三大核心能力全面交付：全库维护刷新中心 + Alpha 投研周报生成引擎 + 多钱包交互任务跟进看板（2026-09-21 落地）：
+  - 运维台全库数据维护中心：`backend/app/services/ops_tasks.py` 封装 `sync_database_defillama_raises` 与 `audit_database_viability`；开放 `POST /api/v1/ops/sync-funding` 与 `POST /api/v1/ops/audit-viability`（前缀锁入 `ADMIN_ONLY_PREFIXES`，写端点增至 54 个）；前端 `/ops` 运维台集成 Dry-Run 预览诊断、一键触发与结果卡片展开；
+  - Alpha 投研周报生成引擎：`backend/app/services/alpha_digest.py` 纯规则确定性聚合优质 FARM、大额融资动向、零成本测试网与防 PUA 避坑清单，开放 `GET /api/v1/projects/digest`；前端交付 `AlphaDigestModal.tsx`（周报/双周报/月报、最低分过滤、复制与下载 .md）并在主工作台工具栏新增入口；
+  - 多钱包交互任务跟进看板：`frontend-next/components/ParticipationTasks.tsx` 深度增强，支持多钱包独立跟进（主号/小号切换与自由添加）、单钱包清单模式与多钱包矩阵总览模式、进度条百分比与汇报复制，数据 LocalStorage `aa-multi-wallet-done` 隔离持久化并向下平滑兼容；
+  - 门禁与契约：全仓 7 大测试套件（`test_ops_endpoints.py`、`test_alpha_digest.py`、`test_project_evaluation_dossier.py`、`test_admin_only_rules.py`、`test_api_spec_parity.py`、`test_operations_doc_parity.py`、`test_observability_doc_parity.py`）共 117 项单测 100% 通过；前端 `typecheck` 0 错误、34 项单测全绿。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 

@@ -658,6 +658,7 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/scheduler`
 - `/api/v1/notify`
 - `/api/v1/watched-wallets`
+- `/api/v1/ops`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。

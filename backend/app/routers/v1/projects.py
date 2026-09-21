@@ -397,6 +397,33 @@ def list_projects(
 
 
 @router.get(
+    "/projects/digest",
+    summary="生成每日/每周 Alpha 投研周报合辑",
+    description="纯规则确定性批量聚合优质 FARM 项目、最新大额融资、零成本测试网新机会与防 PUA 避坑清单，返回 Markdown 研报与核心指标摘要。",
+)
+def get_projects_digest(
+    window_days: int = Query(7, ge=1, le=90, description="时间窗口（天）"),
+    min_score: float = Query(70.0, ge=0.0, le=100.0, description="入选最低分数线"),
+    limit: int = Query(15, ge=1, le=50, description="精选项目数量上限"),
+) -> dict[str, Any]:
+    """生成每日/每周 Alpha 投研周报."""
+    from app.services.alpha_digest import generate_alpha_digest
+
+    try:
+        digest = generate_alpha_digest(
+            window_days=window_days,
+            min_score=min_score,
+            limit=limit,
+        )
+        return digest
+    except Exception as e:
+        logger.error("api.projects.digest_failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha digest: {e}"}
+        ) from e
+
+
+@router.get(
     "/projects/{project_id}",
     response_model=ProjectsResponse,
     responses={
