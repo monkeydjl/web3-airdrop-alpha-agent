@@ -124,6 +124,69 @@ def test_create_list_update_delete_interaction(client: TestClient):
     assert r5.status_code == 200
 
 
+def test_interaction_unvetoes_no_participation_path_project(client: TestClient):
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO projects (id, name, sector, stage, score, label, veto, reason, confidence, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("proj-no-path", "NoPathProject", "DeFi", "testnet", 72, "WATCH", "no_participation_path", '["no verified participation path"]', 0.8, "seed"),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.post(
+        "/api/v1/interactions",
+        json={
+            "project_id": "proj-no-path",
+            "status": "active",
+            "started_at": "2026-07-02",
+            "cost_usd": 5.0,
+            "activities": "水龙头领水交互",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    conn = get_connection()
+    row = conn.execute("SELECT label, veto, reason FROM projects WHERE id = 'proj-no-path'").fetchone()
+    conn.close()
+    assert row[0] == "FARM"
+    assert row[1] is None
+    assert "已记录参与投入" in row[2]
+
+
+def test_interaction_airdropped_outcome_marks_project_ended(client: TestClient):
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO projects (id, name, sector, stage, score, label, veto, reason, confidence, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("proj-outcome", "OutcomeProject", "Infra", "mainnet", 85, "FARM", None, '["优质项目"]', 0.9, "seed"),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.post(
+        "/api/v1/interactions",
+        json={
+            "project_id": "proj-outcome",
+            "status": "done",
+            "outcome": "airdropped",
+            "profit_usd": 500.0,
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    conn = get_connection()
+    row = conn.execute("SELECT stage, veto, reason FROM projects WHERE id = 'proj-outcome'").fetchone()
+    conn.close()
+    assert row[0] == "ended"
+    assert row[1] == "already_launched"
+    assert "已完成空投" in row[2]
+
+
 def test_create_unknown_project_404(client: TestClient):
     r = client.post(
         "/api/v1/interactions",

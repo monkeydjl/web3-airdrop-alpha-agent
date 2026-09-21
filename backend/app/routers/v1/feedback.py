@@ -286,6 +286,39 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                         updated_label = target_label
                         updated_veto = new_veto
 
+            if request.outcome == "airdropped":
+                row = conn.execute(
+                    "SELECT * FROM projects WHERE id = ?", (request.project_id,)
+                ).fetchone()
+                if row:
+                    row_dict = dict_from_row(row)
+                    meta = parse_meta(row_dict.get("meta"))
+                    meta["outcome"] = "airdropped"
+                    meta["airdropped_at"] = datetime.now(UTC).isoformat()
+                    meta_json = json.dumps(meta, ensure_ascii=False)
+
+                    raw_reason = row_dict.get("reason")
+                    reasons_list: list[str] = []
+                    if raw_reason:
+                        try:
+                            parsed = json.loads(raw_reason)
+                            reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                        except Exception:
+                            reasons_list = [str(raw_reason)]
+                    outcome_msg = "实际结果复盘：已完成空投"
+                    if outcome_msg not in reasons_list:
+                        reasons_list.insert(0, outcome_msg)
+                    reason_json = json.dumps(reasons_list, ensure_ascii=False)
+
+                    conn.execute(
+                        """
+                        UPDATE projects
+                        SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (meta_json, reason_json, datetime.now(UTC), request.project_id),
+                    )
+
             conn.commit()
 
         record_feedback(signal=request.signal)
@@ -379,6 +412,42 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
                 """,
                 [(item.project_id, uid, item.signal, item.note, item.outcome) for item in request.items],
             )
+
+            # 同步更新项目状态：复盘确认已空投的项目自动沉淀为 ended + already_launched
+            for item in request.items:
+                if item.outcome == "airdropped":
+                    row = conn.execute(
+                        "SELECT * FROM projects WHERE id = ?", (item.project_id,)
+                    ).fetchone()
+                    if row:
+                        row_dict = dict_from_row(row)
+                        meta = parse_meta(row_dict.get("meta"))
+                        meta["outcome"] = "airdropped"
+                        meta["airdropped_at"] = datetime.now(UTC).isoformat()
+                        meta_json = json.dumps(meta, ensure_ascii=False)
+
+                        raw_reason = row_dict.get("reason")
+                        reasons_list: list[str] = []
+                        if raw_reason:
+                            try:
+                                parsed = json.loads(raw_reason)
+                                reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                            except Exception:
+                                reasons_list = [str(raw_reason)]
+                        outcome_msg = "实际结果复盘：已完成空投"
+                        if outcome_msg not in reasons_list:
+                            reasons_list.insert(0, outcome_msg)
+                        reason_json = json.dumps(reasons_list, ensure_ascii=False)
+
+                        conn.execute(
+                            """
+                            UPDATE projects
+                            SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (meta_json, reason_json, datetime.now(UTC), item.project_id),
+                        )
+
             conn.commit()
 
         for item in request.items:

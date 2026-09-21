@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { apiFetch } from '@/lib/api';
 import { labelZh } from '@/lib/format';
@@ -50,7 +50,7 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function InteractionPanel({ projectId }: { projectId: string }) {
+export function InteractionPanel({ projectId, onSaved }: { projectId: string; onSaved?: () => void }) {
   const [items, setItems] = useState<Interaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -163,6 +163,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
       }
       resetForm();
       await load();
+      onSaved?.();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '保存失败');
     } finally {
@@ -177,6 +178,7 @@ export function InteractionPanel({ projectId }: { projectId: string }) {
       await apiFetch(`/interactions/${id}`, { method: 'DELETE' });
       if (editingId === id) resetForm();
       await load();
+      onSaved?.();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '删除失败');
     }

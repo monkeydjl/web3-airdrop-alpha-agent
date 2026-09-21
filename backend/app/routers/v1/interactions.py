@@ -5,6 +5,7 @@ Tracks: did I farm this project, start/end dates, cost, profit, notes, outcome.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import uuid
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.auth import ROLE_ADMIN, get_current_user
 from app.db import dict_from_row, get_connection, scalar
 from app.repository import ProjectRepository
+from app.services.project_signals import parse_meta
 from app.services.user_scope import build_user_scope_filter
 
 logger = structlog.get_logger(__name__)
@@ -465,6 +467,64 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
         else:
             iid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             row = conn.execute("SELECT * FROM interactions WHERE id = ?", (iid,)).fetchone()
+
+        # 实时联动项目主表状态：真实交互记录证实用户已参与该项目
+        proj_row = conn.execute("SELECT * FROM projects WHERE id = ?", (body.project_id,)).fetchone()
+        if proj_row:
+            p_dict = dict_from_row(proj_row)
+            p_meta = parse_meta(p_dict.get("meta"))
+            p_signals = p_meta.get("signals") if isinstance(p_meta.get("signals"), dict) else {}
+            p_signals["has_interaction"] = True
+            p_signals["interaction_count"] = int(p_signals.get("interaction_count") or 0) + 1
+
+            p_label = p_dict.get("label")
+            p_veto = p_dict.get("veto")
+            p_stage = p_dict.get("stage")
+            p_score = int(p_dict.get("score") or 0)
+
+            raw_reason = p_dict.get("reason")
+            reasons_list: list[str] = []
+            if raw_reason:
+                try:
+                    parsed = json.loads(raw_reason)
+                    reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                except Exception:
+                    reasons_list = [str(raw_reason)]
+
+            # 若项目曾因缺少参与路径被 veto，用户实际交互直接证实参与有效，自动解除否决
+            if p_veto == "no_participation_path":
+                p_veto = None
+                p_signals["manual_verified_path"] = True
+                p_signals["has_points_program"] = True
+                if p_score >= 65:
+                    p_label = "FARM"
+                reasons_list = [r for r in reasons_list if "no verified participation path" not in r.lower()]
+                note_msg = "已记录参与投入：参与路径已确认有效"
+                if note_msg not in reasons_list:
+                    reasons_list.insert(0, note_msg)
+
+            # 若交互记录了 outcome 为 airdropped
+            if body.outcome == "airdropped":
+                p_stage = "ended"
+                p_veto = "already_launched"
+                p_meta["outcome"] = "airdropped"
+                outcome_msg = "实际结果复盘：已完成空投"
+                if outcome_msg not in reasons_list:
+                    reasons_list.insert(0, outcome_msg)
+
+            p_meta["signals"] = p_signals
+            p_meta_json = json.dumps(p_meta, ensure_ascii=False)
+            p_reason_json = json.dumps(reasons_list, ensure_ascii=False)
+
+            conn.execute(
+                """
+                UPDATE projects
+                SET label = ?, veto = ?, stage = ?, meta = ?, reason = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (p_label, p_veto, p_stage, p_meta_json, p_reason_json, datetime.now(UTC), body.project_id),
+            )
+
         conn.commit()
         item = _row_to_item(row) if row else {"project_id": body.project_id}
         logger.info(
@@ -574,7 +634,11 @@ def interactions_summary() -> dict[str, Any]:
         return {
             "ok": True,
             "data": {
+                "total": total,
                 "total_interactions": total,
+                "total_cost_usd": s.get("total_cost", 0),
+                "total_profit_usd": s.get("total_profit", 0),
+                "total_hours_spent": s.get("total_hours", 0),
                 "by_status": by_status,
                 "by_outcome": by_outcome,
                 "label_outcome": label_outcome,
@@ -703,6 +767,41 @@ def update_interaction(
                 status_code=404,
                 detail={"code": "NOT_FOUND", "message": "Interaction not found"},
             )
+
+        if fields.get("outcome") == "airdropped":
+            proj_id = current.get("project_id")
+            if proj_id:
+                p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
+                if p_row:
+                    p_dict = dict_from_row(p_row)
+                    p_meta = parse_meta(p_dict.get("meta"))
+                    p_meta["outcome"] = "airdropped"
+                    p_meta["airdropped_at"] = datetime.now(UTC).isoformat()
+                    p_raw_reason = p_dict.get("reason")
+                    p_reasons: list[str] = []
+                    if p_raw_reason:
+                        try:
+                            parsed = json.loads(p_raw_reason)
+                            p_reasons = parsed if isinstance(parsed, list) else [str(parsed)]
+                        except Exception:
+                            p_reasons = [str(p_raw_reason)]
+                    outcome_msg = "实际结果复盘：已完成空投"
+                    if outcome_msg not in p_reasons:
+                        p_reasons.insert(0, outcome_msg)
+                    conn.execute(
+                        """
+                        UPDATE projects
+                        SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            json.dumps(p_meta, ensure_ascii=False),
+                            json.dumps(p_reasons, ensure_ascii=False),
+                            datetime.now(UTC),
+                            proj_id,
+                        ),
+                    )
+
         conn.commit()
         return {"ok": True, "data": _row_to_item(row)}
     except Exception:

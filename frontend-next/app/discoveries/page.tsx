@@ -152,6 +152,33 @@ export default function DiscoveriesPage() {
     }
   };
 
+  const [runningAnalysis, setRunningAnalysis] = useState(false);
+
+  const handleRunAnalysis = async () => {
+    if (runningAnalysis) return;
+    setRunningAnalysis(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; data?: { total_scored?: number } }>('/run', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (res?.ok) {
+        const count = res.data?.total_scored ?? 0;
+        setToast({ message: `分析运行完成，共评分处理 ${count} 个项目`, type: 'success' });
+      } else {
+        setToast({ message: '分析完成', type: 'success' });
+      }
+      await Promise.all([loadStats(), loadList()]);
+    } catch (err: unknown) {
+      setToast({
+        message: err instanceof Error ? err.message : '运行分析失败',
+        type: 'error',
+      });
+    } finally {
+      setRunningAnalysis(false);
+    }
+  };
+
   return (
     <>
       {toast && <Toast message={toast.message} type={toast.type} />}
@@ -160,9 +187,14 @@ export default function DiscoveriesPage() {
           <ShieldOff className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">查看隔离区</span>
         </Link>
-        <button type="button" className="btn-primary inline-flex items-center gap-1.5">
-          <Play className="h-4 w-4" strokeWidth={2} />
-          <span>运行分析</span>
+        <button
+          type="button"
+          disabled={runningAnalysis}
+          onClick={handleRunAnalysis}
+          className="btn-primary inline-flex items-center gap-1.5 disabled:opacity-60"
+        >
+          <Play className={`h-4 w-4 ${runningAnalysis ? 'animate-spin' : ''}`} strokeWidth={2} />
+          <span>{runningAnalysis ? '正在分析…' : '运行分析'}</span>
         </button>
       </TopBar>
 

@@ -300,6 +300,34 @@ export default function ProjectPage() {
     }
   };
 
+  const [verifying, setVerifying] = useState(false);
+
+  const handleVerify = async (target: 'FARM' | 'WATCH') => {
+    if (!project || verifying) return;
+    setVerifying(true);
+    try {
+      await apiFetch('/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: project.id,
+          signal: 'wrong_label',
+          note: target,
+        }),
+      });
+      showToast(
+        target === 'FARM'
+          ? '核验成功：已升级为 FARM · 状态已实时落库'
+          : '核验成功：维持观察 · 已消除待验证状态',
+        'success',
+      );
+      loadProject();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '核验操作失败', 'error');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const sendFeedback = async () => {
     if (!project) return;
     if (!selectedSignal) {
@@ -320,6 +348,7 @@ export default function ProjectPage() {
       showToast('反馈已提交', 'success');
       setNote('');
       setSelectedSignal(null);
+      loadProject();
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : '反馈提交失败', 'error');
     } finally {
@@ -566,6 +595,21 @@ export default function ProjectPage() {
           </p>
           <div className="mt-3.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
             <LabelBadge label={project.label} />
+            {project.veto === 'no_participation_path' ? (
+              <span
+                className="badge bg-watch-soft/90 text-watch border border-watch/40 text-[11px] font-semibold"
+                title="分数已达 FARM 线，但未发现测试网/积分/任务入口 —— 需要你到官网或 Twitter 人工验证一次"
+              >
+                待验证路径
+              </span>
+            ) : project.veto === 'verified_no_path' ? (
+              <span
+                className="badge bg-surface-2 text-ink-muted border border-line text-[11px]"
+                title="已人工核验确认：目前无明确参与路径，维持观察"
+              >
+                已核验观察
+              </span>
+            ) : null}
             <span className="font-mono text-[11px] font-medium tracking-wide text-ink-muted">
               score-v1.4
             </span>
@@ -575,6 +619,30 @@ export default function ProjectPage() {
               </span>
             ) : null}
           </div>
+
+          {project.veto === 'no_participation_path' && (
+            <div className="mt-3.5 flex flex-wrap items-center gap-2 rounded-xl border border-watch/30 bg-watch-soft/20 p-2.5 text-xs">
+              <span className="font-mono font-medium text-watch">路径核验：</span>
+              <button
+                type="button"
+                disabled={verifying}
+                onClick={() => void handleVerify('FARM')}
+                className="px-2.5 py-1 text-xs font-semibold rounded-md bg-farm/15 hover:bg-farm/25 text-farm border border-farm/40 transition disabled:opacity-50"
+                title="已确认有测试网/积分/任务入口 —— 升级为重点参与 FARM"
+              >
+                {verifying ? '处理中…' : '有路径 → 升 FARM'}
+              </button>
+              <button
+                type="button"
+                disabled={verifying}
+                onClick={() => void handleVerify('WATCH')}
+                className="btn-secondary !min-h-0 px-2.5 py-1 text-xs disabled:opacity-50"
+                title="确实没有参与入口 —— 系统维持观察"
+              >
+                {verifying ? '处理中…' : '维持观察'}
+              </button>
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap items-center gap-2 pt-1">
             <button
               type="button"
@@ -844,7 +912,7 @@ export default function ProjectPage() {
           {/* interactions */}
           <section id="pd-interactions" className="scroll-mt-[4.5rem] border-t border-line py-5">
             <SecHead title="我的投入" />
-            <InteractionPanel projectId={project.id} />
+            <InteractionPanel projectId={project.id} onSaved={loadProject} />
           </section>
 
           {/* on-chain contract liveness verifier */}

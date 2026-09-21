@@ -146,6 +146,64 @@ class TestFeedbackEndpoints:
             assert row["veto"] == "verified_no_path"
             assert "维持观察" in row["reason"]
 
+    def test_feedback_airdropped_marks_project_ended(self, client, feedback_enabled) -> None:
+        """测试复盘反馈 outcome 为 airdropped 时，项目主表同步置为 ended + already_launched。"""
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, stage, veto, reason)
+                VALUES ('test-p-airdrop', 'Test Airdrop Project', 80, 'FARM', 'mainnet', NULL, '["活跃参与中"]')
+                """
+            )
+            conn.commit()
+
+        response = client.post(
+            "/api/v1/feedback",
+            json={
+                "project_id": "test-p-airdrop",
+                "signal": "correct_outcome",
+                "outcome": "airdropped",
+            },
+        )
+        assert response.status_code == 200
+
+        with get_connection() as conn:
+            row = conn.execute("SELECT stage, veto, reason FROM projects WHERE id = 'test-p-airdrop'").fetchone()
+            assert row["stage"] == "ended"
+            assert row["veto"] == "already_launched"
+            assert "已完成空投" in row["reason"]
+
+    def test_feedback_batch_airdropped_marks_project_ended(self, client, feedback_enabled) -> None:
+        """测试批量复盘反馈 outcome 为 airdropped 时，项目主表同步置为 ended + already_launched。"""
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, stage, veto, reason)
+                VALUES ('test-p-batch', 'Test Batch Airdrop', 75, 'FARM', 'testnet', NULL, '["参与中"]')
+                """
+            )
+            conn.commit()
+
+        response = client.post(
+            "/api/v1/feedback/batch",
+            json={
+                "items": [
+                    {
+                        "project_id": "test-p-batch",
+                        "signal": "correct_outcome",
+                        "outcome": "airdropped",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+        with get_connection() as conn:
+            row = conn.execute("SELECT stage, veto, reason FROM projects WHERE id = 'test-p-batch'").fetchone()
+            assert row["stage"] == "ended"
+            assert row["veto"] == "already_launched"
+            assert "已完成空投" in row["reason"]
+
 
 class TestEventsEndpoints:
     def test_events_disabled_by_default(self, client) -> None:
