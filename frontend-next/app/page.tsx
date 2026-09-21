@@ -78,9 +78,9 @@ function DashboardContent() {
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
-  const [curatedOnly, setCuratedOnly] = useState(true);
-  // 工作台默认精选模式：后端已按评分/置信度/近90天活动/参与路径过滤。
-  // 关掉「精选模式」开关即可查看后台候选池（未达标项目不删除，只是不上首页）。
+  const [curatedOnly, setCuratedOnly] = useState(false);
+  // 工作台默认展示全部候选池（实时监控与评分项目）。
+  // 可随时点击「✨ 精选模式」过滤查看同时满足 90 天内链上任务凭证的强证据项目。
 
   const loader = useCallback(
     async (signal: AbortSignal) => {
@@ -493,13 +493,25 @@ function DashboardContent() {
       {/* Content */}
       {loading ? <SkeletonGrid n={8} /> : filtered.length === 0 ? (
         <EmptyState
-          title={projects.length === 0 ? '还没有项目数据' : '当前筛选无结果'}
-          description={projects.length === 0 ? '点击「采集并评分」从 DefiLlama / GitHub 等源拉取并写入评分结果' : '尝试清空筛选，或关闭「隐藏忽略」'}
-          action={projects.length === 0 ? (
-            <button type="button" className="btn-primary" onClick={runPipeline} disabled={running}>▶ 开始采集评分</button>
-          ) : (
-            <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); }}>清除筛选</button>
-          )}
+          title={projects.length === 0 ? (curatedOnly ? '精选模式下暂无强凭证项目' : '还没有项目数据') : '当前筛选无结果'}
+          description={
+            projects.length === 0
+              ? curatedOnly
+                ? '当前候选池已有大量实时监控项目，但尚未关联到 90 天内链上任务凭证。点击下方按钮即可查看全部实时项目。'
+                : '点击「采集并评分」从 DefiLlama / GitHub 等源拉取并写入评分结果'
+              : '尝试清空筛选，或关闭「隐藏忽略」'
+          }
+          action={
+            projects.length === 0 ? (
+              curatedOnly ? (
+                <button type="button" className="btn-primary" onClick={() => setCuratedOnly(false)}>查看全部实时项目</button>
+              ) : (
+                <button type="button" className="btn-primary" onClick={runPipeline} disabled={running}>▶ 开始采集评分</button>
+              )
+            ) : (
+              <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); }}>清除筛选</button>
+            )
+          }
         />
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">

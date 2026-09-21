@@ -265,6 +265,7 @@ def list_projects(
     curated: bool = Query(False, description="仅返回满足精选门槛的项目（评分/置信度/近90天活动/参与路径）"),
     zero_cost_only: bool = Query(False, description="仅返回零资金成本/纯测试网项目（保本优先）"),
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
+    include_historical: bool = Query(False, description="是否包含历史回测样本（默认 False，排除历史回测）"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -303,6 +304,7 @@ def list_projects(
         auto_discovered=auto_discovered,
         user_id=effective_user_id,
         zero_cost_only=zero_cost_only,
+        include_historical=include_historical,
     )
 
     # Query from database
@@ -322,6 +324,7 @@ def list_projects(
             skip_user_id=effective_user_id,
             curated=curated,
             zero_cost_only=zero_cost_only,
+            include_historical=include_historical,
         )
 
         # Convert to response format — include discovery metadata for Dashboard

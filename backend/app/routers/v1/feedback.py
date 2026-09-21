@@ -150,7 +150,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
     elif current_user["user_id"] != "anonymous":
         uid = current_user["user_id"]
     else:
-        uid = request.user_id or "anonymous"
+        uid = request.user_id or DEFAULT_USER
 
     try:
         with get_connection() as conn:
@@ -217,7 +217,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
     elif current_user["user_id"] != "anonymous":
         uid = current_user["user_id"]
     else:
-        uid = request.user_id or "anonymous"
+        uid = request.user_id or DEFAULT_USER
 
     project_ids = [item.project_id for item in request.items]
 
@@ -305,7 +305,7 @@ def get_pending_review(
     if current_user["role"] == ROLE_ADMIN:
         uid = user_id or DEFAULT_USER
     else:
-        uid = current_user["user_id"] if current_user["user_id"] != "anonymous" else (user_id or DEFAULT_USER)
+        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
 
     try:
         with get_connection() as conn:
@@ -321,6 +321,7 @@ def get_pending_review(
                 SELECT id, name, sector, stage, score, label, confidence, url, updated_at
                 FROM projects
                 WHERE label IN ('FARM', 'WATCH')
+                  AND (source != 'historical_backfill' OR source IS NULL)
                 ORDER BY score DESC
                 LIMIT 400
                 """
@@ -559,7 +560,7 @@ def list_events(
                 ORDER BY timestamp DESC, id DESC
                 LIMIT ? OFFSET ?
             """  # noqa: S608
-            rows = conn.execute(query_sql, tuple(params + [limit, offset])).fetchall()
+            rows = conn.execute(query_sql, tuple([*params, limit, offset])).fetchall()
             items = [dict(row) for row in rows]
 
         return FeedbackResponse(

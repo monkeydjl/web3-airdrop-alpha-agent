@@ -117,14 +117,14 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
 
         # ── 今日新增项目（projects.created_at）──────────────────────
         cursor = conn.execute(
-            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ?",
+            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ? AND (source != 'historical_backfill' OR source IS NULL)",
             (midnight.isoformat(sep=" "),),
         )
         today_new = int(_row_value(cursor.fetchone(), "n", 0) or 0)
         data["today"]["new_projects"] = today_new
 
         cursor = conn.execute(
-            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ? AND label = 'FARM'",
+            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ? AND label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)",
             (midnight.isoformat(sep=" "),),
         )
         today_farm = int(_row_value(cursor.fetchone(), "n", 0) or 0)

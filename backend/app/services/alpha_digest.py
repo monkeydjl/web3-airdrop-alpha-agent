@@ -43,6 +43,7 @@ def generate_alpha_digest(
         """
         SELECT id, name, sector, stage, score, label, reason, sub_scores, meta, updated_at
         FROM projects
+        WHERE (source != 'historical_backfill' OR source IS NULL)
         ORDER BY score DESC
         """
     )

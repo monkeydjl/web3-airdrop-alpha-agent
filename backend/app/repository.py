@@ -58,10 +58,7 @@ def is_zero_cost_opportunity(record: dict[str, Any]) -> bool:
         if isinstance(raw_reason, str) and raw_reason.startswith("[")
         else ([str(raw_reason)] if raw_reason else [])
     )
-    if "LOW_RUNWAY_RISK" in reasons_list or "HEAVY_CAPITAL_LOCKUP" in reasons_list:
-        return False
-
-    return True
+    return not ("LOW_RUNWAY_RISK" in reasons_list or "HEAVY_CAPITAL_LOCKUP" in reasons_list)
 
 
 class ProjectRepository:
@@ -624,6 +621,7 @@ class ProjectRepository:
         skip_user_id: str | None = None,
         curated: bool = False,
         zero_cost_only: bool = False,
+        include_historical: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -641,6 +639,7 @@ class ProjectRepository:
             skip_user_id: 用户 ID
             curated: 仅精选项目
             zero_cost_only: 仅零资金成本/纯测试网项目（保本优先）
+            include_historical: 是否包含历史回测样本（默认 False，排除历史回测）
 
         Returns:
             (项目列表, 总数量)
@@ -650,6 +649,9 @@ class ProjectRepository:
             # 构建 WHERE 条件
             conditions = []
             params: list[Any] = []
+
+            if not include_historical:
+                conditions.append("(source != 'historical_backfill' OR source IS NULL)")
 
             if label:
                 conditions.append("label = ?")
