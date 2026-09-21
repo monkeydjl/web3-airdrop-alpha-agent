@@ -166,6 +166,12 @@
   - 统一调度器完整覆盖：`backend/app/scheduler.py` 的 `UnifiedScheduler` 补全 6 个采集源（`discord`, `reddit`, `medium`, `mirror`, `telegram`, `farcaster`），全仓 16 个源统一调度；
   - 前端运维联动：`frontend-next/app/ops/page.tsx` 增加「自动评分出分」复选框，触发采集后实时回显采集与自动评分条数；
   - 门禁与契约：`docs/DATA_SOURCE_STRATEGY.md` §11 与 `docs/API_SPEC.md` §21 同步更新，专项测试 `test_collection_auto_run.py` 4 项全过，全仓契约与回归测试 100% 通过。
+- 单项目全链路即时重新评估与 Alpha 深度投研研报生成引擎（2026-09-21 落地）：
+  - 核心服务：`backend/app/services/project_evaluation.py` 实现 `evaluate_single_project`，恢复信号、SimpleOrchestrator 8 维综合打分、落库 `projects` 并写入 `project_history` 演化快照，联动 `OpportunityService.evaluate(persist=True)`；
+  - 深度研报引擎：`backend/app/services/alpha_dossier.py` 纯确定性、零 Token 聚合 6 大核心模块（项目定位与叙事周期、VC 融资跑道存活门禁、防 PUA 疲劳指数与磨损建议、多源免费情报共识印证、多钱包防女巫指南、保姆级交互清单与测试网水龙头指引），输出 Markdown 研报与核心指标摘要 JSON；
+  - RESTful API：开放 `POST /api/v1/projects/{id}/evaluate` 与 `GET /api/v1/projects/{id}/dossier`；写端点总数增至 52（36 匿名），与 `docs/API_SPEC.md` §3 及 `test_admin_only_rules.py` 精确对齐；
+  - 前端呈现与模态框：`frontend-next/components/AlphaDossierModal.tsx` 交付 Markdown 预览与一键复制；`frontend-next/app/project/[id]/page.tsx` 集成 TopBar 与 Masthead 重新评估按钮与研报弹窗，状态局部热更新免刷新；
+  - 门禁与契约：`test_project_evaluation_dossier.py`（4 passed）、`test_operations_doc_parity.py`（46 passed）、`test_observability_doc_parity.py`（18 passed）、`test_api_spec_parity.py`（13 passed）、`test_admin_only_rules.py`（31 passed）共 112 项门禁与测试 100% 通过；前端 `npm run typecheck` 0 错误、34 项单测全绿。
 - 前端依赖漏洞优先通过 `frontend-next/package.json` 的 `overrides`；改依赖后跑五项门禁。
 - 遗留：无阻断性业务功能或文档漂移遗留。
 

@@ -429,7 +429,7 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 
 ### 4.3 采集源故障
 
-采集共注册 **10 个源**。**「注册了」不等于「在采」** —— 每个源要真正执行，
+采集共注册 **16 个源**。**「注册了」不等于「在采」** —— 每个源要真正执行，
 必须三个条件同时成立：
 
 1. `XXX_ENABLED` 开关为真；
@@ -455,6 +455,8 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 | `reddit` | `REDDIT_ENABLED` | ✅ `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` + `REDDIT_USERNAME` |
 | `medium` | `MEDIUM_ENABLED` | ❌ RSS 免费无需 Key |
 | `mirror` | `MIRROR_ENABLED` | ❌ Arweave 公开读无需 Key |
+| `telegram` | `TELEGRAM_ENABLED` | ❌ 网页预览免费无需 Key |
+| `farcaster` | `FARCASTER_ENABLED` | ❌ Hub 公开 API 免费无需 Key |
 <!-- collection-ready:end -->
 
 > 注意两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`：关掉它会同时停掉
@@ -842,6 +844,8 @@ curl http://localhost:18080/health
 | `reddit` | `30 * * * *` |
 | `medium` | `0 */6 * * *` |
 | `mirror` | `30 */6 * * *` |
+| `telegram` | `0 */4 * * *` |
+| `farcaster` | `0 */4 * * *` |
 <!-- collection-cron:end -->
 
 注册条件是**两道闸**：`COLLECTION_SCHEDULER_ENABLED=true`（实测 `True`）

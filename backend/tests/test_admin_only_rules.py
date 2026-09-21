@@ -134,6 +134,9 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/onchain/verify"): "免 Key 公共 RPC 探测合约存活性，只读查询链上状态，不修改系统数据。",
     ("POST", "/api/v1/faucets/{faucet_id}/claim"): "用户标记测试网水龙头已领取，按 user_id 隔离。",
     ("DELETE", "/api/v1/faucets/{faucet_id}/claim"): "重置测试网水龙头冷却状态，按 user_id 隔离。",
+    ("POST", "/api/v1/projects/{project_id}/evaluate"): (
+        "即时全链路重新评估单个项目，100% 规则确定性计算，不花钱、不产生外部 API 成本，更新项目画像与决策快照。"
+    ),
 }
 
 

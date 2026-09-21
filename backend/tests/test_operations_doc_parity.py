@@ -167,6 +167,8 @@ def _collection_cron_from_settings() -> dict[str, str]:
         "reddit": settings.reddit_cron,
         "medium": settings.medium_cron,
         "mirror": settings.mirror_cron,
+        "telegram": settings.telegram_cron,
+        "farcaster": settings.farcaster_cron,
     }
     assert all(mapping.values()), f"有采集源的 cron 是空值：{mapping}"
     return mapping

@@ -69,14 +69,14 @@
 
 ### 2.1 写操作的鉴权分布（实测，2026-09-21 随零成本增强更新）
 
-全仓共 **51 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **52 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 11 |
 | 无鉴权（公开） | 5 |
-| 匿名 token 可调 | 35 |
+| 匿名 token 可调 | 36 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -244,6 +244,8 @@
 | DELETE | `/api/v1/user/account` | v1 | V3（已实现，2026-09-19） | 注销删除用户账户（W12-11，详见 §52b） |
 | GET | `/api/v1/ha/status` | v1 | V3（已实现，2026-09-20） | 集群选主与 HA 状态查询（公开只读，W12-03，详见 §53） |
 | GET | `/api/v1/projects/{project_id}/signals-consensus` | v1 | 零成本增强（2026-09-21） | 多免费源信号交叉印证与共识度 |
+| POST | `/api/v1/projects/{project_id}/evaluate` | v1 | 零成本增强（2026-09-21） | 单项目即时全链路重新评估（8 维重评/存活门禁/防 PUA/决策流） |
+| GET | `/api/v1/projects/{project_id}/dossier` | v1 | 零成本增强（2026-09-21） | 项目 Alpha 深度投研研报一键生成（Markdown + 核心指标摘要） |
 | GET | `/api/v1/onchain/chains` | v1 | 零成本增强（2026-09-21） | 支持的免 Key 公共 RPC 链列表 |
 | POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
 | GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |

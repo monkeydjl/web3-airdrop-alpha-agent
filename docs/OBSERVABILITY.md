@@ -62,11 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **385 个不同事件名**、
-**72 个命名空间**（2026-09-20 随「V3 多实例 HA 与选主」新增：`ha.leader_promoted`、
-`ha.leader_demoted`、`ha.lease_renewed`、`ha.election_failed`、`ha.leader_stepped_down`、
-`app.ha_promoted_starting_scheduler`、`app.ha_demoted_stopping_scheduler`、`app.shutdown.leader_elector_error`）；
-段数分布：2 段 308 个、3 段 71 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **399 个不同事件名**、
+**76 个命名空间**（2026-09-21 随「单项目全链路即时评估与 Alpha 深度研报生成引擎」更新）；
+段数分布：2 段 318 个、3 段 75 个、4 段 5 个、1 段 1 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`

@@ -12,9 +12,10 @@ import { MultiWalletStrategyPanel } from '@/components/MultiWalletStrategyPanel'
 import { OnChainVerifierPanel } from '@/components/OnChainVerifierPanel';
 import { ProjectTimelinePanel } from '@/components/ProjectTimelinePanel';
 import { TopBar } from '@/components/TopBar';
+import { AlphaDossierModal, type AlphaDossierData } from '@/components/AlphaDossierModal';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, FileText, Plus, RefreshCw } from 'lucide-react';
 import {
   formatPct,
   lifecycleStageZh,
@@ -155,6 +156,8 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rescoring, setRescoring] = useState(false);
+  const [generatingDossier, setGeneratingDossier] = useState(false);
+  const [dossierData, setDossierData] = useState<AlphaDossierData | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [selectedSignal, setSelectedSignal] = useState<string | null>(null);
@@ -234,30 +237,49 @@ export default function ProjectPage() {
   }, [loadProject]);
 
   const rescore = async () => {
-    if (!project) return;
+    if (!project || rescoring) return;
     setRescoring(true);
     try {
-      const data = await apiFetch<{
-        score?: { score?: number; label?: string; error?: string } | null;
-      }>(`/projects/${project.id}/funding?rescore=true`, {
-        method: 'PATCH',
-        body: JSON.stringify({}),
+      const res = await apiFetch<{
+        ok: boolean;
+        data?: { project?: Project };
+      }>(`/projects/${project.id}/evaluate`, {
+        method: 'POST',
       });
-      if (data.score?.error) {
-        showToast(`重评失败：${data.score.error}`, 'error');
-      } else {
+      if (res.ok && res.data?.project) {
+        setProject(res.data.project);
         showToast(
-          data.score?.score != null
-            ? `重新评分完成：${data.score.score} · ${data.score.label || ''}`
-            : '重新评分完成',
+          `全链路重评完成：${res.data.project.score} 分 · ${res.data.project.label || ''}`,
           'success',
         );
+      } else {
+        showToast('重新评分完成', 'success');
+        loadProject();
       }
-      loadProject();
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : '重新评分失败', 'error');
     } finally {
       setRescoring(false);
+    }
+  };
+
+  const handleGenerateDossier = async () => {
+    if (!project || generatingDossier) return;
+    setGeneratingDossier(true);
+    try {
+      const res = await apiFetch<{
+        ok: boolean;
+        data?: AlphaDossierData;
+      }>(`/projects/${project.id}/dossier`);
+      if (res.ok && res.data) {
+        setDossierData(res.data);
+      } else {
+        showToast('未能生成 Alpha 深度研报', 'error');
+      }
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : '生成研报失败', 'error');
+    } finally {
+      setGeneratingDossier(false);
     }
   };
 
@@ -425,10 +447,37 @@ export default function ProjectPage() {
     <>
       {toast ? <Toast message={toast.message} type={toast.type} /> : null}
 
+      {dossierData && (
+        <AlphaDossierModal
+          dossier={dossierData}
+          onClose={() => setDossierData(null)}
+        />
+      )}
+
       <TopBar
         title={project.name}
         subtitle={`${sourceZh(project.source)} · ${relativeTime(project.updated_at)}`}
       >
+        <button
+          type="button"
+          className="btn-secondary inline-flex items-center gap-1.5"
+          disabled={rescoring}
+          onClick={rescore}
+          title="触发全链路 8 维综合即时出分、存活门禁与防 PUA 检测"
+        >
+          <RefreshCw className={`h-4 w-4 ${rescoring ? 'animate-spin text-brand' : ''}`} strokeWidth={2} />
+          <span className="hidden sm:inline">{rescoring ? '评估中…' : '即时重评'}</span>
+        </button>
+        <button
+          type="button"
+          className="btn-secondary inline-flex items-center gap-1.5"
+          disabled={generatingDossier}
+          onClick={handleGenerateDossier}
+          title="一键生成并预览 6 大核心模块 Alpha 深度投研研报"
+        >
+          <FileText className={`h-4 w-4 ${generatingDossier ? 'animate-pulse text-brand' : ''}`} strokeWidth={2} />
+          <span className="hidden sm:inline">{generatingDossier ? '生成中…' : 'Alpha 研报'}</span>
+        </button>
         <Link
           href="/"
           className="btn-secondary"
@@ -529,11 +578,23 @@ export default function ProjectPage() {
           <div className="mt-4 flex flex-wrap items-center gap-2 pt-1">
             <button
               type="button"
-              className="btn-primary min-h-9"
+              className="btn-primary min-h-9 inline-flex items-center gap-1.5"
               onClick={rescore}
               disabled={rescoring}
+              title="触发全链路 8 维综合即时出分、存活门禁与防 PUA 检测"
             >
-              {rescoring ? '评分中…' : '重新评分'}
+              <RefreshCw className={`h-4 w-4 ${rescoring ? 'animate-spin' : ''}`} />
+              <span>{rescoring ? '全链路重评中…' : '即时重新评分'}</span>
+            </button>
+            <button
+              type="button"
+              className="btn-secondary min-h-9 inline-flex items-center gap-1.5"
+              onClick={handleGenerateDossier}
+              disabled={generatingDossier}
+              title="一键生成并预览 6 大核心模块 Alpha 深度投研研报"
+            >
+              <FileText className={`h-4 w-4 ${generatingDossier ? 'animate-pulse text-brand' : ''}`} />
+              <span>{generatingDossier ? '生成研报中…' : 'Alpha 深度研报'}</span>
             </button>
             <button
               type="button"

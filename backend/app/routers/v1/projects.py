@@ -97,6 +97,61 @@ def _parse_json_field(value: Any) -> Any:
         return None
 
 
+def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
+    narrative = _parse_json_field(project.get("narrative_json"))
+    team = _parse_json_field(project.get("team_json"))
+    risk = _parse_json_field(project.get("risk_json"))
+    tokenomics = _parse_json_field(project.get("tokenomics_json"))
+
+    if isinstance(team, dict) and "risk_level" not in team:
+        team_score = team.get("team_score")
+        if isinstance(team_score, (int, float)):
+            from app.agents.team import score_to_risk_level
+
+            team = {**team, "risk_level": score_to_risk_level(float(team_score))}
+
+    reason = _parse_json_field(project.get("reason"))
+    if reason is not None and not isinstance(reason, list):
+        reason = [str(reason)]
+
+    sub_scores = _parse_json_field(project.get("sub_scores"))
+    weight_version = project.get("weight_version")
+
+    from app.services.project_signals import funding_public_view, parse_meta
+
+    meta = parse_meta(project.get("meta"))
+    funding = funding_public_view(project.get("meta"))
+    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+
+    return {
+        "id": project["id"],
+        "name": project["name"],
+        "url": project.get("url"),
+        "sector": project.get("sector"),
+        "stage": project.get("stage"),
+        "score": project.get("score"),
+        "label": project.get("label"),
+        "confidence": project.get("confidence"),
+        "reason": reason or [],
+        "reason_zh": [_reason_to_zh(r) for r in (reason or [])],
+        "narrative": narrative or {},
+        "team": team or {},
+        "risk": risk or {},
+        "tokenomics": tokenomics or {},
+        "source": project.get("source"),
+        "funding": funding,
+        "signals": signals,
+        "funding_note": meta.get("funding_note"),
+        "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
+        "weight_version": weight_version or "v1.2",
+        "veto": project.get("veto"),
+        "skipped": bool(project.get("skipped", False)),
+        "signal_consensus": project.get("signal_consensus"),
+        "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
+        "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 # Enums and Models
 # ══════════════════════════════════════════════════════════════
@@ -389,87 +444,10 @@ def get_project(
                 status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
             )
 
-        # Parse JSON fields (tolerate already-decoded values / bad rows)
-        import json
-
-        def _parse_json_field(value: Any) -> Any:
-            if value is None or value == "":
-                return None
-            if isinstance(value, (dict, list)):
-                return value
-            try:
-                return json.loads(value)
-            except (TypeError, json.JSONDecodeError):
-                return None
-
-        narrative = _parse_json_field(project.get("narrative_json"))
-        team = _parse_json_field(project.get("team_json"))
-        risk = _parse_json_field(project.get("risk_json"))
-        tokenomics = _parse_json_field(project.get("tokenomics_json"))
-
-        # 历史行补 risk_level：本次改动之前打的分，team_json 里没有这个键
-        # （分档逻辑当时只打日志）。它由 team_score 唯一决定，而 team_score
-        # 是落库的，所以可以按同一个真值函数现算 —— 不是猜，是重放同一个映射。
-        #
-        # 注意 farming_cost **不做**同样的补算：它的输入是 has_points_program，
-        # 这个字段不在 projects 表里，无法忠实重放。历史行因此没有该键，
-        # 前端显示「—」。宁可显示「不知道」，也不端出一个看起来很像真值的猜测。
-        if isinstance(team, dict) and "risk_level" not in team:
-            team_score = team.get("team_score")
-            if isinstance(team_score, (int, float)):
-                from app.agents.team import score_to_risk_level
-
-                team = {**team, "risk_level": score_to_risk_level(float(team_score))}
-
-        reason = _parse_json_field(project.get("reason"))
-        if reason is not None and not isinstance(reason, list):
-            reason = [str(reason)]
-
-        sub_scores = _parse_json_field(project.get("sub_scores"))
-        weight_version = project.get("weight_version")
-
-        from app.services.project_signals import funding_public_view, parse_meta
-
-        meta = parse_meta(project.get("meta"))
-        funding = funding_public_view(project.get("meta"))
-        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
-
         return {
             "ok": True,
             "data": {
-                "project": {
-                    "id": project["id"],
-                    "name": project["name"],
-                    "url": project.get("url"),
-                    "sector": project.get("sector"),
-                    "stage": project.get("stage"),
-                    "score": project.get("score"),
-                    "label": project.get("label"),
-                    "confidence": project.get("confidence"),
-                    "reason": reason or [],
-                    "reason_zh": [_reason_to_zh(r) for r in (reason or [])],
-                    "narrative": narrative or {},
-                    "team": team or {},
-                    "risk": risk or {},
-                    "tokenomics": tokenomics or {},
-                    "source": project.get("source"),
-                    "funding": funding,
-                    "signals": signals,
-                    "funding_note": meta.get("funding_note"),
-                    "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
-                    "weight_version": weight_version or "v1.2",
-                    # 资格门否决原因（ADR-015）。不暴露的话这列就是死数据：
-                    # score 不因否决改变，只看 score/label 无法区分「分数低」与
-                    # 「被规则否决」。NULL 语义是「未经资格门评估」，不填默认值。
-                    "veto": project.get("veto"),
-                    # 用户自主「不参与」标记（get_by_id 已把 LEFT JOIN 算进来）。
-                    # 与 veto 刻意分两列：系统判断（veto）与用户决定（skipped）
-                    # 要能分别呈现/撤掉（2026-09-08，§44）。
-                    "skipped": bool(project.get("skipped", False)),
-                    "signal_consensus": project.get("signal_consensus"),
-                    "created_at": str(project["created_at"]) if project.get("created_at") is not None else None,
-                    "updated_at": str(project["updated_at"]) if project.get("updated_at") is not None else None,
-                }
+                "project": _serialize_project_payload(project),
             },
         }
 
@@ -485,6 +463,83 @@ def get_project(
         raise HTTPException(
             status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to retrieve project"}
         ) from e
+
+
+@router.post(
+    "/projects/{project_id}/evaluate",
+    response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {"application/json": {"examples": {"not_found": ERROR_RESPONSE_EXAMPLES["not_found"]}}},
+        }
+    },
+    summary="即时全链路重新评估项目",
+    description="对指定项目触发即时 8 维综合评估、存活/跑道门禁、防 PUA 退出检测、多源共识加成与演化快照落库，并更新关联的机会与决策。",
+)
+async def evaluate_project(
+    project_id: str = Path(..., description="项目 ID"),
+) -> dict[str, Any]:
+    """即时全链路重新评估项目."""
+    try:
+        from app.services.project_evaluation import evaluate_single_project
+
+        updated_project = await evaluate_single_project(project_id)
+        return {
+            "ok": True,
+            "data": {
+                "project": _serialize_project_payload(updated_project),
+            },
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("api.projects.evaluate_failed", project_id=project_id, error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to evaluate project: {e}"}
+        ) from e
+
+
+@router.get(
+    "/projects/{project_id}/dossier",
+    response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {"application/json": {"examples": {"not_found": ERROR_RESPONSE_EXAMPLES["not_found"]}}},
+        }
+    },
+    summary="生成项目 Alpha 深度投研研报",
+    description="一站式聚合基本面、VC 融资跑道、防 PUA 摩擦预警、多源共识印证、多钱包策略与水龙头任务清单，生成 100% 确定性零 Token 投研 Markdown 研报与核心指标摘要。",
+)
+def get_project_dossier(
+    project_id: str = Path(..., description="项目 ID"),
+) -> dict[str, Any]:
+    """生成项目 Alpha 深度投研研报."""
+    try:
+        from app.services.alpha_dossier import generate_alpha_dossier
+
+        dossier = generate_alpha_dossier(project_id)
+        return {
+            "ok": True,
+            "data": dossier,
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("api.projects.dossier_failed", project_id=project_id, error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha dossier: {e}"}
+        ) from e
+
 
 
 @router.get(
