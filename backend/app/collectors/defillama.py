@@ -316,7 +316,20 @@ class DefiLlamaCollector(DataCollector):
             "has_github": bool(protocol.get("github")),
             "no_token_yet": no_token,
             "has_testnet": has_testnet,
-            "has_points_program": False,
+            "has_points_program": (
+                True
+                if (
+                    any(
+                        kw in str(protocol.get("description") or "").lower()
+                        for kw in ("points", "staking", "stakers", "restaking", "vault", "incentive", "rewards", "deposit")
+                    )
+                    or any(
+                        cat in str(protocol.get("category") or "").lower()
+                        for cat in ("restaking", "liquid staking", "yield", "leveraged farming", "basis")
+                    )
+                )
+                else None
+            ),
             "recent_funding": bool(protocol.get("funding") or protocol.get("recent_funding")),
             "funding": protocol.get("funding"),
         }

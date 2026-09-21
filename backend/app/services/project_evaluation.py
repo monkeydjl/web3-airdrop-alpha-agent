@@ -38,6 +38,16 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
 
     # 1. Restore saved signals and infer flags
     saved = apply_signals_to_kwargs(row.get("meta"))
+    inferred_signal_keys = {
+        "explicit_airdrop_mention",
+        "explicit_no_airdrop",
+        "has_points_program",
+        "has_testnet",
+        "has_task_portal",
+    }
+    input_signals = {
+        k: v for k, v in saved.items() if v not in (None, "", [], "unknown") and k not in inferred_signal_keys
+    }
     flags = CollectorAgent._infer_airdrop_flags(
         source.split(",")[0] if source else "defillama",
         {
@@ -45,15 +55,28 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
             "sector": sector,
             "stage": stage,
             "url": row.get("url"),
-            **{k: v for k, v in saved.items() if v not in (None, "", [], "unknown")},
+            **input_signals,
         },
     )
-    merged = {**flags, **saved}
-    for k in ("has_testnet", "has_points_program", "no_token_yet", "recent_funding"):
-        if k in saved:
-            merged[k] = saved[k]
-        elif k in flags:
+    merged = {**saved, **flags}
+    for k in ("has_testnet", "has_points_program", "recent_funding"):
+        if flags.get(k) is True:
+            merged[k] = True
+        elif k in flags and flags[k] is not None:
             merged[k] = flags[k]
+        elif k in saved and saved[k] is not None:
+            merged[k] = saved[k]
+
+    # no_token_yet: 既有库内明确标注已发币 (False) 的，必须严格保留，防止已发币项目混入
+    if saved.get("no_token_yet") is False:
+        merged["no_token_yet"] = False
+    elif "no_token_yet" in flags:
+        merged["no_token_yet"] = flags["no_token_yet"]
+
+    # 否认一旦写入就保持：重算时正文未必还带那句原话，False 覆盖会把
+    # 已否决的项目放回 FARM。文本没再说，不代表官方改口了。
+    if saved.get("explicit_no_airdrop") is True or flags.get("explicit_no_airdrop") is True:
+        merged["explicit_no_airdrop"] = True
 
     # Only pass known RawProject fields
     field_names = {field.name for field in RawProject.__dataclass_fields__.values()}

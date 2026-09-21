@@ -387,6 +387,22 @@ class TestMergeRawRecords:
         assert merged["has_testnet"] is True
         assert merged["has_points_program"] is True
 
+    def test_explicit_no_airdrop_ors_across_sources(self):
+        records = [
+            {"name": "X", "source": "defillama", "explicit_no_airdrop": False},
+            {"name": "X", "source": "twitter", "explicit_no_airdrop": True},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["explicit_no_airdrop"] is True
+
+    def test_manual_can_clear_explicit_no_airdrop(self):
+        records = [
+            {"name": "X", "source": "twitter", "explicit_no_airdrop": True},
+            {"name": "X", "source": "manual", "explicit_no_airdrop": False},
+        ]
+        merged = merge_raw_records(records)
+        assert merged["explicit_no_airdrop"] is False
+
     def test_discovery_score_max(self):
         records = [
             {"name": "LayerX", "source": "defillama", "discovery_score": 0.4},

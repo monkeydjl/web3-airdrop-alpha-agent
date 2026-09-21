@@ -293,6 +293,7 @@ _MERGE_BOOL_OR = (
     "has_twitter",
     "has_discord",
     "explicit_airdrop_mention",
+    "explicit_no_airdrop",
     "has_task_portal",
     "has_contract",
 )

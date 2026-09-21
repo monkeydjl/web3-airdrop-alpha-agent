@@ -102,6 +102,35 @@ _AIRDROP_COMPLETED_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# 官方否认发币/空投（ADR-015）。只认永久否定。
+# "no token yet" / "there will be no token yet" / "还不会发币" 是「还没发」，
+# 正是要找的机会，不能写成否认 —— 否则资格门会把真 FARM 打成 IGNORE。
+_EXPLICIT_NO_AIRDROP_RE = re.compile(
+    r"""(
+        \b(?:no|not|never|without)\s+plans?\s+to\s+(?:ever\s+)?
+          (?:launch|issue|have|introduce|release)\s+(?:a\s+|an\s+|any\s+)?
+          (?:token|airdrop)\b(?!\s+yet\b)
+      | \bwill\s+(?:not|never)\s+(?:launch|issue|have|introduce|do)\s+
+          (?:a\s+|an\s+|any\s+)?(?:token|airdrop)\b(?!\s+yet\b)
+      | \b(?:is\s+)?not\s+launching\s+(?:a\s+|an\s+)?(?:token|airdrop)\b(?!\s+yet\b)
+      | \bthere\s+will\s+(?:be\s+no|never\s+be\s+(?:a|an))\s+
+          (?:token|airdrop)\b(?!\s+yet\b)
+      | \bno\s+intention\s+(?:of|to)\s+(?:launching|launch|issuing|issue)\s+
+          (?:a\s+|an\s+)?(?:token|airdrop)\b(?!\s+yet\b)
+      | \b(?:ruled|rules)\s+out\s+(?:a\s+|an\s+|any\s+)?(?:token|airdrop)\b
+      | \bno\s+token\s+incentives?\b(?!\s+yet\b)
+      | \b(?:remain|remains|remaining)\s+tokenless\b
+      | \bintentionally\s+tokenless\b
+      | (?<!目前)(?<![还暂未])不会发行代币
+      | (?<!目前)(?<![还暂未])不会发币
+      | (?<!目前)(?<![还暂未])不打算(?:发行)?(?:代币|空投)
+      | (?:没有|无)发币计划
+      | 不会(?:做|有)空投
+      | 明确(?:否认|拒绝)(?:发币|空投|代币)
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 
 class CollectorAgent(BaseAgent):
     """Collector Agent - MVP implementation.
@@ -143,6 +172,7 @@ class CollectorAgent(BaseAgent):
             "github_stars": int(ext.get("github_stars") or 0),
             "github_recent_push_days": ext.get("github_recent_push_days"),
             "explicit_airdrop_mention": bool(ext.get("explicit_airdrop_mention", False)),
+            "explicit_no_airdrop": bool(ext.get("explicit_no_airdrop", False)),
             "tvl_usd": ext.get("tvl_usd"),
             "description": ext.get("description"),
             "has_task_portal": bool(ext.get("has_task_portal", False)),
@@ -227,11 +257,23 @@ class CollectorAgent(BaseAgent):
         if has_testnet is None:
             has_testnet = stage == "testnet" or "testnet" in text
 
+        completed_airdrop = bool(_AIRDROP_COMPLETED_RE.search(text))
+
         if has_points is None:
-            has_points = (
+            has_points = not completed_airdrop and (
                 "points program" in text
-                or ("points" in text and ("airdrop" in text or "loyalty" in text))
+                or "points system" in text
+                or "point system" in text
+                or (
+                    "points" in text
+                    and ("airdrop" in text or "loyalty" in text or "reward" in text or "portal" in text)
+                )
                 or "incentive" in text
+                or "restaking" in text
+                or "stakers" in text
+                or "staking rewards" in text
+                or "vaults" in text
+                or "liquidity mining" in text
             )
 
         if recent_funding is None:
@@ -281,7 +323,6 @@ class CollectorAgent(BaseAgent):
         # 已结束的空投不是 upcoming 证据：先做负向门控，再匹配正向措辞。
         # 显式字段（raw_data["explicit_airdrop_mention"]）不受门控影响——
         # 刻意输入的断言优先于文本推断。
-        completed_airdrop = bool(_AIRDROP_COMPLETED_RE.search(text))
         explicit_airdrop = bool(
             raw_data.get("explicit_airdrop_mention")
             or (
@@ -296,6 +337,10 @@ class CollectorAgent(BaseAgent):
                 )
             )
         )
+        if "explicit_no_airdrop" in raw_data:
+            explicit_no_airdrop = bool(raw_data.get("explicit_no_airdrop"))
+        else:
+            explicit_no_airdrop = bool(_EXPLICIT_NO_AIRDROP_RE.search(text))
 
         # Verifiable task / quest / points portal (not just wording)
         has_task_portal = bool(
@@ -441,6 +486,7 @@ class CollectorAgent(BaseAgent):
             "github_stars": github_stars,
             "github_recent_push_days": push_days,
             "explicit_airdrop_mention": bool(explicit_airdrop),
+            "explicit_no_airdrop": bool(explicit_no_airdrop),
             "tvl_usd": tvl_usd,
             "description": description,
             "has_task_portal": bool(has_task_portal),
@@ -522,6 +568,7 @@ class CollectorAgent(BaseAgent):
                     github_stars=int(merged.get("github_stars") or 0),
                     github_recent_push_days=merged.get("github_recent_push_days"),
                     explicit_airdrop_mention=bool(merged.get("explicit_airdrop_mention", False)),
+                    explicit_no_airdrop=bool(merged.get("explicit_no_airdrop", False)),
                     tvl_usd=merged.get("tvl_usd"),
                     description=merged.get("description"),
                     has_task_portal=bool(merged.get("has_task_portal", False)),
@@ -827,6 +874,7 @@ class CollectorAgent(BaseAgent):
                     "github_stars": flags.get("github_stars") or 0,
                     "github_recent_push_days": flags.get("github_recent_push_days"),
                     "explicit_airdrop_mention": flags.get("explicit_airdrop_mention", False),
+                    "explicit_no_airdrop": flags.get("explicit_no_airdrop", False),
                     "tvl_usd": flags.get("tvl_usd"),
                     "description": flags.get("description"),
                     "has_task_portal": flags.get("has_task_portal", False),

@@ -89,3 +89,90 @@ class TestCompletedAirdropGate:
             {"name": "X", "description": "airdrop completed", "explicit_airdrop_mention": True},
         )
         assert flags["explicit_airdrop_mention"] is True
+
+
+class TestExplicitNoAirdrop:
+    """官方否认必须进 explicit_no_airdrop；「还没发」不能被当成否认。
+
+    资格门只在这个字段为真时把 FARM 打成 IGNORE。采集侧此前从不写它，
+    否决在生产路径上是空的。措辞收得很紧：no token yet / 还不会发币
+    是本系统要找的机会，误伤比漏判更亏。
+    """
+
+    def test_permanent_denial_sets_flag(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "medium",
+            {"name": "Social", "description": "The team said there will be no token."},
+        )
+        assert flags["explicit_no_airdrop"] is True
+
+    def test_will_never_airdrop(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "twitter",
+            {"name": "Social", "text": "We will never do an airdrop."},
+        )
+        assert flags["explicit_no_airdrop"] is True
+
+    def test_chinese_denial(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "mirror",
+            {"name": "社交协议", "description": "官方明确否认空投，也没有发币计划。"},
+        )
+        assert flags["explicit_no_airdrop"] is True
+
+    def test_no_token_yet_is_not_a_denial(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "github",
+            {"name": "Cool", "description": "testnet is live, no token yet"},
+        )
+        assert flags["explicit_no_airdrop"] is False
+        assert flags["no_token_yet"] is True
+
+    def test_not_yet_qualifier_blocks_denial(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "medium",
+            {"name": "X", "description": "there will be no token yet; points program is open"},
+        )
+        assert flags["explicit_no_airdrop"] is False
+
+    def test_temporary_chinese_is_not_a_denial(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "medium",
+            {"name": "X", "description": "目前还不会发币，测试网积分进行中"},
+        )
+        assert flags["explicit_no_airdrop"] is False
+
+    def test_explicit_false_suppresses_text(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "manual",
+            {
+                "name": "X",
+                "description": "there will be no token",
+                "explicit_no_airdrop": False,
+            },
+        )
+        assert flags["explicit_no_airdrop"] is False
+
+    def test_explicit_true_without_text(self):
+        flags = CollectorAgent._infer_airdrop_flags(
+            "manual",
+            {"name": "X", "description": "testnet points", "explicit_no_airdrop": True},
+        )
+        assert flags["explicit_no_airdrop"] is True
+
+    def test_seed_collect_carries_flag_onto_project(self):
+        projects = CollectorAgent().collect_from_seed(
+            [
+                {
+                    "name": "NoDrop Protocol",
+                    "sector": "L2",
+                    "source": "seed",
+                    "stage": "testnet",
+                    "no_token_yet": True,
+                    "has_testnet": True,
+                    "description": "Founders ruled out a token.",
+                }
+            ]
+        )
+        assert len(projects) == 1
+        assert projects[0].explicit_no_airdrop is True

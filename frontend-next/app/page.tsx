@@ -167,8 +167,14 @@ function DashboardContent() {
     const counts: Record<Label, number> = { FARM: 0, WATCH: 0, IGNORE: 0 };
     let sum = 0;
     let top = 0;
-    projects.forEach((p) => { if (p.label in counts) counts[p.label as Label]++; sum += p.score || 0; top = Math.max(top, p.score || 0); });
-    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top };
+    let needsVerify = 0;
+    projects.forEach((p) => {
+      if (p.label in counts) counts[p.label as Label]++;
+      if (p.veto === 'no_participation_path') needsVerify++;
+      sum += p.score || 0;
+      top = Math.max(top, p.score || 0);
+    });
+    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top, needsVerify };
   }, [projects]);
 
   const sectors = useMemo(() => {
@@ -378,7 +384,7 @@ function DashboardContent() {
                   : 'bg-surface-2 text-watch hover:bg-surface-3 border border-watch/30'
               }`}
             >
-              ⚠️ 待验证路径
+              ⚠️ 待核验路径 ({stats.needsVerify})
             </button>
           </div>
 
