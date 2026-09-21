@@ -91,7 +91,13 @@ function DashboardContent() {
   );
 
   const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly]);
-  const projects: Project[] = useMemo(() => data?.projects ?? [], [data]);
+  const [projectOverrides, setProjectOverrides] = useState<Record<string, Partial<Project>>>({});
+
+  const projects: Project[] = useMemo(() => {
+    const raw = data?.projects ?? [];
+    if (Object.keys(projectOverrides).length === 0) return raw;
+    return raw.map((p) => (projectOverrides[p.id] ? { ...p, ...projectOverrides[p.id] } : p));
+  }, [data, projectOverrides]);
   const truncated = data?.truncated ?? false;
 
   // 「今日流水线」真实聚合数据（发现队列 / 影子引擎 / 采集运行）
@@ -128,6 +134,19 @@ function DashboardContent() {
       showToast(err instanceof Error ? err.message : 'Pipeline 失败', 'error');
     } finally { setRunning(false); setRunStatus(''); }
   };
+
+  const handleProjectUpdate = useCallback(
+    (updated: { id: string; label: 'FARM' | 'WATCH' | 'IGNORE'; veto: string | null; reason?: string[] }) => {
+      setProjectOverrides((prev) => ({
+        ...prev,
+        [updated.id]: {
+          ...(prev[updated.id] || {}),
+          ...updated,
+        },
+      }));
+    },
+    [],
+  );
 
   const stats = useMemo(() => {
     const counts: Record<Label, number> = { FARM: 0, WATCH: 0, IGNORE: 0 };
@@ -515,7 +534,9 @@ function DashboardContent() {
         />
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">
-          {filtered.map((p, i) => <ProjectCard key={p.id} project={p} rank={i + 1} />)}
+          {filtered.map((p, i) => (
+            <ProjectCard key={p.id} project={p} rank={i + 1} onUpdate={handleProjectUpdate} />
+          ))}
         </div>
       ) : (
         <div className="dash-card overflow-hidden">

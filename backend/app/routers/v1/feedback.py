@@ -9,6 +9,7 @@ Reference:
 """
 
 import contextlib
+import json
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -18,8 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import ROLE_ADMIN, get_current_user
 from app.config import settings
-from app.db import get_connection, insert_returning_id
+from app.db import dict_from_row, get_connection, insert_returning_id
 from app.metrics import record_feedback
+from app.services.project_signals import parse_meta
 from app.services.user_scope import DEFAULT_USER, build_user_scope_filter, owned_project_ids, owned_project_ids_where
 
 logger = structlog.get_logger(__name__)
@@ -153,6 +155,8 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
         uid = request.user_id or DEFAULT_USER
 
     try:
+        updated_label: str | None = None
+        updated_veto: str | None = None
         with get_connection() as conn:
             feedback_id = insert_returning_id(
                 conn,
@@ -162,6 +166,126 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                 """,
                 (request.project_id, uid, request.signal, request.note, request.outcome),
             )
+
+            # 状态同步持久化：当用户人工核验/校准标签时，直接将结果写入 projects 库表
+            if request.signal == "wrong_label" and request.note:
+                norm_note = request.note.strip().upper()
+                if norm_note in ("FARM", "WATCH", "IGNORE"):
+                    row = conn.execute(
+                        "SELECT * FROM projects WHERE id = ?", (request.project_id,)
+                    ).fetchone()
+                    if row:
+                        row_dict = dict_from_row(row)
+                        target_label = norm_note
+                        current_veto = row_dict.get("veto")
+
+                        if target_label == "FARM":
+                            new_veto = None
+                        elif target_label == "WATCH":
+                            new_veto = (
+                                "verified_no_path"
+                                if current_veto == "no_participation_path"
+                                else current_veto
+                            )
+                        else:  # IGNORE
+                            new_veto = None
+
+                        meta = parse_meta(row_dict.get("meta"))
+                        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+                        if target_label == "FARM":
+                            signals["has_points_program"] = True
+                            signals["manual_verified_path"] = True
+                        elif target_label == "WATCH":
+                            signals["manual_verified_path"] = False
+                        meta["signals"] = signals
+                        meta["manual_label_override"] = target_label
+                        meta["manual_verified_at"] = datetime.now(UTC).isoformat()
+                        meta_json = json.dumps(meta, ensure_ascii=False)
+
+                        raw_reason = row_dict.get("reason")
+                        reasons_list: list[str] = []
+                        if raw_reason:
+                            try:
+                                parsed = json.loads(raw_reason)
+                                reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                            except Exception:
+                                reasons_list = [str(raw_reason)]
+
+                        reasons_list = [
+                            r
+                            for r in reasons_list
+                            if "no verified participation path" not in r.lower()
+                            and "人工核验确认" not in r
+                            and "人工标记" not in r
+                        ]
+                        if target_label == "FARM":
+                            note_msg = "人工核验确认：已发现参与路径，升为重点参与"
+                        elif target_label == "WATCH":
+                            note_msg = "人工核验确认：目前无明确参与路径，维持观察"
+                        else:
+                            note_msg = "人工标记：已标记为忽略"
+                        reasons_list.insert(0, note_msg)
+                        reason_json = json.dumps(reasons_list, ensure_ascii=False)
+
+                        now_ts = datetime.now(UTC)
+                        conn.execute(
+                            """
+                            UPDATE projects
+                            SET label = ?, veto = ?, meta = ?, reason = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                target_label,
+                                new_veto,
+                                meta_json,
+                                reason_json,
+                                now_ts,
+                                request.project_id,
+                            ),
+                        )
+
+                        # 记录项目历史审计快照
+                        history_snapshot = json.dumps(
+                            {
+                                "project_name": row_dict.get("name"),
+                                "url": row_dict.get("url"),
+                                "sector": row_dict.get("sector"),
+                                "source": row_dict.get("source"),
+                                "confidence": row_dict.get("confidence"),
+                                "veto": new_veto,
+                                "reason": reasons_list,
+                                "meta": meta,
+                                "manual_override_by": uid,
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                        conn.execute(
+                            """
+                            INSERT INTO project_history
+                                (project_id, run_id, score, label, stage, weight_version, snapshot)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                request.project_id,
+                                f"manual_feedback_{uid}",
+                                row_dict.get("score"),
+                                target_label,
+                                row_dict.get("stage"),
+                                row_dict.get("weight_version"),
+                                history_snapshot,
+                            ),
+                        )
+
+                        if row_dict.get("sector"):
+                            from app.repository import ProjectRepository
+
+                            with contextlib.suppress(Exception):
+                                ProjectRepository().invalidate_sector_cache(row_dict.get("sector"))
+
+                        updated_label = target_label
+                        updated_veto = new_veto
+
             conn.commit()
 
         record_feedback(signal=request.signal)
@@ -172,15 +296,20 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
             signal=request.signal,
             feedback_id=feedback_id,
             user_id=uid,
+            updated_label=updated_label,
+            updated_veto=updated_veto,
         )
 
-        return FeedbackResponse(
-            data={
-                "feedback_id": feedback_id,
-                "project_id": request.project_id,
-                "signal": request.signal,
-            }
-        )
+        resp_data: dict[str, Any] = {
+            "feedback_id": feedback_id,
+            "project_id": request.project_id,
+            "signal": request.signal,
+        }
+        if updated_label is not None:
+            resp_data["updated_label"] = updated_label
+            resp_data["updated_veto"] = updated_veto
+
+        return FeedbackResponse(data=resp_data)
     except Exception as e:
         logger.error("feedback.failed", error=str(e), exc_info=True)
         raise HTTPException(

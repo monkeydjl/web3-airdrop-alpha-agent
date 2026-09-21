@@ -1,17 +1,35 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
 import { formatPct, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
 
-export function ProjectCard({ project, rank }: { project: Project; rank?: number }) {
-  const needsVerify = project.veto === 'no_participation_path';
+export function ProjectCard({
+  project,
+  rank,
+  onUpdate,
+}: {
+  project: Project;
+  rank?: number;
+  onUpdate?: (updated: { id: string; label: 'FARM' | 'WATCH' | 'IGNORE'; veto: string | null; reason?: string[] }) => void;
+}) {
+  const [currentLabel, setCurrentLabel] = useState(project.label);
+  const [currentVeto, setCurrentVeto] = useState(project.veto);
+  const [currentReason, setCurrentReason] = useState(project.reason);
   const [verdict, setVerdict] = useState<'FARM' | 'WATCH' | null>(null);
   const [sending, setSending] = useState(false);
   const [verifyErr, setVerifyErr] = useState('');
+
+  useEffect(() => {
+    setCurrentLabel(project.label);
+    setCurrentVeto(project.veto);
+    setCurrentReason(project.reason);
+  }, [project.label, project.veto, project.reason]);
+
+  const needsVerify = currentVeto === 'no_participation_path';
 
   // 人工核验 → 反馈样本。校准门禁只认 wrong_label + note(正确标签)两类
   // 样本（见 calibration.extract_samples），按钮直接产出这种样本。
@@ -28,13 +46,36 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
           body: JSON.stringify({ project_id: project.id, signal: 'wrong_label', note: v }),
         });
         setVerdict(v);
+        if (v === 'FARM') {
+          const newReason = [
+            '人工核验确认：已发现参与路径，升为重点参与',
+            ...(currentReason || []).filter(
+              (r) => !r.includes('no verified participation path') && !r.includes('人工核验确认'),
+            ),
+          ];
+          setCurrentLabel('FARM');
+          setCurrentVeto(null);
+          setCurrentReason(newReason);
+          onUpdate?.({ id: project.id, label: 'FARM', veto: null, reason: newReason });
+        } else {
+          const newReason = [
+            '人工核验确认：目前无明确参与路径，维持观察',
+            ...(currentReason || []).filter(
+              (r) => !r.includes('no verified participation path') && !r.includes('人工核验确认'),
+            ),
+          ];
+          setCurrentLabel('WATCH');
+          setCurrentVeto('verified_no_path');
+          setCurrentReason(newReason);
+          onUpdate?.({ id: project.id, label: 'WATCH', veto: 'verified_no_path', reason: newReason });
+        }
       } catch (e) {
         setVerifyErr(e instanceof Error ? e.message : '提交失败');
       } finally {
         setSending(false);
       }
     },
-    [project.id, sending],
+    [project.id, sending, currentReason, onUpdate],
   );
 
   return (
@@ -48,7 +89,7 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
                   #{rank.toString().padStart(2, '0')}
                 </span>
               ) : null}
-              <LabelBadge label={project.label} />
+              <LabelBadge label={currentLabel} />
               {project.stage ? (
                 <span className="badge bg-surface-2 text-ink-muted border border-line font-mono text-[10px]">
                   {stageZh(project.stage)}
@@ -59,12 +100,19 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
                   💰 {tierZh(project.funding.funding_tier)}
                 </span>
               ) : null}
-              {project.veto === 'no_participation_path' ? (
+              {currentVeto === 'no_participation_path' ? (
                 <span
                   className="badge bg-watch-soft/90 text-watch border border-watch/40 text-[10px] font-semibold"
                   title="分数已达 FARM 线，但未发现测试网/积分/任务入口 —— 需要你到官网或 Twitter 人工验证一次"
                 >
                   待验证路径
+                </span>
+              ) : currentVeto === 'verified_no_path' ? (
+                <span
+                  className="badge bg-surface-2 text-ink-muted border border-line text-[10px]"
+                  title="已人工核验确认：目前无明确参与路径，维持观察"
+                >
+                  已核验观察
                 </span>
               ) : null}
               {project.signals?.has_testnet && !project.signals?.has_points_program ? (
@@ -139,16 +187,16 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
               {project.source ? <span className="text-ink-faint">· {sourceZh(project.source)}</span> : ''}
             </p>
           </div>
-          <ScoreRing score={project.score ?? 0} size={64} label={project.label} />
+          <ScoreRing score={project.score ?? 0} size={64} label={currentLabel} />
         </div>
 
         <div className="mt-3.5">
           <ConfidenceBar value={project.confidence ?? 0} />
         </div>
 
-        {project.reason?.length ? (
+        {currentReason?.length ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {project.reason.slice(0, 2).map((r, i) => {
+            {currentReason.slice(0, 2).map((r, i) => {
               const tone = reasonTone(r);
               const sign = tone === 'pos' ? '+' : tone === 'neg' ? '−' : tone === 'warn' ? '!' : '·';
               return (
@@ -164,12 +212,16 @@ export function ProjectCard({ project, rank }: { project: Project; rank?: number
         )}
       </Link>
 
-      {needsVerify ? (
+      {needsVerify || verdict ? (
         <div className="mt-3.5 border-t border-line/70 pt-3">
           {verdict ? (
             <p className="text-xs font-mono font-medium text-farm flex items-center gap-1" role="status">
               <span>✓</span>
-              <span>{verdict === 'FARM' ? '已核验：该升 FARM · 计入样本' : '已核验：维持观察 · 计入样本'}</span>
+              <span>
+                {verdict === 'FARM'
+                  ? '已核验：已升级为 FARM · 状态已落盘持久化'
+                  : '已核验：维持观察 · 已消除待验证状态'}
+              </span>
             </p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">

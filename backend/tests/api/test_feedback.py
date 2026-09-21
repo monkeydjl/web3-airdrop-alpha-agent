@@ -84,6 +84,68 @@ class TestFeedbackEndpoints:
         assert data["signals"]["useful"] == 1
         assert data["signals"]["useless"] == 1
 
+    def test_feedback_wrong_label_upgrades_project_to_farm(self, client, feedback_enabled) -> None:
+        """测试人工核验将 veto=no_participation_path 的项目升级为 FARM 并持久化落库。"""
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, veto, reason)
+                VALUES ('test-p1', 'Test Project 1', 75, 'WATCH', 'no_participation_path', '["no verified participation path"]')
+                """
+            )
+            conn.commit()
+
+        response = client.post(
+            "/api/v1/feedback",
+            json={
+                "project_id": "test-p1",
+                "signal": "wrong_label",
+                "note": "FARM",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["updated_label"] == "FARM"
+        assert data["updated_veto"] is None
+
+        # 验证数据库持久化
+        with get_connection() as conn:
+            row = conn.execute("SELECT label, veto, reason FROM projects WHERE id = 'test-p1'").fetchone()
+            assert row["label"] == "FARM"
+            assert row["veto"] is None
+            assert "已发现参与路径" in row["reason"]
+
+    def test_feedback_wrong_label_verifies_watch(self, client, feedback_enabled) -> None:
+        """测试人工核验确认无路径维持观察，veto 更新为 verified_no_path，消除待验证提示。"""
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO projects (id, name, score, label, veto, reason)
+                VALUES ('test-p2', 'Test Project 2', 72, 'WATCH', 'no_participation_path', '["no verified participation path"]')
+                """
+            )
+            conn.commit()
+
+        response = client.post(
+            "/api/v1/feedback",
+            json={
+                "project_id": "test-p2",
+                "signal": "wrong_label",
+                "note": "WATCH",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["updated_label"] == "WATCH"
+        assert data["updated_veto"] == "verified_no_path"
+
+        # 验证数据库持久化
+        with get_connection() as conn:
+            row = conn.execute("SELECT label, veto, reason FROM projects WHERE id = 'test-p2'").fetchone()
+            assert row["label"] == "WATCH"
+            assert row["veto"] == "verified_no_path"
+            assert "维持观察" in row["reason"]
+
 
 class TestEventsEndpoints:
     def test_events_disabled_by_default(self, client) -> None:

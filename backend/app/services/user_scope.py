@@ -33,7 +33,11 @@ def _scope_clause(user_id: str) -> str:
     （单用户 MVP 下这些就是用户自己的记录）；查具体用户时严格匹配，
     不把 NULL 记录算进来，避免多用户启用后跨用户串数据。
     """
-    return "(user_id = ? OR user_id IS NULL)" if user_id in (DEFAULT_USER, "anonymous") else "user_id = ?"
+    return (
+        "(user_id = ? OR user_id = ? OR user_id IS NULL)"
+        if user_id in (DEFAULT_USER, "anonymous")
+        else "user_id = ?"
+    )
 
 
 def build_user_scope_filter(
@@ -59,7 +63,7 @@ def build_user_scope_filter(
         return "", []
 
     if user_id in (DEFAULT_USER, "anonymous"):
-        return f"({col_name} = ? OR {col_name} IS NULL)", [user_id]
+        return f"({col_name} = ? OR {col_name} = ? OR {col_name} IS NULL)", [user_id, DEFAULT_USER]
     return f"{col_name} = ?", [user_id]
 
 
@@ -89,5 +93,6 @@ def owned_project_ids_where(
 
     # 表名来自白名单、条件片段来自调用方字面量，user_id 走绑定参数
     sql = f"SELECT DISTINCT project_id FROM {table} WHERE {where}"  # noqa: S608
-    rows = conn.execute(sql, (user_id,)).fetchall()
+    params = (user_id, DEFAULT_USER) if user_id in (DEFAULT_USER, "anonymous") else (user_id,)
+    rows = conn.execute(sql, params).fetchall()
     return {str(r[0]) for r in rows if r and r[0]}
