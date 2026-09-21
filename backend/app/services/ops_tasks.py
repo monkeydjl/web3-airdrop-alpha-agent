@@ -291,10 +291,7 @@ def audit_database_viability(*, apply_changes: bool = False) -> dict[str, Any]:
 
             new_label = current_label
             if current_label == "FARM" and tier == "unviable":
-                if UNBACKED_POINTS_MACHINE in res["reasons"]:
-                    new_label = "IGNORE"
-                else:
-                    new_label = "WATCH"
+                new_label = "IGNORE" if UNBACKED_POINTS_MACHINE in res["reasons"] else "WATCH"
 
                 if LOW_RUNWAY_RISK not in reasons_list:
                     reasons_list.append(LOW_RUNWAY_RISK)

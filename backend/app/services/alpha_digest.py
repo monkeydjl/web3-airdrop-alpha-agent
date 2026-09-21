@@ -7,7 +7,6 @@ anti-PUA capital friction radar, and multi-wallet operational guidance into a un
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -73,8 +72,6 @@ def generate_alpha_digest(
             zero_cost_projects.append(p)
 
         v_tier = meta.get("viability_tier")
-        v_advisory = meta.get("viability_advisory") or {}
-        reasons = v_advisory.get("reasons", []) if isinstance(v_advisory, dict) else []
         if v_tier == "unviable" or "low_runway_risk" in str(p.get("reason") or ""):
             pua_warning_projects.append(p)
 
@@ -107,7 +104,7 @@ def generate_alpha_digest(
         f"- **重点参与 (FARM) 项目库存**：`{total_farm}` 个（全库占比 {round(total_farm / total_scanned * 100, 1) if total_scanned else 0}%）",
         f"- **零资金门槛测试网机会**：`{total_zero_cost}` 个（免本金摩擦，水龙头驱动）",
         f"- **本期精选 Top 项目均分**：`{avg_top_score}` 分",
-        f"- **热门叙事赛道分布**：" + "、".join(f"`{k}` ({v})" for k, v in top_sectors_sorted),
+        "- **热门叙事赛道分布**：" + "、".join(f"`{k}` ({v})" for k, v in top_sectors_sorted),
         "",
         "---",
         "",
