@@ -91,6 +91,7 @@ class UnifiedScheduler:
         self._register_archive_job()
         self._register_notify_job()
         self._register_vitals_job()
+        self._register_alpha_digest_job()
         self.scheduler.start()
         self._logger.info("unified_scheduler.started")
 
@@ -118,6 +119,7 @@ class UnifiedScheduler:
         cron_map = {
             "defillama": settings.defillama_cron,
             "github": settings.github_cron,
+            "github_curated": getattr(settings, "github_curated_cron", "30 3 * * *"),
             "coingecko": settings.coingecko_cron,
             "cryptorank": settings.cryptorank_cron,
             "rootdata": getattr(settings, "rootdata_cron", "45 9 * * *"),
@@ -465,6 +467,33 @@ class UnifiedScheduler:
             self._logger.error("unified_scheduler.notify_failed", error=str(e), exc_info=True)
             return
         self._logger.info("unified_scheduler.notify_completed", **stats)
+
+    # ── Alpha 投研速递 job 注册 ────────────────────
+
+    def _register_alpha_digest_job(self) -> None:
+        """注册每日 Alpha 投研周报与动态速递定时任务。"""
+        cron = getattr(settings, "alpha_digest_cron", "0 8 * * *")
+        self.scheduler.add_job(
+            self._run_alpha_digest_job,
+            trigger=CronTrigger.from_crontab(cron, timezone=settings.timezone),
+            id="daily_alpha_digest",
+            name="Daily Alpha Digest Generator",
+            replace_existing=True,
+            misfire_grace_time=settings.scheduler_misfire_grace_seconds,
+            coalesce=True,
+            max_instances=1,
+        )
+        self._logger.info("unified_scheduler.alpha_digest_job_added", cron=cron)
+
+    async def _run_alpha_digest_job(self) -> None:
+        """生成每日 Alpha 动态与周报快照。"""
+        try:
+            from app.services.alpha_digest import generate_alpha_digest
+
+            generate_alpha_digest(window_days=7, min_score=70.0, limit=15)
+            self._logger.info("unified_scheduler.alpha_digest_completed")
+        except Exception as e:
+            self._logger.error("unified_scheduler.alpha_digest_failed", error=str(e))
 
     # ── 诊断 ──────────────────────────────────────
 

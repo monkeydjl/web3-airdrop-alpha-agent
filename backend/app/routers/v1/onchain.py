@@ -68,3 +68,35 @@ async def verify_onchain_address(payload: VerifyContractRequest) -> dict[str, An
         "ok": True,
         "data": res,
     }
+
+
+class SybilCheckRequest(BaseModel):
+    addresses: list[str] = Field(..., min_length=1, max_length=20, description="需要自检的 EVM 钱包地址列表")
+
+
+@router.post(
+    "/onchain/sybil-check",
+    summary="多钱包女巫关联风险自检雷达",
+    description="对用户提交的钱包地址矩阵进行女巫风险关联性分析，评估地址特征与隔离风险。",
+)
+def check_sybil_risk(payload: SybilCheckRequest) -> dict[str, Any]:
+    from app.services.onchain_sybil import evaluate_sybil_risk
+
+    result = evaluate_sybil_risk(payload.addresses)
+    return {"ok": True, "data": result}
+
+
+@router.get(
+    "/onchain/sybil-topology",
+    summary="获取多钱包防女巫资金隔离路由拓扑图",
+    description="生成标准 0 关联资金流拓扑结构、节点信息与 Mermaid 流程图。",
+)
+def get_sybil_topology(
+    wallet_count: int = 3,
+    project_name: str = "Airdrop Project",
+) -> dict[str, Any]:
+    from app.services.onchain_sybil import generate_sybil_routing_topology
+
+    topo = generate_sybil_routing_topology(wallet_count=wallet_count, project_name=project_name)
+    return {"ok": True, "data": topo.to_dict()}
+

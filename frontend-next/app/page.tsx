@@ -62,7 +62,18 @@ function DashboardContent() {
   const [view, setView] = useState<ViewMode>('grid');
   const [showCharts, setShowCharts] = useState(false);
   const [showDigestModal, setShowDigestModal] = useState(false);
+  const [dailyFlash, setDailyFlash] = useState<{ ticker_text: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ data: { ticker_text: string } }>('/dashboard/daily-flash')
+      .then((res) => {
+        if (res?.data?.ticker_text) {
+          setDailyFlash(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // 顶栏搜索 → ?keyword=xxx → 同步到本地筛选
   useEffect(() => {
@@ -302,6 +313,29 @@ function DashboardContent() {
           </div>
         </div>
       </div>
+
+      {/* Daily Alpha Flash Banner */}
+      {dailyFlash && (
+        <div className="rounded-xl border border-brand-500/25 bg-gradient-to-r from-brand-500/10 via-surface-2 to-surface p-3 sm:px-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-500/20 text-brand-500 font-bold">
+              ⚡
+            </span>
+            <span className="text-ink font-medium leading-relaxed">
+              {dailyFlash.ticker_text}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 text-xs">
+            <button
+              type="button"
+              onClick={() => setShowDigestModal(true)}
+              className="text-brand-600 dark:text-brand-400 hover:underline font-semibold whitespace-nowrap"
+            >
+              查看完整投研速递 →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modern Cyber Toolbar */}
       <div className="dash-card p-4 space-y-3.5">

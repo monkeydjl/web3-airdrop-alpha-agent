@@ -116,3 +116,27 @@ def test_onchain_api_routes() -> None:
     # Test POST /api/v1/onchain/verify with invalid address
     res = client.post("/api/v1/onchain/verify", json={"address": "bad", "chain": "sepolia"})
     assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_wallet_balance_and_nonce() -> None:
+    from app.services.public_rpc_verifier import get_wallet_balance_and_nonce
+
+    addr = "0x1234567890123456789012345678901234567890"
+    endpoint = "https://ethereum-sepolia-rpc.publicnode.com"
+
+    # Mock eth_getBalance returning 1 ETH (0xde0b6b3a7640000) and eth_getTransactionCount returning 7 (0x7)
+    respx.post(endpoint).mock(
+        side_effect=[
+            httpx.Response(200, json={"jsonrpc": "2.0", "result": "0xde0b6b3a7640000", "id": 1}),
+            httpx.Response(200, json={"jsonrpc": "2.0", "result": "0x7", "id": 2}),
+        ]
+    )
+
+    res = await get_wallet_balance_and_nonce(addr, chain="sepolia")
+    assert res["is_valid"] is True
+    assert res["balance_eth"] == 1.0
+    assert res["transaction_count"] == 7
+    assert res["status"] == "active"
+

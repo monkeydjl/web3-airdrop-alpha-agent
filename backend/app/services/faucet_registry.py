@@ -265,3 +265,94 @@ def reset_faucet_claim(
     finally:
         if own_conn:
             conn.close()
+
+
+async def check_faucets_liveness(
+    faucet_id: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> list[dict[str, Any]]:
+    """Check liveness and balance status across faucets."""
+    import time
+    import httpx
+    from app.services.public_rpc_verifier import get_wallet_balance_and_nonce
+
+    targets = FREE_FAUCETS
+    if faucet_id:
+        targets = [f for f in FREE_FAUCETS if f["id"] == faucet_id]
+
+    own_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=3.5, follow_redirects=True)
+        own_client = True
+
+    results: list[dict[str, Any]] = []
+    now_iso = datetime.now(UTC).isoformat()
+
+    try:
+        for f in targets:
+            start_t = time.perf_counter()
+            f_id = f["id"]
+            vault = f.get("vault_address")
+            url = f.get("url", "")
+            chain = f.get("chain", "sepolia")
+
+            if vault:
+                # Query on-chain vault balance
+                bal_data = await get_wallet_balance_and_nonce(vault, chain=chain, client=client)
+                bal = bal_data.get("balance_eth", 0.0)
+                latency_ms = bal_data.get("latency_ms", 0.0)
+                if bal >= 0.5:
+                    health = "healthy"
+                    health_zh = "存量充沛"
+                elif bal > 0.0:
+                    health = "low_balance"
+                    health_zh = "余额紧张"
+                else:
+                    health = "depleted"
+                    health_zh = "暂时枯竭"
+
+                results.append({
+                    "id": f_id,
+                    "name": f["name"],
+                    "chain": chain,
+                    "health": health,
+                    "health_zh": health_zh,
+                    "vault_balance_eth": bal,
+                    "latency_ms": latency_ms,
+                    "checked_at": now_iso,
+                })
+            else:
+                # Ping HTTP endpoint
+                try:
+                    res = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    latency_ms = round((time.perf_counter() - start_t) * 1000, 2)
+                    if res.status_code < 400 or res.status_code in (401, 403):
+                        health = "healthy"
+                        health_zh = "正常开放"
+                    elif res.status_code == 429:
+                        health = "low_balance"
+                        health_zh = "领水拥堵"
+                    else:
+                        health = "degraded"
+                        health_zh = "维护中"
+                except Exception:
+                    latency_ms = round((time.perf_counter() - start_t) * 1000, 2)
+                    health = "degraded"
+                    health_zh = "连接超时"
+
+                results.append({
+                    "id": f_id,
+                    "name": f["name"],
+                    "chain": chain,
+                    "health": health,
+                    "health_zh": health_zh,
+                    "vault_balance_eth": None,
+                    "latency_ms": latency_ms,
+                    "checked_at": now_iso,
+                })
+    finally:
+        if own_client:
+            await client.aclose()
+
+    return results
+

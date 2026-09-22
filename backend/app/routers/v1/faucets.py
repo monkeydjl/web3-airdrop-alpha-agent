@@ -105,3 +105,27 @@ def reset_faucet(
         "ok": True,
         "message": f"Faucet {faucet_id} cooldown reset to ready",
     }
+
+
+@router.get(
+    "/faucets/health",
+    summary="探测测试网水龙头实时存量与健康状态",
+    description="通过免 Key 公共 RPC 与探活检测水龙头金库资金充足度与网络可用性。",
+)
+async def get_faucets_health(
+    faucet_id: str | None = Query(None, description="按指定水龙头 ID 探测"),
+) -> dict[str, Any]:
+    from app.services.faucet_registry import check_faucets_liveness
+
+    res = await check_faucets_liveness(faucet_id=faucet_id)
+    return {
+        "ok": True,
+        "data": {
+            "statuses": res,
+            "total_checked": len(res),
+            "healthy_count": sum(1 for f in res if f["health"] == "healthy"),
+            "low_balance_count": sum(1 for f in res if f["health"] == "low_balance"),
+            "depleted_count": sum(1 for f in res if f["health"] == "depleted"),
+        },
+    }
+

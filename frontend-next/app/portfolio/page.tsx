@@ -1,6 +1,7 @@
 'use client';
 
 import { RoiLedger } from '@/components/RoiLedger';
+import { RoiSimulatorPanel } from '@/components/RoiSimulatorPanel';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -281,6 +282,8 @@ export default function PortfolioPage() {
             title="还没有参与记录"
             description="在项目详情页点击「我的投入」添加第一条交互记录，这里会自动汇总校准矩阵和收益分析。"
           />
+          {/* 投前 ROI 收益预测与资本分配模拟器 */}
+          <RoiSimulatorPanel />
           {/* 台账独立于 interactions：没有参与记录时也要能录第一笔投入，
               否则空态会把台账入口一起藏掉。 */}
           <RoiLedger projectNames={projectNames} />
@@ -548,7 +551,10 @@ export default function PortfolioPage() {
           </div>
         </section>
 
-        {/* 5. 收益台账（F3）—— 与上方 interactions 是两套数据，见组件注释 */}
+        {/* 5. 空投投前 ROI 收益预测与资本分配模拟器 */}
+        <RoiSimulatorPanel />
+
+        {/* 6. 收益台账（F3）—— 与上方 interactions 是两套数据，见组件注释 */}
         <RoiLedger projectNames={projectNames} />
       </div>
     </>

@@ -1,8 +1,8 @@
-﻿'use client';
+'use client';
 
 import { apiFetch } from '@/lib/api';
 import type { MultiWalletStrategy } from '@/lib/types';
-import { AlertTriangle, Clock, DollarSign, ShieldAlert, ShieldCheck, Wallet } from 'lucide-react';
+import { AlertTriangle, Clock, DollarSign, ShieldAlert, ShieldCheck, Wallet, Network, Layers, Search, ArrowRight, Ban } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 const statusBadgeConfig: Record<string, { label: string; className: string }> = {
@@ -38,10 +38,53 @@ const severityBadgeConfig: Record<string, { label: string; badgeClass: string; c
   },
 };
 
+interface SybilCheckResult {
+  address_count: number;
+  addresses: string[];
+  risk_score: number;
+  risk_level: string;
+  risk_level_zh: string;
+  is_clean: boolean;
+  findings: string[];
+  recommendations: string[];
+}
+
 export function MultiWalletStrategyPanel({ projectId }: { projectId: string }) {
   const [data, setData] = useState<MultiWalletStrategy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Sybil Self-check states
+  const [sybilAddresses, setSybilAddresses] = useState('');
+  const [sybilChecking, setSybilChecking] = useState(false);
+  const [sybilResult, setSybilResult] = useState<SybilCheckResult | null>(null);
+  const [sybilError, setSybilError] = useState('');
+  const [showChecker, setShowChecker] = useState(false);
+
+  const handleSybilCheck = async () => {
+    const lines = sybilAddresses
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length < 2) {
+      setSybilError('请至少输入 2 个不同的 EVM 钱包地址（每行一个）');
+      return;
+    }
+    setSybilChecking(true);
+    setSybilError('');
+    try {
+      const res = await apiFetch<SybilCheckResult>('/onchain/sybil-check', {
+        method: 'POST',
+        body: JSON.stringify({ addresses: lines }),
+      });
+      setSybilResult(res);
+    } catch (e: unknown) {
+      setSybilError(e instanceof Error ? e.message : '自检失败');
+    } finally {
+      setSybilChecking(false);
+    }
+  };
+
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -232,6 +275,145 @@ export function MultiWalletStrategyPanel({ projectId }: { projectId: string }) {
           </ul>
         </div>
       )}
+
+      {/* Anti-Sybil Routing Topology Diagram */}
+      <div className="rounded-xl border border-line/80 bg-surface-2/30 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Network className="h-4 w-4 text-brand-500" />
+            <h3 className="text-xs font-semibold text-ink">防女巫资金流路由拓扑架构（推荐 {data.recommended_wallets_optimal} 号矩阵）</h3>
+          </div>
+          <span className="text-[10px] text-ink-muted bg-surface px-2 py-0.5 rounded border border-line">
+            资金零闭环
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+          {/* Layer 1: CEX Subaccounts */}
+          <div className="rounded-lg border border-brand-500/20 bg-brand-500/5 p-3 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-brand-600 dark:text-brand-400">
+                <Layers className="h-3.5 w-3.5" />
+                <span>1. CEX 独立子账户出金</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-muted leading-relaxed">
+                从 OKX/Binance 等交易所不同子账号独立提币至各钱包，彻底切断提现归集源。
+              </p>
+            </div>
+            <div className="mt-2.5 flex items-center justify-center text-[10px] font-mono text-brand-600 dark:text-brand-400">
+              <span>独立通道 ➔ 错峰提币</span>
+            </div>
+          </div>
+
+          {/* Layer 2: Independent Wallets */}
+          <div className="rounded-lg border border-line bg-surface p-3 flex flex-col justify-between relative">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+                <Wallet className="h-3.5 w-3.5 text-ink-muted" />
+                <span>2. 交互执行钱包群</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-muted leading-relaxed">
+                主号重质押，副号参与轻量交互。各钱包间隔 4h+ 错峰操作，独立 RPC 节点。
+              </p>
+            </div>
+            <div className="mt-2 rounded bg-red-500/10 border border-red-500/20 px-2 py-1 flex items-center justify-center gap-1 text-[10px] text-red-500 font-semibold">
+              <Ban className="h-3 w-3" />
+              <span>严禁钱包间链上互转</span>
+            </div>
+          </div>
+
+          {/* Layer 3: Independent Deposit */}
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                <ArrowRight className="h-3.5 w-3.5" />
+                <span>3. 交易所独立充币归集</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-muted leading-relaxed">
+                发币/退场后，分别充值到各子账户独立的充币地址，绝不在链上归集到同一钱包。
+              </p>
+            </div>
+            <div className="mt-2.5 flex items-center justify-center text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
+              <span>独立充值 ➔ 彻底安全退出</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Sybil Self-Check Radar */}
+      <div className="rounded-xl border border-line/80 bg-surface p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-purple-500" />
+            <h3 className="text-xs font-semibold text-ink">多钱包女巫关联风险自检雷达</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowChecker((v) => !v)}
+            className="text-xs text-brand-600 hover:underline dark:text-brand-400 font-medium"
+          >
+            {showChecker ? '收起自检' : '展开多地址自检'}
+          </button>
+        </div>
+
+        {showChecker && (
+          <div className="space-y-3 pt-2">
+            <p className="text-xs text-ink-muted">
+              粘贴您计划参与本项目的多个 EVM 钱包地址（每行一个，支持 2-10 个），系统将自动评估地址相似度、集群规模与女巫清洗暴露风险：
+            </p>
+            <textarea
+              rows={3}
+              value={sybilAddresses}
+              onChange={(e) => setSybilAddresses(e.target.value)}
+              placeholder="0x1111...&#10;0x2222...&#10;0x3333..."
+              className="w-full rounded-lg border border-line bg-surface-2 p-2.5 font-mono text-xs text-ink focus:border-brand-500 focus:outline-none"
+            />
+            {sybilError && (
+              <p className="text-xs text-red-500 font-medium">{sybilError}</p>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSybilCheck}
+                disabled={sybilChecking}
+                className="btn-primary !py-1 text-xs flex items-center gap-1.5"
+              >
+                <Search className={`h-3 w-3 ${sybilChecking ? 'animate-spin' : ''}`} />
+                {sybilChecking ? '正在评估中…' : '开始女巫关联自检'}
+              </button>
+            </div>
+
+            {sybilResult && (
+              <div className={`mt-3 rounded-xl border p-3.5 space-y-2 ${
+                sybilResult.risk_level === 'high'
+                  ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                  : sybilResult.risk_level === 'medium'
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold">
+                      自检结果：{sybilResult.risk_level_zh}
+                    </span>
+                    <span className="font-mono text-xs font-bold">
+                      风险分：{sybilResult.risk_score} / 100
+                    </span>
+                  </div>
+                  <span className="text-[11px] opacity-80">
+                    检测地址数: {sybilResult.address_count}
+                  </span>
+                </div>
+                <ul className="text-xs space-y-1 list-disc pl-4 text-ink-muted">
+                  {sybilResult.findings.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Red-Line Compliance Callout */}
       <div className="rounded-xl border border-line/60 bg-surface-2/30 px-3.5 py-2.5 text-[11px] text-ink-faint">

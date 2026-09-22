@@ -1,9 +1,19 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Clock, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
+import { CheckCircle2, Clock, ExternalLink, RefreshCw, Sparkles, Activity } from 'lucide-react';
+
+interface FaucetHealthItem {
+  id: string;
+  name: string;
+  chain: string;
+  health: 'healthy' | 'low_balance' | 'depleted' | 'degraded';
+  health_zh: string;
+  vault_balance_eth?: number | null;
+  latency_ms?: number;
+}
 
 export interface FaucetItem {
   id: string;
@@ -36,6 +46,24 @@ export function FaucetTrackerPanel() {
   const [error, setError] = useState('');
   const [chainFilter, setChainFilter] = useState('all');
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+  const [healthMap, setHealthMap] = useState<Record<string, FaucetHealthItem>>({});
+  const [healthLoading, setHealthLoading] = useState(false);
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const res = await apiFetch<{ statuses: FaucetHealthItem[] }>('/faucets/health');
+      const map: Record<string, FaucetHealthItem> = {};
+      for (const s of res.statuses || []) {
+        map[s.id] = s;
+      }
+      setHealthMap(map);
+    } catch {
+      /* non-blocking */
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
 
   const loadFaucets = useCallback(async () => {
     setLoading(true);
@@ -52,7 +80,8 @@ export function FaucetTrackerPanel() {
 
   useEffect(() => {
     loadFaucets();
-  }, [loadFaucets]);
+    loadHealth();
+  }, [loadFaucets, loadHealth]);
 
   const handleClaim = async (id: string) => {
     setActionBusy((prev) => ({ ...prev, [id]: true }));
@@ -121,7 +150,21 @@ export function FaucetTrackerPanel() {
 
           <button
             type="button"
-            onClick={() => loadFaucets()}
+            onClick={() => loadHealth()}
+            disabled={healthLoading}
+            className="btn-secondary !py-1 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 flex items-center gap-1"
+            title="探测水龙头金库余额与实时可用性"
+          >
+            <Activity className={`h-3 w-3 ${healthLoading ? 'animate-spin' : ''}`} />
+            <span>{healthLoading ? '探活中…' : '探活巡检'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              loadFaucets();
+              loadHealth();
+            }}
             disabled={loading}
             className="btn-ghost text-xs p-1.5"
             title="刷新水龙头状态"
@@ -187,17 +230,44 @@ export function FaucetTrackerPanel() {
                     <h3 className="mt-1 text-sm font-semibold text-ink">{faucet.name}</h3>
                   </div>
 
-                  {isCooling ? (
-                    <span className="badge bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] flex items-center gap-1 font-mono">
-                      <Clock className="h-3 w-3" />
-                      {faucet.remaining_human}
-                    </span>
-                  ) : (
-                    <span className="badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] flex items-center gap-1">
-                      <CheckCircle2 className="h-3 w-3" />
-                      可领取
-                    </span>
-                  )}
+                  <div className="flex flex-col items-end gap-1.5">
+                    {isCooling ? (
+                      <span className="badge bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] flex items-center gap-1 font-mono">
+                        <Clock className="h-3 w-3" />
+                        {faucet.remaining_human}
+                      </span>
+                    ) : (
+                      <span className="badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        可领取
+                      </span>
+                    )}
+
+                    {healthMap[faucet.id] && (
+                      <span
+                        className={`badge text-[10px] flex items-center gap-1 font-mono ${
+                          healthMap[faucet.id].health === 'healthy'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : healthMap[faucet.id].health === 'low_balance'
+                            ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                        }`}
+                        title={typeof healthMap[faucet.id].latency_ms === 'number' ? `响应耗时: ${healthMap[faucet.id].latency_ms}ms` : undefined}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            healthMap[faucet.id].health === 'healthy'
+                              ? 'bg-emerald-400'
+                              : healthMap[faucet.id].health === 'low_balance'
+                              ? 'bg-amber-400'
+                              : 'bg-red-400'
+                          }`}
+                        />
+                        {healthMap[faucet.id].health_zh}
+                        {typeof healthMap[faucet.id].vault_balance_eth === 'number' && ` · ${healthMap[faucet.id].vault_balance_eth} ETH`}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <p className="text-xs text-ink-muted">{faucet.description}</p>

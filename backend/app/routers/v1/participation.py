@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
@@ -446,3 +446,124 @@ def get_participation_tasks(
         task_count=data.get("summary", {}).get("total"),
     )
     return {"ok": True, "data": data}
+
+
+@router.post("/participation/tasks/auto-check")
+async def auto_check_tasks_onchain(
+    request: Request,
+    project_id: str = Query(..., description="项目 ID"),
+    wallet_address: str | None = Query(None, description="要检查的钱包地址（不填则读取用户登记的第一个激活钱包）"),
+    chain: str | None = Query(None, description="目标网络代号，不填则根据项目智能推断"),
+    auto_commit: bool = Query(False, description="是否自动完成打卡并写入凭据"),
+) -> dict[str, Any]:
+    """通过免 Key 公共 RPC 检查用户钱包在目标网络上的真实交互活性，并提供一键任务打卡建议。"""
+    from app.services.public_rpc_verifier import get_wallet_balance_and_nonce, is_valid_evm_address
+
+    user = get_current_user(request)
+    uid = user.get("user_id", "anonymous")
+
+    repo = ProjectRepository()
+    project = repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"},
+        )
+
+    target_address = wallet_address.strip().lower() if wallet_address else None
+    if not target_address:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT address FROM watched_wallets WHERE active = 1 ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if row:
+                target_address = str(row["address"]).lower()
+
+    if not target_address or not is_valid_evm_address(target_address):
+        return {
+            "ok": True,
+            "data": {
+                "matched": False,
+                "reason": "no_valid_wallet",
+                "message": "未指定钱包地址且无激活的登记观察钱包",
+                "wallet_address": target_address,
+                "project_id": project_id,
+                "activity": None,
+                "suggested_tasks": [],
+            },
+        }
+
+    p = signals_view(project)
+    name = str(p.get("name") or "").lower()
+    desc = str(p.get("description") or "").lower()
+    sector = str(p.get("sector") or "").lower()
+    text = f"{name} {desc} {sector}"
+
+    if chain:
+        target_chain = chain.lower().strip()
+    elif "berachain" in text:
+        target_chain = "berachain_bartio"
+    elif "story" in text:
+        target_chain = "story_odyssey"
+    elif "arbitrum" in text:
+        target_chain = "arbitrum_sepolia"
+    elif "base" in text:
+        target_chain = "base_sepolia"
+    elif "optimism" in text:
+        target_chain = "optimism_sepolia"
+    elif "polygon" in text:
+        target_chain = "polygon_amoy"
+    elif bool(p.get("has_testnet")):
+        target_chain = "sepolia"
+    else:
+        target_chain = "ethereum"
+
+    activity = await get_wallet_balance_and_nonce(target_address, chain=target_chain)
+    tx_count = activity.get("transaction_count", 0)
+    bal_eth = activity.get("balance_eth", 0.0)
+    has_activity = tx_count > 0 or bal_eth > 0
+
+    updated_task_ids = []
+    if has_activity and auto_commit:
+        with get_connection() as conn:
+            plan_row = conn.execute(
+                "SELECT id FROM participation_plans WHERE project_id = ? AND user_id = ?",
+                (project_id, uid),
+            ).fetchone()
+            if plan_row:
+                plan_id = plan_row["id"]
+                # 找到该计划下首个未完成的 task
+                task_row = conn.execute(
+                    "SELECT id FROM participation_tasks WHERE plan_id = ? AND status != 'done' ORDER BY priority ASC LIMIT 1",
+                    (plan_id,),
+                ).fetchone()
+                if task_row:
+                    t_id = task_row["id"]
+                    memo = f"RPC 链上核销: {target_chain} nonce={tx_count}, bal={bal_eth}"
+                    conn.execute(
+                        "UPDATE participation_tasks SET status = 'done', completed_at = ?, note = ? WHERE id = ?",
+                        (_now_str(), memo, t_id),
+                    )
+                    conn.commit()
+                    updated_task_ids.append(t_id)
+
+    return {
+        "ok": True,
+        "data": {
+            "matched": has_activity,
+            "project_id": project_id,
+            "wallet_address": target_address,
+            "target_chain": target_chain,
+            "transaction_count": tx_count,
+            "balance_eth": bal_eth,
+            "activity_status": activity.get("status"),
+            "suggested_action": "auto_mark_done" if has_activity else "manual_check",
+            "updated_task_ids": updated_task_ids,
+            "message": (
+                f"在 {target_chain} 上检测到活跃度 (Nonce={tx_count}, 余额={bal_eth} ETH)"
+                if has_activity
+                else f"在 {target_chain} 上暂未检测到链上交互记录"
+            ),
+        },
+    }
+

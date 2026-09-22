@@ -179,3 +179,77 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
         conn.close()
 
     return DashboardOverviewResponse(ok=True, data=data)
+
+
+@router.get(
+    "/dashboard/daily-flash",
+    summary="获取今日 Alpha 动态速递快报",
+    description="汇总今日最新测试网挖掘、FARM 头部重点项目与系统核心 Alpha 变动简讯。",
+)
+def get_daily_flash() -> dict[str, Any]:
+    from app.db import dict_from_row, get_connection
+
+    conn = get_connection()
+    try:
+        now = datetime.now(UTC)
+        date_str = now.strftime("%Y-%m-%d")
+
+        # 1. 统计当前活跃 FARM 数量
+        farm_cursor = conn.execute(
+            """
+            SELECT id, name, score, reason, sector, stage
+            FROM projects
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+            ORDER BY score DESC
+            """
+        )
+        farm_rows = [dict_from_row(r) for r in farm_cursor.fetchall()]
+        active_farm_count = len(farm_rows)
+
+        # 2. Top 3 FARM picks
+        top_picks = []
+        for r in farm_rows[:3]:
+            top_picks.append({
+                "id": r["id"],
+                "name": r["name"],
+                "score": r["score"],
+                "reason": r.get("reason") or "重点推荐参与",
+                "sector": r.get("sector") or "",
+            })
+
+        # 3. 今日/近期新增项目（开源测试网等）
+        testnet_cursor = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM projects
+            WHERE (source = 'github_curated' OR source = 'github' OR stage = 'testnet')
+              AND (source != 'historical_backfill' OR source IS NULL)
+            """
+        )
+        testnet_count = int(testnet_cursor.fetchone()["c"] or 0)
+
+        # 4. 生成快讯文案
+        top_names = "、".join(p["name"] for p in top_picks[:2]) if top_picks else "头部项目"
+        ticker_text = (
+            f"⚡ 今日 Alpha 速递 ({date_str})：全网挖掘 {active_farm_count} 个活跃 FARM 项目，"
+            f"涵盖 {testnet_count} 个开源测试网与水龙头；"
+            f"{top_names} 维持高优先级推荐。"
+        )
+
+        return {
+            "ok": True,
+            "data": {
+                "date": date_str,
+                "active_farm_count": active_farm_count,
+                "testnet_count": testnet_count,
+                "top_picks": top_picks,
+                "ticker_text": ticker_text,
+                "highlights": [
+                    f"库中共有 {active_farm_count} 个高价值未发币 FARM 标的",
+                    f"收录 {testnet_count} 个免 Key 开源测试网与水龙头交互路径",
+                    "多钱包防女巫资金隔离拓扑与链上自动核销已就绪",
+                ],
+            },
+        }
+    finally:
+        conn.close()
+

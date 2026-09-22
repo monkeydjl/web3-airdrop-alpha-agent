@@ -465,3 +465,51 @@ def _require_project(conn: Any, project_id: str) -> None:
 def _sum_field(rows: list[dict[str, Any]], field: str) -> float:
     """对明细行求和，None 当 0 —— SQL SUM 的 COALESCE 语义在这层保持一致。"""
     return sum(float(r.get(field) or 0.0) for r in rows)
+
+
+class PortfolioSimulateRequest(BaseModel):
+    total_budget_usd: float = Field(500.0, ge=10.0, le=100000.0, description="预期总资金预算 (USD)")
+    weekly_hours: float = Field(6.0, ge=0.5, le=80.0, description="每周可投入小时数")
+    risk_appetite: str = Field("balanced", description="风险偏好: balanced | aggressive | conservative")
+
+
+@router.get(
+    "/roi/simulate/{project_id}",
+    summary="单项目空投投前预期收益测算",
+    description="基于融资、估值、TVL 与空投池比例测算单钱包预估回报与资金效率。",
+)
+def get_single_project_roi_simulation(
+    project_id: str,
+    capital_invested_usd: float = 100.0,
+    hours_spent: float = 5.0,
+) -> dict[str, Any]:
+    from app.services.roi_simulator import simulate_project_roi
+
+    res = simulate_project_roi(
+        project_id=project_id,
+        capital_invested_usd=capital_invested_usd,
+        hours_spent=hours_spent,
+    )
+    if not res.get("ok"):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": res.get("error") or "Project not found"},
+        )
+    return res
+
+
+@router.post(
+    "/roi/simulate/portfolio",
+    summary="投资组合资本与时间最优分配模拟器",
+    description="利用背包算法根据用户设定的预算和可用时间在当前 FARM 项目中推荐最优分配组合与预期收益。",
+)
+def post_portfolio_roi_simulation(body: PortfolioSimulateRequest) -> dict[str, Any]:
+    from app.services.roi_simulator import simulate_portfolio_allocation
+
+    res = simulate_portfolio_allocation(
+        total_budget_usd=body.total_budget_usd,
+        weekly_hours=body.weekly_hours,
+        risk_appetite=body.risk_appetite,
+    )
+    return res
+

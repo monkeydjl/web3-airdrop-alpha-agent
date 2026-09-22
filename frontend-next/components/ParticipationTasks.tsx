@@ -3,7 +3,7 @@
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Plus, Trash2, Copy, CheckCheck, ExternalLink } from 'lucide-react';
+import { Check, Plus, Trash2, Copy, CheckCheck, ExternalLink, Zap } from 'lucide-react';
 import { FaucetTrackerPanel } from '@/components/FaucetTrackerPanel';
 
 export interface ParticipationTask {
@@ -411,6 +411,51 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
     }
   };
 
+  const [autoChecking, setAutoChecking] = useState(false);
+  const [autoCheckMsg, setAutoCheckMsg] = useState<{ text: string; isSuccess: boolean } | null>(null);
+
+  const handleAutoCheckOnchain = async () => {
+    setAutoChecking(true);
+    setAutoCheckMsg(null);
+    try {
+      if (!plan) {
+        await startParticipating();
+      }
+      const res = await apiFetch<{
+        matched: boolean;
+        target_chain: string;
+        wallet_address?: string;
+        transaction_count: number;
+        balance_eth: number;
+        message: string;
+        updated_task_ids: number[];
+      }>(`/participation/tasks/auto-check?project_id=${projectId}&auto_commit=true`, {
+        method: 'POST',
+      });
+      if (res.matched) {
+        setAutoCheckMsg({
+          text: `⚡ 链上已核销：在 ${res.target_chain} 探测到钱包 ${res.wallet_address?.slice(0, 6)}...${res.wallet_address?.slice(-4)} 产生交互 (Nonce=${res.transaction_count}, 余额=${res.balance_eth} ETH)，已自动为您完成任务打卡！`,
+          isSuccess: true,
+        });
+        const updatedPlans = await apiFetch<Plan[]>(`/participation?project_id=${projectId}`);
+        const cur = updatedPlans.find((p) => p.project_id === projectId && p.status === 'active');
+        if (cur) setPlan(cur);
+      } else {
+        setAutoCheckMsg({
+          text: res.message || `在 ${res.target_chain} 暂未检测到登记钱包的链上 Nonce 或余额。`,
+          isSuccess: false,
+        });
+      }
+    } catch (e: unknown) {
+      setAutoCheckMsg({
+        text: e instanceof Error ? e.message : '自动核销检测失败',
+        isSuccess: false,
+      });
+    } finally {
+      setAutoChecking(false);
+    }
+  };
+
   const tasks = data?.tasks || [];
   const categories = useMemo(() => {
     const set = new Set(tasks.map((t) => t.category_zh));
@@ -469,6 +514,16 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                 📊 多钱包矩阵
               </button>
             </div>
+            <button
+              type="button"
+              className="btn-secondary !py-1 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 flex items-center gap-1"
+              onClick={handleAutoCheckOnchain}
+              disabled={autoChecking || loading}
+              title="通过公共 RPC 探测观察钱包链上交互 Nonce 并自动打卡"
+            >
+              <Zap className={`h-3.5 w-3.5 ${autoChecking ? 'animate-spin' : ''}`} />
+              {autoChecking ? '链上核验中…' : '⚡ 链上自动核销'}
+            </button>
             {plan ? (
               <span className="badge bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm">
                 服务端同步中
@@ -485,6 +540,25 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
             )}
           </div>
         </div>
+
+        {autoCheckMsg && (
+          <div
+            className={`mt-3 rounded-lg border p-2.5 text-xs flex items-center justify-between gap-2 ${
+              autoCheckMsg.isSuccess
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            }`}
+          >
+            <span>{autoCheckMsg.text}</span>
+            <button
+              type="button"
+              onClick={() => setAutoCheckMsg(null)}
+              className="text-ink-muted hover:text-ink text-[11px] shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Multi-Wallet Tabs Bar */}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-3">

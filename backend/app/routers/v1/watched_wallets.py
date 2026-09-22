@@ -41,9 +41,21 @@ router = APIRouter(tags=["watched-wallets"])
 # 只校验形状，不校验 EIP-55 checksum（见模块 docstring 第 2 条）。
 _ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
-# 支持的链。收成闭表而不是任意字符串：chain 会进通知文案，
-# 拼写不一致（ethereum / Ethereum / eth）会让同一条链看起来像三条。
-SUPPORTED_CHAINS = ("ethereum", "arbitrum", "optimism", "base", "polygon")
+SUPPORTED_CHAINS = (
+    "ethereum",
+    "arbitrum",
+    "optimism",
+    "base",
+    "polygon",
+    "sepolia",
+    "arbitrum_sepolia",
+    "base_sepolia",
+    "optimism_sepolia",
+    "polygon_amoy",
+    "berachain_bartio",
+    "story_odyssey",
+    "holesky",
+)
 
 
 class WalletCreate(BaseModel):
@@ -259,3 +271,20 @@ def delete_watched_wallet(wallet_id: int) -> dict[str, Any]:
 
     logger.info("claim_watch.wallet_deleted", wallet_id=wallet_id)
     return {"ok": True, "data": {"wallet_id": wallet_id, "deleted": True}}
+
+
+@router.get(
+    "/watched-wallets/{address}/activity",
+    summary="查询钱包链上余额与 Nonce 交互活性",
+    description="通过免 Key 公共 RPC 查询指定登记地址在目标网络上的真实代币余额与 Transaction Count (Nonce)。",
+)
+async def get_wallet_activity(
+    address: str,
+    chain: str = "sepolia",
+) -> dict[str, Any]:
+    from app.services.public_rpc_verifier import get_wallet_balance_and_nonce
+
+    norm_address = _normalize_address(address)
+    res = await get_wallet_balance_and_nonce(norm_address, chain=chain)
+    return {"ok": True, "data": res}
+
