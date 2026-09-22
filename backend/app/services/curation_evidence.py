@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.services.project_signals import evidence_time, valid_evidence_url
+from app.services.project_signals import valid_evidence_url
 
 # 证据"新鲜"的判定窗口与 curation_reasons 的 90 天截止保持同源口径
 RECENT_PUSH_DAYS_LIMIT = 45
@@ -56,4 +56,4 @@ def build_curation_evidence(state: Any) -> list[dict[str, Any]]:
     return items
 
 
-__all__ = ["RECENT_PUSH_DAYS_LIMIT", "build_curation_evidence", "evidence_time"]
+__all__ = ["RECENT_PUSH_DAYS_LIMIT", "build_curation_evidence"]

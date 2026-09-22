@@ -17,10 +17,7 @@ from typing import Any
 import httpx
 import structlog
 
-from app.services.funding import (
-    classify_investor_tier,
-    compute_funding_quality,
-)
+from app.services.funding import compute_funding_quality
 from app.utils.normalize import normalize_name
 
 logger = structlog.get_logger(__name__)

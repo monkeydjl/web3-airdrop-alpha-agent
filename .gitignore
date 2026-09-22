@@ -198,3 +198,4 @@ junit-*.xml
 # .partial 是含占位符的半成品，不该进仓库；选择题清单是过程文件。
 *.md.partial
 docs/_utf8_worklist.json
+.freebuff/

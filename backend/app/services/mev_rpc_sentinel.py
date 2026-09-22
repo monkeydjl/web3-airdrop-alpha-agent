@@ -143,6 +143,10 @@ PRESET_MEV_RPC_NODES: list[dict[str, Any]] = [
 ]
 
 
+# 预索引哈希字典，提供 O(1) 毫秒级私有 RPC 节点信息检索
+_MEV_NODE_MAP: dict[str, dict[str, Any]] = {n["id"]: n for n in PRESET_MEV_RPC_NODES}
+
+
 def list_mev_rpc_nodes(chain_id: int | None = None) -> list[dict[str, Any]]:
     """获取所有受支持的防 MEV 私有 RPC 节点信息."""
     if chain_id is not None:
@@ -151,13 +155,8 @@ def list_mev_rpc_nodes(chain_id: int | None = None) -> list[dict[str, Any]]:
 
 
 def benchmark_rpc_node(node_id: str | None = None, custom_url: str | None = None) -> dict[str, Any]:
-    """探测指定或自定义 RPC 节点的延迟与防护等级."""
-    selected: dict[str, Any] | None = None
-    if node_id:
-        for n in PRESET_MEV_RPC_NODES:
-            if n["id"] == node_id:
-                selected = n
-                break
+    """探测指定或自定义 RPC 节点的延迟与防护等级 (O(1) 预索引检索)."""
+    selected: dict[str, Any] | None = _MEV_NODE_MAP.get(node_id) if node_id else None
 
     if not selected:
         url = custom_url or "https://rpc.mevblocker.io"

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
-import { ArrowRight, ArrowRightLeft, ExternalLink, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, ExternalLink, ShieldCheck, Sparkles } from 'lucide-react';
 
 interface BridgeChain {
   id: string;

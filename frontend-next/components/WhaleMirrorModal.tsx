@@ -133,7 +133,10 @@ export default function WhaleMirrorModal({
           {/* Controls Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl border border-line bg-surface-2/40">
             <div>
-              <label className="text-[11px] text-ink-muted">对标历史大毛战神基准</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-ink-muted">对标历史大毛战神基准</label>
+                {loading && <span className="text-[10px] text-brand-400 animate-pulse">正在反推测算中...</span>}
+              </div>
               <select
                 value={selectedBenchmark}
                 onChange={(e) => {

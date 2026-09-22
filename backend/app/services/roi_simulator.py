@@ -8,8 +8,7 @@ Zero commercial API cost.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.db import dict_from_row, get_connection

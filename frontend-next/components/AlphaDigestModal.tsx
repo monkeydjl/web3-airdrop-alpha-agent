@@ -2,7 +2,7 @@
 
 import { apiFetch } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
-import { X, Copy, Download, RefreshCw, Check, Sparkles, BookOpen } from 'lucide-react';
+import { X, Copy, Download, RefreshCw, Check, BookOpen } from 'lucide-react';
 
 interface DigestSummary {
   generated_at: string;

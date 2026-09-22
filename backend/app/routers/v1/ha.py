@@ -6,8 +6,6 @@ multi-instance deployments, health checks, and ops monitoring.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 import structlog
 
@@ -172,12 +171,14 @@ def evaluate_wallet_identity(wallet_address: str) -> dict[str, Any]:
     }
 
 
+# 预先在模块加载阶段按性价比（分值/成本）排好序，避免每次 API 调用重复排序
+_PRECOMPUTED_STAMPING_GUIDE: list[dict[str, Any]] = sorted(
+    PASSPORT_STAMPS_CATALOG,
+    key=lambda s: (s["weight"] / (s["cost_usd"] + 0.2)),
+    reverse=True,
+)
+
+
 def get_stamping_guide() -> list[dict[str, Any]]:
-    """获取所有受支持的戳记目录，并按性价比（分值/成本）排序."""
-    # 计算 ROI 指标: 分值 / (成本 + 0.1 防止除以0)
-    sorted_catalog = sorted(
-        PASSPORT_STAMPS_CATALOG,
-        key=lambda s: (s["weight"] / (s["cost_usd"] + 0.2)),
-        reverse=True,
-    )
-    return sorted_catalog
+    """获取所有受支持的戳记目录，并按性价比（分值/成本）排序 (O(1) 预计算快速返回)."""
+    return _PRECOMPUTED_STAMPING_GUIDE

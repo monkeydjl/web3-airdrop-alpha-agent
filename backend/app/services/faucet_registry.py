@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.db import DbConnection, dict_from_row, get_connection
+from app.db import DbConnection, get_connection
 
 DEFAULT_USER = "default"
 

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 import structlog
 
-from app.services.gas_tracker import get_all_chains_gas_summary, get_chain_gas_status
+from app.services.gas_tracker import get_all_chains_gas_summary
 
 logger = structlog.get_logger(__name__)
 

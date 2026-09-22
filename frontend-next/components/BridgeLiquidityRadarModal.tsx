@@ -139,7 +139,9 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
                   <h4 className="text-sm font-bold text-ink flex items-center gap-1.5">
                     <span>⚡ 大额跨链资金滑点与枯竭推演器</span>
                   </h4>
-                  <span className="text-[10px] font-mono text-ink-muted">Slippage & Drain Estimator</span>
+                  <span className="text-[10px] font-mono text-ink-muted">
+                    {simulating ? <span className="text-brand-400 animate-pulse">⚡ 实时推演中...</span> : 'Slippage & Drain Estimator'}
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">

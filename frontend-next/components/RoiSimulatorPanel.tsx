@@ -155,6 +155,31 @@ export function RoiSimulatorPanel() {
         </div>
       </div>
 
+      {/* Risk Appetite Selector */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl border border-line bg-surface-2/20">
+        <span className="text-xs font-medium text-ink">风险策略模型偏好:</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {[
+            { key: 'conservative' as const, label: '🛡️ 稳健保守 (低耗保本)' },
+            { key: 'balanced' as const, label: '⚖️ 全能平衡 (标准收益)' },
+            { key: 'aggressive' as const, label: '⚡ 激进进取 (高弹性博爆发)' },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setRisk(opt.key)}
+              className={`px-2.5 py-1 text-xs rounded-lg transition font-medium ${
+                risk === opt.key
+                  ? 'bg-brand-500 text-white shadow-sm'
+                  : 'bg-surface hover:bg-surface-2 text-ink-muted border border-line'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-400">
           {error}

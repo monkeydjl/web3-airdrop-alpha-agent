@@ -157,15 +157,28 @@ export default function CalldataDecoderModal({
           </div>
 
           <div className="space-y-2">
-            <div>
-              <label className="text-[11px] text-slate-400 block mb-1">交互合约地址</label>
-              <input
-                type="text"
-                value={contractAddress}
-                onChange={(e) => setContractAddress(e.target.value)}
-                placeholder="0x..."
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 p-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="sm:col-span-2">
+                <label className="text-[11px] text-slate-400 block mb-1">交互合约地址</label>
+                <input
+                  type="text"
+                  value={contractAddress}
+                  onChange={(e) => setContractAddress(e.target.value)}
+                  placeholder="0x..."
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 p-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">交易 Value (ETH)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={valueEth}
+                  onChange={(e) => setValueEth(e.target.value)}
+                  placeholder="0.0"
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 p-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
             </div>
 
             <div>

@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 import structlog
 
@@ -70,6 +69,10 @@ HISTORICAL_WHALE_BENCHMARKS: list[dict[str, Any]] = [
 ]
 
 
+# 模块级预构建哈希索引表，实现 O(1) 毫秒级基准匹配
+_BENCHMARK_MAP: dict[str, dict[str, Any]] = {b["airdrop_id"]: b for b in HISTORICAL_WHALE_BENCHMARKS}
+
+
 def list_whale_benchmarks() -> list[dict[str, Any]]:
     """获取所有历史顶级空投胜利者行为基准."""
     return HISTORICAL_WHALE_BENCHMARKS
@@ -84,8 +87,8 @@ def compare_wallet_with_whale(
     user_retained_eth: float = 0.02,
     target_project: str = "Monad",
 ) -> dict[str, Any]:
-    """对比用户当前钱包数据与顶级巨鲸基准，计算匹配度与补刀清单."""
-    bm = next((b for b in HISTORICAL_WHALE_BENCHMARKS if b["airdrop_id"] == benchmark_id), HISTORICAL_WHALE_BENCHMARKS[0])
+    """对比用户当前钱包数据与顶级巨鲸基准，计算匹配度与补刀清单 (O(1) 哈希快速比对)."""
+    bm = _BENCHMARK_MAP.get(benchmark_id, HISTORICAL_WHALE_BENCHMARKS[0])
     
     # 计算各项达标百分比
     r_months = min(1.0, user_active_months / max(1, bm["active_months_required"]))

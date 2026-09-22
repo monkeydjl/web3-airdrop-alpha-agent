@@ -8,8 +8,6 @@ import datetime
 from typing import Any
 import structlog
 
-from app.db import dict_from_row, get_connection
-
 logger = structlog.get_logger(__name__)
 
 # 默认内置的历史空投战绩样例（提供开箱即用行业基准复盘）

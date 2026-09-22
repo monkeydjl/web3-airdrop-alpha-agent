@@ -295,7 +295,7 @@ export function ProjectComparisonModal({
                     <tr>
                       <th className="px-3.5 py-2.5 font-medium">对比维度</th>
                       <th className="px-3.5 py-2.5 font-medium">定义说明</th>
-                      {data.projects.map((p, idx) => (
+                      {data.projects.map((p) => (
                         <th key={p.id} className="px-3.5 py-2.5 font-medium font-bold text-ink">
                           {p.name}
                         </th>

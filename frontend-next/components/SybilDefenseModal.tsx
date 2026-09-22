@@ -103,6 +103,17 @@ export function SybilDefenseModal({ initialAddress = '', onClose }: SybilDefense
             />
           </div>
 
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold text-ink-muted">独立性补充自述与网络环境证据</label>
+            <textarea
+              rows={2}
+              value={customNotes}
+              onChange={(e) => setCustomNotes(e.target.value)}
+              placeholder="说明交互习惯、多链活动背景、独立网络与设备环境等..."
+              className="input text-xs w-full resize-none"
+            />
+          </div>
+
           <div className="flex justify-end">
             <button
               type="button"

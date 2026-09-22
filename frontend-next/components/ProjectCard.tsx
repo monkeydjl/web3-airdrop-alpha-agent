@@ -433,19 +433,25 @@ export function ProjectCard({
           onClose={() => setShowPkModal(false)}
         />
       )}
-      <PointsEpochEstimatorModal
-        isOpen={showPointsModal}
-        onClose={() => setShowPointsModal(false)}
-      />
-      <PlaybookStudioModal
-        isOpen={showPlaybookModal}
-        onClose={() => setShowPlaybookModal(false)}
-      />
-      <WhaleMirrorModal
-        isOpen={showWhaleModal}
-        onClose={() => setShowWhaleModal(false)}
-        initialProjectName={project.name}
-      />
+      {showPointsModal && (
+        <PointsEpochEstimatorModal
+          isOpen={showPointsModal}
+          onClose={() => setShowPointsModal(false)}
+        />
+      )}
+      {showPlaybookModal && (
+        <PlaybookStudioModal
+          isOpen={showPlaybookModal}
+          onClose={() => setShowPlaybookModal(false)}
+        />
+      )}
+      {showWhaleModal && (
+        <WhaleMirrorModal
+          isOpen={showWhaleModal}
+          onClose={() => setShowWhaleModal(false)}
+          initialProjectName={project.name}
+        />
+      )}
     </div>
   );
 }

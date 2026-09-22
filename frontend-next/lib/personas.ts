@@ -79,7 +79,9 @@ export const HUNTER_PERSONAS: HunterPersona[] = [
   },
 ];
 
-export function getPersonaConfig(id: string | null | undefined): HunterPersona {
+export function getPersonaConfig(id: HunterPersonaId | string | null | undefined): HunterPersona {
   const found = HUNTER_PERSONAS.find((p) => p.id === id);
   return found || HUNTER_PERSONAS[0];
 }
+
+export type { HunterPersonaId };

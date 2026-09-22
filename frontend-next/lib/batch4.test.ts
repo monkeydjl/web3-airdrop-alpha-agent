@@ -34,6 +34,7 @@ describe('batch4 sell-off simulator & wallet health diagnostic', () => {
     const amt = 1000;
     const price = 2.0;
     const initialGross = amt * price; // 2000
+    assert.equal(initialGross, 2000);
 
     // Instant dump: 5% slippage execution
     const instant = amt * (price * 0.95);

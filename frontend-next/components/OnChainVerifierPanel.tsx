@@ -13,7 +13,6 @@ import {
   Zap,
   Globe,
   Code2,
-  Layers,
 } from 'lucide-react';
 
 export interface OnChainVerifierPanelProps {
