@@ -9,6 +9,8 @@ import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
 import { formatPct, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
 import { ScriptForgeModal } from './ScriptForgeModal';
 import { SecuritySentinelModal } from './SecuritySentinelModal';
+import { AlphaDossierModal, type AlphaDossierData } from './AlphaDossierModal';
+import { ProjectComparisonModal } from './ProjectComparisonModal';
 
 export function ProjectCard({
   project,
@@ -29,6 +31,9 @@ export function ProjectCard({
   const [watchlistBusy, setWatchlistBusy] = useState(false);
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [dossierData, setDossierData] = useState<AlphaDossierData | null>(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+  const [showPkModal, setShowPkModal] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
@@ -279,7 +284,39 @@ export function ProjectCard({
       </Link>
 
       <div className="mt-2.5 flex items-center justify-between border-t border-line/60 pt-2 text-xs">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={async () => {
+              if (dossierLoading) return;
+              setDossierLoading(true);
+              try {
+                const res = await apiFetch<{ ok: boolean; data?: AlphaDossierData }>(`/projects/${project.id}/dossier`);
+                if (res?.ok && res.data) {
+                  setDossierData(res.data);
+                }
+              } catch {
+                // non-blocking
+              } finally {
+                setDossierLoading(false);
+              }
+            }}
+            disabled={dossierLoading}
+            className="px-2 py-0.5 text-[10px] font-medium text-brand-400 hover:text-brand-300 bg-brand-500/10 hover:bg-brand-500/20 rounded border border-brand-500/30 transition flex items-center gap-1"
+            title="一键调出全景 Alpha 深度投研研报与操作蓝图"
+          >
+            <span>📑</span>
+            <span>{dossierLoading ? '生成中…' : '投研研报'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPkModal(true)}
+            className="px-2 py-0.5 text-[10px] font-medium text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 rounded border border-purple-500/30 transition flex items-center gap-1"
+            title="启动 8 维指标雷达对比与竞品 PK 矩阵"
+          >
+            <span>⚔️</span>
+            <span>竞品PK</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowScriptModal(true)}
@@ -349,6 +386,18 @@ export function ProjectCard({
         <SecuritySentinelModal
           initialUrl={project.url || ''}
           onClose={() => setShowSecurityModal(false)}
+        />
+      )}
+      {dossierData && (
+        <AlphaDossierModal
+          dossier={dossierData}
+          onClose={() => setDossierData(null)}
+        />
+      )}
+      {showPkModal && (
+        <ProjectComparisonModal
+          initialProjectIds={[project.id]}
+          onClose={() => setShowPkModal(false)}
         />
       )}
     </div>

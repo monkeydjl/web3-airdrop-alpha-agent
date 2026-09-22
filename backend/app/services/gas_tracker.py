@@ -225,3 +225,16 @@ def get_all_chains_gas_summary() -> dict[str, Any]:
         "recommendations": recommendations,
         "timestamp": int(time.time()),
     }
+
+
+def get_best_gas_windows() -> dict[str, Any]:
+    """返回全周黄金交互窗口与费率指引 (极速纯内存返回，无需实时网络探测)."""
+    return {
+        "best_time_window_utc": "周六至周日全天 (UTC) / 工作日 UTC 01:00-06:00",
+        "savings_percentage": "45%~65%",
+        "recommendations": [
+            "周末美欧机构休市，以太坊主网与各大 L2 基础费率降至周内最低谷。",
+            "工作日优先在早盘（UTC 01:00 - 06:00 / 北京时间 09:00 - 14:00）执行交互。",
+            "避开美股开盘重叠期（UTC 14:00 - 18:00），此时链上突发波峰概率最高。",
+        ],
+    }

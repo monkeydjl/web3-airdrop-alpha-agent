@@ -569,6 +569,8 @@ def create_app(
         pnl,
         scripts,
         smart_money,
+        bridge,
+        comparison,
     )
 
     # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`
@@ -581,6 +583,7 @@ def create_app(
     )
 
     app.include_router(run.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(comparison.router, prefix="/api/v1", tags=["v1"])
     app.include_router(projects.router, prefix="/api/v1", tags=["v1"])
     app.include_router(export_import.router, prefix="/api/v1", tags=["v1"])
     app.include_router(collections.router, prefix="/api/v1", tags=["v1"])
@@ -624,6 +627,7 @@ def create_app(
     app.include_router(pnl.router, prefix="/api/v1", tags=["v1"])
     app.include_router(scripts.router, prefix="/api/v1", tags=["v1"])
     app.include_router(smart_money.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(bridge.router, prefix="/api/v1", tags=["v1"])
     # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
     # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
     app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])

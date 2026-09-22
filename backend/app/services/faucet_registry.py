@@ -82,7 +82,91 @@ FREE_FAUCETS: list[dict[str, Any]] = [
         "description": "Polygon 官方新一代测试网水龙头",
         "daily_quota": "0.2 POL",
     },
+    {
+        "id": "story-odyssey",
+        "name": "Story Odyssey Faucet",
+        "chain": "story_odyssey",
+        "chain_name": "Story Odyssey",
+        "url": "https://faucet.story.foundation/",
+        "requires_auth": False,
+        "cooldown_hours": 24,
+        "description": "Story Protocol 官方测试币 IP 水龙头",
+        "daily_quota": "1.0 IP",
+    },
+    {
+        "id": "soneium-minato",
+        "name": "Soneium Minato Bridge & Faucet",
+        "chain": "soneium_minato",
+        "chain_name": "Soneium Minato",
+        "url": "https://bridge.soneium.org/",
+        "requires_auth": False,
+        "cooldown_hours": 24,
+        "description": "索尼 Soneium 官方测试网跨链水龙头通道",
+        "daily_quota": "0.05 Minato ETH",
+    },
+    {
+        "id": "monad-testnet",
+        "name": "Monad Devnet Faucet",
+        "chain": "monad_testnet",
+        "chain_name": "Monad Devnet",
+        "url": "https://testnet.monad.xyz/",
+        "requires_auth": True,
+        "cooldown_hours": 12,
+        "description": "Monad 官方生态水龙头通道",
+        "daily_quota": "0.1 MON",
+    },
 ]
+
+_PROBE_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": []}
+
+
+def probe_faucets_liveness(force_refresh: bool = False) -> list[dict[str, Any]]:
+    """Probe real-time HTTP reachability and latency for all registered faucets."""
+    import time
+    import httpx
+
+    now = time.time()
+    if not force_refresh and _PROBE_CACHE["data"] and (now - _PROBE_CACHE["timestamp"] < 60.0):
+        return _PROBE_CACHE["data"]
+
+    results = []
+    for faucet in FREE_FAUCETS:
+        url = faucet["url"]
+        start_t = time.perf_counter()
+        status = "online"
+        status_code = 200
+        try:
+            with httpx.Client(timeout=1.8, follow_redirects=True) as client:
+                resp = client.head(url)
+                latency_ms = max(10, int((time.perf_counter() - start_t) * 1000))
+                status_code = resp.status_code
+                if resp.status_code == 429:
+                    status = "rate_limited"
+                elif resp.status_code >= 400:
+                    status = "warning"
+        except Exception:
+            latency_ms = 999
+            status = "offline"
+
+        results.append(
+            {
+                "faucet_id": faucet["id"],
+                "name": faucet["name"],
+                "chain": faucet["chain"],
+                "chain_name": faucet.get("chain_name", faucet["chain"]),
+                "url": url,
+                "status": status,
+                "latency_ms": latency_ms,
+                "status_code": status_code,
+                "requires_auth": faucet.get("requires_auth", False),
+                "daily_quota": faucet.get("daily_quota", ""),
+                "probed_at": int(now),
+            }
+        )
+
+    _PROBE_CACHE["timestamp"] = now
+    _PROBE_CACHE["data"] = results
+    return results
 
 
 def ensure_faucet_claims_table(conn: DbConnection) -> None:

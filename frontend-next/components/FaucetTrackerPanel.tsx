@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
-import { CheckCircle2, Clock, ExternalLink, RefreshCw, Sparkles, Activity } from 'lucide-react';
+import { CheckCircle2, Clock, ExternalLink, RefreshCw, Sparkles, Activity, Zap } from 'lucide-react';
 
 interface FaucetHealthItem {
   id: string;
@@ -48,6 +48,28 @@ export function FaucetTrackerPanel() {
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
   const [healthMap, setHealthMap] = useState<Record<string, FaucetHealthItem>>({});
   const [healthLoading, setHealthLoading] = useState(false);
+  const [probeMap, setProbeMap] = useState<Record<string, { latency_ms: number; status: string }>>({});
+  const [probeLoading, setProbeLoading] = useState(false);
+
+  const loadProbes = useCallback(async (force = false) => {
+    setProbeLoading(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; data: { probes: Array<{ faucet_id: string; latency_ms: number; status: string }> } }>(
+        `/faucets/probe${force ? '?force_refresh=true' : ''}`
+      );
+      if (res?.data?.probes) {
+        const map: Record<string, { latency_ms: number; status: string }> = {};
+        for (const p of res.data.probes) {
+          map[p.faucet_id] = { latency_ms: p.latency_ms, status: p.status };
+        }
+        setProbeMap(map);
+      }
+    } catch {
+      /* non-blocking */
+    } finally {
+      setProbeLoading(false);
+    }
+  }, []);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -81,7 +103,8 @@ export function FaucetTrackerPanel() {
   useEffect(() => {
     loadFaucets();
     loadHealth();
-  }, [loadFaucets, loadHealth]);
+    loadProbes();
+  }, [loadFaucets, loadHealth, loadProbes]);
 
   const handleClaim = async (id: string) => {
     setActionBusy((prev) => ({ ...prev, [id]: true }));
@@ -150,6 +173,17 @@ export function FaucetTrackerPanel() {
 
           <button
             type="button"
+            onClick={() => loadProbes(true)}
+            disabled={probeLoading}
+            className="btn-secondary !py-1 text-xs text-brand-600 dark:text-brand-400 border-brand-500/30 hover:bg-brand-500/10 flex items-center gap-1"
+            title="毫秒级探测全网水龙头网络连通性与延迟"
+          >
+            <Zap className={`h-3 w-3 ${probeLoading ? 'animate-spin' : ''}`} />
+            <span>{probeLoading ? '测速中…' : '实时测速'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => loadHealth()}
             disabled={healthLoading}
             className="btn-secondary !py-1 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 flex items-center gap-1"
@@ -164,6 +198,7 @@ export function FaucetTrackerPanel() {
             onClick={() => {
               loadFaucets();
               loadHealth();
+              loadProbes(true);
             }}
             disabled={loading}
             className="btn-ghost text-xs p-1.5"
@@ -183,6 +218,9 @@ export function FaucetTrackerPanel() {
           { key: 'base_sepolia', label: 'Base' },
           { key: 'berachain_bartio', label: 'Berachain' },
           { key: 'polygon_amoy', label: 'Polygon' },
+          { key: 'story_odyssey', label: 'Story Odyssey' },
+          { key: 'soneium_minato', label: 'Soneium' },
+          { key: 'monad_testnet', label: 'Monad' },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -265,6 +303,34 @@ export function FaucetTrackerPanel() {
                         />
                         {healthMap[faucet.id].health_zh}
                         {typeof healthMap[faucet.id].vault_balance_eth === 'number' && ` · ${healthMap[faucet.id].vault_balance_eth} ETH`}
+                      </span>
+                    )}
+
+                    {probeMap[faucet.id] && (
+                      <span
+                        className={`badge text-[10px] flex items-center gap-1 font-mono ${
+                          probeMap[faucet.id].status === 'online'
+                            ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                            : probeMap[faucet.id].status === 'rate_limited'
+                            ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                        }`}
+                        title={`HTTP 状态: ${probeMap[faucet.id].status}`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            probeMap[faucet.id].status === 'online'
+                              ? 'bg-cyan-400'
+                              : probeMap[faucet.id].status === 'rate_limited'
+                              ? 'bg-amber-400'
+                              : 'bg-red-400'
+                          }`}
+                        />
+                        {probeMap[faucet.id].status === 'online'
+                          ? `⚡ ${probeMap[faucet.id].latency_ms}ms`
+                          : probeMap[faucet.id].status === 'rate_limited'
+                          ? '429限流'
+                          : '超时离线'}
                       </span>
                     )}
                   </div>

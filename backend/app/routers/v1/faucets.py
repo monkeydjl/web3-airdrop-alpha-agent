@@ -11,11 +11,31 @@ from app.services.user_scope import DEFAULT_USER
 from app.services.faucet_registry import (
     FREE_FAUCETS,
     list_faucets_with_status,
+    probe_faucets_liveness,
     record_faucet_claim,
     reset_faucet_claim,
 )
 
 router = APIRouter(tags=["faucets"])
+
+
+@router.get(
+    "/faucets/probe",
+    summary="实时测速探测所有测试网水龙头存活性",
+    description="免 Key 毫秒级探测主流测试网水龙头当前在线状态与网络响应延迟。",
+)
+def probe_faucets(
+    force_refresh: bool = Query(False, description="是否强制刷新探测"),
+) -> dict[str, Any]:
+    items = probe_faucets_liveness(force_refresh=force_refresh)
+    return {
+        "ok": True,
+        "data": {
+            "probes": items,
+            "total": len(items),
+            "online_count": sum(1 for p in items if p["status"] == "online"),
+        },
+    }
 
 
 @router.get(
