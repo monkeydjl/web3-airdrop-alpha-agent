@@ -578,6 +578,10 @@ def create_app(
         calldata,
         points,
         daily_briefing,
+        mev_rpc,
+        bridge_liquidity,
+        playbook,
+        team_studio,
     )
 
     # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`
@@ -642,6 +646,10 @@ def create_app(
     app.include_router(calldata.router, prefix="/api/v1", tags=["v1"])
     app.include_router(points.router, prefix="/api/v1", tags=["v1"])
     app.include_router(daily_briefing.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(mev_rpc.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(bridge_liquidity.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(playbook.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(team_studio.router, prefix="/api/v1", tags=["v1"])
     # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
     # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
     app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])

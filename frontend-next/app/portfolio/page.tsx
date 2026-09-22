@@ -6,6 +6,8 @@ import { AirdropPnlPanel } from '@/components/AirdropPnlPanel';
 import { BridgeOptimizerPanel } from '@/components/BridgeOptimizerPanel';
 import WalletDiagnosticModal from '@/components/WalletDiagnosticModal';
 import SybilLineageGraphModal from '@/components/SybilLineageGraphModal';
+import BridgeLiquidityRadarModal from '@/components/BridgeLiquidityRadarModal';
+import TeamStudioModal from '@/components/TeamStudioModal';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -156,6 +158,8 @@ export default function PortfolioPage() {
   const [projectNames, setProjectNames] = useState<Record<string, string>>({});
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [lineageOpen, setLineageOpen] = useState(false);
+  const [bridgeLiquidityOpen, setBridgeLiquidityOpen] = useState(false);
+  const [teamStudioOpen, setTeamStudioOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -294,6 +298,22 @@ export default function PortfolioPage() {
             <span>🕸️</span>
             <span className="hidden sm:inline">女巫血缘图谱</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setBridgeLiquidityOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
+            <span>💎</span>
+            <span className="hidden sm:inline">跨链流动性</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTeamStudioOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
+            <span>👥</span>
+            <span className="hidden sm:inline">工作室协同</span>
+          </button>
           <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
@@ -318,6 +338,8 @@ export default function PortfolioPage() {
         </div>
         <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
         <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
+        <BridgeLiquidityRadarModal isOpen={bridgeLiquidityOpen} onClose={() => setBridgeLiquidityOpen(false)} />
+        <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
       </>
     );
   }
@@ -340,6 +362,22 @@ export default function PortfolioPage() {
         >
           <span>🕸️</span>
           <span className="hidden sm:inline">女巫血缘图谱</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setBridgeLiquidityOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5"
+        >
+          <span>💎</span>
+          <span className="hidden sm:inline">跨链流动性</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTeamStudioOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5"
+        >
+          <span>👥</span>
+          <span className="hidden sm:inline">工作室协同</span>
         </button>
         <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
           <Download className="h-4 w-4" strokeWidth={2} />
@@ -612,6 +650,8 @@ export default function PortfolioPage() {
 
       <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
       <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
+      <BridgeLiquidityRadarModal isOpen={bridgeLiquidityOpen} onClose={() => setBridgeLiquidityOpen(false)} />
+      <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
     </>
   );
 }
