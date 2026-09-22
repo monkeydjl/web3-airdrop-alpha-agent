@@ -14,6 +14,7 @@ import { ProjectCard } from '@/components/ProjectCard';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/components/ui';
 import { AlphaDigestModal } from '@/components/AlphaDigestModal';
+import DailyBriefingModal from '@/components/DailyBriefingModal';
 import { HunterPersonaSelector } from '@/components/HunterPersonaSelector';
 import { GasTrackerWidget } from '@/components/GasTrackerWidget';
 import type { CollectionSourceApi, HunterPersonaId, Label, Project } from '@/lib/types';
@@ -66,6 +67,7 @@ function DashboardContent() {
   const [view, setView] = useState<ViewMode>('grid');
   const [showCharts, setShowCharts] = useState(false);
   const [showDigestModal, setShowDigestModal] = useState(false);
+  const [showBriefingModal, setShowBriefingModal] = useState(false);
   const [dailyFlash, setDailyFlash] = useState<{ ticker_text: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -352,7 +354,16 @@ function DashboardContent() {
               onClick={() => setShowDigestModal(true)}
               className="text-brand-600 dark:text-brand-400 hover:underline font-semibold whitespace-nowrap"
             >
-              查看完整投研速递 →
+              投研速递 →
+            </button>
+            <span className="text-line">|</span>
+            <button
+              type="button"
+              onClick={() => setShowBriefingModal(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30 font-semibold whitespace-nowrap flex items-center gap-1 transition"
+            >
+              <span>📰</span>
+              <span>今日晚报</span>
             </button>
           </div>
         </div>
@@ -711,6 +722,7 @@ function DashboardContent() {
       </div>
     </div>
     <AlphaDigestModal isOpen={showDigestModal} onClose={() => setShowDigestModal(false)} />
+    <DailyBriefingModal isOpen={showBriefingModal} onClose={() => setShowBriefingModal(false)} />
     </>
   );
 }

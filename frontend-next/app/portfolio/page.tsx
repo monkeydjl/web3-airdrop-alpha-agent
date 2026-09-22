@@ -5,6 +5,7 @@ import { RoiSimulatorPanel } from '@/components/RoiSimulatorPanel';
 import { AirdropPnlPanel } from '@/components/AirdropPnlPanel';
 import { BridgeOptimizerPanel } from '@/components/BridgeOptimizerPanel';
 import WalletDiagnosticModal from '@/components/WalletDiagnosticModal';
+import SybilLineageGraphModal from '@/components/SybilLineageGraphModal';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -154,6 +155,7 @@ export default function PortfolioPage() {
   const [interactions, setInteractions] = useState<InteractionItem[]>([]);
   const [projectNames, setProjectNames] = useState<Record<string, string>>({});
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+  const [lineageOpen, setLineageOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -284,6 +286,14 @@ export default function PortfolioPage() {
             <span>🩺</span>
             <span className="hidden sm:inline">钱包履历体检</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setLineageOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
+            <span>🕸️</span>
+            <span className="hidden sm:inline">女巫血缘图谱</span>
+          </button>
           <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
@@ -307,6 +317,7 @@ export default function PortfolioPage() {
           <RoiLedger projectNames={projectNames} />
         </div>
         <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
+        <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
       </>
     );
   }
@@ -321,6 +332,14 @@ export default function PortfolioPage() {
         >
           <span>🩺</span>
           <span className="hidden sm:inline">钱包履历体检</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setLineageOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5"
+        >
+          <span>🕸️</span>
+          <span className="hidden sm:inline">女巫血缘图谱</span>
         </button>
         <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
           <Download className="h-4 w-4" strokeWidth={2} />
@@ -592,6 +611,7 @@ export default function PortfolioPage() {
       </div>
 
       <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
+      <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
     </>
   );
 }

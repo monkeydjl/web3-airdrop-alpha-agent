@@ -8,6 +8,7 @@ import { fetchAllProjects } from '@/lib/projects';
 import { LABEL_ZH, labelStyles } from '@/lib/format';
 import type { Label, Project } from '@/lib/types';
 import { isAbortError } from '@/lib/api';
+import CalldataDecoderModal from '@/components/CalldataDecoderModal';
 
 interface TopBarProps {
   title: string;
@@ -100,6 +101,7 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [decoderOpen, setDecoderOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -286,8 +288,20 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => setDecoderOpen(true)}
+          className="btn-secondary !px-2.5 !py-1.5 text-xs inline-flex items-center gap-1 shrink-0"
+          title="合约 Calldata 逆向解码与安全沙箱"
+        >
+          <span>📜</span>
+          <span className="hidden xl:inline">Calldata沙箱</span>
+        </button>
         {children}
       </div>
+
+      {/* 合约 Calldata 逆向解码与安全沙箱 */}
+      <CalldataDecoderModal isOpen={decoderOpen} onClose={() => setDecoderOpen(false)} />
     </header>
   );
 }

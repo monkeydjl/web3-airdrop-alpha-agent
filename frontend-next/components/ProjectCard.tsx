@@ -11,6 +11,7 @@ import { ScriptForgeModal } from './ScriptForgeModal';
 import { SecuritySentinelModal } from './SecuritySentinelModal';
 import { AlphaDossierModal, type AlphaDossierData } from './AlphaDossierModal';
 import { ProjectComparisonModal } from './ProjectComparisonModal';
+import PointsEpochEstimatorModal from './PointsEpochEstimatorModal';
 
 export function ProjectCard({
   project,
@@ -34,6 +35,7 @@ export function ProjectCard({
   const [dossierData, setDossierData] = useState<AlphaDossierData | null>(null);
   const [dossierLoading, setDossierLoading] = useState(false);
   const [showPkModal, setShowPkModal] = useState(false);
+  const [showPointsModal, setShowPointsModal] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
@@ -319,6 +321,15 @@ export function ProjectCard({
           </button>
           <button
             type="button"
+            onClick={() => setShowPointsModal(true)}
+            className="px-2 py-0.5 text-[10px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded border border-amber-500/30 transition flex items-center gap-1"
+            title="推演空投阶段积分估值与全网排位"
+          >
+            <span>⏳</span>
+            <span>积分测算</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setShowScriptModal(true)}
             className="px-2 py-0.5 text-[10px] font-medium text-ink-muted hover:text-ink bg-surface-2 hover:bg-surface-3 rounded border border-line transition flex items-center gap-1"
             title="生成 Foundry Cast / Web3.py / Viem 交互脚本模板"
@@ -400,6 +411,10 @@ export function ProjectCard({
           onClose={() => setShowPkModal(false)}
         />
       )}
+      <PointsEpochEstimatorModal
+        isOpen={showPointsModal}
+        onClose={() => setShowPointsModal(false)}
+      />
     </div>
   );
 }
