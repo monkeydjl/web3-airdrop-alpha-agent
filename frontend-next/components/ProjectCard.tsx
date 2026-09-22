@@ -7,6 +7,8 @@ import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
 import { formatPct, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
+import { ScriptForgeModal } from './ScriptForgeModal';
+import { SecuritySentinelModal } from './SecuritySentinelModal';
 
 export function ProjectCard({
   project,
@@ -25,6 +27,8 @@ export function ProjectCard({
   const [verifyErr, setVerifyErr] = useState('');
   const [isWatchlisted, setIsWatchlisted] = useState(Boolean(project.watchlisted));
   const [watchlistBusy, setWatchlistBusy] = useState(false);
+  const [showScriptModal, setShowScriptModal] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
@@ -274,8 +278,31 @@ export function ProjectCard({
         )}
       </Link>
 
+      <div className="mt-2.5 flex items-center justify-between border-t border-line/60 pt-2 text-xs">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowScriptModal(true)}
+            className="px-2 py-0.5 text-[10px] font-medium text-ink-muted hover:text-ink bg-surface-2 hover:bg-surface-3 rounded border border-line transition flex items-center gap-1"
+            title="生成 Foundry Cast / Web3.py / Viem 交互脚本模板"
+          >
+            <span>⚡</span>
+            <span>脚本工坊</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowSecurityModal(true)}
+            className="px-2 py-0.5 text-[10px] font-medium text-ink-muted hover:text-ink bg-surface-2 hover:bg-surface-3 rounded border border-line transition flex items-center gap-1"
+            title="检测代币无限授权与钓鱼网址安全体检"
+          >
+            <span>🛡️</span>
+            <span>安全体检</span>
+          </button>
+        </div>
+      </div>
+
       {needsVerify || verdict ? (
-        <div className="mt-3.5 border-t border-line/70 pt-3">
+        <div className="mt-2.5 border-t border-line/70 pt-2.5">
           {verdict ? (
             <p className="text-xs font-mono font-medium text-farm flex items-center gap-1" role="status">
               <span>✓</span>
@@ -311,6 +338,19 @@ export function ProjectCard({
           {verifyErr ? <p className="mt-1 text-[11px] text-watch">{verifyErr}</p> : null}
         </div>
       ) : null}
+
+      {showScriptModal && (
+        <ScriptForgeModal
+          initialProjectName={project.name}
+          onClose={() => setShowScriptModal(false)}
+        />
+      )}
+      {showSecurityModal && (
+        <SecuritySentinelModal
+          initialUrl={project.url || ''}
+          onClose={() => setShowSecurityModal(false)}
+        />
+      )}
     </div>
   );
 }

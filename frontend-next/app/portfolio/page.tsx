@@ -2,6 +2,7 @@
 
 import { RoiLedger } from '@/components/RoiLedger';
 import { RoiSimulatorPanel } from '@/components/RoiSimulatorPanel';
+import { AirdropPnlPanel } from '@/components/AirdropPnlPanel';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -278,6 +279,9 @@ export default function PortfolioPage() {
           </button>
         </TopBar>
         <div className="app-content space-y-5 py-10">
+          {/* 空投真实收益账本与历史战绩复盘看板 */}
+          <AirdropPnlPanel />
+
           <EmptyState
             title="还没有参与记录"
             description="在项目详情页点击「我的投入」添加第一条交互记录，这里会自动汇总校准矩阵和收益分析。"
@@ -306,6 +310,9 @@ export default function PortfolioPage() {
       </TopBar>
 
       <div className="app-content space-y-5 animate-fade-in">
+        {/* 空投真实收益账本与历史战绩复盘看板 */}
+        <AirdropPnlPanel />
+
         {/* 1. KPI 汇总 */}
         <div className="pf-kpi-grid">
           <div className="pf-kpi">

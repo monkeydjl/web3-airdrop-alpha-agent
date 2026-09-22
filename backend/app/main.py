@@ -565,6 +565,10 @@ def create_app(
         calendar as calendar_router,
         bot,
         sybil_dossier,
+        security,
+        pnl,
+        scripts,
+        smart_money,
     )
 
     # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`
@@ -616,6 +620,10 @@ def create_app(
     app.include_router(calendar_router.router, prefix="/api/v1", tags=["v1"])
     app.include_router(bot.router, prefix="/api/v1", tags=["v1"])
     app.include_router(sybil_dossier.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(security.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(pnl.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(scripts.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(smart_money.router, prefix="/api/v1", tags=["v1"])
     # 公开的评分方法论快照。**不能**挂在 /settings/* 下 —— 那整个前缀在
     # ADMIN_ONLY_PREFIXES 里，挂进去就等于没拆（见 public_config.py 模块文档）。
     app.include_router(public_config.router, prefix="/api/v1", tags=["v1"])

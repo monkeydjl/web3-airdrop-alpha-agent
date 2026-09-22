@@ -529,3 +529,29 @@ export function viabilityTierZh(tier?: string | null): string {
   return VIABILITY_TIER_ZH[tier.toLowerCase()] || tier;
 }
 
+const PNL_TIER_ZH: Record<string, string> = {
+  legendary: '传奇巨鲸领主',
+  diamond: '钻石手资深猎人',
+  gold: '黄金活跃先锋',
+  novice: '萌新链上探险家',
+};
+
+export function pnlTierZh(tier?: string | null): string {
+  if (!tier) return '萌新猎人';
+  return PNL_TIER_ZH[tier.toLowerCase()] || tier;
+}
+
+const SECURITY_RISK_ZH: Record<string, string> = {
+  critical: '极度危险',
+  high: '高风险',
+  medium: '中风险',
+  low: '低风险',
+  safe: '安全',
+};
+
+export function securityRiskZh(lvl?: string | null): string {
+  if (!lvl) return '未知';
+  return SECURITY_RISK_ZH[lvl.toLowerCase()] || lvl;
+}
+
+

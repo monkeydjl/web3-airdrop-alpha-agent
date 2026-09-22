@@ -2,6 +2,7 @@
 
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
 import { TopBar } from '@/components/TopBar';
+import { SmartMoneyRadarPanel } from '@/components/SmartMoneyRadarPanel';
 import { EmptyState, LabelBadge, SectionTitle, StatCard } from '@/components/ui';
 import { apiFetch, isAbortError } from '@/lib/api';
 import { LABEL_ORDER, LABEL_ZH, riskLevelZh } from '@/lib/format';
@@ -485,6 +486,8 @@ export default function InsightsPage() {
           )}
         </div>
       </div>
+
+      <SmartMoneyRadarPanel />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1600px]:grid-cols-3">
         <div className="ins-card">
