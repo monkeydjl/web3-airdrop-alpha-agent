@@ -4,6 +4,7 @@ import { RoiLedger } from '@/components/RoiLedger';
 import { RoiSimulatorPanel } from '@/components/RoiSimulatorPanel';
 import { AirdropPnlPanel } from '@/components/AirdropPnlPanel';
 import { BridgeOptimizerPanel } from '@/components/BridgeOptimizerPanel';
+import WalletDiagnosticModal from '@/components/WalletDiagnosticModal';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -152,6 +153,7 @@ export default function PortfolioPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [interactions, setInteractions] = useState<InteractionItem[]>([]);
   const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -274,6 +276,14 @@ export default function PortfolioPage() {
     return (
       <>
         <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
+          <button
+            type="button"
+            onClick={() => setDiagnosticOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
+            <span>🩺</span>
+            <span className="hidden sm:inline">钱包履历体检</span>
+          </button>
           <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
@@ -296,6 +306,7 @@ export default function PortfolioPage() {
               否则空态会把台账入口一起藏掉。 */}
           <RoiLedger projectNames={projectNames} />
         </div>
+        <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
       </>
     );
   }
@@ -303,6 +314,14 @@ export default function PortfolioPage() {
   return (
     <>
       <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
+        <button
+          type="button"
+          onClick={() => setDiagnosticOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5"
+        >
+          <span>🩺</span>
+          <span className="hidden sm:inline">钱包履历体检</span>
+        </button>
         <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
           <Download className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">导出记录</span>
@@ -571,6 +590,8 @@ export default function PortfolioPage() {
         {/* 6. 收益台账（F3）—— 与上方 interactions 是两套数据，见组件注释 */}
         <RoiLedger projectNames={projectNames} />
       </div>
+
+      <WalletDiagnosticModal isOpen={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} />
     </>
   );
 }

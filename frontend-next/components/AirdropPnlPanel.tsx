@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { StatCard } from './ui';
+import SellOffSimulatorModal from '@/components/SellOffSimulatorModal';
 
 export function AirdropPnlPanel() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showSimulator, setShowSimulator] = useState(false);
   const [copiedTrophy, setCopiedTrophy] = useState(false);
 
   // 表单输入
@@ -115,6 +117,13 @@ export function AirdropPnlPanel() {
               className="btn-secondary !py-2 text-xs flex items-center gap-1.5"
             >
               <span>{copiedTrophy ? '✅ 已复制战绩' : '📋 复制战绩海报'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSimulator(true)}
+              className="rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 px-3 py-2 text-xs font-semibold flex items-center gap-1.5 transition"
+            >
+              <span>💰 止盈出局模拟器</span>
             </button>
             <button
               type="button"
@@ -320,6 +329,9 @@ export function AirdropPnlPanel() {
           </div>
         </div>
       )}
+
+      {/* 空投止盈策略模拟器弹窗 */}
+      <SellOffSimulatorModal isOpen={showSimulator} onClose={() => setShowSimulator(false)} />
     </div>
   );
 }

@@ -16,6 +16,7 @@ const FILES = [
   './lib/personas.test.ts',
   './lib/batch2.test.ts',
   './lib/batch3.test.ts',
+  './lib/batch4.test.ts',
 ];
 
 for (const f of FILES) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import GasAlertRuleModal from '@/components/GasAlertRuleModal';
 
 interface ChainGas {
   chain: string;
@@ -29,6 +30,7 @@ interface GasSummaryResponse {
 export function GasTrackerWidget() {
   const [data, setData] = useState<GasSummaryResponse | null>(null);
   const [open, setOpen] = useState(false);
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -92,14 +94,27 @@ export function GasTrackerWidget() {
               <span className="text-base">⛽</span>
               <span className="text-xs font-bold text-ink">全链实时 Gas 极佳交互雷达</span>
             </div>
-            <button
-              type="button"
-              onClick={fetchGas}
-              disabled={loading}
-              className="text-[11px] text-brand-400 hover:text-brand-300 disabled:opacity-50"
-            >
-              {loading ? '刷新中...' : '立即刷新 ⟳'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setAlertModalOpen(true);
+                }}
+                className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium transition"
+                title="配置 Gas 阈值告警规则"
+              >
+                <span>🔔</span> 规则预警
+              </button>
+              <button
+                type="button"
+                onClick={fetchGas}
+                disabled={loading}
+                className="text-[11px] text-brand-400 hover:text-brand-300 disabled:opacity-50"
+              >
+                {loading ? '...' : '⟳'}
+              </button>
+            </div>
           </div>
 
           {/* 各链列表 */}
@@ -145,6 +160,9 @@ export function GasTrackerWidget() {
           )}
         </div>
       )}
+
+      {/* Gas 预警模态框 */}
+      <GasAlertRuleModal isOpen={alertModalOpen} onClose={() => setAlertModalOpen(false)} />
     </div>
   );
 }
