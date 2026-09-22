@@ -2,8 +2,9 @@
 
 import { apiFetch } from '@/lib/api';
 import type { MultiWalletStrategy } from '@/lib/types';
-import { AlertTriangle, Clock, DollarSign, ShieldAlert, ShieldCheck, Wallet, Network, Layers, Search, ArrowRight, Ban } from 'lucide-react';
+import { AlertTriangle, Clock, DollarSign, ShieldAlert, ShieldCheck, Wallet, Network, Layers, Search, ArrowRight, Ban, FileText } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { SybilDefenseModal } from './SybilDefenseModal';
 
 const statusBadgeConfig: Record<string, { label: string; className: string }> = {
   recommended: {
@@ -60,6 +61,7 @@ export function MultiWalletStrategyPanel({ projectId }: { projectId: string }) {
   const [sybilResult, setSybilResult] = useState<SybilCheckResult | null>(null);
   const [sybilError, setSybilError] = useState('');
   const [showChecker, setShowChecker] = useState(false);
+  const [showDossierModal, setShowDossierModal] = useState(false);
 
   const handleSybilCheck = async () => {
     const lines = sybilAddresses
@@ -371,7 +373,16 @@ export function MultiWalletStrategyPanel({ projectId }: { projectId: string }) {
             {sybilError && (
               <p className="text-xs text-red-500 font-medium">{sybilError}</p>
             )}
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDossierModal(true)}
+                className="btn-secondary !py-1 text-xs flex items-center gap-1.5 border-brand-500/30 text-brand-400 hover:bg-brand-500/10"
+              >
+                <FileText className="h-3 w-3" />
+                <span>生成防女巫申诉存证 (Appeal Dossier)</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleSybilCheck}
@@ -420,6 +431,13 @@ export function MultiWalletStrategyPanel({ projectId }: { projectId: string }) {
         <span className="font-semibold text-ink-muted">纯策略建议声明：</span>
         本系统严格遵循纯决策辅助原则，绝不管理私钥，亦不提供自动化代投或批量脚本上链。所有多钱包行为须由用户在隔离环境中独立手动操作，防范资产交叉污染与链上女巫清洗。
       </div>
+
+      {showDossierModal && (
+        <SybilDefenseModal
+          initialAddress={sybilAddresses.split('\n')[0]?.trim() || ''}
+          onClose={() => setShowDossierModal(false)}
+        />
+      )}
     </div>
   );
 }

@@ -15,6 +15,7 @@ import { TopBar } from '@/components/TopBar';
 import { EmptyState, Toast } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { relativeTime } from '@/lib/format';
+import { BotNotificationPanel } from '@/components/BotNotificationPanel';
 
 /**
  * 通知类型。
@@ -336,6 +337,9 @@ export default function NotificationsPage() {
             )}
           </section>
         </div>
+
+        {/* Telegram / Discord 实时播报与交互式 Bot 控制台 */}
+        <BotNotificationPanel />
       </div>
     </>
   );

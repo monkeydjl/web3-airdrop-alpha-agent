@@ -15,6 +15,7 @@ import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/components/ui';
 import { AlphaDigestModal } from '@/components/AlphaDigestModal';
 import { HunterPersonaSelector } from '@/components/HunterPersonaSelector';
+import { GasTrackerWidget } from '@/components/GasTrackerWidget';
 import type { CollectionSourceApi, HunterPersonaId, Label, Project } from '@/lib/types';
 
 type SortBy = 'score' | 'name' | 'confidence';
@@ -245,6 +246,7 @@ function DashboardContent() {
       {toast && <Toast message={toast.message} type={toast.type} />}
 
       <TopBar title="项目雷达" subtitle={`自动发现 · 六维评分 · 重点参与 / 观察 / 忽略 · 共 ${stats.total} 个项目`}>
+        <GasTrackerWidget />
         <button type="button" onClick={loadProjects} className="btn-secondary" disabled={loading || running}>刷新</button>
         <button type="button" onClick={runPipeline} className="btn-primary" disabled={running}>
           {running ? <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />运行中</> : <>▶ 采集并评分</>}
