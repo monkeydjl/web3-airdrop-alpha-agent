@@ -554,4 +554,35 @@ export function securityRiskZh(lvl?: string | null): string {
   return SECURITY_RISK_ZH[lvl.toLowerCase()] || lvl;
 }
 
+/**
+ * 判定项目是否具备明确的空投信号 (Explicit / Strong Airdrop Signal)。
+ * 判定依据（命中任一项即视为具备明确空投信号）：
+ * 1. 理由清单中命中强空投信号、官方明确提及空投、清晰积分路径
+ * 2. 信号元数据中 explicit_airdrop_mention 为真
+ * 3. 拥有积分系统且尚未发币 (has_points_program && no_token_yet !== false)
+ * 4. airdrop_signal 空投维度子评分 ≥ 80
+ */
+export function hasExplicitAirdropSignal(project?: {
+  reason?: string[] | null;
+  reason_zh?: string[] | null;
+  signals?: Record<string, unknown> | null;
+  sub_scores?: Record<string, number> | null;
+} | null): boolean {
+  if (!project) return false;
+  const reasons = Array.isArray(project.reason) ? project.reason : [];
+  const reasonZhList = Array.isArray(project.reason_zh) ? project.reason_zh : [];
+  const signals = project.signals || {};
+  const subScores = project.sub_scores || {};
+
+  return Boolean(
+    reasons.includes('strong airdrop signal') ||
+    reasons.includes('explicit airdrop mention') ||
+    reasons.includes('clear airdrop / points path') ||
+    reasonZhList.some((r) => r.includes('明确的空投信号') || r.includes('官方明确提及空投')) ||
+    signals.explicit_airdrop_mention ||
+    (signals.has_points_program && signals.no_token_yet !== false) ||
+    (typeof subScores.airdrop_signal === 'number' && subScores.airdrop_signal >= 80)
+  );
+}
+
 

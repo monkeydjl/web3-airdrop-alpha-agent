@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
-import { LABEL_ORDER, sortProjects, stageZh } from '@/lib/format';
+import { LABEL_ORDER, hasExplicitAirdropSignal, sortProjects, stageZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
@@ -52,6 +52,7 @@ function DashboardContent() {
   const [hideIgnore, setHideIgnore] = useState(true);
   const [hasFundingOnly, setHasFundingOnly] = useState(false);
   const [zeroCostOnly, setZeroCostOnly] = useState(false);
+  const [explicitAirdropOnly, setExplicitAirdropOnly] = useState(false);
   // 「分数已达 FARM 线、但缺参与路径」是库里唯一上不去的一批 —— 单独抽出来做
   // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那 86 行）。
   const [needsVerifyOnly, setNeedsVerifyOnly] = useState(false);
@@ -201,13 +202,15 @@ function DashboardContent() {
     let sum = 0;
     let top = 0;
     let needsVerify = 0;
+    let explicitAirdrop = 0;
     projects.forEach((p) => {
       if (p.label in counts) counts[p.label as Label]++;
       if (p.veto === 'no_participation_path') needsVerify++;
+      if (hasExplicitAirdropSignal(p)) explicitAirdrop++;
       sum += p.score || 0;
       top = Math.max(top, p.score || 0);
     });
-    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top, needsVerify };
+    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top, needsVerify, explicitAirdrop };
   }, [projects]);
 
   const sectors = useMemo(() => {
@@ -231,6 +234,7 @@ function DashboardContent() {
       if (stageFilter && p.stage !== stageFilter) return false;
       if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
+      if (explicitAirdropOnly && !hasExplicitAirdropSignal(p)) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
       if (zeroCostOnly) {
         const hasTestnet = Boolean(p.signals?.has_testnet || p.stage === 'testnet');
@@ -241,7 +245,7 @@ function DashboardContent() {
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, explicitAirdropOnly, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -395,9 +399,9 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); setZeroCostOnly(false); }}
+              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); setZeroCostOnly(false); setExplicitAirdropOnly(false); }}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                !labelFilter && !needsVerifyOnly && !hasFundingOnly && !zeroCostOnly
+                !labelFilter && !needsVerifyOnly && !hasFundingOnly && !zeroCostOnly && !explicitAirdropOnly
                   ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
                   : 'bg-surface-2 text-ink-muted hover:text-ink border border-line'
               }`}
@@ -425,6 +429,18 @@ function DashboardContent() {
               }`}
             >
               观察 WATCH ({stats.counts.WATCH})
+            </button>
+            <button
+              type="button"
+              onClick={() => setExplicitAirdropOnly((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                explicitAirdropOnly
+                  ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20'
+                  : 'bg-surface-2 text-indigo-300 hover:bg-surface-3 border border-indigo-500/25'
+              }`}
+              title="过滤具备官方明确提及空投、积分计划或强空投信号的项目"
+            >
+              🪂 明确空投信号 ({stats.explicitAirdrop})
             </button>
             <button
               type="button"
@@ -622,7 +638,7 @@ function DashboardContent() {
                 <button type="button" className="btn-primary" onClick={runPipeline} disabled={running}>▶ 开始采集评分</button>
               )
             ) : (
-              <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); }}>清除筛选</button>
+              <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); setZeroCostOnly(false); setNeedsVerifyOnly(false); setExplicitAirdropOnly(false); }}>清除筛选</button>
             )
           }
         />

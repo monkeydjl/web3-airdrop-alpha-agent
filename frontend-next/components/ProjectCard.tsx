@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
-import { formatPct, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
+import { formatPct, hasExplicitAirdropSignal, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
 import { ScriptForgeModal } from './ScriptForgeModal';
 import { SecuritySentinelModal } from './SecuritySentinelModal';
 import { AlphaDossierModal, type AlphaDossierData } from './AlphaDossierModal';
@@ -182,6 +182,14 @@ export function ProjectCard({
                   title="纯测试网/零成本交互：无需质押真实本金，保本优先"
                 >
                   零资金成本
+                </span>
+              ) : null}
+              {hasExplicitAirdropSignal(project) ? (
+                <span
+                  className="badge bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-medium flex items-center gap-1"
+                  title="明确空投信号：官方发币/空投规划、积分活动或强空投信号"
+                >
+                  🪂 明确空投
                 </span>
               ) : null}
               {project.reason?.includes('PUA_FATIGUE_WARNING') ? (

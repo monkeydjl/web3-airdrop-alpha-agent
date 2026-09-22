@@ -15,6 +15,7 @@ import {
   capitalFrictionTierZh,
   blockerCodeZh,
   severityZh,
+  hasExplicitAirdropSignal,
 } from './format.ts';
 
 describe('labelZh', () => {
@@ -119,3 +120,26 @@ describe('confColor', () => {
     assert.ok(confColor(0.3).includes('text-red-500'));
   });
 });
+
+describe('hasExplicitAirdropSignal', () => {
+  it('识别包含 strong airdrop signal 或 explicit mention 的项目', () => {
+    assert.equal(hasExplicitAirdropSignal({ reason: ['strong airdrop signal', 'credible team'] }), true);
+    assert.equal(hasExplicitAirdropSignal({ reason: ['explicit airdrop mention'] }), true);
+    assert.equal(hasExplicitAirdropSignal({ reason: ['clear airdrop / points path'] }), true);
+    assert.equal(hasExplicitAirdropSignal({ reason_zh: ['明确的空投信号'] }), true);
+  });
+
+  it('识别 signals 标记或高分积分活动', () => {
+    assert.equal(hasExplicitAirdropSignal({ signals: { explicit_airdrop_mention: true } }), true);
+    assert.equal(hasExplicitAirdropSignal({ signals: { has_points_program: true, no_token_yet: true } }), true);
+    assert.equal(hasExplicitAirdropSignal({ sub_scores: { airdrop_signal: 85 } }), true);
+  });
+
+  it('对无空投信号项目返回 false', () => {
+    assert.equal(hasExplicitAirdropSignal(null), false);
+    assert.equal(hasExplicitAirdropSignal({}), false);
+    assert.equal(hasExplicitAirdropSignal({ reason: ['credible team', 'late narrative'] }), false);
+    assert.equal(hasExplicitAirdropSignal({ signals: { explicit_airdrop_mention: false } }), false);
+  });
+});
+
