@@ -109,7 +109,7 @@ class GitHubCollector(DataCollector):
     建议配置 GITHUB_TOKEN 以提升配额（30 req/min）。
     """
 
-    STARS_THRESHOLD = 50
+    STARS_THRESHOLD = 20
     MAX_RESULTS = 30
     SEARCH_WINDOW_DAYS = 90
     # Cap raw discovery score so weak-relevance repos rarely enter analysis (threshold 0.3)
@@ -128,8 +128,8 @@ class GitHubCollector(DataCollector):
         return "api"
 
     def is_enabled(self) -> bool:
-        # GitHub 搜索需要 token 才能稳定运行；无 token 时默认禁用
-        return settings.github_enabled and bool(settings.github_token)
+        # 支持未配置 token 时使用未认证公开搜索（受限流器保护，速率 ≤ 10 req/min）
+        return bool(settings.github_enabled)
 
     async def collect(self) -> CollectorResult:
         """执行 GitHub 搜索采集。"""
@@ -176,11 +176,10 @@ class GitHubCollector(DataCollector):
     async def _search_repositories(self) -> list[dict[str, Any]]:
         """搜索 GitHub 仓库。
 
-        查询关注：近期更新的、与空投/测试网/积分相关的仓库。
+        查询关注：近期更新的、与空投/测试网水龙头/积分相关的仓库。
         """
-        # 90 天内更新 + 空投相关关键词（OR），并要求最低 stars
-        since = (datetime.now(UTC) - timedelta(days=self.SEARCH_WINDOW_DAYS)).strftime("%Y-%m-%d")
-        query = f'(airdrop OR testnet OR "points program" OR airdrops) pushed:>{since} stars:>={self.STARS_THRESHOLD}'
+        # 关注空投和测试网相关开源仓库，按 stars 初筛并由 API 按 updated 倒序返回
+        query = f"airdrop testnet stars:>={self.STARS_THRESHOLD}"
         url = f"{self.base_url}/search/repositories"
         params: dict[str, str | int | float | bool | None] = {
             "q": query,
@@ -188,7 +187,10 @@ class GitHubCollector(DataCollector):
             "order": "desc",
             "per_page": self.MAX_RESULTS,
         }
-        headers = {"Accept": "application/vnd.github+json"}
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "AirdropAlphaAgent/2.0 (Web3 Open-Source Alpha Collector)",
+        }
         if settings.github_token:
             headers["Authorization"] = f"Bearer {settings.github_token}"
 
@@ -287,9 +289,14 @@ class GitHubCollector(DataCollector):
         created_at = repo.get("created_at")
         rel = self._relevance_multiplier(repo)
 
-        blob = f"{name} {description}".lower()
-        has_testnet = "testnet" in blob
-        has_points = "points" in blob or "airdrop" in blob
+        topics = repo.get("topics") or []
+        if not isinstance(topics, list):
+            topics = []
+        topics_text = " ".join(str(t).lower() for t in topics)
+
+        blob = f"{name} {description} {topics_text}".lower()
+        has_testnet = "testnet" in blob or "faucet" in blob or "devnet" in blob
+        has_points = "points" in blob or "airdrop" in blob or "incentivized" in blob
         raw_data = {
             "name": name,
             "url": url,
@@ -311,7 +318,7 @@ class GitHubCollector(DataCollector):
             "owner_type": owner_type,
             "license": repo.get("license", {}).get("key") if repo.get("license") else None,
             "relevance": rel,
-            "topics": repo.get("topics") or [],
+            "topics": topics,
             "has_testnet": has_testnet,
             "has_points_program": has_points,
             "no_token_yet": "airdrop" in blob or has_testnet,
@@ -336,6 +343,8 @@ class GitHubCollector(DataCollector):
 
         discovery_score = self._calculate_discovery_score(stars, forks, open_issues, updated_at, created_at, language)
         discovery_score = round(min(self.MAX_DISCOVERY_SCORE, discovery_score * rel), 4)
+        if rel >= 0.55 and (has_testnet or has_points):
+            discovery_score = max(discovery_score, 0.35)
         # Weak relevance → keep as signal-only (below analysis threshold 0.3)
         if rel < 0.55:
             discovery_score = min(discovery_score, 0.28)

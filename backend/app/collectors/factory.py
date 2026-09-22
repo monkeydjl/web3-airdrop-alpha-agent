@@ -20,6 +20,7 @@ from app.collectors.etherscan import EtherscanCollector
 from app.collectors.farcaster import FarcasterCollector
 from app.collectors.galxe import GalxeCollector
 from app.collectors.github import GitHubCollector
+from app.collectors.github_curated import GitHubCuratedCollector
 from app.collectors.layer3 import Layer3Collector
 from app.collectors.medium import MediumCollector
 from app.collectors.mirror import MirrorCollector
@@ -39,6 +40,7 @@ def build_default_registry() -> CollectorRegistry:
     for collector in (
         DefiLlamaCollector(),
         GitHubCollector(),
+        GitHubCuratedCollector(),
         CoinGeckoCollector(),
         CryptoRankCollector(),
         RootDataCollector(),

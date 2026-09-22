@@ -28,10 +28,18 @@ def test_github_collector_enabled(github_collector: GitHubCollector) -> None:
 
 
 @respx.mock
-def test_github_collector_disabled_without_token(monkeypatch) -> None:
-    """无 token 时采集器应禁用。"""
+def test_github_collector_enabled_without_token(monkeypatch) -> None:
+    """无 token 但 github_enabled=True 时采集器支持未认证公开搜索。"""
     monkeypatch.setattr(settings, "github_token", "")
     monkeypatch.setattr(settings, "github_enabled", True)
+    collector = GitHubCollector()
+    assert collector.is_enabled()
+
+
+@respx.mock
+def test_github_collector_disabled_when_not_enabled(monkeypatch) -> None:
+    """github_enabled 为 False 时采集器禁用。"""
+    monkeypatch.setattr(settings, "github_enabled", False)
     collector = GitHubCollector()
     assert not collector.is_enabled()
 

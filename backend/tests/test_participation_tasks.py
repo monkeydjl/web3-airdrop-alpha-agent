@@ -125,3 +125,54 @@ def test_signals_view_tolerates_missing_or_broken_meta():
     assert signals_view({"id": "x", "meta": "not-json"})["id"] == "x"
     assert signals_view({"id": "x", "meta": json.dumps({"signals": "wrong-type"})})["id"] == "x"
     assert signals_view(None) == {}
+
+
+def test_curated_protocol_tasks_enrichment():
+    """验证重点 FARM 项目生成协议专属的高置信度指引及富文本字段。"""
+    # 1. Symbiotic
+    symbiotic = generate_participation_tasks(
+        {
+            "id": "76ad0874-e3e7-5067-8aef-d6d92449aa5a",
+            "name": "Symbiotic",
+            "sector": "Collateral Markets",
+            "label": "FARM",
+            "url": "https://symbiotic.fi",
+        }
+    )
+    symbiotic_ids = {t["id"] for t in symbiotic["tasks"]}
+    assert "curated-symbiotic-vault-deposit" in symbiotic_ids
+    curated_task = next(t for t in symbiotic["tasks"] if t["id"] == "curated-symbiotic-vault-deposit")
+    assert curated_task["estimated_gas"] is not None
+    assert "wstETH" in curated_task["recommended_asset"]
+    assert len(curated_task["execution_steps"]) >= 3
+    assert curated_task["anti_sybil_tip"] is not None
+    assert curated_task["dapp_url"] == "https://app.symbiotic.fi"
+
+    # 2. Berachain
+    bera = generate_participation_tasks(
+        {
+            "id": "bera-1",
+            "name": "Berachain",
+            "sector": "DeFi",
+            "label": "FARM",
+            "stage": "testnet",
+        }
+    )
+    bera_ids = {t["id"] for t in bera["tasks"]}
+    assert "curated-berachain-artio-loop" in bera_ids
+    bera_task = next(t for t in bera["tasks"] if t["id"] == "curated-berachain-artio-loop")
+    assert "0 USD" in bera_task["estimated_gas"]
+    assert "BERA" in bera_task["recommended_asset"]
+
+    # 3. Mantle Restaking
+    mantle = generate_participation_tasks(
+        {
+            "id": "mantle-1",
+            "name": "Mantle Restaking",
+            "sector": "Liquid Restaking",
+            "label": "FARM",
+        }
+    )
+    mantle_ids = {t["id"] for t in mantle["tasks"]}
+    assert "curated-mantle-restaking" in mantle_ids
+

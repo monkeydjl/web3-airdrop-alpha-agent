@@ -3,7 +3,7 @@
 import { apiFetch } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Plus, Trash2, Copy, CheckCheck } from 'lucide-react';
+import { Check, Plus, Trash2, Copy, CheckCheck, ExternalLink } from 'lucide-react';
 import { FaucetTrackerPanel } from '@/components/FaucetTrackerPanel';
 
 export interface ParticipationTask {
@@ -19,6 +19,12 @@ export interface ParticipationTask {
   action_hint?: string | null;
   link?: string | null;
   required?: boolean;
+  estimated_gas?: string | null;
+  recommended_asset?: string | null;
+  dapp_url?: string | null;
+  execution_steps?: string[];
+  anti_sybil_tip?: string | null;
+  protocol_highlight?: string | null;
 }
 
 interface ParticipationData {
@@ -43,6 +49,8 @@ interface PlanTask {
   title: string;
   status: 'todo' | 'doing' | 'done' | 'skipped' | string;
   completed_at?: string | null;
+  note?: string | null;
+  due_at?: string | null;
 }
 
 interface Plan {
@@ -143,6 +151,12 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
   const [viewMode, setViewMode] = useState<'checklist' | 'matrix'>('checklist');
   const [copiedSummary, setCopiedSummary] = useState(false);
 
+  // Sub-steps & note state
+  const [subStepsDone, setSubStepsDone] = useState<Record<string, Record<string, Record<number, boolean>>>>({});
+  const [notesByTask, setNotesByTask] = useState<Record<string, string>>({});
+  const [editingNoteTaskId, setEditingNoteTaskId] = useState<string | null>(null);
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
@@ -156,8 +170,30 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
       setActiveWallet(loadedWallets[0] || '钱包 #1 (主号)');
       setMultiDone(loadMultiDone(projectId, loadedWallets));
 
+      // Load sub-steps from localStorage
+      try {
+        const rawSubSteps = localStorage.getItem('aa-substeps:' + projectId);
+        if (rawSubSteps) setSubStepsDone(JSON.parse(rawSubSteps));
+      } catch {}
+
+      // Load notes (first from localStorage fallback, then server plan)
+      const initialNotes: Record<string, string> = {};
+      try {
+        const rawNotes = localStorage.getItem('aa-notes:' + projectId);
+        if (rawNotes) Object.assign(initialNotes, JSON.parse(rawNotes));
+      } catch {}
+
       const listed = await apiFetch<{ items: Plan[] }>('/participation');
-      setPlan(listed.items.find((p) => p.project_id === projectId) ?? null);
+      const foundPlan = listed.items.find((p) => p.project_id === projectId) ?? null;
+      setPlan(foundPlan);
+      if (foundPlan) {
+        for (const t of foundPlan.tasks) {
+          if (t.ref && t.note) {
+            initialNotes[t.ref] = t.note;
+          }
+        }
+      }
+      setNotesByTask(initialNotes);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '加载任务失败');
     } finally {
@@ -168,6 +204,44 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const toggleSubStep = (wallet: string, taskId: string, stepIdx: number) => {
+    setSubStepsDone((prev) => {
+      const walletSteps = prev[wallet] || {};
+      const taskSteps = walletSteps[taskId] || {};
+      const nextDone = !taskSteps[stepIdx];
+      const nextTaskSteps = { ...taskSteps, [stepIdx]: nextDone };
+      const nextWalletSteps = { ...walletSteps, [taskId]: nextTaskSteps };
+      const updated = { ...prev, [wallet]: nextWalletSteps };
+      try {
+        localStorage.setItem('aa-substeps:' + projectId, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const saveTaskNote = async (taskId: string, noteContent: string) => {
+    setSavingNoteId(taskId);
+    const updated = { ...notesByTask, [taskId]: noteContent };
+    setNotesByTask(updated);
+    try {
+      localStorage.setItem('aa-notes:' + projectId, JSON.stringify(updated));
+    } catch {}
+
+    const serverTask = serverStatusByRef[taskId];
+    if (serverTask) {
+      try {
+        await apiFetch(`/participation/tasks/${serverTask.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ note: noteContent }),
+        });
+      } catch (e) {
+        console.error('Failed to sync note to server', e);
+      }
+    }
+    setSavingNoteId(null);
+    setEditingNoteTaskId(null);
+  };
 
   const serverStatusByRef = useMemo(() => {
     const map: Record<string, PlanTask> = {};
@@ -617,6 +691,11 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                             >
                               {t.title}
                             </span>
+                            {t.protocol_highlight ? (
+                              <span className="badge bg-purple-500/10 text-purple-700 dark:text-purple-300 font-semibold">
+                                ✨ {t.protocol_highlight}
+                              </span>
+                            ) : null}
                             {t.required ? (
                               <span className="badge bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm">
                                 建议优先
@@ -628,23 +707,140 @@ export function ParticipationTasks({ projectId }: { projectId: string }) {
                             </span>
                             <span className="text-[10px] text-ink-faint">P{t.priority}</span>
                           </div>
-                          <p className="mt-1 text-xs leading-relaxed text-ink-muted">{t.description}</p>
+
+                          {/* Quick indicators: Gas, Asset, dApp Entry */}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            {t.estimated_gas ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                                ⛽ 预估 Gas: {t.estimated_gas}
+                              </span>
+                            ) : null}
+                            {t.recommended_asset ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:text-blue-300">
+                                🎯 推荐资产: {t.recommended_asset}
+                              </span>
+                            ) : null}
+                            {safeExternalUrl(t.dapp_url || t.link) ? (
+                              <a
+                                href={safeExternalUrl(t.dapp_url || t.link) as string}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded bg-farm/10 px-2 py-0.5 text-[11px] font-semibold text-farm hover:bg-farm/20 transition"
+                              >
+                                🔗 官方安全入口
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : null}
+                          </div>
+
+                          <p className="mt-1.5 text-xs leading-relaxed text-ink-muted">{t.description}</p>
                           <p className="mt-1 text-xs text-ink-faint">为什么：{t.why}</p>
                           {t.action_hint ? (
                             <p className="mt-0.5 text-xs text-farm dark:text-farm">
                               做法：{t.action_hint}
                             </p>
                           ) : null}
-                          {safeExternalUrl(t.link) ? (
-                            <a
-                              href={safeExternalUrl(t.link) as string}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-1 inline-block text-xs text-farm underline dark:text-farm"
-                            >
-                              打开相关链接
-                            </a>
+
+                          {/* Execution Sub-Steps Checklist */}
+                          {t.execution_steps && t.execution_steps.length > 0 ? (
+                            <div className="mt-2.5 rounded-lg border border-line/70 bg-surface-2/40 p-2.5">
+                              <div className="flex items-center justify-between text-[11px] font-medium text-ink-muted mb-1.5">
+                                <span className="font-semibold text-ink">📋 分步执行核对清单（可逐项打勾完成）：</span>
+                                <span className="font-mono text-[10px] text-brand-600 dark:text-brand-400">
+                                  {t.execution_steps.filter((_, idx) => subStepsDone[activeWallet]?.[t.id]?.[idx]).length} / {t.execution_steps.length} 完成
+                                </span>
+                              </div>
+                              <div className="space-y-1">
+                                {t.execution_steps.map((step, sIdx) => {
+                                  const stepDone = !!subStepsDone[activeWallet]?.[t.id]?.[sIdx];
+                                  return (
+                                    <div
+                                      key={sIdx}
+                                      onClick={() => toggleSubStep(activeWallet, t.id, sIdx)}
+                                      className={`flex items-start gap-2 rounded px-2 py-1 cursor-pointer text-xs transition ${
+                                        stepDone
+                                          ? 'bg-farm-soft/30 text-ink-muted line-through'
+                                          : 'hover:bg-surface text-ink'
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={stepDone}
+                                        onChange={() => {}}
+                                        className="mt-0.5 h-3.5 w-3.5 rounded border-line text-farm focus:ring-farm"
+                                      />
+                                      <span className="leading-snug">{step}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           ) : null}
+
+                          {/* Anti-Sybil Tip Card */}
+                          {t.anti_sybil_tip ? (
+                            <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
+                              <span className="text-sm shrink-0">🛡️</span>
+                              <p className="leading-relaxed">
+                                <strong>防女巫要诀：</strong>{t.anti_sybil_tip}
+                              </p>
+                            </div>
+                          ) : null}
+
+                          {/* Interaction Logging / TxHash Memo */}
+                          <div className="mt-2.5 pt-2 border-t border-line/40 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                              <span className="text-[11px] text-ink-faint shrink-0">✍️ 交互打卡:</span>
+                              {editingNoteTaskId === t.id ? (
+                                <div className="flex items-center gap-1.5 flex-1">
+                                  <input
+                                    type="text"
+                                    defaultValue={notesByTask[t.id] || ''}
+                                    id={`note-input-${t.id}`}
+                                    placeholder="例: 质押 0.1 wstETH, tx: 0xabc... 消耗 Gas 0.002"
+                                    className="flex-1 rounded border border-line bg-surface px-2 py-0.5 text-xs text-ink focus:border-brand-500 focus:outline-hidden"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        const val = (e.currentTarget as HTMLInputElement).value;
+                                        saveTaskNote(t.id, val);
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={savingNoteId === t.id}
+                                    onClick={() => {
+                                      const el = document.getElementById(`note-input-${t.id}`) as HTMLInputElement;
+                                      saveTaskNote(t.id, el?.value || '');
+                                    }}
+                                    className="rounded bg-farm px-2 py-0.5 text-[11px] text-white font-medium hover:bg-farm/90 transition"
+                                  >
+                                    {savingNoteId === t.id ? '保存中…' : '保存'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingNoteTaskId(null)}
+                                    className="text-[11px] text-ink-faint hover:text-ink"
+                                  >
+                                    取消
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className={`text-[11px] ${notesByTask[t.id] ? 'text-ink font-mono bg-surface-2 px-1.5 py-0.5 rounded border border-line/50' : 'text-ink-faint italic'}`}>
+                                    {notesByTask[t.id] || '未填写打卡凭据'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingNoteTaskId(t.id)}
+                                    className="text-[11px] text-brand-600 dark:text-brand-400 hover:underline cursor-pointer"
+                                  >
+                                    {notesByTask[t.id] ? '修改' : '打卡记录'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>

@@ -63,6 +63,16 @@ class CryptoRankCollector(DataCollector):
         result = CollectorResult(source_id=self.source_id)
         result.started_at = datetime.now(UTC)
 
+        if not self.api_key:
+            self.logger.info(
+                "cryptorank.skipped_no_key",
+                message="CryptoRank API key not configured. Register for a free key at https://cryptorank.io to enable tokenomics synchronization.",
+            )
+            result.status = "skipped"
+            result.error_message = "CryptoRank API key not configured (free key available at cryptorank.io)"
+            result.finished_at = datetime.now(UTC)
+            return result
+
         try:
             currencies = await self._fetch_currencies()
             self.logger.info("cryptorank.fetched", total=len(currencies))
