@@ -144,6 +144,23 @@ export function ProjectCard({
                   已核验观察
                 </span>
               ) : null}
+              {project.persona_applied && project.persona_applied !== 'balanced' ? (
+                <span
+                  className="badge bg-brand-500/20 text-brand-300 border border-brand-500/40 text-[10px] font-semibold flex items-center gap-1"
+                  title={project.persona_boost_reason || `角色自适应加权: ${project.persona_applied}`}
+                >
+                  <span>
+                    {project.persona_applied === 'zero_cost' ? '🎒 零成本适配' :
+                     project.persona_applied === 'whale_restaking' ? '💎 巨鲸优选' :
+                     project.persona_applied === 'high_beta' ? '⚡ 叙事爆发' : '🎯 角色适配'}
+                  </span>
+                  {project.base_score != null && project.score !== project.base_score ? (
+                    <span className="font-mono text-[9px] opacity-80">
+                      ({project.score > project.base_score ? `+${project.score - project.base_score}` : project.score - project.base_score})
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
               {project.signals?.has_testnet && !project.signals?.has_points_program ? (
                 <span
                   className="badge bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-medium"

@@ -13,6 +13,7 @@
 const FILES = [
   './lib/download.test.ts',
   './lib/format.test.ts',
+  './lib/personas.test.ts',
 ];
 
 for (const f of FILES) {

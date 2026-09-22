@@ -1,4 +1,4 @@
-﻿import { apiFetch } from './api';
+import { apiFetch } from './api';
 import type { ProjectsResponse } from './types';
 
 /** 单页上限与后端 `Query(20, ge=1, le=500)` 对齐 */
@@ -23,12 +23,13 @@ export interface AllProjects {
  */
 export async function fetchAllProjects(
   signal?: AbortSignal,
-  options?: { curated?: boolean },
+  options?: { curated?: boolean; persona?: string },
 ): Promise<AllProjects> {
   const curated = options?.curated ?? false;
   const curatedQuery = curated ? '&curated=true' : '';
+  const personaQuery = options?.persona && options.persona !== 'balanced' ? `&persona=${encodeURIComponent(options.persona)}` : '';
   const first = await apiFetch<ProjectsResponse>(
-    `/projects?page=1&page_size=${PAGE_SIZE}${curatedQuery}`,
+    `/projects?page=1&page_size=${PAGE_SIZE}${curatedQuery}${personaQuery}`,
     {
       signal,
     },
@@ -40,7 +41,7 @@ export async function fetchAllProjects(
   let page = 2;
   while (projects.length < cap) {
     const next = await apiFetch<ProjectsResponse>(
-      `/projects?page=${page}&page_size=${PAGE_SIZE}${curatedQuery}`,
+      `/projects?page=${page}&page_size=${PAGE_SIZE}${curatedQuery}${personaQuery}`,
       {
         signal,
       },

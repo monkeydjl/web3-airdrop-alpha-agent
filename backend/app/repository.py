@@ -626,6 +626,7 @@ class ProjectRepository:
         curated: bool = False,
         zero_cost_only: bool = False,
         include_historical: bool = False,
+        persona: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -756,7 +757,69 @@ class ProjectRepository:
             skip_params = [effective_skip_user]
             wl_params = [effective_skip_user]
 
-            # 分页查询
+            # 若指定了特定猎人角色（非 balanced），在满足筛选条件的候选集中进行自适应加权与重排序
+            if persona and persona != "balanced":
+                from app.services.hunter_personas import calculate_persona_score
+
+                all_query = f"""
+                    SELECT projects.*,
+                           CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped,
+                           CASE WHEN wl.id IS NULL THEN 0 ELSE 1 END AS watchlisted
+                    FROM projects
+                    {skip_join}
+                    {wl_join}
+                    {where_clause}
+                """
+                all_rows = conn.execute(all_query, [*skip_params, *wl_params, *params]).fetchall()
+                all_records = [dict_from_row(row) for row in all_rows]
+
+                for rec in all_records:
+                    p_res = calculate_persona_score(rec, persona)
+                    rec["base_score"] = p_res["base_score"]
+                    rec["persona_applied"] = p_res["persona_applied"]
+                    rec["persona_score"] = p_res["persona_score"]
+                    rec["persona_label"] = p_res["persona_label"]
+                    rec["persona_boost_reason"] = p_res["persona_boost_reason"]
+                    # 动态更新展示分与标签
+                    rec["score"] = p_res["persona_score"]
+                    rec["label"] = p_res["persona_label"]
+
+                if sort_by == "score":
+                    reverse = (sort_order.lower() == "desc")
+                    all_records.sort(
+                        key=lambda x: (
+                            float(x.get("score") or 0.0),
+                            float(x.get("confidence") or 0.0),
+                            str(x.get("name") or ""),
+                        ),
+                        reverse=reverse,
+                    )
+                elif sort_by == "name":
+                    reverse = (sort_order.lower() == "desc")
+                    all_records.sort(key=lambda x: str(x.get("name") or "").lower(), reverse=reverse)
+                elif sort_by == "created_at":
+                    reverse = (sort_order.lower() == "desc")
+                    all_records.sort(key=lambda x: str(x.get("created_at") or ""), reverse=reverse)
+
+                offset = (page - 1) * page_size
+                projects = all_records[offset : offset + page_size]
+
+                from app.services.signal_correlation import correlate_signals_for_project
+
+                for p in projects:
+                    p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+
+                logger.info(
+                    "repository.project.listed_persona",
+                    persona=persona,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    returned=len(projects),
+                )
+                return projects, total
+
+            # 分页查询（默认平衡模式）
             offset = (page - 1) * page_size
             list_query = f"""
                 SELECT projects.*,
@@ -777,6 +840,10 @@ class ProjectRepository:
 
             for p in projects:
                 p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+                p["persona_applied"] = "balanced"
+                p["base_score"] = p.get("score")
+                p["persona_score"] = p.get("score")
+                p["persona_label"] = p.get("label")
 
             logger.info(
                 "repository.project.listed",

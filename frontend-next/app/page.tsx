@@ -7,7 +7,6 @@ import { exportProjectsCsv } from '@/lib/export';
 import { LABEL_ORDER, sortProjects, stageZh } from '@/lib/format';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
-import type { CollectionSourceApi, Label, Project } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
 import { ActionQueue } from '@/components/ActionQueue';
 import { LabelDoughnut, SectorBars } from '@/components/Charts';
@@ -15,6 +14,8 @@ import { ProjectCard } from '@/components/ProjectCard';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge, SkeletonGrid, StatCard, Toast } from '@/components/ui';
 import { AlphaDigestModal } from '@/components/AlphaDigestModal';
+import { HunterPersonaSelector } from '@/components/HunterPersonaSelector';
+import type { CollectionSourceApi, HunterPersonaId, Label, Project } from '@/lib/types';
 
 type SortBy = 'score' | 'name' | 'confidence';
 type ViewMode = 'grid' | 'table';
@@ -41,6 +42,8 @@ export default function DashboardPage() {
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const initialPersona = (searchParams.get('persona') as HunterPersonaId) || 'balanced';
+  const [persona, setPersona] = useState<HunterPersonaId>(initialPersona);
   const [labelFilter, setLabelFilter] = useState<Label | ''>('');
   const [sectorFilter, setSectorFilter] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -79,7 +82,23 @@ function DashboardContent() {
   useEffect(() => {
     const q = searchParams.get('keyword');
     if (q != null) setKeyword(q);
+    const p = searchParams.get('persona') as HunterPersonaId;
+    if (p && ['balanced', 'zero_cost', 'whale_restaking', 'high_beta'].includes(p)) {
+      setPersona(p);
+    }
   }, [searchParams]);
+
+  const handlePersonaChange = (newPersona: HunterPersonaId) => {
+    setPersona(newPersona);
+    const params = new URLSearchParams(searchParams.toString());
+    if (newPersona === 'balanced') {
+      params.delete('persona');
+    } else {
+      params.set('persona', newPersona);
+    }
+    const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+    router.replace(newUrl, { scroll: false });
+  };
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -95,13 +114,13 @@ function DashboardContent() {
 
   const loader = useCallback(
     async (signal: AbortSignal) => {
-      const all = await fetchAllProjects(signal, { curated: curatedOnly });
+      const all = await fetchAllProjects(signal, { curated: curatedOnly, persona });
       return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
     },
-    [curatedOnly],
+    [curatedOnly, persona],
   );
 
-  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly]);
+  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly, persona]);
   const [projectOverrides, setProjectOverrides] = useState<Record<string, Partial<Project>>>({});
 
   const projects: Project[] = useMemo(() => {
@@ -336,6 +355,13 @@ function DashboardContent() {
           </div>
         </div>
       )}
+
+      {/* Hunter Persona & Adaptive Weights Selector */}
+      <HunterPersonaSelector
+        currentPersona={persona}
+        onChange={handlePersonaChange}
+        loading={loading}
+      />
 
       {/* Modern Cyber Toolbar */}
       <div className="dash-card p-4 space-y-3.5">

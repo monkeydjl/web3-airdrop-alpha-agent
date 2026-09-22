@@ -41,8 +41,26 @@ export interface Project {
   funding_note?: string | null;
   sub_scores?: Record<string, number> | null;
   weight_version?: string | null;
+  persona_applied?: string | null;
+  persona_score?: number | null;
+  persona_label?: Label | null;
+  persona_boost_reason?: string | null;
+  base_score?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export type HunterPersonaId = 'balanced' | 'zero_cost' | 'whale_restaking' | 'high_beta';
+
+export interface HunterPersona {
+  id: HunterPersonaId;
+  name: string;
+  icon: string;
+  tagline: string;
+  description: string;
+  weights?: Record<string, number>;
+  badges: string[];
+  key_factors: string[];
 }
 
 export interface SignalConsensus {

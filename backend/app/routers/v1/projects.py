@@ -267,6 +267,7 @@ def list_projects(
     zero_cost_only: bool = Query(False, description="仅返回零资金成本/纯测试网项目（保本优先）"),
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
     include_historical: bool = Query(False, description="是否包含历史回测样本（默认 False，排除历史回测）"),
+    persona: str | None = Query(None, description="猎人角色偏好 (balanced/zero_cost/whale_restaking/high_beta)"),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -306,6 +307,7 @@ def list_projects(
         user_id=effective_user_id,
         zero_cost_only=zero_cost_only,
         include_historical=include_historical,
+        persona=persona,
     )
 
     # Query from database
@@ -326,6 +328,7 @@ def list_projects(
             curated=curated,
             zero_cost_only=zero_cost_only,
             include_historical=include_historical,
+            persona=persona,
         )
 
         # Convert to response format — include discovery metadata for Dashboard
@@ -351,6 +354,11 @@ def list_projects(
                     "veto": p.get("veto"),
                     "skipped": bool(p.get("skipped", False)),
                     "signal_consensus": p.get("signal_consensus"),
+                    "persona_applied": p.get("persona_applied") or (persona or "balanced"),
+                    "persona_score": p.get("persona_score") if p.get("persona_score") is not None else p.get("score"),
+                    "persona_label": p.get("persona_label") or p.get("label"),
+                    "persona_boost_reason": p.get("persona_boost_reason") or "",
+                    "base_score": p.get("base_score") if p.get("base_score") is not None else p.get("score"),
                 }
             )
 
@@ -391,6 +399,7 @@ def list_projects(
                 "auto_discovered": auto_discovered,
                 "veto": veto,
                 "zero_cost_only": zero_cost_only,
+                "persona": persona or "balanced",
             },
             "sort": {
                 "by": sort_by.value,
@@ -398,6 +407,23 @@ def list_projects(
             },
         },
     )
+
+
+@router.get(
+    "/projects/personas",
+    summary="获取猎人角色预设元数据列表",
+    description="返回系统支持的 4 大猎人角色预设（全能平衡、零成本测试网、巨鲸质押、高弹性叙事）及其权重与特征定义。",
+)
+def get_personas() -> dict[str, Any]:
+    """获取所有可用角色的预设配置与权重矩阵."""
+    from app.services.hunter_personas import get_all_personas_metadata
+
+    return {
+        "ok": True,
+        "data": {
+            "personas": get_all_personas_metadata(),
+        },
+    }
 
 
 @router.get(
