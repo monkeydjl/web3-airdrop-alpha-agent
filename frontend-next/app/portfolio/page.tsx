@@ -8,6 +8,8 @@ import WalletDiagnosticModal from '@/components/WalletDiagnosticModal';
 import SybilLineageGraphModal from '@/components/SybilLineageGraphModal';
 import BridgeLiquidityRadarModal from '@/components/BridgeLiquidityRadarModal';
 import TeamStudioModal from '@/components/TeamStudioModal';
+import IdentityPassportModal from '@/components/IdentityPassportModal';
+import ImpermanentLossModal from '@/components/ImpermanentLossModal';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
@@ -160,6 +162,8 @@ export default function PortfolioPage() {
   const [lineageOpen, setLineageOpen] = useState(false);
   const [bridgeLiquidityOpen, setBridgeLiquidityOpen] = useState(false);
   const [teamStudioOpen, setTeamStudioOpen] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [ilOpen, setIlOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -314,6 +318,22 @@ export default function PortfolioPage() {
             <span>👥</span>
             <span className="hidden sm:inline">工作室协同</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setIdentityOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5 text-emerald-400"
+          >
+            <span>🪪</span>
+            <span className="hidden sm:inline">人机身份</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIlOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5 text-amber-400"
+          >
+            <span>📉</span>
+            <span className="hidden sm:inline">无常/清算</span>
+          </button>
           <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
@@ -340,6 +360,8 @@ export default function PortfolioPage() {
         <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
         <BridgeLiquidityRadarModal isOpen={bridgeLiquidityOpen} onClose={() => setBridgeLiquidityOpen(false)} />
         <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
+        <IdentityPassportModal isOpen={identityOpen} onClose={() => setIdentityOpen(false)} />
+        <ImpermanentLossModal isOpen={ilOpen} onClose={() => setIlOpen(false)} />
       </>
     );
   }
@@ -378,6 +400,22 @@ export default function PortfolioPage() {
         >
           <span>👥</span>
           <span className="hidden sm:inline">工作室协同</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setIdentityOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5 text-emerald-400"
+        >
+          <span>🪪</span>
+          <span className="hidden sm:inline">人机身份</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setIlOpen(true)}
+          className="btn-secondary inline-flex items-center gap-1.5 text-amber-400"
+        >
+          <span>📉</span>
+          <span className="hidden sm:inline">无常/清算</span>
         </button>
         <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
           <Download className="h-4 w-4" strokeWidth={2} />
@@ -652,6 +690,8 @@ export default function PortfolioPage() {
       <SybilLineageGraphModal isOpen={lineageOpen} onClose={() => setLineageOpen(false)} />
       <BridgeLiquidityRadarModal isOpen={bridgeLiquidityOpen} onClose={() => setBridgeLiquidityOpen(false)} />
       <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
+      <IdentityPassportModal isOpen={identityOpen} onClose={() => setIdentityOpen(false)} />
+      <ImpermanentLossModal isOpen={ilOpen} onClose={() => setIlOpen(false)} />
     </>
   );
 }

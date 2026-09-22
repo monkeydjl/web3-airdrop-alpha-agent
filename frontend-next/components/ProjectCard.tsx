@@ -13,6 +13,7 @@ import { AlphaDossierModal, type AlphaDossierData } from './AlphaDossierModal';
 import { ProjectComparisonModal } from './ProjectComparisonModal';
 import PointsEpochEstimatorModal from './PointsEpochEstimatorModal';
 import PlaybookStudioModal from './PlaybookStudioModal';
+import WhaleMirrorModal from './WhaleMirrorModal';
 
 export function ProjectCard({
   project,
@@ -38,6 +39,7 @@ export function ProjectCard({
   const [showPkModal, setShowPkModal] = useState(false);
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [showPlaybookModal, setShowPlaybookModal] = useState(false);
+  const [showWhaleModal, setShowWhaleModal] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
@@ -341,6 +343,15 @@ export function ProjectCard({
           </button>
           <button
             type="button"
+            onClick={() => setShowWhaleModal(true)}
+            className="px-2 py-0.5 text-[10px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded border border-emerald-500/30 transition flex items-center gap-1"
+            title="对标历史大毛顶级战神胜者行为基准"
+          >
+            <span>🧠</span>
+            <span>巨鲸镜像</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setShowScriptModal(true)}
             className="px-2 py-0.5 text-[10px] font-medium text-ink-muted hover:text-ink bg-surface-2 hover:bg-surface-3 rounded border border-line transition flex items-center gap-1"
             title="生成 Foundry Cast / Web3.py / Viem 交互脚本模板"
@@ -429,6 +440,11 @@ export function ProjectCard({
       <PlaybookStudioModal
         isOpen={showPlaybookModal}
         onClose={() => setShowPlaybookModal(false)}
+      />
+      <WhaleMirrorModal
+        isOpen={showWhaleModal}
+        onClose={() => setShowWhaleModal(false)}
+        initialProjectName={project.name}
       />
     </div>
   );

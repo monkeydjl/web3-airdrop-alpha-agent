@@ -10,6 +10,7 @@ import type { Label, Project } from '@/lib/types';
 import { isAbortError } from '@/lib/api';
 import CalldataDecoderModal from '@/components/CalldataDecoderModal';
 import MevRpcSentinelModal from '@/components/MevRpcSentinelModal';
+import PaymasterSponsorModal from '@/components/PaymasterSponsorModal';
 
 interface TopBarProps {
   title: string;
@@ -104,6 +105,7 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [decoderOpen, setDecoderOpen] = useState(false);
   const [mevRpcOpen, setMevRpcOpen] = useState(false);
+  const [paymasterOpen, setPaymasterOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -308,6 +310,15 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
           <span>🛡️</span>
           <span className="hidden xl:inline">防夹RPC</span>
         </button>
+        <button
+          type="button"
+          onClick={() => setPaymasterOpen(true)}
+          className="btn-secondary !px-2.5 !py-1.5 text-xs inline-flex items-center gap-1 shrink-0 text-cyan-400 hover:text-cyan-300"
+          title="账户抽象 EIP-4337 全链 Gas 赞助与 Paymaster 零成本雷达"
+        >
+          <span>🛰️</span>
+          <span className="hidden xl:inline">免Gas雷达</span>
+        </button>
         {children}
       </div>
 
@@ -315,6 +326,8 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
       <CalldataDecoderModal isOpen={decoderOpen} onClose={() => setDecoderOpen(false)} />
       {/* 智能防夹 (MEV) 与私有 RPC 路由哨兵 */}
       <MevRpcSentinelModal isOpen={mevRpcOpen} onClose={() => setMevRpcOpen(false)} />
+      {/* 账户抽象 EIP-4337 全链 Gas 赞助与 Paymaster 零成本雷达 */}
+      <PaymasterSponsorModal isOpen={paymasterOpen} onClose={() => setPaymasterOpen(false)} />
     </header>
   );
 }
