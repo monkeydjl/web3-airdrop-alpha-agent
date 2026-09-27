@@ -121,6 +121,8 @@ def _make_result(source_id: str = "defillama") -> CollectorResult:
     result = CollectorResult(source_id=source_id, items=[item], status="success")
     result.finished_at = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
     result.started_at = datetime(2026, 7, 22, 14, 0, tzinfo=UTC)
+    # 自 3f2b89c 起分析管线仅在新条目 > 0 时自动触发
+    result.items_new = 1
     return result
 
 
@@ -178,9 +180,9 @@ def test_default_registry_covers_all_collectors_and_is_shared() -> None:
     from app.collectors.factory import build_default_registry, get_default_registry
     from app.routers.v1 import collections as collections_router
 
-    assert len(build_default_registry()) == 14
+    assert len(build_default_registry()) == 17
     shared = get_default_registry()
-    assert len(shared) == 14
+    assert len(shared) == 17
     assert collections_router._build_registry() is shared
     # 同一 source 多次取用必须是同一对象（否则限流器被重置）
     assert shared.get("defillama") is get_default_registry().get("defillama")
