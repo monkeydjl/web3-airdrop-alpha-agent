@@ -834,7 +834,9 @@ def _project_evidence(
                 source_type_zh=_SOURCE_TYPE_ZH.get(record.source_type.lower()) if record.source_type else None,
                 source_grade=record.source_grade,
                 verification_status=record.verification_status,
-                verification_status_zh=_VERIFICATION_STATUS_ZH.get(record.verification_status.lower()) if record.verification_status else None,
+                verification_status_zh=_VERIFICATION_STATUS_ZH.get(record.verification_status.lower())
+                if record.verification_status
+                else None,
                 observed_at=record.observed_at,
                 effective_at=record.effective_at,
                 expires_at=record.expires_at,

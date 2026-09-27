@@ -205,13 +205,15 @@ def get_daily_flash() -> dict[str, Any]:
         # 2. Top 3 FARM picks
         top_picks = []
         for r in farm_rows[:3]:
-            top_picks.append({
-                "id": r["id"],
-                "name": r["name"],
-                "score": r["score"],
-                "reason": r.get("reason") or "重点推荐参与",
-                "sector": r.get("sector") or "",
-            })
+            top_picks.append(
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "score": r["score"],
+                    "reason": r.get("reason") or "重点推荐参与",
+                    "sector": r.get("sector") or "",
+                }
+            )
 
         # 3. 今日/近期新增项目（开源测试网等）
         testnet_cursor = conn.execute(

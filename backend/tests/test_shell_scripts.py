@@ -274,7 +274,7 @@ class TestWindowsBatchScripts:
     def test_stop_bat_kills_backend_by_port(self) -> None:
         text = _text("Stop.bat")
         assert re.search(r'findstr ":8002"', text), (
-            'Stop.bat 必须按端口 8002 定位后端进程 —— tasklist 的映像名是 '
+            "Stop.bat 必须按端口 8002 定位后端进程 —— tasklist 的映像名是 "
             'python.exe，按 "uvicorn" 找永远匹配不到，等于从不停止后端。'
         )
         port_line = next(line for line in text.splitlines() if '":8002"' in line)
@@ -289,6 +289,4 @@ class TestWindowsBatchScripts:
         text = _text("Stop.bat")
         for line in text.splitlines():
             if '":3002"' in line:
-                assert "LISTENING" in line, (
-                    f"杀 :3002 前必须过滤 LISTENING 行。该行：{line.strip()}"
-                )
+                assert "LISTENING" in line, f"杀 :3002 前必须过滤 LISTENING 行。该行：{line.strip()}"

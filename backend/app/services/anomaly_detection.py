@@ -125,9 +125,7 @@ class AnomalyDetectionService:
         conn = self._get_conn()
         anomalies: list[AnomalyItem] = []
         try:
-            cur = conn.execute(
-                "SELECT id, score, label FROM projects"
-            )
+            cur = conn.execute("SELECT id, score, label FROM projects")
             rows = [dict(r) for r in cur.fetchall()]
         finally:
             if self._should_close():
@@ -438,8 +436,7 @@ class AnomalyDetectionService:
                             severity="warning",
                             title=f"采集源 {sid} 时效性超时",
                             description=(
-                                f"数据源 {sid} 最近一次成功同步距今已 {age_hours:.1f} 小时，"
-                                "超过 72 小时 (3×TTL) 阈值。"
+                                f"数据源 {sid} 最近一次成功同步距今已 {age_hours:.1f} 小时，超过 72 小时 (3×TTL) 阈值。"
                             ),
                             metric_name="airdrop_data_freshness_seconds",
                             metric_value=round(age_hours * 3600.0, 1),

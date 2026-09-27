@@ -99,4 +99,3 @@ def get_sybil_topology(
 
     topo = generate_sybil_routing_topology(wallet_count=wallet_count, project_name=project_name)
     return {"ok": True, "data": topo.to_dict()}
-

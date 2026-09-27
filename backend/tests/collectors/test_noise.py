@@ -83,7 +83,7 @@ class TestRwaCredentialFiltering:
             assert not is_noise_project(name=name, slug=slug, category="RWA"), f"{name} 是真实协议"
 
     def test_btc_prefixed_names_are_not_noise(self):
-        """"BTC" 作前缀的协议名（BTCFi 等）不是 xxxBTC 凭据。"""
+        """ "BTC" 作前缀的协议名（BTCFi 等）不是 xxxBTC 凭据。"""
         assert not is_noise_project(name="BTCFi CDP", slug="btcfi-cdp", category="CDP")
         assert not is_noise_project(name="Vishwa", slug="vishwa", category="Anchor BTC")
         assert not is_noise_project(name="Chain Fusion", slug="chain-fusion", category="Decentralized BTC")
@@ -210,10 +210,7 @@ class TestListedBrandSubproduct:
     def test_brand_token_only_matches_at_name_head(self):
         """品牌词只在**首词**上匹配。Mystic Finance myPLUME 的品牌是 Mystic，
         myplume 只是衍生品名 —— 不能因为名字里包含 plume 就误杀。"""
-        assert (
-            is_listed_brand_subproduct(name="Mystic Finance myPLUME", slug="mystic-finance-myplume")
-            is False
-        )
+        assert is_listed_brand_subproduct(name="Mystic Finance myPLUME", slug="mystic-finance-myplume") is False
 
     def test_generic_first_token_never_matches(self):
         """首词是通用词（mainnet/finance/swap…）不参与品牌匹配，

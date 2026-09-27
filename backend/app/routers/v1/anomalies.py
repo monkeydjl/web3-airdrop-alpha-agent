@@ -3,6 +3,7 @@
 Endpoints:
 - GET /api/v1/anomalies: 获取评分漂移与数据质量巡检报告（支持 force_refresh=true 强制重新扫描）
 """
+
 from __future__ import annotations
 
 from typing import Any

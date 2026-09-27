@@ -157,7 +157,7 @@ def generate_sybil_routing_topology(
         mermaid_lines.append(f"    W{i} -->|独立归集| E{i}")
 
     if count >= 2:
-        mermaid_lines.append('    W1 -.->|❌ 严禁互转 (致命女巫关联)| W2')
+        mermaid_lines.append("    W1 -.->|❌ 严禁互转 (致命女巫关联)| W2")
 
     mermaid_str = "\n".join(mermaid_lines)
 
@@ -221,7 +221,9 @@ def evaluate_sybil_risk(addresses: list[str]) -> dict[str, Any]:
     prefixes = [a[:6] for a in cleaned]
     if len(prefixes) != len(set(prefixes)):
         risk_score += 35
-        findings.append("⚠️ 检测到钱包前缀存在高度相似或相同特征，疑似同一批次自动生成的靓号地址，极易被女巫模式算法识别。")
+        findings.append(
+            "⚠️ 检测到钱包前缀存在高度相似或相同特征，疑似同一批次自动生成的靓号地址，极易被女巫模式算法识别。"
+        )
 
     # 2. Cluster size evaluation
     if len(cleaned) > 5:

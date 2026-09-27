@@ -75,12 +75,8 @@ def test_gdpr_data_export_endpoint(client: TestClient) -> None:
     """测试已认证用户导出个人数据完整流程。"""
     # 插入项目供关注和跳过
     with get_connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO projects (id, name, score) VALUES ('test_proj_1', 'Test Project 1', 80)"
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO projects (id, name, score) VALUES ('test_proj_2', 'Test Project 2', 60)"
-        )
+        conn.execute("INSERT OR REPLACE INTO projects (id, name, score) VALUES ('test_proj_1', 'Test Project 1', 80)")
+        conn.execute("INSERT OR REPLACE INTO projects (id, name, score) VALUES ('test_proj_2', 'Test Project 2', 60)")
         conn.commit()
 
     # 注册用户

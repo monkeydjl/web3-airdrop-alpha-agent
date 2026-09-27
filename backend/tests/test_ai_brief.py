@@ -225,9 +225,7 @@ class TestGetCachedBrief:
     def test_stale_when_row_updated_after_generation(self) -> None:
         """重评/改融资都会推高 updated_at —— 旧解读不得再当新鲜货返回。"""
         gen = datetime.now(UTC)
-        payload, stale = get_cached_brief(
-            _cached_project(generated_at=gen, updated_at=gen + timedelta(minutes=5))
-        )
+        payload, stale = get_cached_brief(_cached_project(generated_at=gen, updated_at=gen + timedelta(minutes=5)))
         assert payload is None
         assert stale is True, "过期的缓存必须带 stale 标记，前端才能提示重新生成"
 
@@ -265,9 +263,7 @@ class TestCachedEndpoint:
             patch("app.routers.v1.ai_brief.ProjectRepository") as repo_cls,
             patch("app.routers.v1.ai_brief.get_cached_brief", return_value=({"headline": "缓存解读"}, False)),
         ):
-            repo_cls.return_value.get_by_id.return_value = _cached_project(
-                generated_at=now, updated_at=now
-            )
+            repo_cls.return_value.get_by_id.return_value = _cached_project(generated_at=now, updated_at=now)
             resp = project_ai_brief_get("p1")
 
         assert resp["data"]["cached"] is True
@@ -299,9 +295,7 @@ class TestCachedEndpoint:
                 new_callable=AsyncMock,
             ) as gen_mock,
         ):
-            repo_cls.return_value.get_by_id.return_value = _cached_project(
-                generated_at=now, updated_at=now
-            )
+            repo_cls.return_value.get_by_id.return_value = _cached_project(generated_at=now, updated_at=now)
             resp = await project_ai_brief(AiBriefRequest(force=False), "p1")
 
         gen_mock.assert_not_awaited()
@@ -323,9 +317,7 @@ class TestCachedEndpoint:
             ) as gen_mock,
             patch("app.routers.v1.ai_brief.store_brief_cache") as store_mock,
         ):
-            repo_cls.return_value.get_by_id.return_value = _cached_project(
-                generated_at=now, updated_at=now
-            )
+            repo_cls.return_value.get_by_id.return_value = _cached_project(generated_at=now, updated_at=now)
             resp = await project_ai_brief(AiBriefRequest(force=True), "p1")
 
         gen_mock.assert_awaited_once(), "force=true 必须无视新鲜缓存强制重新生成"
@@ -351,9 +343,7 @@ class TestCachedEndpoint:
             repo_cls.return_value.get_by_id.return_value = self._project()
             resp = await project_ai_brief(AiBriefRequest(force=False), "p1")
 
-        store_mock.assert_called_once_with("p1", fresh_brief), (
-            "生成的简报必须落缓存 —— 否则缓存功能形同虚设"
-        )
+        store_mock.assert_called_once_with("p1", fresh_brief), ("生成的简报必须落缓存 —— 否则缓存功能形同虚设")
         assert resp["data"]["cached"] is False
 
     @pytest.mark.asyncio

@@ -128,16 +128,8 @@ class DefiLlamaCollector(DataCollector):
         # 母品牌可能早已发币 —— 母条目带真实 symbol，会在本函数开头就被
         # _is_unlisted 过滤掉，子条目却以"未见代币"的身份留下来，成为
         # 已发币项目混入扫描结果的主通道（2026-09 修复）。
-        listed_names = {
-            (p.get("name") or "").strip().lower()
-            for p in protocols
-            if not self._is_unlisted(p)
-        }
-        listed_slugs = {
-            (p.get("slug") or "").strip().lower()
-            for p in protocols
-            if not self._is_unlisted(p)
-        }
+        listed_names = {(p.get("name") or "").strip().lower() for p in protocols if not self._is_unlisted(p)}
+        listed_slugs = {(p.get("slug") or "").strip().lower() for p in protocols if not self._is_unlisted(p)}
 
         candidates = []
         skipped_noise = 0
@@ -321,7 +313,16 @@ class DefiLlamaCollector(DataCollector):
                 if (
                     any(
                         kw in str(protocol.get("description") or "").lower()
-                        for kw in ("points", "staking", "stakers", "restaking", "vault", "incentive", "rewards", "deposit")
+                        for kw in (
+                            "points",
+                            "staking",
+                            "stakers",
+                            "restaking",
+                            "vault",
+                            "incentive",
+                            "rewards",
+                            "deposit",
+                        )
                     )
                     or any(
                         cat in str(protocol.get("category") or "").lower()

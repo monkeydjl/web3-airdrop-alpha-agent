@@ -95,12 +95,15 @@ async def main() -> None:
         print("\n[*] Running analysis pipeline on unprocessed discoveries...")
         try:
             run_result = await execute_analysis_pipeline()
-            status_val = run_result.get("status") if isinstance(run_result, dict) else getattr(run_result, "status", "unknown")
-            count_val = len(run_result.get("evaluations", [])) if isinstance(run_result, dict) else len(getattr(run_result, "evaluations", []))
-            print(
-                f"[+] Pipeline finished: Status={status_val}, "
-                f"Evaluated={count_val}"
+            status_val = (
+                run_result.get("status") if isinstance(run_result, dict) else getattr(run_result, "status", "unknown")
             )
+            count_val = (
+                len(run_result.get("evaluations", []))
+                if isinstance(run_result, dict)
+                else len(getattr(run_result, "evaluations", []))
+            )
+            print(f"[+] Pipeline finished: Status={status_val}, Evaluated={count_val}")
         except Exception as e:
             print(f"[-] Pipeline run note: {e}")
 

@@ -193,9 +193,7 @@ class TestEndpoint:
 
     @pytest.mark.asyncio
     async def test_rejects_too_many_messages(self) -> None:
-        msgs = tuple(
-            ("user", "hi") if i % 2 == 0 else ("assistant", "yo") for i in range(21)
-        )
+        msgs = tuple(("user", "hi") if i % 2 == 0 else ("assistant", "yo") for i in range(21))
         with pytest.raises(HTTPException) as ei:
             await project_ai_chat(project_id="p1", req=_req(*msgs))
         assert ei.value.status_code == 400
@@ -227,9 +225,7 @@ class TestEndpoint:
             st.is_llm_enabled = True
             resp = await project_ai_chat(project_id="p1", req=_req(("user", "为什么 72 分？")))
 
-        reply_mock.assert_awaited_once_with(
-            dict(project), [{"role": "user", "content": "为什么 72 分？"}]
-        )
+        reply_mock.assert_awaited_once_with(dict(project), [{"role": "user", "content": "为什么 72 分？"}])
         assert resp["ok"] is True
         assert resp["data"]["reply"] == "答案"
         assert resp["data"]["degraded_reason"] is None

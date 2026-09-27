@@ -213,19 +213,25 @@ class TestSkipExclusion:
 
     def test_skipped_project_is_excluded(self):
         projects = [
-            _project("a", signals={
-                "has_testnet": True,
-                "has_task_portal": True,
-                "has_docs": True,
-            }),
-            {**_project(
-                "b",
+            _project(
+                "a",
                 signals={
                     "has_testnet": True,
                     "has_task_portal": True,
                     "has_docs": True,
                 },
-            ), "skipped": True},
+            ),
+            {
+                **_project(
+                    "b",
+                    signals={
+                        "has_testnet": True,
+                        "has_task_portal": True,
+                        "has_docs": True,
+                    },
+                ),
+                "skipped": True,
+            },
         ]
         data = build_action_queue(projects, limit=10)
         names = {item["project_id"] for item in data["items"]}

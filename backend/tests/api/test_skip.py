@@ -87,9 +87,7 @@ class TestSkipEndpoints:
         from app.db import get_connection
 
         with get_connection() as conn:
-            n = conn.execute(
-                "SELECT COUNT(*) FROM project_skips WHERE project_id='skip-c'"
-            ).fetchone()[0]
+            n = conn.execute("SELECT COUNT(*) FROM project_skips WHERE project_id='skip-c'").fetchone()[0]
         assert n == 1
 
     def test_unskip_roundtrip(self, client):

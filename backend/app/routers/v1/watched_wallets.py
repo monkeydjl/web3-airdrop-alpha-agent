@@ -287,4 +287,3 @@ async def get_wallet_activity(
     norm_address = _normalize_address(address)
     res = await get_wallet_balance_and_nonce(norm_address, chain=chain)
     return {"ok": True, "data": res}
-

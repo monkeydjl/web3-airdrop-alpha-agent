@@ -360,4 +360,3 @@ async def get_wallet_balance_and_nonce(
     finally:
         if own_client:
             await client.aclose()
-

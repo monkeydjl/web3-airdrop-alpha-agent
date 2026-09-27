@@ -303,5 +303,15 @@ class TestGlobalSharedData:
         detail_b = client.get("/api/v1/projects/layerx-001", headers=bob_headers).json()
         detail_adm = client.get("/api/v1/projects/layerx-001", headers=admin_headers).json()
 
-        assert detail_a["data"]["project"]["score"] == detail_b["data"]["project"]["score"] == detail_adm["data"]["project"]["score"] == 88.5
-        assert detail_a["data"]["project"]["label"] == detail_b["data"]["project"]["label"] == detail_adm["data"]["project"]["label"] == "FARM"
+        assert (
+            detail_a["data"]["project"]["score"]
+            == detail_b["data"]["project"]["score"]
+            == detail_adm["data"]["project"]["score"]
+            == 88.5
+        )
+        assert (
+            detail_a["data"]["project"]["label"]
+            == detail_b["data"]["project"]["label"]
+            == detail_adm["data"]["project"]["label"]
+            == "FARM"
+        )

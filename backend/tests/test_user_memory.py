@@ -55,14 +55,10 @@ def test_infer_profile_from_actions(memory_db):
     )
 
     # 2. User interested in L2 (watchlist)
-    memory_db.execute(
-        "INSERT INTO watchlist (project_id, user_id) VALUES ('proj-l2-1', 'test-user-1')"
-    )
+    memory_db.execute("INSERT INTO watchlist (project_id, user_id) VALUES ('proj-l2-1', 'test-user-1')")
 
     # 3. User dislikes/avoids high-risk DeFi (skipped + useless feedback)
-    memory_db.execute(
-        "INSERT INTO project_skips (project_id, user_id) VALUES ('proj-defi-1', 'test-user-1')"
-    )
+    memory_db.execute("INSERT INTO project_skips (project_id, user_id) VALUES ('proj-defi-1', 'test-user-1')")
     memory_db.execute(
         "INSERT INTO feedback (project_id, user_id, signal) VALUES ('proj-defi-1', 'test-user-1', 'useless')"
     )
@@ -122,9 +118,7 @@ def test_clear_user_profile(memory_db):
     svc = UserProfileMemoryService(conn=memory_db)
 
     # Seed an action
-    memory_db.execute(
-        "INSERT INTO watchlist (project_id, user_id) VALUES ('proj-1', ?)", (uid,)
-    )
+    memory_db.execute("INSERT INTO watchlist (project_id, user_id) VALUES ('proj-1', ?)", (uid,))
     memory_db.commit()
 
     prof_before = svc.infer_user_profile(uid)

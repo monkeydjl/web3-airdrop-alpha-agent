@@ -566,4 +566,3 @@ async def auto_check_tasks_onchain(
             ),
         },
     }
-

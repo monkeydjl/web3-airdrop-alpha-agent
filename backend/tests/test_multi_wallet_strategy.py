@@ -134,4 +134,3 @@ def test_hygiene_guidelines_contain_critical_rules() -> None:
     assert "temporal_dispersion" in rule_ids
     assert "path_differentiation" in rule_ids
     assert "environment_isolation" in rule_ids
-

@@ -202,4 +202,3 @@ def test_scorer_applies_explicit_no_airdrop_veto() -> None:
     scored = asyncio.run(scorer.run(state))
     assert scored.label == "IGNORE"
     assert scored.veto == VETO_EXPLICIT_NO_AIRDROP
-

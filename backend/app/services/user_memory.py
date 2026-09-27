@@ -4,6 +4,7 @@ Infers user preference vectors (sector affinity, risk tolerance, favorite sector
 from historical actions (feedback, interactions, watchlist, skips) to support
 personalized project ranking and privacy-preserving preference management.
 """
+
 from __future__ import annotations
 
 import math
@@ -79,9 +80,7 @@ class UserProfileMemoryService:
     ) -> list[dict[str, Any]]:
         """Rank projects based on user profile affinity without altering base score in DB."""
         affinity = (
-            profile.sector_affinity
-            if isinstance(profile, UserProfile)
-            else (profile.get("sector_affinity") or {})
+            profile.sector_affinity if isinstance(profile, UserProfile) else (profile.get("sector_affinity") or {})
         )
 
         if not affinity:

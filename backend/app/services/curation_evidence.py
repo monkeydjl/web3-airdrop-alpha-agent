@@ -22,11 +22,7 @@ def build_curation_evidence(state: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     push_days = getattr(project, "github_recent_push_days", None)
-    if (
-        getattr(project, "has_github", False)
-        and isinstance(push_days, int)
-        and push_days <= RECENT_PUSH_DAYS_LIMIT
-    ):
+    if getattr(project, "has_github", False) and isinstance(push_days, int) and push_days <= RECENT_PUSH_DAYS_LIMIT:
         occurred = (now - timedelta(days=push_days)).isoformat()
         # 优先项目自身的 github URL（https 可核验），缺失时退回官网
         url = project.url if valid_evidence_url(project.url) else None

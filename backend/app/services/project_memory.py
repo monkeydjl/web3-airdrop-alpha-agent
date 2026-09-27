@@ -3,6 +3,7 @@
 Tracks project score trajectory, stage progression, label changes, and volatility across runs,
 providing analytical summaries and LLM context.
 """
+
 from __future__ import annotations
 
 import math

@@ -121,18 +121,33 @@ class TestSiteLivenessSignal:
 
         ctx = AgentContext(run_id="r")
         paper = RawProject(
-            id="p1", name="Paper", sector="DeFi", stage="mainnet",
-            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            id="p1",
+            name="Paper",
+            sector="DeFi",
+            stage="mainnet",
+            source="defillama",
+            has_roadmap=True,
+            github_recent_push_days=30,
             site_alive=False,  # 探测到官网挂了
         )
         ship = RawProject(
-            id="p2", name="Ship", sector="DeFi", stage="mainnet",
-            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            id="p2",
+            name="Ship",
+            sector="DeFi",
+            stage="mainnet",
+            source="defillama",
+            has_roadmap=True,
+            github_recent_push_days=30,
             site_alive=True,
         )
         unprobed = RawProject(
-            id="p3", name="Pristine", sector="DeFi", stage="mainnet",
-            source="defillama", has_roadmap=True, github_recent_push_days=30,
+            id="p3",
+            name="Pristine",
+            sector="DeFi",
+            stage="mainnet",
+            source="defillama",
+            has_roadmap=True,
+            github_recent_push_days=30,
             site_alive=None,
         )
         agent = Agent()
@@ -152,12 +167,15 @@ class TestSiteLivenessSignal:
 
         ctx = AgentContext(run_id="r")
         p = RawProject(
-            id="p1", name="Dead", sector="DeFi", stage="mainnet",
-            source="defillama", site_alive=False,
+            id="p1",
+            name="Dead",
+            sector="DeFi",
+            stage="mainnet",
+            source="defillama",
+            site_alive=False,
         )
         state = PipelineState(project=p, context=ctx)
         await Agent().run(state)
         assert any("unreachable" in r for r in (state.reason or [])), (
             "site_alive=False 必须在最终 reason 里可见，不能悄悄只扣了分"
         )
-

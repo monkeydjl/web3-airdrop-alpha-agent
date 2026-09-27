@@ -524,4 +524,3 @@ class TestMultiWalletStrategyEndpoint:
         data = resp.json()["data"]
         assert data["status"] == "ineligible"
         assert data["recommended_wallets_optimal"] == 0
-

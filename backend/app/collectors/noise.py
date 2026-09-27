@@ -227,9 +227,25 @@ KNOWN_LISTED_BRANDS = frozenset(
 # "Mainnet Finance" 会被 "Plume Mainnet" 误伤。
 _BRAND_STOPLIST = frozenset(
     {
-        "mainnet", "finance", "swap", "vault", "vaults", "network", "chain",
-        "protocol", "defi", "labs", "staking", "points", "testnet", "liquid",
-        "pool", "pools", "token", "bridge", "portal",
+        "mainnet",
+        "finance",
+        "swap",
+        "vault",
+        "vaults",
+        "network",
+        "chain",
+        "protocol",
+        "defi",
+        "labs",
+        "staking",
+        "points",
+        "testnet",
+        "liquid",
+        "pool",
+        "pools",
+        "token",
+        "bridge",
+        "portal",
     }
 )
 

@@ -512,4 +512,3 @@ def post_portfolio_roi_simulation(body: PortfolioSimulateRequest) -> dict[str, A
         risk_appetite=body.risk_appetite,
     )
     return res
-

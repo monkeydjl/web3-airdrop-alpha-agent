@@ -92,8 +92,11 @@ class TestDefiLlamaFacetFiltering:
     def test_brand_prefix_facet_of_listed_protocol_skipped(self, collector: DefiLlamaCollector) -> None:
         protocols = [
             sample_protocol(
-                name="Zircuit", slug="zircuit", category="Canonical Bridge",
-                symbol="ZRC", gecko_id="zircuit",
+                name="Zircuit",
+                slug="zircuit",
+                category="Canonical Bridge",
+                symbol="ZRC",
+                gecko_id="zircuit",
             ),
             sample_protocol(name="Zircuit Staking", slug="zircuit-staking", category="Farm"),
         ]
@@ -103,8 +106,11 @@ class TestDefiLlamaFacetFiltering:
     def test_parent_linked_facet_of_listed_protocol_skipped(self, collector: DefiLlamaCollector) -> None:
         protocols = [
             sample_protocol(
-                name="Solv Protocol", slug="solv-protocol", category="Yield",
-                symbol="SOLV", gecko_id="solv-protocol",
+                name="Solv Protocol",
+                slug="solv-protocol",
+                category="Yield",
+                symbol="SOLV",
+                gecko_id="solv-protocol",
             ),
             {
                 **sample_protocol(name="Solv Staking", slug="solv-staking", category="Farm"),
@@ -129,8 +135,7 @@ class TestDefiLlamaFacetFiltering:
     def test_short_listed_brand_stems_do_not_clobber(self, collector: DefiLlamaCollector) -> None:
         """≥3 字符门槛：两字符上市条目名（如 "SX"）不作为品牌前缀判据。"""
         protocols = [
-            sample_protocol(name="SX", slug="sx", category="Prediction Market",
-                            symbol="SX", gecko_id="sx"),
+            sample_protocol(name="SX", slug="sx", category="Prediction Market", symbol="SX", gecko_id="sx"),
             sample_protocol(name="SXPB Vault", slug="sxpb-vault", category="Yield"),
         ]
         candidates = collector._filter_candidates(protocols)
@@ -309,9 +314,7 @@ class TestFacetOfListedBrandToken:
         不能因为名字里带 plume 被误杀。"""
         protocols = [
             sample_protocol(name="Plume Mainnet", slug="plume-mainnet", symbol="PLUME", gecko_id="plume", tvl=0),
-            sample_protocol(
-                name="Mystic Finance myPLUME", slug="mystic-finance-myplume", symbol="-", tvl=200_000_000
-            ),
+            sample_protocol(name="Mystic Finance myPLUME", slug="mystic-finance-myplume", symbol="-", tvl=200_000_000),
         ]
         candidates = collector._filter_candidates(protocols)
         assert [c["name"] for c in candidates] == ["Mystic Finance myPLUME"]
@@ -330,10 +333,25 @@ class TestZombieFilter:
     def test_url_missing_and_github_stale_is_dropped(self, collector: DefiLlamaCollector) -> None:
         """F1：url 缺失且无 ppmitted github。**假定应采取尽的快筛。"""
         protocols = [
-            {"name": "DeadZone", "slug": "deadzone", "url": "", "github": ["deadgh"],
-             "category": "DeFi", "tvl": 5_000_000, "twitter": None, "symbol": "-"},
-            {"name": "LiveLink", "slug": "livelink", "url": "https://live.example",
-             "github": ["lslabs"], "category": "DeFi", "tvl": 20_000_000, "symbol": "-"},
+            {
+                "name": "DeadZone",
+                "slug": "deadzone",
+                "url": "",
+                "github": ["deadgh"],
+                "category": "DeFi",
+                "tvl": 5_000_000,
+                "twitter": None,
+                "symbol": "-",
+            },
+            {
+                "name": "LiveLink",
+                "slug": "livelink",
+                "url": "https://live.example",
+                "github": ["lslabs"],
+                "category": "DeFi",
+                "tvl": 20_000_000,
+                "symbol": "-",
+            },
         ]
         out = collector._filter_candidates(protocols)
         names = [p["name"] for p in out]
@@ -343,10 +361,22 @@ class TestZombieFilter:
     def test_url_placeholder_never_survives(self, collector: DefiLlamaCollector) -> None:
         """F2：URL 里挂着聚合站详情页占位链（非真官网）的也应被撇。"""
         protocols = [
-            {"name": "Placeholder", "slug": "ph", "url": "https://defillama.com/protocol/ph",
-             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
-            {"name": "RealSite", "slug": "real", "url": "https://real.example",
-             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
+            {
+                "name": "Placeholder",
+                "slug": "ph",
+                "url": "https://defillama.com/protocol/ph",
+                "category": "DeFi",
+                "tvl": 5_000_000,
+                "symbol": "-",
+            },
+            {
+                "name": "RealSite",
+                "slug": "real",
+                "url": "https://real.example",
+                "category": "DeFi",
+                "tvl": 5_000_000,
+                "symbol": "-",
+            },
         ]
         out = collector._filter_candidates(protocols)
         names = [p["name"] for p in out]
@@ -356,9 +386,16 @@ class TestZombieFilter:
     def test_zombie_with_testnet_kept(self, collector: DefiLlamaCollector) -> None:
         """Goose 那反证：就算项目有 testnet 也不该进（因为这是个噪音特质）。"""
         protocols = [
-            {"name": "Goose", "slug": "goose", "url": "",
-             "github": ["GooseFarmLabs"], "has_testnet": True,
-             "category": "DeFi", "tvl": 5_000_000, "symbol": "-"},
+            {
+                "name": "Goose",
+                "slug": "goose",
+                "url": "",
+                "github": ["GooseFarmLabs"],
+                "has_testnet": True,
+                "category": "DeFi",
+                "tvl": 5_000_000,
+                "symbol": "-",
+            },
         ]
         out = collector._filter_candidates(protocols)
         assert out == [], "Goose 这种条目不该留下来 (testnet 是展能不是保命)"

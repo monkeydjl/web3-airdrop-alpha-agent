@@ -97,14 +97,18 @@ class TestProbeSite:
 
             async def head(self, url, **kw):
                 self.calls.append("HEAD")
+
                 class Resp:
                     status_code = 405
+
                 return Resp()
 
             async def get(self, url, **kw):
                 self.calls.append("GET")
+
                 class Resp:
                     status_code = 200
+
                 return Resp()
 
         with patch("httpx.AsyncClient", return_value=FallbackClient()):
@@ -158,6 +162,7 @@ class TestRunVitalsProbe:
 
             a = dict(repo.get_by_id("a"))
             import json
+
             sa = json.loads(a["meta"]).get("signals", {})
             assert sa.get("site_alive") is True
             assert sa.get("site_http_status") == 200

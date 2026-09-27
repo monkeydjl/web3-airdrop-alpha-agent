@@ -45,7 +45,9 @@ def skip_project(req: Request, project_id: str = Path(...), body: SkipRequest | 
     """标记项目为「不参与」。幂等：重复标记返回 already=True，不产生多行。"""
     current_user = get_current_user(req)
     if current_user["role"] == ROLE_ADMIN:
-        uid = (body.user_id if body else None) or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
+        uid = (body.user_id if body else None) or (
+            current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER
+        )
     elif current_user["user_id"] != "anonymous":
         uid = current_user["user_id"]
     else:
@@ -64,9 +66,7 @@ def skip_project(req: Request, project_id: str = Path(...), body: SkipRequest | 
                 (project_id, uid),
             ).fetchone()
             if existing:
-                return SkipResponse(
-                    data={"project_id": project_id, "user_id": uid, "skipped": True, "already": True}
-                )
+                return SkipResponse(data={"project_id": project_id, "user_id": uid, "skipped": True, "already": True})
 
             conn.execute(
                 "INSERT INTO project_skips (project_id, user_id) VALUES (?, ?)",
@@ -75,9 +75,7 @@ def skip_project(req: Request, project_id: str = Path(...), body: SkipRequest | 
             conn.commit()
 
         logger.info("projects.skip_marked", project_id=project_id, user_id=uid)
-        return SkipResponse(
-            data={"project_id": project_id, "user_id": uid, "skipped": True, "already": False}
-        )
+        return SkipResponse(data={"project_id": project_id, "user_id": uid, "skipped": True, "already": False})
     except HTTPException:
         raise
     except Exception as e:

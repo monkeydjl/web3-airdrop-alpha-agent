@@ -139,4 +139,3 @@ async def test_get_wallet_balance_and_nonce() -> None:
     assert res["balance_eth"] == 1.0
     assert res["transaction_count"] == 7
     assert res["status"] == "active"
-

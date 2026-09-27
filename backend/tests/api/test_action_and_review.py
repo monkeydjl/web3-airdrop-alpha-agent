@@ -36,9 +36,7 @@ def _insert_project(
     from datetime import UTC, datetime, timedelta
 
     meta: dict = {
-        "signals": signals
-        if signals is not None
-        else {"has_testnet": True, "has_task_portal": True, "has_docs": True}
+        "signals": signals if signals is not None else {"has_testnet": True, "has_task_portal": True, "has_docs": True}
     }
     if curated:
         now = datetime.now(UTC)

@@ -4,6 +4,7 @@ Endpoints:
 - GET /api/v1/user-profile: 获取当前用户的推断偏好画像（赛道亲和度向量、风险风格等）
 - DELETE /api/v1/user-profile: 清除当前用户的偏好记忆（隐私与 GDPR 合规）
 """
+
 from __future__ import annotations
 
 from typing import Any

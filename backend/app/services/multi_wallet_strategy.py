@@ -171,14 +171,18 @@ def generate_multi_wallet_strategy(project_data: Any) -> MultiWalletStrategy:
         w_min, w_max, w_opt = 5, 10, 5
         tier = "medium_scale"
         tier_zh = "测试节点适度铺开（5~10 个）"
-        summary = "门槛较低且无需真实本金，预期刷量稀释严重。建议以 5~10 个钱包形成中等规模矩阵适度覆盖，控制时间边际效益。"
+        summary = (
+            "门槛较低且无需真实本金，预期刷量稀释严重。建议以 5~10 个钱包形成中等规模矩阵适度覆盖，控制时间边际效益。"
+        )
         hours_per_wallet = 0.3
     else:
         # Medium sybil friction: standard on-chain contracts / L2 ecosystem
         w_min, w_max, w_opt = 3, 5, 3
         tier = "small_cluster"
         tier_zh = "梯度小梯队（3~5 个）"
-        summary = "综合女巫难度中等，最适合 3~5 个钱包梯度参与：1 个核心精品号深入交互，搭配 2~4 个阶梯副号完成核心交互指标。"
+        summary = (
+            "综合女巫难度中等，最适合 3~5 个钱包梯度参与：1 个核心精品号深入交互，搭配 2~4 个阶梯副号完成核心交互指标。"
+        )
         hours_per_wallet = 0.8
 
     # Calculate capital requirements
@@ -236,4 +240,3 @@ def _as_dict(rule: HygieneRule) -> dict[str, str]:
         "description": rule.description,
         "severity": rule.severity,
     }
-

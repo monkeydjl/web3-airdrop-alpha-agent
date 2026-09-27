@@ -109,8 +109,15 @@ class TestSeedLaunchedTokenFiltering:
         """发币+空投已结束的真实项目不得出现在 fallback 输出里。"""
         projects = get_seed_raw_projects()
         names = {p.name for p in projects}
-        for launched in ("ZKsync Era", "Berachain", "LayerZero V2", "EigenLayer Pro",
-                         "Scroll zkEVM", "Celestia Modular", "Pyth Network"):
+        for launched in (
+            "ZKsync Era",
+            "Berachain",
+            "LayerZero V2",
+            "EigenLayer Pro",
+            "Scroll zkEVM",
+            "Celestia Modular",
+            "Pyth Network",
+        ):
             assert launched not in names, f"已发币项目 {launched} 泄漏进 fallback 输出"
 
     def test_launched_projects_have_no_stale_airdrop_signals(self):

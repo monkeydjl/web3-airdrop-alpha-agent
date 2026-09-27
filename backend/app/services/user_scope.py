@@ -34,9 +34,7 @@ def _scope_clause(user_id: str) -> str:
     不把 NULL 记录算进来，避免多用户启用后跨用户串数据。
     """
     return (
-        "(user_id = ? OR user_id = ? OR user_id IS NULL)"
-        if user_id in (DEFAULT_USER, "anonymous")
-        else "user_id = ?"
+        "(user_id = ? OR user_id = ? OR user_id IS NULL)" if user_id in (DEFAULT_USER, "anonymous") else "user_id = ?"
     )
 
 

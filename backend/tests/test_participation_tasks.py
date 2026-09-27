@@ -175,4 +175,3 @@ def test_curated_protocol_tasks_enrichment():
     )
     mantle_ids = {t["id"] for t in mantle["tasks"]}
     assert "curated-mantle-restaking" in mantle_ids
-
