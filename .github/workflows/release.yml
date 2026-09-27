@@ -54,6 +54,11 @@ jobs:
       - name: Run ruff format check
         run: python -m ruff format --check .
 
+      # 连接卫生守卫与 ci.yml 对齐（CONVENTIONS.md §13.3）：发布门禁不应比
+      # 日常 CI 更松 —— tag push 不触发 ci.yml，这里是该 commit 的唯一静态门。
+      - name: Connection hygiene guard
+        run: python scripts/check_connection_hygiene.py
+
       - name: Run mypy (strict)
         run: mypy app --config-file pyproject.toml
 

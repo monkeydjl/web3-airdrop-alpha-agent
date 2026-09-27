@@ -223,6 +223,10 @@ def create_app(
                         conn_factory=(lambda: db_override) if db_override is not None else get_connection,
                         on_promoted=on_promoted,
                         on_demoted=on_demoted,
+                        # db_override is a borrowed shared connection owned by this
+                        # lifespan (closed once in the finally below, and only when
+                        # app_owns_conn); the elector must not close it per use.
+                        owns_connections=db_override is None,
                         enabled=settings.ha_enabled,
                     )
                 else:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.config import settings
@@ -41,7 +42,9 @@ def test_initial_acquire_and_renew():
     assert elector.acquire_or_renew() is True
 
     status = elector.get_status()
-    assert status["is_leader"] is False  # not updated until _tick, but DB has lease
+    # acquire_or_renew 初次获取成功即在实例上置位 _is_leader（同 734f0a7 引入），
+    # get_status 直接读取该成员；旧注释「not updated until _tick」与实现自相矛盾。
+    assert status["is_leader"] is True
     assert status["current_leader"] == "inst_1"
     assert status["version"] == 1
 

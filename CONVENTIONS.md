@@ -606,6 +606,30 @@ def init_db(conn: sqlite3.Connection) -> None:
 - Write 阶段 `BEGIN/COMMIT` 包裹 `projects` 表 upsert（参考 `ENGINEERING_ROADMAP.md` §6.9.12）。
 - logs 表写入允许孤立行（业务上可接受），不参与事务。
 
+### 13.3 连接所有权契约（own / borrow）
+
+全仓只有两种合法的连接生命周期，语义由 `app.db.connection_scope`（唯一权威实现）裁决：
+
+- **own**：消费方创建的连接（`get_connection()` 或 factory 每次新建）。使用结束
+  必须 close 恰一次——不关即泄漏，多关即 double-close。
+- **borrow**：注入的共享连接（lifespan `db_override`、请求级共享栈、测试注入）。
+  借用方**永不 close**，由所有者在自己的生命周期终点关恰一次。
+
+实现方式按消费形态三选一：
+
+| 形态 | 做法 |
+|---|---|
+| 短作用域 | `with connection_scope() as conn:`（own，等价旧 `with get_connection()`） |
+| factory 消费者 | `connection_scope(factory=f, owns=owns_flag)`（如 `LeaderElector`，借用型 factory 传 `owns_connections=False`） |
+| 注入型长生命周期（repo/service） | `_as_db_connection(conn)` 或 `_conn is None` 判 own（`ProjectRepository._should_close` 惯例），在实例 `close()`/方法 finally 中关 |
+
+**禁止**对可能为借用的连接写 `with conn:` / `__exit__`（`DbConnection.__exit__`
+一律 close，借用连接会被误关）。
+
+> 教训（2026-09-26）：`LeaderElector` 对 db_override 借用连接执行了
+> `with self.conn_factory() as conn:`，lifespan 退出后共享连接已被关闭，
+> 经济栈全部失效。verifier 17.1.26 的 `close_s == 1` 断言捕获了它。
+
 ---
 
 ## 14. Prometheus 指标命名

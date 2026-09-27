@@ -8,15 +8,16 @@ a single instance in a multi-replica deployment activates scheduled jobs
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
-import uuid
 
 import structlog
 
 from app.config import settings
-from app.db import DbConnection, dict_from_row, get_connection
+from app.db import DbConnection, connection_scope, dict_from_row, get_connection
 
 logger = structlog.get_logger(__name__)
 
@@ -37,8 +38,15 @@ class LeaderElector:
         on_promoted: CallbackType | None = None,
         on_demoted: CallbackType | None = None,
         enabled: bool | None = None,
+        owns_connections: bool = True,
     ) -> None:
         self.conn_factory = conn_factory or get_connection
+        # True → factory yields a fresh, elector-owned connection that must be
+        # closed after each use (default get_connection). False → factory hands
+        # back a borrowed shared connection that must NEVER be closed here
+        # (create_app db_override reuse); the owner closes it in its own finally.
+        # 所有权语义由 app.db.connection_scope 统一裁决（唯一权威实现）。
+        self.owns_connections = owns_connections
         self.resource_id = resource_id
         self.instance_id = (
             instance_id
@@ -70,7 +78,7 @@ class LeaderElector:
         now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=self.lease_ttl_seconds)
 
-        with self.conn_factory() as conn:
+        with connection_scope(factory=self.conn_factory, owns=self.owns_connections) as conn:
             conn.begin_serialized_write()
             try:
                 row = conn.execute(
@@ -177,7 +185,7 @@ class LeaderElector:
             return False
 
         now = datetime.now(UTC)
-        with self.conn_factory() as conn:
+        with connection_scope(factory=self.conn_factory, owns=self.owns_connections) as conn:
             conn.begin_serialized_write()
             try:
                 conn.execute(
@@ -208,14 +216,13 @@ class LeaderElector:
 
     def get_status(self) -> dict[str, Any]:
         """Query current cluster leadership and lease status."""
-        now = datetime.now(UTC)
         current_leader = None
         lease_expires_at = None
         acquired_at = None
         version = 0
 
         try:
-            with self.conn_factory() as conn:
+            with connection_scope(factory=self.conn_factory, owns=self.owns_connections) as conn:
                 row = conn.execute(
                     "SELECT leader_id, lease_expires_at, acquired_at, version FROM leader_election WHERE resource_id = ?",
                     (self.resource_id,),
@@ -226,8 +233,8 @@ class LeaderElector:
                     lease_expires_at = str(data.get("lease_expires_at"))
                     acquired_at = str(data.get("acquired_at"))
                     version = data.get("version", 0)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("leader_election.status_query_failed", error=repr(exc))
 
         if not self.enabled:
             status_str = "standalone"
@@ -271,13 +278,15 @@ class LeaderElector:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
-        if self._is_leader:
+        # Standalone mode never holds a real lease, so it cannot be
+        # "demoted": no DB write (standalone contract) and no on_demoted
+        # callback — the app owner performs its own graceful shutdown
+        # (e.g. lifespan closes the scheduler with wait=True exactly once).
+        if self._is_leader and self.enabled:
             self.step_down()
             if self.on_demoted:
                 res = self.on_demoted()
@@ -323,6 +332,7 @@ class LeaderElector:
         """Continuous heartbeat and election polling loop."""
         while self._running:
             await asyncio.sleep(self.heartbeat_interval_seconds)
-            if not self._running:
-                break
-            await self._tick()
+            # sleep 期间 stop() 可能并发置 _running=False；正向判断避免 mypy
+            # 对成员收窄后误判 unreachable（await 不会使成员收窄失效）
+            if self._running:
+                await self._tick()

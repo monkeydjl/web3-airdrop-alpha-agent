@@ -57,6 +57,14 @@ jobs:
         run: python -m ruff format --check .
         continue-on-error: false
 
+      # 连接卫生守卫（CONVENTIONS.md §13.3）：app/ 下建连必须统一走
+      # app.db.connection_scope，禁止裸 with get_connection() 与手写
+      # finally close 模式（17.1.26 借用连接被 close 的事故回归防线）。
+      # 纯标准库 AST 实现，无需额外安装。
+      - name: Connection hygiene guard
+        run: python scripts/check_connection_hygiene.py
+        continue-on-error: false
+
   # ── Phase 2: Tests ───────────────────────
   test:
     name: Full Backend Test Suite
