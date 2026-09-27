@@ -13,6 +13,8 @@
 const FILES = [
   './lib/download.test.ts',
   './lib/format.test.ts',
+  './lib/dashboardFilters.test.ts',
+  './lib/dashboardFiltersStorage.test.ts',
   './lib/personas.test.ts',
   './lib/batch2.test.ts',
   './lib/batch3.test.ts',

@@ -4,7 +4,18 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
-import { LABEL_ORDER, hasExplicitAirdropSignal, sortProjects, stageZh } from '@/lib/format';
+import { LABEL_ORDER, hasExplicitAirdropSignal, hasHighRiskStructuredSignal, sortProjects, stageZh } from '@/lib/format';
+import {
+  DASHBOARD_FILTER_KEYS,
+  browserStorage,
+  dashboardFilterSearchParams,
+  defaultDashboardFilters,
+  loadStoredFilterPairs,
+  parseDashboardFilters,
+  saveStoredFilters,
+  storedFilterPairs,
+  type DashboardFilters,
+} from '@/lib/dashboardFilters';
 import { fetchAllProjects } from '@/lib/projects';
 import { normalizeCollectionSource } from '@/lib/types';
 import { useAsyncData } from '@/lib/useAsyncData';
@@ -19,8 +30,7 @@ import { HunterPersonaSelector } from '@/components/HunterPersonaSelector';
 import { GasTrackerWidget } from '@/components/GasTrackerWidget';
 import type { CollectionSourceApi, HunterPersonaId, Label, Project } from '@/lib/types';
 
-type SortBy = 'score' | 'name' | 'confidence';
-type ViewMode = 'grid' | 'table';
+type SortBy = import('@/lib/dashboardFilters').SortBy;
 
 /** apiFetch 已解包后端 data 字段 */
 interface DashboardOverview {
@@ -45,27 +55,104 @@ function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialPersona = (searchParams.get('persona') as HunterPersonaId) || 'balanced';
+
+  // 筛选状态 ↔ URL 双向同步：首帧从 URL 恢复（分享链接/刷新不丢），此后每次
+  // 变更把本页接管的键整组重写（先删后写，只落非默认值，persona 等他处键原样保留）。
+  // 解析/序列化的校验逻辑在 lib/dashboardFilters.ts，有 node:test 钉住。
+  // popstate（浏览器后退/前进）只反向拉回状态，不写 URL。
+  const [filters, setFilters] = useState<DashboardFilters>(() =>
+    parseDashboardFilters((k) => searchParams.get(k)),
+  );
+
+  const updateFilters = useCallback(
+    (patch: Partial<DashboardFilters>) => {
+      const next = { ...filters, ...patch };
+      setFilters(next);
+      const params = new URLSearchParams(window.location.search);
+      for (const k of DASHBOARD_FILTER_KEYS) params.delete(k);
+      for (const [k, v] of dashboardFilterSearchParams(next)) params.set(k, v);
+      const qs = params.toString();
+      router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false });
+      // 跨会话记忆：每次手动变更都存（keyword 不入库）；全默认则清键。
+      saveStoredFilters(next, browserStorage());
+    },
+    [filters, router],
+  );
+
+  // 「已记住偏好」提示与「恢复默认」：入库存了非默认偏好才显示（同源判定，
+  // 见 storedFilterPairs —— 它就是 saveStoredFilters 实际写入的集合）。
+  // keyword 不入库所以不触发提示；恢复默认同时清 URL 与存储，提示自然消失。
+  const rememberedFilters = useMemo(() => storedFilterPairs(filters), [filters]);
+  const hasRememberedPrefs = rememberedFilters.length > 0;
+  const resetFiltersToDefault = useCallback(() => {
+    updateFilters(defaultDashboardFilters());
+  }, [updateFilters]);
+
+  // 无参打开时的跨会话恢复：localStorage 逐键让位给 URL —— URL 里已有的键
+  // 以 URL 为准（分享链接精确还原），URL 没写的键才用上次的存储值补齐。
+  // 挂载后跑一次（localStorage 仅客户端可用），异常静默：存储坏了不影响页面。
+  useEffect(() => {
+    const stored = loadStoredFilterPairs(browserStorage());
+    if (!stored) return;
+    setFilters((prev) => {
+      const urlVals = new Map(DASHBOARD_FILTER_KEYS.map((k) => [k, searchParams.get(k)]));
+      const storedVals = new Map(stored);
+      const merged = new Map<string, string>();
+      for (const k of DASHBOARD_FILTER_KEYS) {
+        const url = urlVals.get(k);
+        if (url != null) {
+          if (url !== '') merged.set(k, url);
+          continue; // URL 管的键不吃存储值（含 URL 显式清空的场景）
+        }
+        const s = storedVals.get(k);
+        if (s != null) merged.set(k, s);
+      }
+      if (merged.size === 0) return prev;
+      // 空串与缺省同义（URL get 对不存在的键返回 null，这里 merged 只装非空值）
+      const get = (k: string) => merged.get(k) ?? null;
+      const restored = parseDashboardFilters(get);
+      return { ...prev, ...restored, keyword: prev.keyword };
+    });
+    // 刻意只跑一次：恢复只发生在挂载帧，后续 URL 变化走 updateFilters 正向同步。
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      setFilters(parseDashboardFilters((k) => new URLSearchParams(window.location.search).get(k)));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [persona, setPersona] = useState<HunterPersonaId>(initialPersona);
-  const [labelFilter, setLabelFilter] = useState<Label | ''>('');
-  const [sectorFilter, setSectorFilter] = useState('');
-  const [keyword, setKeyword] = useState('');
-  const [hideIgnore, setHideIgnore] = useState(true);
-  const [hasFundingOnly, setHasFundingOnly] = useState(false);
-  const [zeroCostOnly, setZeroCostOnly] = useState(false);
-  const [explicitAirdropOnly, setExplicitAirdropOnly] = useState(false);
+
+  // 以下筛选值全部由 URL 同步的 filters 派生（单一事实来源，见上方 updateFilters）。
+  // 口径备忘：「永续盘/多季」高危侧 = is_perp=true 或 points_season_count>=2，
+  // 与 ProjectCard 角标同源（hasHighRiskStructuredSignal）；「隐藏忽略」与
+  // 「隐藏永续盘/多季」默认 true —— 找不回的排除就是单向墙；「不参与」同理。
   // 「分数已达 FARM 线、但缺参与路径」是库里唯一上不去的一批 —— 单独抽出来做
-  // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那 86 行）。
-  const [needsVerifyOnly, setNeedsVerifyOnly] = useState(false);
-  // 「不参与」默认从工作台隐藏（这是它的主要用途：说不要了就别天天出现），
-  // 可以从「显示不参与」开关找回 —— 找回入口必须存在，否则就是单向墙。
-  const [showSkipped, setShowSkipped] = useState(false);
-  const [stageFilter, setStageFilter] = useState('');
-  const [minScore, setMinScore] = useState('');
-  const [sortBy, setSortBy] = useState<SortBy>('score');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  // 人工验证清单（被 veto=no_participation_path 压回 WATCH 的那批）。
+  const {
+    keyword,
+    label: labelFilter,
+    sector: sectorFilter,
+    stage: stageFilter,
+    minScore,
+    sortBy,
+    sortOrder,
+    view,
+    hideIgnore,
+    hideHighRisk,
+    showSkipped,
+    hasFundingOnly,
+    zeroCostOnly,
+    explicitAirdropOnly,
+    highRiskSignalsOnly,
+    needsVerifyOnly,
+    curatedOnly,
+  } = filters;
+
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState('');
-  const [view, setView] = useState<ViewMode>('grid');
   const [showCharts, setShowCharts] = useState(false);
   const [showDigestModal, setShowDigestModal] = useState(false);
   const [showBriefingModal, setShowBriefingModal] = useState(false);
@@ -82,15 +169,15 @@ function DashboardContent() {
       .catch(() => {});
   }, []);
 
-  // 顶栏搜索 → ?keyword=xxx → 同步到本地筛选
+  // 顶栏搜索 → ?keyword=xxx → 同步进筛选状态（值相同则跳过，避免写回循环）。
   useEffect(() => {
     const q = searchParams.get('keyword');
-    if (q != null) setKeyword(q);
+    if (q != null && q !== filters.keyword) updateFilters({ keyword: q });
     const p = searchParams.get('persona') as HunterPersonaId;
     if (p && ['balanced', 'zero_cost', 'whale_restaking', 'high_beta'].includes(p)) {
       setPersona(p);
     }
-  }, [searchParams]);
+  }, [searchParams, filters.keyword, updateFilters]);
 
   const handlePersonaChange = (newPersona: HunterPersonaId) => {
     setPersona(newPersona);
@@ -112,8 +199,7 @@ function DashboardContent() {
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
-  const [curatedOnly, setCuratedOnly] = useState(false);
-  // 工作台默认展示全部候选池（实时监控与评分项目）。
+  // 工作台默认展示全部候选池（实时监控与评分项目，curatedOnly 进 URL 可分享）。
   // 可随时点击「✨ 精选模式」过滤查看同时满足 90 天内链上任务凭证的强证据项目。
 
   const loader = useCallback(
@@ -203,14 +289,16 @@ function DashboardContent() {
     let top = 0;
     let needsVerify = 0;
     let explicitAirdrop = 0;
+    let highRiskSignals = 0;
     projects.forEach((p) => {
       if (p.label in counts) counts[p.label as Label]++;
       if (p.veto === 'no_participation_path') needsVerify++;
       if (hasExplicitAirdropSignal(p)) explicitAirdrop++;
+      if (hasHighRiskStructuredSignal(p.signals)) highRiskSignals++;
       sum += p.score || 0;
       top = Math.max(top, p.score || 0);
     });
-    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top, needsVerify, explicitAirdrop };
+    return { counts, total: projects.length, avg: projects.length ? Math.round(sum / projects.length) : 0, top, needsVerify, explicitAirdrop, highRiskSignals };
   }, [projects]);
 
   const sectors = useMemo(() => {
@@ -235,6 +323,8 @@ function DashboardContent() {
       if (minScore && (p.score ?? 0) < Number(minScore)) return false;
       if (keyword && !p.name.toLowerCase().includes(keyword.toLowerCase())) return false;
       if (explicitAirdropOnly && !hasExplicitAirdropSignal(p)) return false;
+      if (hideHighRisk && hasHighRiskStructuredSignal(p.signals)) return false;
+      if (highRiskSignalsOnly && !hasHighRiskStructuredSignal(p.signals)) return false;
       if (hasFundingOnly && !p.funding?.funding_total_usd && !p.funding?.recent_funding) return false;
       if (zeroCostOnly) {
         const hasTestnet = Boolean(p.signals?.has_testnet || p.stage === 'testnet');
@@ -245,7 +335,7 @@ function DashboardContent() {
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, showSkipped, labelFilter, sectorFilter, stageFilter, minScore, keyword, explicitAirdropOnly, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, hideHighRisk, labelFilter, sectorFilter, stageFilter, minScore, keyword, explicitAirdropOnly, highRiskSignalsOnly, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -388,7 +478,7 @@ function DashboardContent() {
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setCuratedOnly((prev) => !prev)}
+              onClick={() => updateFilters({ curatedOnly: !curatedOnly })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 curatedOnly
                   ? 'bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/20'
@@ -399,9 +489,9 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setLabelFilter(''); setNeedsVerifyOnly(false); setHasFundingOnly(false); setZeroCostOnly(false); setExplicitAirdropOnly(false); }}
+              onClick={() => updateFilters({ label: '', needsVerifyOnly: false, hasFundingOnly: false, zeroCostOnly: false, explicitAirdropOnly: false, highRiskSignalsOnly: false })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                !labelFilter && !needsVerifyOnly && !hasFundingOnly && !zeroCostOnly && !explicitAirdropOnly
+                !labelFilter && !needsVerifyOnly && !hasFundingOnly && !zeroCostOnly && !explicitAirdropOnly && !highRiskSignalsOnly
                   ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
                   : 'bg-surface-2 text-ink-muted hover:text-ink border border-line'
               }`}
@@ -410,7 +500,7 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setLabelFilter('FARM'); setNeedsVerifyOnly(false); }}
+              onClick={() => updateFilters({ label: 'FARM', needsVerifyOnly: false })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 labelFilter === 'FARM'
                   ? 'bg-farm text-slate-950 shadow-md shadow-farm/20'
@@ -421,7 +511,7 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setLabelFilter('WATCH'); setNeedsVerifyOnly(false); }}
+              onClick={() => updateFilters({ label: 'WATCH', needsVerifyOnly: false })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 labelFilter === 'WATCH' && !needsVerifyOnly
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
@@ -432,7 +522,7 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => setExplicitAirdropOnly((prev) => !prev)}
+              onClick={() => updateFilters({ explicitAirdropOnly: !explicitAirdropOnly })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 explicitAirdropOnly
                   ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20'
@@ -444,7 +534,19 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => setHasFundingOnly((prev) => !prev)}
+              onClick={() => updateFilters({ highRiskSignalsOnly: !highRiskSignalsOnly, hideHighRisk: false })}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                highRiskSignalsOnly
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'bg-surface-2 text-amber-400 hover:bg-surface-3 border border-amber-500/25'
+              }`}
+              title="只看带高危结构化信号的项目：永续/衍生品协议（is_perp）或已进入第 2 季及以上的多季积分（points_season_count）—— 奖励稀释与 PUA 周期的高发区"
+            >
+              ⚠️ 永续盘/多季 ({stats.highRiskSignals})
+            </button>
+            <button
+              type="button"
+              onClick={() => updateFilters({ hasFundingOnly: !hasFundingOnly })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 hasFundingOnly
                   ? 'bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/20'
@@ -455,7 +557,7 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => setZeroCostOnly((prev) => !prev)}
+              onClick={() => updateFilters({ zeroCostOnly: !zeroCostOnly })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 zeroCostOnly
                   ? 'bg-emerald-400 text-slate-950 shadow-md shadow-emerald-400/20'
@@ -466,7 +568,7 @@ function DashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setNeedsVerifyOnly((prev) => !prev); if (!needsVerifyOnly) setLabelFilter(''); }}
+              onClick={() => updateFilters({ needsVerifyOnly: !needsVerifyOnly, label: '' })}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
                 needsVerifyOnly
                   ? 'bg-watch text-slate-950 shadow-md shadow-watch/20'
@@ -484,12 +586,12 @@ function DashboardContent() {
                 className="input !h-9 !py-1.5 !text-xs font-mono"
                 placeholder="搜索项目名称…"
                 value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
+                onChange={(e) => updateFilters({ keyword: e.target.value })}
               />
               {keyword && (
                 <button
                   type="button"
-                  onClick={() => setKeyword('')}
+                  onClick={() => updateFilters({ keyword: '' })}
                   className="absolute right-2.5 top-2 text-xs text-ink-faint hover:text-ink"
                 >
                   ✕
@@ -502,8 +604,7 @@ function DashboardContent() {
               value={`${sortBy}-${sortOrder}`}
               onChange={(e) => {
                 const [b, o] = e.target.value.split('-') as [SortBy, 'asc' | 'desc'];
-                setSortBy(b);
-                setSortOrder(o);
+                updateFilters({ sortBy: b, sortOrder: o });
               }}
             >
               <option value="score-desc">评分 ↓ (最高优先)</option>
@@ -537,7 +638,7 @@ function DashboardContent() {
                 <button
                   key={v}
                   type="button"
-                  onClick={() => setView(v)}
+                  onClick={() => updateFilters({ view: v })}
                   aria-pressed={view === v}
                   className={`seg-item !py-1 !text-xs ${view === v ? 'active' : ''}`}
                 >
@@ -554,7 +655,7 @@ function DashboardContent() {
             <select
               className="select !h-8 !py-1 !text-xs !w-auto"
               value={sectorFilter}
-              onChange={(e) => setSectorFilter(e.target.value)}
+              onChange={(e) => updateFilters({ sector: e.target.value })}
             >
               <option value="">全部赛道</option>
               {sectors.map((s) => (
@@ -567,7 +668,7 @@ function DashboardContent() {
             <select
               className="select !h-8 !py-1 !text-xs !w-auto"
               value={stageFilter}
-              onChange={(e) => setStageFilter(e.target.value)}
+              onChange={(e) => updateFilters({ stage: e.target.value })}
             >
               <option value="">全部阶段</option>
               {stages.map((s) => (
@@ -586,7 +687,7 @@ function DashboardContent() {
                 max="100"
                 placeholder="≥0"
                 value={minScore}
-                onChange={(e) => setMinScore(e.target.value)}
+                onChange={(e) => updateFilters({ minScore: e.target.value })}
                 aria-label="最低分"
               />
             </div>
@@ -596,9 +697,22 @@ function DashboardContent() {
                 type="checkbox"
                 className="rounded border-line text-farm focus:ring-farm/30"
                 checked={hideIgnore}
-                onChange={(e) => setHideIgnore(e.target.checked)}
+                onChange={(e) => updateFilters({ hideIgnore: e.target.checked })}
               />
               隐藏「忽略」
+            </label>
+
+            <label
+              className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition"
+              title="默认排除带高危结构化信号的项目：永续/衍生品协议（is_perp）或多季积分（points_season_count≥2）—— PUA 高发区。取消勾选即可找回"
+            >
+              <input
+                type="checkbox"
+                className="rounded border-line text-amber-500 focus:ring-amber-500/30"
+                checked={hideHighRisk}
+                onChange={(e) => updateFilters({ hideHighRisk: e.target.checked, ...(e.target.checked ? { highRiskSignalsOnly: false } : {}) })}
+              />
+              隐藏永续盘/多季
             </label>
 
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition">
@@ -606,7 +720,7 @@ function DashboardContent() {
                 type="checkbox"
                 className="rounded border-line text-ink-muted focus:ring-ink-muted/30"
                 checked={showSkipped}
-                onChange={(e) => setShowSkipped(e.target.checked)}
+                onChange={(e) => updateFilters({ showSkipped: e.target.checked })}
               />
               显示不参与
             </label>
@@ -614,6 +728,24 @@ function DashboardContent() {
 
           <div className="flex items-center gap-3 text-ink-faint font-mono text-[11px] ml-auto">
             <span>显示 {filtered.length} / 共 {projects.length} 项</span>
+            {hideHighRisk && stats.highRiskSignals > 0 ? (
+              <span className="text-amber-400">已隐藏永续盘/多季 {stats.highRiskSignals}</span>
+            ) : null}
+            {hasRememberedPrefs ? (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-emerald-500 dark:text-emerald-400"
+                title={`已跨会话记住 ${rememberedFilters.length} 项筛选偏好（刷新/下次打开仍生效）：${rememberedFilters.map((pair: [string, string]) => pair[0]).join('、')}。恢复默认将同时清除。`}
+              >
+                ✓ 已记住偏好
+                <button
+                  type="button"
+                  onClick={resetFiltersToDefault}
+                  className="font-semibold underline decoration-dotted underline-offset-2 hover:text-ink transition"
+                >
+                  恢复默认
+                </button>
+              </span>
+            ) : null}
             {truncated && <span className="text-watch">超过上限</span>}
           </div>
         </div>
@@ -633,12 +765,12 @@ function DashboardContent() {
           action={
             projects.length === 0 ? (
               curatedOnly ? (
-                <button type="button" className="btn-primary" onClick={() => setCuratedOnly(false)}>查看全部实时项目</button>
+                <button type="button" className="btn-primary" onClick={() => updateFilters({ curatedOnly: false })}>查看全部实时项目</button>
               ) : (
                 <button type="button" className="btn-primary" onClick={runPipeline} disabled={running}>▶ 开始采集评分</button>
               )
             ) : (
-              <button type="button" className="btn-secondary" onClick={() => { setLabelFilter(''); setSectorFilter(''); setStageFilter(''); setMinScore(''); setKeyword(''); setHideIgnore(false); setHasFundingOnly(false); setZeroCostOnly(false); setNeedsVerifyOnly(false); setExplicitAirdropOnly(false); }}>清除筛选</button>
+              <button type="button" className="btn-secondary" onClick={() => updateFilters(defaultDashboardFilters())}>清除筛选</button>
             )
           }
         />
@@ -718,7 +850,7 @@ function DashboardContent() {
                   <button
                     key={l}
                     type="button"
-                    onClick={() => setLabelFilter((cur) => (cur === l ? '' : l))}
+                    onClick={() => updateFilters({ label: labelFilter === l ? '' : l })}
                     className={`transition ${labelFilter === l ? 'scale-105 ring-2 ring-farm' : 'opacity-85 hover:opacity-100'}`}
                   >
                     <LabelBadge label={l} />
