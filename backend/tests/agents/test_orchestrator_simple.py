@@ -14,6 +14,17 @@ from app.agents.orchestrator_simple import SimpleOrchestrator, run_orchestrator
 from app.models import RunResponse
 
 
+# 显式建库：orchestrator 的 DB 回退路径直连 DB_PATH 但本文件不 init_db()，
+# 过去依赖 conftest pytest_configure 的会话级兑底侥幸通过；全新 checkout /
+# CI runner 上单跑必红（no such table）。改为显式 autouse fixture 幂等建库。
+@pytest.fixture(autouse=True)
+def _ensure_db_schema():
+    """显式幂等建库（不删库、不清数据）；详见上方注释。"""
+    from app.db import init_db
+
+    init_db()
+
+
 @pytest.fixture
 def sample_projects():
     """Sample projects for testing."""

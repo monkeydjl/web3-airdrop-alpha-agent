@@ -7,6 +7,21 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.auth import hash_password, verify_password
+
+# 显式建库：此文件的用例直连 DB_PATH 但自身不 init_db()，过去依赖
+# conftest pytest_configure 的会话级兜底（主仓库 data/test.db 的历史残留
+# schema）侥幸通过；全新 checkout / CI runner 上单跑必红（no such table）。
+# 现改为模块内显式 autouse fixture 幂等建库，消除对兜底的隐式依赖。
+
+
+@pytest.fixture(autouse=True)
+def _ensure_db_schema():
+    """显式幂等建库（不删库、不清数据）；详见文件头注释。"""
+    from app.db import init_db
+
+    init_db()
+
+
 from app.db import get_connection
 from app.repositories.api_key import ApiKeyRepository
 from app.repositories.user import UserRepository

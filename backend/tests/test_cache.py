@@ -17,6 +17,17 @@ from app.cache import (
 )
 
 
+# 显式建库：TestRepositoryIntegration 直连 DB_PATH 但本文件不 init_db()，过去
+# 依赖 conftest pytest_configure 的会话级兑底侥幸通过；全新 checkout / CI
+# runner 上单跑必红（no such table）。改为显式 autouse fixture 幂等建库。
+@pytest.fixture(autouse=True)
+def _ensure_db_schema():
+    """显式幂等建库（不删库、不清数据）；详见上方注释。"""
+    from app.db import init_db
+
+    init_db()
+
+
 @pytest.fixture(autouse=True)
 def clean_cache():
     """每个测试前重置全局缓存单例。"""

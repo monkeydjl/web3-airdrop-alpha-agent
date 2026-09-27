@@ -160,7 +160,7 @@ def tmp_path(request):
 # 串行（master）进程也要保证 schema 存在：不少用例（如 test_daily_briefing）
 # 直连 DB_PATH 却从不 init_db()，过去靠仓库里历史残留的 data/test.db 带着
 # 旧 schema 侥幸通过——全新 checkout / CI runner 上首个串行用例必红
-#（no such table）。串行路径不删库（保留既有行为与跨运行残留数据），
+# （no such table）。串行路径不删库（保留既有行为与跨运行残留数据），
 # 只做幂等 init_db() 补齐缺失表。
 def pytest_configure(config):
     from app.db import init_db
