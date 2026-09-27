@@ -630,6 +630,27 @@ def init_db(conn: sqlite3.Connection) -> None:
 > `with self.conn_factory() as conn:`，lifespan 退出后共享连接已被关闭，
 > 经济栈全部失效。verifier 17.1.26 的 `close_s == 1` 断言捕获了它。
 
+### 13.4 测试数据纪律（建库与播种）
+
+测试文件对默认库（`DB_PATH`）的使用由 `scripts/check_test_db_bootstrap.py`
+守卫拦在 CI lint 阶段（与 §13.3 守卫同位），两条规则：
+
+- **规则一（schema 来源）**：直连 `DB_PATH`（`from app.db/app.repository import`
+  等）的测试文件必须有自救建库路径（`init_db` / `create_app` / `from app.main
+  import app` / 自建 `CREATE TABLE` / `:memory:`）。缺者加文件内显式 autouse
+  fixture 幂等 `init_db()`（参考 `tests/test_daily_briefing.py` 文件头注释）。
+- **规则二（数据来源）**：直连默认库且含 `SELECT...FROM` 表读的文件必须有
+  同文件自播种路径（SQL INSERT / repository 导入 / `client.post` 等 API 写）
+  或自管库重定向（monkeypatch `settings.db_path` 到 tmp_path / `:memory:`）。
+  直读不播种意味着全新空库上要么读空集红、要么依赖其他文件留下的行
+  （跨文件顺序耦合，xdist 随机红的同源问题）。
+
+豁免登记规范（脚本内 `WHITELIST` / `READS_DEFAULT_DB_WHITELIST`）：
+豁免是例外不是惯例，登记必须附理由注释；新增豁免前先跑对应文件于
+全新空库验证行为，确认豁免理由成立。已知边界：经 service 层间接使用
+默认库的文件静态不可见，依赖逐文件空库酸测人工覆盖（2026-09-28 已全量
+过一遍：34 灰区 + 5 探针类共 39 文件全新空库全绿）。
+
 ---
 
 ## 14. Prometheus 指标命名
