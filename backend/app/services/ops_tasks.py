@@ -22,7 +22,7 @@ from app.services.defillama_raises import (
     fetch_protocol_funding,
     match_protocol_slug,
 )
-from app.services.project_signals import funding_public_view, parse_meta
+from app.services.project_signals import funding_public_view, parse_meta, signals_of
 from app.services.viability_gate import (
     LOW_FUNDING_UNVIABLE,
     RUNWAY_DEPLETED,
@@ -150,7 +150,7 @@ async def sync_database_defillama_raises(
                     "synced_at": now.isoformat(),
                 }
 
-                signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+                signals = signals_of(meta)
                 old_viability = meta.get("viability_tier") or "unknown"
                 viability_eval = evaluate_project_viability(
                     funding_total_usd=new_amount,
@@ -257,7 +257,7 @@ def audit_database_viability(*, apply_changes: bool = False) -> dict[str, Any]:
                 )
 
                 meta = parse_meta(p.get("meta"))
-                signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+                signals = signals_of(meta)
                 funding = funding_public_view(meta)
 
                 funding_total_usd = signals.get("funding_total_usd") or funding.get("funding_total_usd")

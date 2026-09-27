@@ -21,7 +21,7 @@ import structlog
 from app.agents.base import PipelineState
 from app.db import dict_from_row, get_connection, is_postgres, scalar
 from app.opportunity.economic_evidence import replay_economic_snapshots_for_project
-from app.services.project_signals import curation_reasons, merge_meta, parse_meta
+from app.services.project_signals import curation_reasons, merge_meta, parse_meta, signals_of
 from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
@@ -42,7 +42,7 @@ def _sub_scores_json(state: PipelineState) -> str | None:
 def is_zero_cost_opportunity(record: dict[str, Any]) -> bool:
     """判断项目是否为零资金成本 / 纯测试网高性价比机会。"""
     meta = parse_meta(record.get("meta"))
-    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+    signals = signals_of(meta)
 
     has_testnet = bool(signals.get("has_testnet") or str(record.get("stage") or "").lower() == "testnet")
     if not has_testnet:
@@ -743,17 +743,13 @@ class ProjectRepository:
                 if effective_skip_user == DEFAULT_USER
                 else "AND ps.user_id = ?"
             )
-            skip_join = (
-                "LEFT JOIN project_skips ps ON ps.project_id = projects.id " + join_scope
-            )
+            skip_join = "LEFT JOIN project_skips ps ON ps.project_id = projects.id " + join_scope
             wl_scope = (
                 "AND (wl.user_id = ? OR wl.user_id IS NULL)"
                 if effective_skip_user == DEFAULT_USER
                 else "AND wl.user_id = ?"
             )
-            wl_join = (
-                "LEFT JOIN watchlist wl ON wl.project_id = projects.id " + wl_scope
-            )
+            wl_join = "LEFT JOIN watchlist wl ON wl.project_id = projects.id " + wl_scope
             skip_params = [effective_skip_user]
             wl_params = [effective_skip_user]
 
@@ -785,7 +781,7 @@ class ProjectRepository:
                     rec["label"] = p_res["persona_label"]
 
                 if sort_by == "score":
-                    reverse = (sort_order.lower() == "desc")
+                    reverse = sort_order.lower() == "desc"
                     all_records.sort(
                         key=lambda x: (
                             float(x.get("score") or 0.0),
@@ -795,10 +791,10 @@ class ProjectRepository:
                         reverse=reverse,
                     )
                 elif sort_by == "name":
-                    reverse = (sort_order.lower() == "desc")
+                    reverse = sort_order.lower() == "desc"
                     all_records.sort(key=lambda x: str(x.get("name") or "").lower(), reverse=reverse)
                 elif sort_by == "created_at":
-                    reverse = (sort_order.lower() == "desc")
+                    reverse = sort_order.lower() == "desc"
                     all_records.sort(key=lambda x: str(x.get("created_at") or ""), reverse=reverse)
 
                 offset = (page - 1) * page_size

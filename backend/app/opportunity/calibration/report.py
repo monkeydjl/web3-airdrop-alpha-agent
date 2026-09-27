@@ -87,18 +87,6 @@ def canonical_report_json(report: Mapping[str, Any]) -> bytes:
     return _canonical_bytes(report)
 
 
-def _project_probability_records(records: Sequence[BinaryObservation]) -> tuple[BinaryObservation, ...]:
-    groups = dict(_group_by_project(records))
-    return tuple(
-        BinaryObservation(
-            project,
-            sum(item.predicted for item in items) / len(items),
-            round(sum(item.actual for item in items) / len(items)),
-        )
-        for project, items in sorted(groups.items())
-    )
-
-
 def _project_numeric_records(records: Sequence[NumericObservation]) -> tuple[NumericObservation, ...]:
     groups = dict(_group_by_project(records))
     return tuple(

@@ -47,6 +47,12 @@ SIGNAL_KEYS = (
     "funding_lead_investors",
     "funding_tier",
     "funding_quality",
+    # 结构化 Anti-PUA 输入（app.opportunity.evidence 消费）。
+    # 取代旧的 description/sector 文本匹配："s3x 含 s3"、"perplexity 含 perp"
+    # 这类子串误判从根上消除。读取方对脏类型/缺失一律回退保守默认档。
+    "points_season_count",
+    "tge_clarity",
+    "is_perp",
 )
 
 
@@ -60,6 +66,16 @@ def parse_meta(raw: Any) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (TypeError, json.JSONDecodeError):
         return {}
+
+
+def signals_of(meta: Any) -> dict[str, Any]:
+    """安全取 meta["signals"]，非 dict（脏数据）时回空 dict。
+
+    独立 helper 而非内联三目：``meta.get("signals") if isinstance(meta.get("signals"), dict)``
+    里的两次 get 是独立表达式，isinstance 收窄不了第一次的结果（mypy union-attr）。
+    """
+    signals = meta.get("signals") if isinstance(meta, dict) else None
+    return signals if isinstance(signals, dict) else {}
 
 
 def signals_from_project(project: RawProject) -> dict[str, Any]:

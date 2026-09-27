@@ -14,7 +14,7 @@ import structlog
 
 from app.db import connection_scope, dict_from_row
 from app.repository import is_zero_cost_opportunity
-from app.services.project_signals import funding_public_view, parse_meta
+from app.services.project_signals import funding_public_view, parse_meta, signals_of
 
 logger = structlog.get_logger(__name__)
 
@@ -48,16 +48,6 @@ def generate_alpha_digest(
         rows = cursor.fetchall()
     now = datetime.now(UTC)
     date_str = now.strftime("%Y-%m-%d")
-
-    cursor = conn.execute(
-        """
-        SELECT id, name, sector, stage, score, label, reason, sub_scores, meta, updated_at
-        FROM projects
-        WHERE (source != 'historical_backfill' OR source IS NULL)
-        ORDER BY score DESC
-        """
-    )
-    rows = cursor.fetchall()
 
     all_projects: list[dict[str, Any]] = []
     farm_projects: list[dict[str, Any]] = []
@@ -93,11 +83,7 @@ def generate_alpha_digest(
     total_scanned = len(all_projects)
     total_farm = len([p for p in all_projects if p.get("label") == "FARM"])
     total_zero_cost = len(zero_cost_projects)
-    avg_top_score = (
-        round(sum(float(p.get("score") or 0) for p in top_picks) / len(top_picks), 1)
-        if top_picks
-        else 0.0
-    )
+    avg_top_score = round(sum(float(p.get("score") or 0) for p in top_picks) / len(top_picks), 1) if top_picks else 0.0
 
     top_sectors_sorted = sorted(sector_counts.items(), key=lambda x: x[1], reverse=True)[:5]
 
@@ -134,70 +120,80 @@ def generate_alpha_digest(
         meta = parse_meta(p.get("meta"))
         funding = funding_public_view(meta)
         amount = funding.get("funding_total_usd") or 0.0
-        amount_str = f"${amount/1e6:,.1f}M" if amount >= 1e6 else (f"${amount/1e3:,.0f}K" if amount > 0 else "未知")
+        amount_str = f"${amount / 1e6:,.1f}M" if amount >= 1e6 else (f"${amount / 1e3:,.0f}K" if amount > 0 else "未知")
         tier = funding.get("funding_tier") or "unknown"
         tier_str = "Tier-1 顶级" if tier == "tier1" else ("Tier-2 知名" if tier == "tier2" else "常规/早期")
         v_tier = meta.get("viability_tier") or "viable"
         v_str = "稳健充足" if v_tier == "viable" else ("跑道观察" if v_tier == "borderline" else "存活预警")
-        lines.append(f"| **{name}** | `{sector}` | `{stage}` | **{score}** | `{label}` | {amount_str} | {tier_str} | {v_str} |")
+        lines.append(
+            f"| **{name}** | `{sector}` | `{stage}` | **{score}** | `{label}` | {amount_str} | {tier_str} | {v_str} |"
+        )
 
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## 3. 🛡️ 零资金成本测试网优先专区 (Zero-Cost Opportunities)",
-        "",
-        "以下项目处于测试网或极早期阶段，**无需质押沉淀大额资金**，依托测试网水龙头即可完成交互，性价比与 ROI 风险比极佳：",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 3. 🛡️ 零资金成本测试网优先专区 (Zero-Cost Opportunities)",
+            "",
+            "以下项目处于测试网或极早期阶段，**无需质押沉淀大额资金**，依托测试网水龙头即可完成交互，性价比与 ROI 风险比极佳：",
+            "",
+        ]
+    )
 
     for p in zero_cost_projects[:8]:
         name = p.get("name") or f"Project #{p['id']}"
         sector = p.get("sector") or "infra"
         score = round(float(p.get("score") or 0), 1)
         meta = parse_meta(p.get("meta"))
-        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+        signals = signals_of(meta)
         has_faucet = bool(signals.get("has_faucet") or "faucet" in str(meta))
         lines.append(
             f"- **{name}** (`{sector}` · 评分: {score})："
             f" 阶段: `{p.get('stage')}` | 水龙头支持: {'✅ 已集成' if has_faucet else '⚠️ 需公共水龙头'} | 建议: 保持每周 1-2 次低频交互打卡。"
         )
 
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## 4. ⚠️ 防 PUA 疲劳指数与风险避坑雷达 (Risk & Friction Warning)",
-        "",
-        "基于链上真实融资、跑道存活率硬门禁与代码活跃度检测，以下特征项目建议**严格控制精力分配与资金磨损**：",
-        "",
-        "1. **纯积分盘且无大额融资背书 (Unbacked Points Machine)**：杜绝参与以积分任务为幌子却无 Tier-1/Tier-2 机构注资的项目，避免被长期 PUA。",
-        "2. **跑道耗尽停摆 (Runway Depleted)**：公开融资发生于 18 个月以上且 GitHub 活跃度低于 60 天的项目，极大概率存在团队资金链断裂风险。",
-        "3. **高摩擦重资金锁仓 (Heavy Capital Friction)**：无明显代币经济学刺激的借贷锁仓，资金占用成本远高于空投预期 ROI。",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 4. ⚠️ 防 PUA 疲劳指数与风险避坑雷达 (Risk & Friction Warning)",
+            "",
+            "基于链上真实融资、跑道存活率硬门禁与代码活跃度检测，以下特征项目建议**严格控制精力分配与资金磨损**：",
+            "",
+            "1. **纯积分盘且无大额融资背书 (Unbacked Points Machine)**：杜绝参与以积分任务为幌子却无 Tier-1/Tier-2 机构注资的项目，避免被长期 PUA。",
+            "2. **跑道耗尽停摆 (Runway Depleted)**：公开融资发生于 18 个月以上且 GitHub 活跃度低于 60 天的项目，极大概率存在团队资金链断裂风险。",
+            "3. **高摩擦重资金锁仓 (Heavy Capital Friction)**：无明显代币经济学刺激的借贷锁仓，资金占用成本远高于空投预期 ROI。",
+            "",
+        ]
+    )
 
     if pua_warning_projects:
-        lines.append(f"> 🚨 当前全库共有 **{len(pua_warning_projects)}** 个项目被标记为存活率低或跑道耗尽预警，系统已自动对其执行标签降级保护。")
+        lines.append(
+            f"> 🚨 当前全库共有 **{len(pua_warning_projects)}** 个项目被标记为存活率低或跑道耗尽预警，系统已自动对其执行标签降级保护。"
+        )
     else:
         lines.append("> ✅ 当前监控范围内未发现大面积资金盘跑道异常。")
 
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## 5. 💼 多钱包防女巫操作守则与资金配置建议",
-        "",
-        "对于准备多钱包参与的高确定性项目，请严格遵循系统建议的防女巫隔离原则：",
-        "",
-        "1. **资金链路物理隔离**：绝对禁止钱包间直接转账（A → B），提币充币必须通过不同 CEX 子账户或隐私跨链中继；",
-        "2. **时间维度离散化**：各钱包交互时间应错开 2~48 小时，严禁使用批量脚本同区块或同分钟执行；",
-        "3. **行为轨迹差异化**：交互路径与金额随机化（避免每个钱包均做一模一样金额的 Swap/Mint）；",
-        "4. **IP 与运行环境隔离**：不同钱包使用独立指纹浏览器环境或分散代理节点。",
-        "",
-        "---",
-        f"*报告生成时间：{now.isoformat()} · Web3 Airdrop Alpha Agent System*",
-    ])
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 5. 💼 多钱包防女巫操作守则与资金配置建议",
+            "",
+            "对于准备多钱包参与的高确定性项目，请严格遵循系统建议的防女巫隔离原则：",
+            "",
+            "1. **资金链路物理隔离**：绝对禁止钱包间直接转账（A → B），提币充币必须通过不同 CEX 子账户或隐私跨链中继；",
+            "2. **时间维度离散化**：各钱包交互时间应错开 2~48 小时，严禁使用批量脚本同区块或同分钟执行；",
+            "3. **行为轨迹差异化**：交互路径与金额随机化（避免每个钱包均做一模一样金额的 Swap/Mint）；",
+            "4. **IP 与运行环境隔离**：不同钱包使用独立指纹浏览器环境或分散代理节点。",
+            "",
+            "---",
+            f"*报告生成时间：{now.isoformat()} · Web3 Airdrop Alpha Agent System*",
+        ]
+    )
 
     markdown_text = "\n".join(lines)
 

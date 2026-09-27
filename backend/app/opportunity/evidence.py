@@ -1,4 +1,3 @@
-import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from math import isfinite
@@ -9,11 +8,11 @@ from app.opportunity.models import (
     EvidenceRecord,
     MoneyRange,
     OpportunityInputs,
-    OpportunityProfile,
     ProbabilityRange,
     RiskLevel,
     RiskSet,
 )
+from app.services.project_signals import parse_meta
 
 SOURCE_GRADE_WEIGHT = {"A": 1.0, "B": 0.8, "C": 0.5, "D": 0.2, "U": 0.0}
 
@@ -124,19 +123,6 @@ def independent_count(records: list[EvidenceRecord], minimum_grade: str) -> int:
             and record.verification_status in {"verified", "partially_verified"}
         }
     )
-
-
-def _legacy_signals(project_row: Mapping[str, Any]) -> Mapping[str, Any]:
-    meta = project_row.get("meta")
-    if isinstance(meta, str):
-        try:
-            meta = json.loads(meta)
-        except (TypeError, ValueError):
-            return {}
-    if not isinstance(meta, Mapping):
-        return {}
-    signals = meta.get("signals")
-    return signals if isinstance(signals, Mapping) else {}
 
 
 def _range_value(
@@ -444,6 +430,9 @@ def _without_validly_superseded_blockers(records: list[EvidenceRecord], now: dat
     return active
 
 
+# 口径注：与 resolve_factor 的 verified-only 不同，本函数的输入含
+# partially_verified 记录（同组内混入 partial 只会让 "all True" 更难成立，
+# 保守方向），这是刻意的宽入口 + 严出口设计。
 def _current_airdrop_support(
     records: list[tuple[EvidenceRecord, Any]],
     conflicted_factors: set[str],
@@ -462,14 +451,47 @@ def _current_airdrop_support(
     return support
 
 
+# fatigue/friction 结构化信号的读取器：键在 services.project_signals.SIGNAL_KEYS
+# 登记，存储侧由 merge_meta 写入 projects.meta["signals"]。读取只信类型正确的
+# 值——脏类型视为"未观测"，回退到保守默认档，与字段缺失等价（永不抛错）。
+def _structured_signals(project_row: Mapping[str, Any]) -> dict[str, Any]:
+    meta = project_row.get("meta")
+    if isinstance(meta, str):
+        meta = parse_meta(meta)
+    if not isinstance(meta, Mapping):
+        return {}
+    signals = meta.get("signals")
+    if not isinstance(signals, Mapping):
+        return {}
+    return dict(signals)
+
+
+def _signal_season_count(signals: Mapping[str, Any]) -> int:
+    value = signals.get("points_season_count")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 1
+    return min(value, 10)
+
+
+def _signal_tge_clarity(signals: Mapping[str, Any]) -> str:
+    value = signals.get("tge_clarity")
+    if isinstance(value, str) and value in {"confirmed_quarter", "vague_soon", "unannounced"}:
+        return value
+    return "unannounced"
+
+
+def _signal_is_perp(signals: Mapping[str, Any]) -> bool:
+    value = signals.get("is_perp")
+    return isinstance(value, bool) and value
+
+
 def build_inputs(
     project_row: Mapping[str, Any],
     evidence: list[EvidenceRecord],
-    profile: OpportunityProfile,
     now: datetime | None = None,
 ) -> OpportunityInputs:
-    del profile
-    _legacy_signals(project_row)
+    # project_row 的 legacy meta/signals 刻意不参与推断：输入只能来自证据记录
+    # （契约由 test_legacy_signals_never_create_complete_or_quantified_inputs 钉住）。
     project_id = str(project_row["id"])
     current_time = now or datetime.now(UTC)
     supporting = []
@@ -584,18 +606,14 @@ def build_inputs(
     from app.services.viability_gate import evaluate_project_viability
 
     has_points = bool(project_row.get("has_points_program"))
-    desc = (str(project_row.get("description") or "") + " " + str(project_row.get("sector") or "")).lower()
-    season_count = 1
-    if "season 3" in desc or "s3" in desc:
-        season_count = 3
-    elif "season 2" in desc or "s2" in desc:
-        season_count = 2
-
-    tge_clarity = "unannounced"
-    if project_row.get("explicit_airdrop_mention"):
-        tge_clarity = "confirmed_quarter"
-
-    is_perp = any(k in desc for k in ("perp", "derivative", "perpetual"))
+    # fatigue/friction 的结构化输入走 meta["signals"]（services.project_signals 的
+    # SIGNAL_KEYS 词表），不再对 description/sector 做文本匹配——"s3x 含 s3"、
+    # "perplexity 含 perp" 这类子串误判从根上消除。读取只经 _structured_signals
+    # 统一校验：脏类型一律视为"未观测"，回退到保守默认档，与缺失等价。
+    signals = _structured_signals(project_row)
+    season_count = _signal_season_count(signals)
+    tge_clarity = _signal_tge_clarity(signals)
+    is_perp = _signal_is_perp(signals)
     hard_cost_val = normalized.get("hard_cost_usd")
     hard_cost_base = hard_cost_val.base if hard_cost_val else None
     cap_risk_val = normalized.get("capital_at_risk_usd")
@@ -608,12 +626,16 @@ def build_inputs(
         is_perp=is_perp,
     )
 
-    fatigue_idx = calculate_fatigue_index(
-        duration_months=6.0 if has_points else 1.0,
-        season_count=season_count,
-        tge_transparency=tge_clarity,
-        lockup_days=30 if is_perp else 0,
-    ) if has_points else 0.10
+    fatigue_idx = (
+        calculate_fatigue_index(
+            duration_months=6.0 if has_points else 1.0,
+            season_count=season_count,
+            tge_transparency=tge_clarity,
+            lockup_days=30 if is_perp else 0,
+        )
+        if has_points
+        else 0.10
+    )
 
     exit_adv = evaluate_exit_advisory(
         github_inactive_days=project_row.get("github_recent_push_days"),

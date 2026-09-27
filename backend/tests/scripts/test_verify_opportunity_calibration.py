@@ -14,6 +14,24 @@ verifier = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verifier)
 
 
+@pytest.fixture(autouse=True)
+def _fast_bootstrap(monkeypatch):
+    """把 bootstrap 重采样降到 20 次以加速 verifier 双跑。
+
+    run_verification 每个用例要完整跑两遍报告管线（稳定性校验），生产默认
+    BOOTSTRAP_REPLICATES=1000 时单用例 ~26s，本文件 9 个用例烧 ~4 分钟
+    （pytest --durations 2026-09-24 实测）。被测对象是 verifier 的契约
+    （SQL 只读、metadata 一致、隐私脱敏），不是重采样统计本身；
+    tests/opportunity/test_calibration_report.py 已有同样的降速先例。
+    """
+    from app.opportunity import calibration as calibration_pkg
+
+    monkeypatch.setattr(calibration_pkg, "BOOTSTRAP_REPLICATES", 20)
+    import app.opportunity.calibration.report as report_module
+
+    monkeypatch.setattr(report_module, "BOOTSTRAP_REPLICATES", 20)
+
+
 def _configure_database(tmp_path, monkeypatch):
     database = tmp_path / "calibration.sqlite3"
     monkeypatch.setattr(verifier.settings, "database_url", None)

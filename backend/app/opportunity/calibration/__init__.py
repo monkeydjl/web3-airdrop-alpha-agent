@@ -16,9 +16,16 @@ from .models import (
     RangeValue,
 )
 from .outcomes import map_outcomes, maturity_state
-from .report import build_calibration_report, canonical_report_json, render_markdown, write_report_pair
+from .report import (
+    BOOTSTRAP_REPLICATES,
+    build_calibration_report,
+    canonical_report_json,
+    render_markdown,
+    write_report_pair,
+)
 
 __all__ = [
+    "BOOTSTRAP_REPLICATES",
     "BinaryObservation",
     "CalibrationDataset",
     "CalibrationSample",

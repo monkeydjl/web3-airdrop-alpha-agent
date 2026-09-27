@@ -93,6 +93,14 @@ class RawProject:
     roadmap_delivery: str = "unknown"  # "aligned" | "partial" | "unclear" | "unknown"
     sybil_friction: str = "unknown"  # "high" | "medium" | "low" | "unknown"
 
+    # v2.0 结构化 Anti-PUA 信号（app.opportunity.evidence 消费）。
+    # 取代 opportunity 侧对 description/sector 的文本匹配：采集时一次推断,
+    # 读取方只信类型正确的值,脏类型/缺失回退保守默认档。推断词表唯一
+    # 来源是 services.structured_signals（与存量回填脚本同源,防两套漂移）。
+    points_season_count: int | None = None  # 积分季数;None = 未观测
+    tge_clarity: str = "unannounced"  # confirmed_quarter | vague_soon | unannounced
+    is_perp: bool = False  # 永续合约/衍生品协议
+
     # v1.4 funding quality (RootData / CryptoRank / manual)
     funding_total_usd: float | None = None
     funding_rounds: int = 0
@@ -142,6 +150,9 @@ class RawProject:
             "source_count": self.source_count,
             "roadmap_delivery": self.roadmap_delivery,
             "sybil_friction": self.sybil_friction,
+            "points_season_count": self.points_season_count,
+            "tge_clarity": self.tge_clarity,
+            "is_perp": self.is_perp,
             "funding_total_usd": self.funding_total_usd,
             "funding_rounds": self.funding_rounds,
             "funding_last_date": self.funding_last_date,

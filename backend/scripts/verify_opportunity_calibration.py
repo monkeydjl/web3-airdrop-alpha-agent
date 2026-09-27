@@ -23,6 +23,7 @@ from app.opportunity.calibration import (
     load_calibration_dataset,
     render_markdown,
 )
+from app.opportunity.calibration import report as _report_module
 
 MODEL_VERSION = "opportunity-v2.0"
 PROFILE_VERSION = "low-cost-curated-multiwallet-v1"
@@ -274,7 +275,9 @@ def _assert_report_contract(
         "as_of": as_of.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "windows": [90, 180],
         "bootstrap_seed": 20260717,
-        "bootstrap_replicates": 1000,
+        # 调用时读 report 模块的运行时属性（测试会把重采样降速，
+        # from-import 会把导入期的值冻结成 1000 导致契约自相矛盾）。
+        "bootstrap_replicates": _report_module.BOOTSTRAP_REPLICATES,
         "database_backend": backend_name(),
         "report_id": report["metadata"]["report_id"],
     }

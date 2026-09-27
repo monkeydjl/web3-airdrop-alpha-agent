@@ -11,6 +11,8 @@ import json
 from enum import StrEnum
 from typing import Any
 
+from app.services.project_signals import signals_of
+
 
 class HunterPersonaId(StrEnum):
     BALANCED = "balanced"
@@ -147,10 +149,11 @@ def _extract_signals_and_funding(project_record: dict[str, Any]) -> tuple[dict[s
         except (ValueError, TypeError):
             meta = {}
 
-    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
-    funding = meta.get("funding") if isinstance(meta.get("funding"), dict) else {}
+    signals = signals_of(meta)
+    funding = meta.get("funding") if isinstance(meta, dict) and isinstance(meta.get("funding"), dict) else {}
     if not funding:
-        funding = project_record.get("funding") if isinstance(project_record.get("funding"), dict) else {}
+        pf = project_record.get("funding")
+        funding = pf if isinstance(pf, dict) else {}
 
     return signals, funding
 
@@ -264,7 +267,7 @@ def calculate_persona_score(
             bonus -= 6.0
             reasons.append("叙事热度过峰进入平缓期")
 
-    final_score = int(round(min(100.0, max(0.0, weighted_score + bonus))))
+    final_score = round(min(100.0, max(0.0, weighted_score + bonus)))
 
     # 根据重算后的分数推导标签
     if final_score >= 65:

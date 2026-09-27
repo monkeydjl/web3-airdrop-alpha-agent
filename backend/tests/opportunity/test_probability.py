@@ -55,7 +55,7 @@ def _record(
 
 def _derive(records: list[EvidenceRecord], *, inputs_records=None):
     normalized_records = records if inputs_records is None else inputs_records
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, normalized_records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, normalized_records)
     return derive_probability_inputs(inputs, records, DEFAULT_PROFILE)
 
 
@@ -174,7 +174,7 @@ def test_explicit_probability_ranges_are_preserved():
         _record("survival_probability", {"low": 0.31, "base": 0.42, "high": 0.53}),
         _record("multiwallet_policy", "forbidden"),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert derive_probability_inputs(inputs, records, DEFAULT_PROFILE) == (
         inputs.event_probability,
@@ -188,7 +188,7 @@ def test_future_evidence_cannot_derive_probabilities(temporal_field):
     now = datetime(2026, 7, 14, tzinfo=UTC)
     future = now + timedelta(seconds=1)
     record = _record("official_airdrop_statement", True).model_copy(update={temporal_field: future})
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE, now=now)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], now=now)
 
     assert derive_probability_inputs(inputs, [record], DEFAULT_PROFILE, now=now) == (
         None,
@@ -203,7 +203,7 @@ def test_future_evidence_cannot_derive_probabilities(temporal_field):
 )
 def test_explicit_range_is_not_trusted_when_omitted_from_current_evidence(factor):
     record = _record(factor, {"low": 0.2, "base": 0.4, "high": 0.6})
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record])
 
     result = derive_probability_inputs(inputs, [], DEFAULT_PROFILE)
 
@@ -217,7 +217,7 @@ def test_explicit_range_is_not_trusted_when_omitted_from_current_evidence(factor
 def test_explicit_range_is_not_trusted_when_current_evidence_is_revoked(factor):
     active = _record(factor, {"low": 0.2, "base": 0.4, "high": 0.6})
     revoked = active.model_copy(update={"verification_status": "invalidated"})
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [active], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [active])
 
     result = derive_probability_inputs(inputs, [revoked], DEFAULT_PROFILE)
 
@@ -235,7 +235,7 @@ def test_explicit_ranges_reject_estimated_and_assumed_provenance(factor, observa
         {"low": 0.2, "base": 0.4, "high": 0.6},
         observation_type=observation_type,
     )
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record])
     result = derive_probability_inputs(inputs, [record], DEFAULT_PROFILE)
     assert result[{"event_probability": 0, "eligibility_probability": 1, "survival_probability": 2}[factor]] is None
 
@@ -247,7 +247,7 @@ def test_explicit_ranges_accept_observed_and_derived_provenance(observation_type
         {"low": 0.2, "base": 0.4, "high": 0.6},
         observation_type=observation_type,
     )
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record])
     event, _, _ = derive_probability_inputs(inputs, [record], DEFAULT_PROFILE)
     assert event == ProbabilityRange(low=0.2, base=0.4, high=0.6)
 
@@ -345,7 +345,7 @@ def test_legacy_no_token_funding_task_and_narrative_never_derive_event():
             '{"signals":{"no_token_yet":true,"funding_million":100,"has_task_portal":true,"narrative_heat":"high"}}'
         ),
     }
-    inputs = build_inputs(row, [], DEFAULT_PROFILE)
+    inputs = build_inputs(row, [])
     event, _, _ = derive_probability_inputs(inputs, [], DEFAULT_PROFILE)
     assert event is None
 
@@ -590,7 +590,7 @@ def test_explicit_event_range_requires_matching_project_even_with_accepted_id(
         {"low": 0.2, "base": 0.4, "high": 0.6},
         evidence_id="event",
     )
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own])
     foreign = own.model_copy(update={"project_id": foreign_project})
 
     event, _, _ = derive_probability_inputs(inputs, [foreign], DEFAULT_PROFILE)
@@ -601,7 +601,7 @@ def test_explicit_event_range_requires_matching_project_even_with_accepted_id(
 @pytest.mark.parametrize("foreign_project", ["p2", None], ids=["other-project", "missing-project"])
 def test_derived_event_requires_matching_project_even_with_accepted_id(foreign_project):
     own = _record("official_airdrop_statement", True, evidence_id="basis")
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own])
     foreign = own.model_copy(update={"project_id": foreign_project})
 
     event, _, _ = derive_probability_inputs(inputs, [foreign], DEFAULT_PROFILE)
@@ -620,7 +620,7 @@ def test_eligibility_requires_matching_project_even_with_accepted_ids(foreign_pr
         ),
         _record("eligibility_mechanism", "deterministic", evidence_id="mechanism"),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, own, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, own)
     foreign = [record.model_copy(update={"project_id": foreign_project}) for record in own]
 
     _, eligibility, _ = derive_probability_inputs(inputs, foreign, DEFAULT_PROFILE)
@@ -631,7 +631,7 @@ def test_eligibility_requires_matching_project_even_with_accepted_ids(foreign_pr
 @pytest.mark.parametrize("foreign_project", ["p2", None], ids=["other-project", "missing-project"])
 def test_survival_requires_matching_project_even_with_accepted_id(foreign_project):
     own = _record("multiwallet_policy", "allowed", evidence_id="policy")
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [own])
     foreign = own.model_copy(update={"project_id": foreign_project})
 
     _, _, survival = derive_probability_inputs(inputs, [foreign], DEFAULT_PROFILE)
@@ -641,7 +641,7 @@ def test_survival_requires_matching_project_even_with_accepted_id(foreign_projec
 
 def test_survival_derivation_requires_id_gated_policy_evidence():
     policy = _record("multiwallet_policy", "allowed", evidence_id="policy")
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [policy], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [policy])
 
     _, _, survival = derive_probability_inputs(inputs, [], DEFAULT_PROFILE)
 

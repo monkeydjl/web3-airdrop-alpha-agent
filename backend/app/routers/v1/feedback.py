@@ -21,7 +21,7 @@ from app.auth import ROLE_ADMIN, get_current_user
 from app.config import settings
 from app.db import connection_scope, dict_from_row, insert_returning_id
 from app.metrics import record_feedback
-from app.services.project_signals import parse_meta
+from app.services.project_signals import parse_meta, signals_of
 from app.services.user_scope import DEFAULT_USER, build_user_scope_filter, owned_project_ids, owned_project_ids_where
 
 logger = structlog.get_logger(__name__)
@@ -171,9 +171,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
             if request.signal == "wrong_label" and request.note:
                 norm_note = request.note.strip().upper()
                 if norm_note in ("FARM", "WATCH", "IGNORE"):
-                    row = conn.execute(
-                        "SELECT * FROM projects WHERE id = ?", (request.project_id,)
-                    ).fetchone()
+                    row = conn.execute("SELECT * FROM projects WHERE id = ?", (request.project_id,)).fetchone()
                     if row:
                         row_dict = dict_from_row(row)
                         target_label = norm_note
@@ -182,16 +180,12 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                         if target_label == "FARM":
                             new_veto = None
                         elif target_label == "WATCH":
-                            new_veto = (
-                                "verified_no_path"
-                                if current_veto == "no_participation_path"
-                                else current_veto
-                            )
+                            new_veto = "verified_no_path" if current_veto == "no_participation_path" else current_veto
                         else:  # IGNORE
                             new_veto = None
 
                         meta = parse_meta(row_dict.get("meta"))
-                        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+                        signals = signals_of(meta)
                         if target_label == "FARM":
                             signals["has_points_program"] = True
                             signals["manual_verified_path"] = True
@@ -287,9 +281,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                         updated_veto = new_veto
 
             if request.outcome == "airdropped":
-                row = conn.execute(
-                    "SELECT * FROM projects WHERE id = ?", (request.project_id,)
-                ).fetchone()
+                row = conn.execute("SELECT * FROM projects WHERE id = ?", (request.project_id,)).fetchone()
                 if row:
                     row_dict = dict_from_row(row)
                     meta = parse_meta(row_dict.get("meta"))
@@ -298,7 +290,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                     meta_json = json.dumps(meta, ensure_ascii=False)
 
                     raw_reason = row_dict.get("reason")
-                    reasons_list: list[str] = []
+                    reasons_list = []  # 类型已在同函数上方标注，重复标注触发 no-redef
                     if raw_reason:
                         try:
                             parsed = json.loads(raw_reason)
@@ -416,9 +408,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
             # 同步更新项目状态：复盘确认已空投的项目自动沉淀为 ended + already_launched
             for item in request.items:
                 if item.outcome == "airdropped":
-                    row = conn.execute(
-                        "SELECT * FROM projects WHERE id = ?", (item.project_id,)
-                    ).fetchone()
+                    row = conn.execute("SELECT * FROM projects WHERE id = ?", (item.project_id,)).fetchone()
                     if row:
                         row_dict = dict_from_row(row)
                         meta = parse_meta(row_dict.get("meta"))

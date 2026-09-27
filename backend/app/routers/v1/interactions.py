@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.auth import ROLE_ADMIN, get_current_user
 from app.db import connection_scope, dict_from_row, scalar
 from app.repository import ProjectRepository
-from app.services.project_signals import parse_meta
+from app.services.project_signals import parse_meta, signals_of
 from app.services.user_scope import build_user_scope_filter
 
 logger = structlog.get_logger(__name__)
@@ -476,7 +476,7 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
             if proj_row:
                 p_dict = dict_from_row(proj_row)
                 p_meta = parse_meta(p_dict.get("meta"))
-                p_signals = p_meta.get("signals") if isinstance(p_meta.get("signals"), dict) else {}
+                p_signals = signals_of(p_meta)
                 p_signals["has_interaction"] = True
                 p_signals["interaction_count"] = int(p_signals.get("interaction_count") or 0) + 1
 

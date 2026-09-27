@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
+from app.services.project_signals import signals_of
 
 DIMENSIONS = [
     {"key": "narrative", "name": "叙事热度", "description": "赛道风口契合度与行业讨论度"},
@@ -62,7 +63,7 @@ def compare_projects(project_ids: list[str]) -> dict[str, Any]:
     for p in projects:
         sub = _safe_json_loads(p.get("sub_scores"))
         meta = _safe_json_loads(p.get("meta"))
-        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+        signals = signals_of(meta)
 
         # 8 维计算
         narrative_val = float(sub.get("narrative") or 70.0)

@@ -9,7 +9,6 @@ from pydantic import ValidationError
 from app.db import init_db
 from app.opportunity.evidence import build_inputs
 from app.opportunity.models import DecisionStatus, EvidenceRecord
-from app.opportunity.profile import DEFAULT_PROFILE
 from app.opportunity.repository import OpportunityRepository
 from app.opportunity.service import OpportunityService, _build_confidence, _freshness_score
 from app.repository import ProjectRepository
@@ -494,7 +493,7 @@ def test_context_closes_owned_opportunity_repository(monkeypatch):
 
 
 def _confidence_for(records):
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE, now=NOW)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, now=NOW)
     return _build_confidence(inputs, records, NOW)
 
 

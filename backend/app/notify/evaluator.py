@@ -222,27 +222,50 @@ def _digest_event(new_projects: list[dict[str, Any]], now: datetime) -> NotifyEv
 
 
 def _exit_advisories_today(conn: Any, window_start: str) -> list[dict[str, Any]]:
-    """寻找在今日窗口内暴露出严重恶化（官网离线或开发停更）的项目。"""
+    """寻找在今日窗口内暴露出严重恶化（官网离线或开发停更）的项目。
+
+    site_alive / github_recent_push_days 并非 projects 表列，而是 vitals 与
+    采集器写入 ``meta.signals`` JSON 的信号（vitals.probe 只经
+    ``update_meta_signals`` 落 meta）。这里从 meta JSON 里读：先在 SQL 粗筛
+    updated_at 窗口，再逐行解析 signals 做精确判定。
+    """
     sql = """
-        SELECT id, name, site_alive, github_recent_push_days
+        SELECT id, name, meta, updated_at
         FROM projects
-        WHERE (site_alive = 0 OR github_recent_push_days >= 60)
+        WHERE (meta LIKE '%"site_alive": false%' OR meta LIKE '%"site_alive\": 0%'
+               OR meta LIKE '%github_recent_push_days%')
           AND updated_at >= ?
     """
     rows = conn.execute(sql, (window_start,)).fetchall()
+    candidates: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            meta = json.loads(_row_value(r, "meta") or "{}")
+        except (TypeError, ValueError):
+            continue
+        signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+        if not signals:
+            continue
+        if signals.get("site_alive") is False or (
+            isinstance(signals.get("github_recent_push_days"), int) and signals["github_recent_push_days"] >= 60
+        ):
+            candidates.append({"id": _row_value(r, "id"), "name": _row_value(r, "name"), **signals})
+    rows = candidates
     results = []
     for r in rows:
         reasons = []
-        if _row_value(r, "site_alive") == 0:
+        if r.get("site_alive") is False or r.get("site_alive") == 0:
             reasons.append("核心官网/交互门户失联")
-        if (_row_value(r, "github_recent_push_days") or 0) >= 60:
+        if isinstance(r.get("github_recent_push_days"), int) and r["github_recent_push_days"] >= 60:
             reasons.append("代码连续 60 天无更新")
         if reasons:
-            results.append({
-                "project_id": str(_row_value(r, "id")),
-                "project_name": _row_value(r, "name"),
-                "reasons": reasons,
-            })
+            results.append(
+                {
+                    "project_id": str(_row_value(r, "id")),
+                    "project_name": _row_value(r, "name"),
+                    "reasons": reasons,
+                }
+            )
     return results
 
 

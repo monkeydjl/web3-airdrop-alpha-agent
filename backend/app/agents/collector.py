@@ -180,6 +180,9 @@ class CollectorAgent(BaseAgent):
             "source_count": int(ext.get("source_count") or 1),
             "roadmap_delivery": ext.get("roadmap_delivery") or "unknown",
             "sybil_friction": ext.get("sybil_friction") or "unknown",
+            "points_season_count": ext.get("points_season_count"),
+            "tge_clarity": ext.get("tge_clarity") or "unannounced",
+            "is_perp": bool(ext.get("is_perp", False)),
             "funding_total_usd": ext.get("funding_total_usd"),
             "funding_rounds": int(ext.get("funding_rounds") or 0),
             "funding_last_date": ext.get("funding_last_date"),
@@ -464,6 +467,26 @@ class CollectorAgent(BaseAgent):
         # source_count filled at merge time; single-source default 1
         source_count = int(raw_data.get("source_count") or 1)
 
+        # ── v2.0 结构化 Anti-PUA 信号（app.opportunity.evidence 消费）──
+        # 推断词表唯一来源是 services.structured_signals（与存量回填脚本同源）。
+        # 显式字段优先；缺失时：is_perp 高置信直接写 True；tge 仅 confirmed
+        # 有可靠词形；season 低置信不自动写（与回填脚本的审核清单策略一致）。
+        from app.services.structured_signals import extract_is_perp, extract_tge_clarity
+
+        sector_text = str(raw_data.get("sector") or "")
+        description_text = str(raw_data.get("description") or raw_data.get("about") or "")
+        is_perp = bool(raw_data.get("is_perp")) or extract_is_perp(sector_text, description_text)
+        raw_tge = raw_data.get("tge_clarity")
+        if isinstance(raw_tge, str) and raw_tge in ("confirmed_quarter", "vague_soon", "unannounced"):
+            tge_clarity = raw_tge
+        else:
+            tge_clarity = extract_tge_clarity(f"{sector_text} {description_text}".lower()) or "unannounced"
+        raw_season = raw_data.get("points_season_count")
+        if isinstance(raw_season, int) and not isinstance(raw_season, bool) and 1 <= raw_season <= 10:
+            points_season_count: int | None = raw_season
+        else:
+            points_season_count = None  # 低置信：文本推断的季数不自动采信
+
         # Funding quality (RootData / CryptoRank / manual)
         from app.services.funding import extract_funding_from_raw
 
@@ -494,6 +517,9 @@ class CollectorAgent(BaseAgent):
             "source_count": source_count,
             "roadmap_delivery": roadmap_delivery,
             "sybil_friction": sybil_friction,
+            "points_season_count": points_season_count,
+            "tge_clarity": tge_clarity,
+            "is_perp": is_perp,
             "funding_total_usd": funding.get("funding_total_usd"),
             "funding_rounds": int(funding.get("funding_rounds") or 0),
             "funding_last_date": funding.get("funding_last_date"),
@@ -583,6 +609,9 @@ class CollectorAgent(BaseAgent):
                     ),
                     roadmap_delivery=str(merged.get("roadmap_delivery") or "unknown"),
                     sybil_friction=str(merged.get("sybil_friction") or "unknown"),
+                    points_season_count=merged.get("points_season_count"),
+                    tge_clarity=str(merged.get("tge_clarity") or "unannounced"),
+                    is_perp=bool(merged.get("is_perp", False)),
                     funding_total_usd=merged.get("funding_total_usd"),
                     funding_rounds=int(merged.get("funding_rounds") or 0),
                     funding_last_date=merged.get("funding_last_date"),

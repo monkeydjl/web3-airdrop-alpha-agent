@@ -13,7 +13,6 @@ from app.opportunity.evidence import (
     usable,
 )
 from app.opportunity.models import EvidenceRecord, RiskLevel
-from app.opportunity.profile import DEFAULT_PROFILE
 
 EXPECTED_FACTOR_KEYS = {
     "official_identity",
@@ -110,7 +109,7 @@ def test_explicit_decision_facts_are_populated_from_current_verified_evidence():
         _record("weekly_maintenance_hours", 3, evidence_id="weekly"),
     ]
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert inputs.participation_open is True
     assert inputs.task_path_known is True
@@ -140,7 +139,7 @@ def test_new_decision_facts_require_id_current_verified_direct_provenance(factor
         _record(factor, value, evidence_id="expired", expires_at="2020-01-01T00:00:00Z"),
     ]
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, invalid_records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, invalid_records)
 
     expected = "unknown" if factor in {"opportunity_timing", "profile_fit"} else None
     assert getattr(inputs, factor) == expected
@@ -153,7 +152,6 @@ def test_conflicting_explicit_decision_fact_remains_unknown():
             _record("project_active", True, evidence_id="active"),
             _record("project_active", False, evidence_id="inactive"),
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.project_active is None
@@ -161,11 +159,10 @@ def test_conflicting_explicit_decision_fact_remains_unknown():
 
 @pytest.mark.parametrize("factor", ["safety_blocked", "integrity_blocked"])
 def test_missing_or_unresolved_blocker_evidence_is_unknown(factor):
-    missing = build_inputs({"id": "p1", "meta": "{}"}, [], DEFAULT_PROFILE)
+    missing = build_inputs({"id": "p1", "meta": "{}"}, [])
     unresolved = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record(factor, False, evidence_id="conflicted", status="conflicted")],
-        DEFAULT_PROFILE,
     )
 
     assert getattr(missing, factor) is None
@@ -179,7 +176,6 @@ def test_verified_false_blocker_evidence_clears_unknown(factor):
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record(factor, False, evidence_id="verified-false")],
-        DEFAULT_PROFILE,
     )
 
     assert getattr(inputs, factor) is False
@@ -187,16 +183,14 @@ def test_verified_false_blocker_evidence_clears_unknown(factor):
 
 
 def test_official_identity_is_explicit_tri_state_and_false_safety_blocks():
-    missing = build_inputs({"id": "p1", "meta": "{}"}, [], DEFAULT_PROFILE)
+    missing = build_inputs({"id": "p1", "meta": "{}"}, [])
     verified = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record("official_identity", True, evidence_id="identity-true")],
-        DEFAULT_PROFILE,
     )
     rejected = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record("official_identity", False, evidence_id="identity-false")],
-        DEFAULT_PROFILE,
     )
 
     assert "official_identity" in missing.critical_unknowns
@@ -213,7 +207,6 @@ def test_any_current_verified_true_blocker_wins_over_false_conflict(factor):
             _record(factor, False, grade="A", evidence_id="false"),
             _record(factor, True, grade="B", evidence_id="true"),
         ],
-        DEFAULT_PROFILE,
     )
 
     assert getattr(inputs, factor) is True
@@ -234,7 +227,6 @@ def test_indirect_blocker_evidence_cannot_block_or_clear(factor, observation_typ
                 observation_type=observation_type,
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert getattr(inputs, factor) is None
@@ -263,7 +255,6 @@ def test_weekly_time_confirmation_requires_direct_current_grade_b_evidence(obser
                 observation_type=observation_type,
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.weekly_maintenance_hours == 3
@@ -289,7 +280,7 @@ def test_weekly_time_confirmation_requires_direct_current_grade_b_evidence(obser
     ],
 )
 def test_non_current_weekly_time_cannot_be_confirmed(record):
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record])
 
     assert inputs.weekly_time_confirmed_minimum is False
 
@@ -318,7 +309,6 @@ def test_false_a_grade_airdrop_basis_does_not_count_or_clear_unknown(factor):
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record(factor, False, grade="A", evidence_id=f"false-{factor}")],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.official_airdrop_evidence_count_a == 0
@@ -350,7 +340,7 @@ def test_only_affirmative_independent_airdrop_records_count_as_support():
             evidence_id="negative-points",
         ),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert inputs.official_airdrop_evidence_count_a == 0
     assert inputs.independent_airdrop_evidence_count_b == 1
@@ -375,7 +365,7 @@ def test_newer_false_restores_unknown_unless_an_independent_affirmative_remains(
             observed_at="2026-07-13T00:00:00Z",
         ),
     ]
-    restored = build_inputs({"id": "p1", "meta": "{}"}, superseded, DEFAULT_PROFILE)
+    restored = build_inputs({"id": "p1", "meta": "{}"}, superseded)
     supported = build_inputs(
         {"id": "p1", "meta": "{}"},
         [
@@ -389,7 +379,6 @@ def test_newer_false_restores_unknown_unless_an_independent_affirmative_remains(
                 observed_at="2026-07-11T00:00:00Z",
             ),
         ],
-        DEFAULT_PROFILE,
     )
 
     assert restored.official_airdrop_evidence_count_a == 0
@@ -415,7 +404,7 @@ def test_idless_evidence_cannot_set_clear_count_or_enter_audit():
             evidence_id=None,
         ),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert set(inputs.critical_unknowns) == CRITICAL_KEYS
     assert inputs.official_multiwallet_policy == "unknown"
@@ -486,7 +475,7 @@ def test_future_evidence_cannot_affect_inputs_or_audit_ids(temporal_field):
         _record("project_quality", 90, evidence_id="future-confidence", **{temporal_field: future}),
     ]
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE, now=now)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, now=now)
 
     assert inputs.safety_blocked is None
     assert inputs.official_airdrop_evidence_count_a == 0
@@ -514,7 +503,7 @@ def test_future_supersession_cannot_clear_current_blocker(temporal_field):
         **timestamps,
     ).model_copy(update={"supersedes_evidence_id": active.evidence_id})
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [active, future_clear], DEFAULT_PROFILE, now=now)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [active, future_clear], now=now)
 
     assert inputs.safety_blocked is True
     assert inputs.evidence_ids == ("active-blocker",)
@@ -530,7 +519,7 @@ def test_legacy_signals_never_create_complete_or_quantified_inputs():
             '"free_to_participate":true}}'
         ),
     }
-    inputs = build_inputs(row, [], DEFAULT_PROFILE)
+    inputs = build_inputs(row, [])
     assert set(inputs.critical_unknowns) == CRITICAL_KEYS
     assert inputs.event_probability is None
     assert inputs.eligibility_probability is None
@@ -545,7 +534,7 @@ def test_legacy_signals_never_create_complete_or_quantified_inputs():
 
 def test_malformed_or_non_object_legacy_meta_is_ignored():
     for meta in ("not-json", "[]", None, {"signals": [True]}):
-        inputs = build_inputs({"id": "p1", "meta": meta}, [], DEFAULT_PROFILE)
+        inputs = build_inputs({"id": "p1", "meta": meta}, [])
         assert set(inputs.critical_unknowns) == CRITICAL_KEYS
 
 
@@ -578,7 +567,7 @@ def test_same_grade_contradictory_active_evidence_is_unresolved_despite_timestam
             expires_at="2020-01-01T00:00:00Z",
         ),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
     assert inputs.official_multiwallet_policy == "unknown"
     assert "multiwallet_policy" in inputs.critical_unknowns
     assert inputs.evidence_ids == ("new-partial", "new-verified", "old")
@@ -588,7 +577,6 @@ def test_verified_forbidden_policy_is_preserved():
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record("multiwallet_policy", "forbidden", evidence_id="policy")],
-        DEFAULT_PROFILE,
     )
     assert inputs.official_multiwallet_policy == "forbidden"
 
@@ -625,7 +613,7 @@ def test_explicit_ranges_and_scalar_factors_are_normalized():
         _record("integrity_blocked", False, evidence_id="integrity"),
         _record("safety_blocked", False, evidence_id="safety"),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, complete, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, complete)
     assert inputs.critical_unknowns == ()
     assert inputs.event_probability.model_dump() == {"low": 0.4, "base": 0.6, "high": 0.8}
     assert inputs.hard_cost_usd.model_dump() == {"low": 1.0, "base": 2.0, "high": 3.0}
@@ -669,7 +657,6 @@ def test_malformed_factor_evidence_is_ignored(factor, value, value_type):
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record(factor, value, evidence_id="malformed", value_type=value_type)],
-        DEFAULT_PROFILE,
     )
     assert inputs.evidence_ids == ()
     assert set(inputs.critical_unknowns) == CRITICAL_KEYS
@@ -697,7 +684,6 @@ def test_range_members_require_exact_finite_numbers(factor, invalid_member):
                 value_type="range",
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.evidence_ids == ()
@@ -714,7 +700,6 @@ def test_oversized_integer_range_member_is_ignored_and_preserves_unknown():
                 value_type="range",
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.hard_cost_usd is None
@@ -733,7 +718,6 @@ def test_oversized_integer_scalar_is_ignored_and_preserves_unknown():
                 value_type="number",
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.weekly_maintenance_hours is None
@@ -755,7 +739,6 @@ def test_documented_eligibility_mechanisms_are_retained(mechanism):
                 evidence_id=f"mechanism-{mechanism}",
             )
         ],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.evidence_ids == (f"mechanism-{mechanism}",)
@@ -765,7 +748,6 @@ def test_undocumented_points_eligibility_mechanism_is_rejected():
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record("eligibility_mechanism", "points", evidence_id="undocumented")],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.evidence_ids == ()
@@ -775,7 +757,6 @@ def test_unknown_factor_is_not_consumed_or_retained_for_audit():
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [_record("magic_score", 100, evidence_id="unsupported")],
-        DEFAULT_PROFILE,
     )
     assert inputs.evidence_ids == ()
     assert set(inputs.critical_unknowns) == CRITICAL_KEYS
@@ -789,7 +770,7 @@ def test_only_present_evidence_ids_are_sorted_and_deduplicated():
         _record("hard_cost_usd", {"low": 0, "base": 0, "high": 0}, evidence_id=None),
         _record("safety_blocked", False, evidence_id="bad", status="conflicted"),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
     assert inputs.evidence_ids == ("a", "z")
 
 
@@ -833,7 +814,7 @@ def test_build_inputs_ignores_other_and_missing_project_evidence_everywhere():
         ),
     ]
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert inputs.event_probability is None
     assert inputs.official_multiwallet_policy == "unknown"
@@ -843,7 +824,7 @@ def test_build_inputs_ignores_other_and_missing_project_evidence_everywhere():
 
 
 def test_sparse_inputs_keep_unknown_risks_explicit():
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [])
     assert set(inputs.confidence.model_dump().values()) == {0.0}
     assert set(inputs.risks.model_dump().values()) == {None}
 
@@ -863,7 +844,7 @@ def test_equal_instant_conflicting_values_are_unusable_across_offsets():
             observed_at="2026-07-14T08:00:00+08:00",
         ),
     ]
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, records)
 
     assert inputs.official_multiwallet_policy == "unknown"
     assert "multiwallet_policy" in inputs.critical_unknowns
@@ -885,8 +866,8 @@ def test_equal_instant_identical_values_choose_smallest_id_deterministically():
             observed_at="2026-07-14T00:00:00Z",
         ),
     ]
-    forward = build_inputs({"id": "p1", "meta": "{}"}, records, DEFAULT_PROFILE)
-    reverse = build_inputs({"id": "p1", "meta": "{}"}, list(reversed(records)), DEFAULT_PROFILE)
+    forward = build_inputs({"id": "p1", "meta": "{}"}, records)
+    reverse = build_inputs({"id": "p1", "meta": "{}"}, list(reversed(records)))
 
     assert forward.official_multiwallet_policy == "allowed"
     assert reverse == forward
@@ -1038,7 +1019,7 @@ def test_a_grade_false_remediation_supersedes_true_blocker_append_only():
         observed_at="2026-07-15T00:00:00Z",
     ).model_copy(update={"supersedes_evidence_id": "blocker"})
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, remediation], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, remediation])
 
     assert inputs.safety_blocked is False
 
@@ -1061,7 +1042,6 @@ def test_true_confirmation_then_strong_false_clears_entire_active_lineage():
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [original, confirmation, remediation],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.safety_blocked is False
@@ -1084,7 +1064,7 @@ def test_weak_false_chain_tip_leaves_latest_true_confirmation_active():
         observed_at="2026-07-14T02:00:00Z",
     ).model_copy(update={"supersedes_evidence_id": "confirmation"})
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, confirmation, weak], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, confirmation, weak])
 
     assert inputs.safety_blocked is True
     assert "confirmation" in inputs.evidence_ids
@@ -1108,7 +1088,6 @@ def test_branching_lineage_stays_blocked_while_any_active_tip_is_true():
     inputs = build_inputs(
         {"id": "p1", "meta": "{}"},
         [original, cleared_branch, confirmed_branch],
-        DEFAULT_PROFILE,
     )
 
     assert inputs.safety_blocked is True
@@ -1129,7 +1108,7 @@ def test_backdated_supersession_edge_is_ignored_conservatively():
         observed_at="2026-07-14T01:00:00Z",
     ).model_copy(update={"supersedes_evidence_id": "blocker"})
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [blocker, backdated], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [blocker, backdated])
 
     assert inputs.safety_blocked is True
 
@@ -1149,7 +1128,7 @@ def test_weak_or_non_false_remediation_cannot_clear_blocker(updates):
         update={"supersedes_evidence_id": "blocker", **updates}
     )
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, remediation], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [original, remediation])
 
     assert inputs.safety_blocked is True
 
@@ -1162,7 +1141,7 @@ def test_circular_supersession_is_conservative():
         update={"supersedes_evidence_id": "first"}
     )
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [first, second], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [first, second])
 
     assert inputs.safety_blocked is None
     assert set(inputs.evidence_ids) == {"first", "second"}
@@ -1174,7 +1153,7 @@ def test_cycle_containing_true_blocker_remains_blocked_conservatively():
         update={"supersedes_evidence_id": "first"}
     )
 
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [first, second], DEFAULT_PROFILE)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [first, second])
 
     assert inputs.safety_blocked is True
 
@@ -1190,7 +1169,7 @@ def test_expiry_equal_to_now_is_unusable_everywhere():
     )
 
     resolution = resolve_factor([record], "participation_open", now)
-    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], DEFAULT_PROFILE, now=now)
+    inputs = build_inputs({"id": "p1", "meta": "{}"}, [record], now=now)
 
     assert resolution.record is None
     assert inputs.participation_open is None
@@ -1238,3 +1217,123 @@ def test_resolution_reports_superseded_and_unresolved_consistency():
     assert superseded.consistency == 0.5
     assert unresolved.record is None
     assert unresolved.consistency == 0.0
+
+
+# ── fatigue/friction 结构化信号（取代 description/sector 文本匹配）──────────
+
+
+def test_structured_signals_replace_text_heuristics():
+    """season/tge/perp 走 meta.signals 结构化字段,不再做文本匹配。
+
+    旧实现对 description 做子串匹配："s3x" 会被 "s3" 命中、
+    "perplexity" 会被 "perp" 命中——新实现下这些词完全无关。
+    """
+    row = {
+        "id": "p1",
+        "has_points_program": True,
+        "description": "an s3x protocol with perplexity search about derivative data",
+        "sector": "s3 tools",
+        "meta": '{"signals":{"points_season_count":3,"tge_clarity":"confirmed_quarter","is_perp":true}}',
+    }
+    inputs = build_inputs(row, [])
+
+    # 三个信号全部来自结构化字段并被采信（season=3→0.90 档,锁仓 30 天）
+    assert inputs.fatigue_index is not None and inputs.fatigue_index > 0.5
+    assert inputs.capital_friction_tier == "heavy_capital"
+
+
+def test_deceptive_text_without_structured_signals_stays_conservative():
+    """文本里出现 season/perp 字样但无结构化信号时,一律按保守默认档。"""
+    row = {
+        "id": "p1",
+        "has_points_program": True,
+        "description": "season 3 of our s3 incentives, perpetual futures dex",
+        "sector": "perp-dex",
+        "meta": "{}",
+    }
+    inputs = build_inputs(row, [])
+
+    # season_count 回退 1、tge 回退 unannounced、is_perp 回退 False:
+    # fatigue 只有 duration/tge 两个基础分量,显著低于多季 + 无 TGE 的水平
+    conservative = build_inputs({"id": "p1", "has_points_program": True, "meta": "{}"}, [])
+    assert inputs.fatigue_index == conservative.fatigue_index
+    # is_perp 回退 False,无成本证据且无 testnet → zero_cost 兜底档
+    assert inputs.capital_friction_tier == "zero_cost"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_season"),
+    [
+        ('{"signals":{"points_season_count":2}}', 2),
+        ('{"signals":{"points_season_count":10}}', 10),
+        ('{"signals":{"points_season_count":99}}', 10),  # 上限钳制
+        ('{"signals":{"points_season_count":0}}', 1),
+        ('{"signals":{"points_season_count":-1}}', 1),
+        ('{"signals":{"points_season_count":true}}', 1),  # bool 是 int 子类,必须拒绝
+        ('{"signals":{"points_season_count":"3"}}', 1),
+        ('{"signals":{"points_season_count":2.5}}', 1),
+        ("{}", 1),
+    ],
+)
+def test_season_count_type_guards(raw, expected_season):
+    row = {"id": "p1", "has_points_program": True, "meta": raw}
+    inputs = build_inputs(row, [])
+    from app.services.anti_pua import calculate_fatigue_index
+
+    expected_fatigue = calculate_fatigue_index(
+        duration_months=6.0,
+        season_count=expected_season,
+        tge_transparency="unannounced",
+        lockup_days=0,
+    )
+    assert inputs.fatigue_index == expected_fatigue
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_tier"),
+    [
+        ('{"signals":{"is_perp":true,"points_season_count":1}}', "heavy_capital"),
+        ('{"signals":{"is_perp":false}}', "zero_cost"),
+        ('{"signals":{"is_perp":"yes"}}', "zero_cost"),  # 脏字符串拒绝
+        ('{"signals":{"is_perp":1}}', "zero_cost"),  # 数值拒绝(只认 bool)
+        ("{}", "zero_cost"),
+    ],
+)
+def test_is_perp_type_guards(raw, expected_tier):
+    row = {"id": "p1", "meta": raw}
+    inputs = build_inputs(row, [])
+    assert inputs.capital_friction_tier == expected_tier
+
+
+def test_tge_clarity_type_guards():
+    valid = build_inputs(
+        {"id": "p1", "has_points_program": True, "meta": '{"signals":{"tge_clarity":"vague_soon"}}'}, []
+    )
+    dirty = build_inputs({"id": "p1", "has_points_program": True, "meta": '{"signals":{"tge_clarity":"SOON!"}}'}, [])
+    default = build_inputs({"id": "p1", "has_points_program": True, "meta": "{}"}, [])
+
+    from app.services.anti_pua import calculate_fatigue_index
+
+    assert valid.fatigue_index == calculate_fatigue_index(
+        duration_months=6.0, season_count=1, tge_transparency="vague_soon", lockup_days=0
+    )
+    # 非法枚举值与缺失等价,都回退 unannounced
+    assert dirty.fatigue_index == default.fatigue_index
+
+
+def test_structured_signals_survive_dict_meta_and_malformed_json():
+    dict_meta = build_inputs(
+        {"id": "p1", "has_points_program": True, "meta": {"signals": {"points_season_count": 2}}}, []
+    )
+    via_json = build_inputs(
+        {"id": "p1", "has_points_program": True, "meta": '{"signals":{"points_season_count":2}}'}, []
+    )
+    assert dict_meta.fatigue_index == via_json.fatigue_index
+
+    malformed = build_inputs(
+        {"id": "p1", "has_points_program": True, "meta": "not-json{", "description": "season 2"}, []
+    )
+    assert (
+        malformed.fatigue_index
+        == build_inputs({"id": "p1", "has_points_program": True, "meta": "{}"}, []).fatigue_index
+    )

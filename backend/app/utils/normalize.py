@@ -332,7 +332,14 @@ _MERGE_SCALAR_BEST_KNOWN = (
     "funding_last_date",
     "roadmap_delivery",
     "sybil_friction",
+    # 结构化 Anti-PUA 信号（services.structured_signals 推断）。
+    # is_perp 高置信但 False 是"没看到"而非"看到了不是"——任一源看到 perp
+    # 证据就应生效，故走 bool OR（_MERGE_BOOL_OR）；tge_clarity 取最高置信档,
+    # season 取已知最大值,都按 best-known/语义各自处理（见下）。
 )
+
+# tge_clarity 置信档排序:合并时取"最确认"的档,而不是 primary 的档。
+_TGE_CLARITY_RANK = {"unannounced": 0, "vague_soon": 1, "confirmed_quarter": 2}
 _UNKNOWN_SCALARS = {None, "", "unknown", "none", "None"}
 
 
@@ -561,6 +568,27 @@ def merge_raw_records(
         best = _known_field_records(sorted_records, field, source_key)
         if best:
             merged[field] = best[0][field]
+
+    # 结构化 Anti-PUA 信号（services.structured_signals）:
+    # - is_perp:任一源判 True 即 True（与 has_* 同向:"没看到"不是证据）
+    # - tge_clarity:取置信最高的档（confirmed > vague > unannounced）
+    # - points_season_count:取已知最大季数（多源看到不同季数时,低估比高估糟）
+    merged["is_perp"] = any(bool(r.get("is_perp")) for r in sorted_records)
+    tge_ranks = [
+        _TGE_CLARITY_RANK[str(r.get("tge_clarity"))]
+        for r in sorted_records
+        if str(r.get("tge_clarity") or "") in _TGE_CLARITY_RANK
+    ]
+    if tge_ranks:
+        best_tge = max(tge_ranks)
+        merged["tge_clarity"] = next(k for k, v in _TGE_CLARITY_RANK.items() if v == best_tge)
+    seasons = [
+        r["points_season_count"]
+        for r in sorted_records
+        if isinstance(r.get("points_season_count"), int) and not isinstance(r.get("points_season_count"), bool)
+    ]
+    if seasons:
+        merged["points_season_count"] = max(seasons)
 
     # Merge discovery_score: take max
     scores = [r.get("discovery_score", 0.0) for r in sorted_records if r.get("discovery_score") is not None]

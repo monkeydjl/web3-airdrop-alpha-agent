@@ -102,7 +102,7 @@ class OpportunityService:
 
         project_id = str(row["id"])
         evidence = self.opportunity_repo.list_evidence(project_id)
-        inputs = build_inputs(row, evidence, self.profile, now=now)
+        inputs = build_inputs(row, evidence, now=now)
         confidence = _build_confidence(inputs, evidence, now)
         inputs = inputs.model_copy(update={"confidence": confidence})
 

@@ -13,14 +13,14 @@ from typing import Any, Literal
 FrictionTier = Literal["zero_cost", "low_cost", "medium_cost", "heavy_capital"]
 FatigueLevel = Literal["low", "medium", "high", "critical"]
 
-FATIGUE_LEVEL_ZH: dict[FatigueLevel, str] = {
+FATIGUE_LEVEL_ZH: dict[str, str] = {
     "low": "健康早期",
     "medium": "成熟观望",
     "high": "高疲劳预警",
     "critical": "严重 PUA 风险",
 }
 
-FRICTION_TIER_ZH: dict[FrictionTier, str] = {
+FRICTION_TIER_ZH: dict[str, str] = {
     "zero_cost": "零资金成本",
     "low_cost": "极低磨损",
     "medium_cost": "中度磨损",
@@ -106,9 +106,11 @@ def classify_capital_friction_tier(
     is_perp: bool = False,
 ) -> FrictionTier:
     """Classify capital friction into 4 tiers."""
-    if (capital_at_risk_usd is not None and capital_at_risk_usd >= 500) or (
-        hard_cost_usd is not None and hard_cost_usd >= 50
-    ) or is_perp:
+    if (
+        (capital_at_risk_usd is not None and capital_at_risk_usd >= 500)
+        or (hard_cost_usd is not None and hard_cost_usd >= 50)
+        or is_perp
+    ):
         return "heavy_capital"
 
     if (hard_cost_usd is not None and hard_cost_usd > 10) or (
@@ -116,12 +118,14 @@ def classify_capital_friction_tier(
     ):
         return "medium_cost"
 
-    if has_testnet and (capital_at_risk_usd is None or capital_at_risk_usd <= 5) and (hard_cost_usd is None or hard_cost_usd <= 5):
+    if (
+        has_testnet
+        and (capital_at_risk_usd is None or capital_at_risk_usd <= 5)
+        and (hard_cost_usd is None or hard_cost_usd <= 5)
+    ):
         return "zero_cost"
 
-    if (hard_cost_usd is not None and hard_cost_usd <= 10) or (
-        not has_testnet and hard_cost_usd is not None
-    ):
+    if (hard_cost_usd is not None and hard_cost_usd <= 10) or (not has_testnet and hard_cost_usd is not None):
         return "low_cost"
 
     # Default to zero_cost if pure testnet or minimal/unknown hard cost
@@ -159,11 +163,7 @@ def evaluate_exit_advisory(
         severity = "warning"
 
     reasons_zh = tuple(EXIT_REASON_ZH.get(r, r) for r in reasons)
-    recommendation_zh = (
-        "由于项目发展出现显著恶化/停摆迹象，建议立即赎回质押资产并停止交互。"
-        if active
-        else ""
-    )
+    recommendation_zh = "由于项目发展出现显著恶化/停摆迹象，建议立即赎回质押资产并停止交互。" if active else ""
 
     return {
         "active": active,

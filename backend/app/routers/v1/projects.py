@@ -117,11 +117,11 @@ def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
     sub_scores = _parse_json_field(project.get("sub_scores"))
     weight_version = project.get("weight_version")
 
-    from app.services.project_signals import funding_public_view, parse_meta
+    from app.services.project_signals import funding_public_view, parse_meta, signals_of
 
     meta = parse_meta(project.get("meta"))
     funding = funding_public_view(project.get("meta"))
-    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+    signals = signals_of(meta)
 
     return {
         "id": project["id"],
@@ -598,7 +598,6 @@ def get_project_dossier(
         ) from e
 
 
-
 @router.get(
     "/projects/{project_id}/multi-wallet-strategy",
     response_model=ProjectsResponse,
@@ -724,5 +723,3 @@ def get_project_signals_consensus(
         raise HTTPException(
             status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to get signals consensus"}
         ) from e
-
-
