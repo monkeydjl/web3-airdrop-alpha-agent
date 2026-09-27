@@ -59,6 +59,10 @@ jobs:
       - name: Connection hygiene guard
         run: python scripts/check_connection_hygiene.py
 
+      # 与 ci.yml 对齐：发布门禁不应比日常 CI 更松。
+      - name: Test DB bootstrap guard
+        run: python scripts/check_test_db_bootstrap.py
+
       - name: Run mypy (strict)
         run: mypy app --config-file pyproject.toml
 
