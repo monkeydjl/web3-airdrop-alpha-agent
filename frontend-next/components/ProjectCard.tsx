@@ -6,7 +6,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
-import { formatPct, hasExplicitAirdropSignal, reasonTone, reasonZh, sourceZh, stageZh, tierZh } from '@/lib/format';
+import {
+  formatPct,
+  hasExplicitAirdropSignal,
+  reasonTone,
+  reasonZh,
+  sourceZh,
+  stageZh,
+  structuredSignalBadges,
+  tierZh,
+} from '@/lib/format';
 import { ScriptForgeModal } from './ScriptForgeModal';
 import { SecuritySentinelModal } from './SecuritySentinelModal';
 import { AlphaDossierModal, type AlphaDossierData } from './AlphaDossierModal';
@@ -200,6 +209,15 @@ export function ProjectCard({
                   PUA预警
                 </span>
               ) : null}
+              {structuredSignalBadges(project.signals).map((b) => (
+                <span
+                  key={b.key}
+                  className={`badge text-[10px] font-medium ${b.badgeClass}`}
+                  title={b.hint}
+                >
+                  {b.text}
+                </span>
+              ))}
               {project.reason?.includes('EXIT_RECOMMENDED') ? (
                 <span
                   className="badge bg-red-500/20 text-red-400 border border-red-500/40 text-[10px] font-semibold animate-pulse"

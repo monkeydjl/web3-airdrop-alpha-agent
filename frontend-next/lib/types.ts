@@ -36,6 +36,9 @@ export interface Project {
   risk?: Record<string, unknown> | null;
   tokenomics?: Record<string, unknown> | null;
   funding?: FundingInfo | null;
+  /** meta.signals 展平视图。结构化 Anti-PUA 键：points_season_count (int 1..10 或缺省)、
+      tge_clarity (confirmed_quarter|vague_soon|unannounced)、is_perp (bool)。
+      展示层守卫见 lib/format.ts::structuredSignalRows。 */
   signals?: Record<string, unknown> | null;
   signal_consensus?: SignalConsensus | null;
   funding_note?: string | null;

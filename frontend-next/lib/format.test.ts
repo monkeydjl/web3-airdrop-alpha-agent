@@ -16,6 +16,10 @@ import {
   blockerCodeZh,
   severityZh,
   hasExplicitAirdropSignal,
+  structuredSignalRows,
+  structuredSignalBadges,
+  hasHighRiskStructuredSignal,
+  tgeClarityZh,
 } from './format.ts';
 
 describe('labelZh', () => {
@@ -59,6 +63,7 @@ describe('sourceZh', () => {
   it('覆盖新增的零成本免费公开源', () => {
     assert.equal(sourceZh('telegram'), 'Telegram 频道');
     assert.equal(sourceZh('farcaster'), 'Farcaster 社区');
+    assert.equal(sourceZh('github_curated'), 'GitHub 精选测试网');
   });
 
   it('覆盖常规数据源与种子导入', () => {
@@ -140,6 +145,144 @@ describe('hasExplicitAirdropSignal', () => {
     assert.equal(hasExplicitAirdropSignal({}), false);
     assert.equal(hasExplicitAirdropSignal({ reason: ['credible team', 'late narrative'] }), false);
     assert.equal(hasExplicitAirdropSignal({ signals: { explicit_airdrop_mention: false } }), false);
+  });
+});
+
+describe('structuredSignalRows & tgeClarityZh', () => {
+  it('三行固定顺序与键', () => {
+    const rows = structuredSignalRows({});
+    assert.deepEqual(
+      rows.map((r) => r.key),
+      ['points_season_count', 'tge_clarity', 'is_perp'],
+    );
+  });
+
+  it('空/脏 signals 全部未观测且永不抛错', () => {
+    for (const sig of [undefined, null, {}, { tge_clarity: 42 }, { points_season_count: '3' }, { is_perp: 'yes' }]) {
+      const rows = structuredSignalRows(sig as Record<string, unknown>);
+      assert.ok(rows.every((r) => !r.observed));
+      assert.ok(rows.every((r) => r.display === '未观测'));
+    }
+  });
+
+  it('观测值正确展示', () => {
+    const rows = structuredSignalRows({
+      points_season_count: 4,
+      tge_clarity: 'confirmed_quarter',
+      is_perp: true,
+    });
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+    const season = byKey.points_season_count;
+    const tge = byKey.tge_clarity;
+    const perp = byKey.is_perp;
+    assert.ok(season && tge && perp);
+    assert.equal(season.display, '4 季');
+    assert.equal(season.observed, true);
+    assert.equal(season.tone, 'watch');
+    assert.equal(tge.display, '已确认·季度锚定');
+    assert.equal(tge.tone, 'pos');
+    assert.equal(perp.display, '是');
+    assert.equal(perp.tone, 'watch');
+  });
+
+  it('is_perp=false 是观测而非未观测（与后端「False 是观测」契约一致）', () => {
+    const perp = structuredSignalRows({ is_perp: false }).find((r) => r.key === 'is_perp');
+    assert.ok(perp);
+    assert.equal(perp.observed, true);
+    assert.equal(perp.display, '否');
+    assert.equal(perp.tone, 'muted');
+  });
+
+  it('tge unannounced 是观测（后端默认档），脏枚举值按未观测处理', () => {
+    const announced = structuredSignalRows({ tge_clarity: 'unannounced' }).find(
+      (r) => r.key === 'tge_clarity',
+    );
+    assert.ok(announced);
+    assert.equal(announced.observed, true);
+    const dirty = structuredSignalRows({ tge_clarity: 'maybe_quarter' }).find(
+      (r) => r.key === 'tge_clarity',
+    );
+    assert.ok(dirty);
+    assert.equal(dirty.observed, false);
+  });
+
+  it('season 超出后端钳制范围按未观测处理', () => {
+    const season = structuredSignalRows({ points_season_count: 99 }).find(
+      (r) => r.key === 'points_season_count',
+    );
+    assert.ok(season);
+    assert.equal(season.observed, false);
+  });
+
+  it('tgeClarityZh 覆盖三档并透传未知值', () => {
+    assert.equal(tgeClarityZh('confirmed_quarter'), '已确认·季度锚定');
+    assert.equal(tgeClarityZh('vague_soon'), '模糊·仅称近期');
+    assert.equal(tgeClarityZh('unannounced'), '未公布');
+    assert.equal(tgeClarityZh('weird'), 'weird');
+    assert.equal(tgeClarityZh(null), '');
+  });
+});
+
+describe('structuredSignalBadges', () => {
+  it('空/脏/未观测不出任何角标', () => {
+    for (const sig of [
+      undefined,
+      null,
+      {},
+      { is_perp: false },
+      { tge_clarity: 'unannounced' },
+      { points_season_count: 1 },
+      { is_perp: 'yes' },
+      { points_season_count: 99 },
+    ]) {
+      assert.deepEqual(structuredSignalBadges(sig as Record<string, unknown>), []);
+    }
+  });
+
+  it('perp 与多季出角标且带口径说明', () => {
+    const badges = structuredSignalBadges({ is_perp: true, points_season_count: 4 });
+    assert.equal(badges.length, 2);
+    assert.ok(badges.every((b) => b.hint.includes('结构化信号')));
+    const texts = badges.map((b) => b.text);
+    assert.ok(texts.includes('永续盘'));
+    assert.ok(texts.includes('4 季积分'));
+  });
+
+  it('单季（=1，与默认档等价）与 vague tge 不出角标', () => {
+    assert.deepEqual(
+      structuredSignalBadges({ points_season_count: 1, tge_clarity: 'vague_soon' }),
+      [],
+    );
+  });
+
+  it('confirmed tge 出正向角标', () => {
+    const badges = structuredSignalBadges({ tge_clarity: 'confirmed_quarter' });
+    assert.equal(badges.length, 1);
+    assert.equal(badges[0]?.key, 'tge_clarity');
+    assert.equal(badges[0]?.text, 'TGE 已锚定');
+  });
+});
+
+describe('hasHighRiskStructuredSignal', () => {
+  it('与 structuredSignalBadges 的 watch 侧同口径：perp 或多季算高危', () => {
+    assert.equal(hasHighRiskStructuredSignal({ is_perp: true }), true);
+    assert.equal(hasHighRiskStructuredSignal({ points_season_count: 2 }), true);
+    assert.equal(hasHighRiskStructuredSignal({ points_season_count: 10 }), true);
+    assert.equal(hasHighRiskStructuredSignal({ is_perp: true, points_season_count: 3 }), true);
+  });
+
+  it('非高危/未观测/脏类型返回 false', () => {
+    assert.equal(hasHighRiskStructuredSignal(undefined), false);
+    assert.equal(hasHighRiskStructuredSignal(null), false);
+    assert.equal(hasHighRiskStructuredSignal({}), false);
+    assert.equal(hasHighRiskStructuredSignal({ is_perp: false }), false);
+    assert.equal(hasHighRiskStructuredSignal({ points_season_count: 1 }), false);
+    assert.equal(hasHighRiskStructuredSignal({ is_perp: 'yes' }), false);
+    assert.equal(hasHighRiskStructuredSignal({ points_season_count: 99 }), false);
+  });
+
+  it('confirmed tge 是利好侧，不算高危', () => {
+    assert.equal(hasHighRiskStructuredSignal({ tge_clarity: 'confirmed_quarter' }), false);
   });
 });
 

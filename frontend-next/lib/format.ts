@@ -147,6 +147,7 @@ export function sourceZh(source?: string | null): string {
   const map: Record<string, string> = {
     defillama: 'DefiLlama',
     github: 'GitHub',
+    github_curated: 'GitHub 精选测试网',
     coingecko: 'CoinGecko',
     cryptorank: 'CryptoRank',
     rootdata: 'RootData',
@@ -583,6 +584,168 @@ export function hasExplicitAirdropSignal(project?: {
     (signals.has_points_program && signals.no_token_yet !== false) ||
     (typeof subScores.airdrop_signal === 'number' && subScores.airdrop_signal >= 80)
   );
+}
+
+/* ── 结构化 Anti-PUA 信号（meta.signals）展示词表 ──
+ *
+ * 后端真值来源：`app/services/structured_signals.py`（词形与置信度契约的唯一
+ * 来源），三个键登记在 `app/services/project_signals.py::SIGNAL_KEYS`，随
+ * `meta.signals` 落库，消费方是 opportunity-v2.0 旁路的 evidence.py。这里只
+ * 做展示层中文化与「未观测」判定，值域必须与后端一致：
+ * - points_season_count: int 1..10（None = 未观测）
+ * - tge_clarity: confirmed_quarter | vague_soon | unannounced
+ * - is_perp: bool（False 表示「未检测到」，不是人工核验的「确实不是」）
+ */
+
+const TGE_CLARITY_ZH: Record<string, string> = {
+  confirmed_quarter: '已确认·季度锚定',
+  vague_soon: '模糊·仅称近期',
+  unannounced: '未公布',
+};
+
+export function tgeClarityZh(value?: unknown): string {
+  if (typeof value !== 'string') return '';
+  return TGE_CLARITY_ZH[value] || value;
+}
+
+export type StructuredSignalTone = 'pos' | 'watch' | 'muted';
+
+/** season 值的守卫：int 1..10 之外（含脏类型）一律未观测，与 evidence.py 钳制一致。 */
+function parsedSeasonCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
+}
+
+export interface StructuredSignalRow {
+  key: 'points_season_count' | 'tge_clarity' | 'is_perp';
+  label: string;
+  /** 展示值；键缺失或类型不合法时为「未观测」 */
+  display: string;
+  tone: StructuredSignalTone;
+  /** 后端观测过且类型合法（False / unannounced 也是观测，别与未观测混淆） */
+  observed: boolean;
+  /** 数据来源与口径说明（title 悬浮提示） */
+  hint: string;
+}
+
+/**
+ * 三个结构化信号的展示行。守卫语义与后端消费方 evidence.py 对齐：只信类型
+ * 正确的值，脏类型/缺失一律按「未观测」处理，永不抛错：
+ * - season：int 1..10（文本推断误报面大，采集/回填侧都不自动写）
+ * - tge：三档枚举（脏值在消费端按 unannounced 等价处理，这里按未观测展示）
+ * - is_perp：bool（True 才会写入；False = 采集源未见相关词形）
+ */
+export function structuredSignalRows(
+  signals?: Record<string, unknown> | null,
+): StructuredSignalRow[] {
+  const sig = signals && typeof signals === 'object' ? signals : {};
+
+  const SEASON_HINT =
+    '积分季数（1-10）。多季意味着奖励稀释与更长的 PUA 周期，是 fatigue 指数的主要输入。文本推断误报面大：仅人工核验后写入，「未观测」≠ 只有一季。';
+  const TGE_HINT =
+    'TGE（代币生成事件）清晰度。confirmed_quarter = 官方确认季度锚定；vague_soon = 只说「近期」；unannounced 为默认档。仅确认措辞会被自动写入（中置信）。';
+  const PERP_HINT =
+    '是否永续合约/衍生品协议（影响资金摩擦与画像匹配）。由赛道/描述公开文案高置信自动推断；False = 未检测到相关词形，非人工核验结论。';
+
+  const season = parsedSeasonCount(sig.points_season_count);
+
+  const tgeRaw = sig.tge_clarity;
+  const tge = typeof tgeRaw === 'string' && tgeRaw in TGE_CLARITY_ZH ? tgeRaw : null;
+
+  const perpRaw = sig.is_perp;
+  const perp = typeof perpRaw === 'boolean' ? perpRaw : null;
+
+  return [
+    {
+      key: 'points_season_count',
+      label: '积分季数',
+      display: season !== null ? `${season} 季` : '未观测',
+      tone: season !== null && season >= 2 ? 'watch' : 'muted',
+      observed: season !== null,
+      hint: SEASON_HINT,
+    },
+    {
+      key: 'tge_clarity',
+      label: 'TGE 清晰度',
+      display: tge !== null ? TGE_CLARITY_ZH[tge] : '未观测',
+      tone: tge === 'confirmed_quarter' ? 'pos' : tge === 'vague_soon' ? 'watch' : 'muted',
+      observed: tge !== null,
+      hint: TGE_HINT,
+    },
+    {
+      key: 'is_perp',
+      label: '永续/衍生品',
+      display: perp !== null ? (perp ? '是' : '否') : '未观测',
+      tone: perp === true ? 'watch' : 'muted',
+      observed: perp !== null,
+      hint: PERP_HINT,
+    },
+  ];
+}
+
+export interface StructuredSignalBadge {
+  key: string;
+  text: string;
+  /** badge 色调类（与 ProjectCard 现有角标体系同一套语义色） */
+  badgeClass: string;
+  hint: string;
+}
+
+/**
+ * ProjectCard 列表角标：只挑「用户不点进详情就该看到」的结构化信号——
+ * 高危或明确利好。is_perp=false / unannounced / 单季 / 未观测都不出角标
+ * （列表空间宝贵，「没消息」就不该占消息）：
+ * - is_perp=true            → 永续盘（watch：资金摩擦高、与低成本画像冲突）
+ * - season >= 2             → 多季积分（watch：奖励稀释 + PUA 周期拉长）
+ * - tge=confirmed_quarter   → TGE 已锚定（pos：官方确认季度，确定性信号）
+ */
+export function structuredSignalBadges(
+  signals?: Record<string, unknown> | null,
+): StructuredSignalBadge[] {
+  const sig = signals && typeof signals === 'object' ? signals : {};
+  const badges: StructuredSignalBadge[] = [];
+
+  if (sig.is_perp === true) {
+    badges.push({
+      key: 'is_perp',
+      text: '永续盘',
+      badgeClass: 'bg-watch-soft/90 text-watch border border-watch/40',
+      hint: '永续合约/衍生品协议：资金摩擦与爆仓风险高，与低成本保本画像冲突（结构化信号 is_perp）',
+    });
+  }
+
+  const season = parsedSeasonCount(sig.points_season_count);
+  if (season !== null && season >= 2) {
+    badges.push({
+      key: 'points_season_count',
+      text: `${season} 季积分`,
+      badgeClass: 'bg-amber-500/20 text-amber-400 border border-amber-500/40',
+      hint: `已进入第 ${season} 季积分：奖励逐季稀释、PUA 周期拉长（结构化信号 points_season_count，人工核验后写入）`,
+    });
+  }
+
+  if (sig.tge_clarity === 'confirmed_quarter') {
+    badges.push({
+      key: 'tge_clarity',
+      text: 'TGE 已锚定',
+      badgeClass: 'bg-farm-soft/80 text-farm border border-farm/30',
+      hint: '官方确认 TGE 季度锚定：发币时间确定性最高的档（结构化信号 tge_clarity，中置信自动推断）',
+    });
+  }
+
+  return badges;
+}
+
+/**
+ * 是否带「高危」结构化信号 —— 与 structuredSignalBadges 的 watch 侧同口径：
+ * is_perp=true（永续盘，资金摩擦/爆仓风险）或 season>=2（多季稀释 + PUA 周期）。
+ * 工作台「⚠️ 永续盘/多季」筛选与 ProjectCard 角标共用本判定，两侧永不漂移。
+ * tge=confirmed_quarter 是利好侧，不算高危。
+ */
+export function hasHighRiskStructuredSignal(signals?: Record<string, unknown> | null): boolean {
+  const sig = signals && typeof signals === 'object' ? signals : {};
+  if (sig.is_perp === true) return true;
+  const season = parsedSeasonCount(sig.points_season_count);
+  return season !== null && season >= 2;
 }
 
 

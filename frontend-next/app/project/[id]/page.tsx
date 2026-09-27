@@ -4,6 +4,7 @@ import { AiBriefPanel } from '@/components/AiBriefPanel';
 import { AiChatPanel } from '@/components/AiChatPanel';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
+import { StructuredSignalsCard } from '@/components/StructuredSignalsCard';
 import { FundingPanel } from '@/components/FundingPanel';
 import { InteractionPanel } from '@/components/InteractionPanel';
 import { OpportunityWorkflowPanel } from '@/components/OpportunityWorkflowPanel';
@@ -64,6 +65,7 @@ const PAGE_SECTIONS = [
   { id: 'pd-brief', label: '简报' },
   { id: 'pd-chat', label: 'AI 追问' },
   { id: 'pd-signals', label: '多源共识与信号' },
+  { id: 'pd-structured', label: '结构化信号' },
   { id: 'pd-participation', label: '参与清单' },
   { id: 'pd-multi-wallet', label: '多钱包策略' },
   { id: 'pd-timeline', label: '演化时间轴' },
@@ -946,6 +948,13 @@ export default function ProjectPage() {
                   </span>
                 </div>
               ) : null}
+            </div>
+
+            {/* 结构化 Anti-PUA 信号卡片：meta.signals 的 points_season_count /
+                tge_clarity / is_perp，opportunity-v2.0 旁路 fatigue/friction 的
+                直接输入。值域/守卫语义与后端 evidence.py 对齐（见 lib/format.ts）。 */}
+            <div id="pd-structured" className="scroll-mt-[4.5rem]">
+              <StructuredSignalsCard signals={signals} />
             </div>
           </section>
 
