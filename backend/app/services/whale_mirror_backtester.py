@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -89,16 +90,18 @@ def compare_wallet_with_whale(
 ) -> dict[str, Any]:
     """对比用户当前钱包数据与顶级巨鲸基准，计算匹配度与补刀清单 (O(1) 哈希快速比对)."""
     bm = _BENCHMARK_MAP.get(benchmark_id, HISTORICAL_WHALE_BENCHMARKS[0])
-    
+
     # 计算各项达标百分比
     r_months = min(1.0, user_active_months / max(1, bm["active_months_required"]))
     r_txs = min(1.0, user_total_txs / max(1, bm["total_txs_required"]))
     r_contracts = min(1.0, user_contracts / max(1, bm["distinct_contracts_required"]))
     r_volume = min(1.0, user_bridged_usd / max(1.0, bm["bridged_volume_usd_required"]))
     r_balance = min(1.0, user_retained_eth / max(0.001, bm["retained_balance_eth_required"]))
-    
+
     # 综合匹配得分 (0 - 100)
-    composite_score = round((r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100, 1)
+    composite_score = round(
+        (r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100, 1
+    )
 
     gap_details = [
         {
@@ -106,35 +109,45 @@ def compare_wallet_with_whale(
             "user_val": f"{user_active_months} 个月",
             "whale_val": f"{bm['active_months_required']} 个月",
             "status": "PASS" if r_months >= 1.0 else "GAP",
-            "gap_advice": f"还需在未来 {bm['active_months_required'] - user_active_months} 个自然月各保持至少 2 笔真实活动" if r_months < 1.0 else "已达到顶级巨鲸标准",
+            "gap_advice": f"还需在未来 {bm['active_months_required'] - user_active_months} 个自然月各保持至少 2 笔真实活动"
+            if r_months < 1.0
+            else "已达到顶级巨鲸标准",
         },
         {
             "dimension": "独立智能合约",
             "user_val": f"{user_contracts} 个",
             "whale_val": f"{bm['distinct_contracts_required']} 个",
             "status": "PASS" if r_contracts >= 1.0 else "GAP",
-            "gap_advice": f"需再寻找 {bm['distinct_contracts_required'] - user_contracts} 个新 DApp 丰富足迹 (DEX/借贷/NFT/跨链)" if r_contracts < 1.0 else "合约丰富度极佳",
+            "gap_advice": f"需再寻找 {bm['distinct_contracts_required'] - user_contracts} 个新 DApp 丰富足迹 (DEX/借贷/NFT/跨链)"
+            if r_contracts < 1.0
+            else "合约丰富度极佳",
         },
         {
             "dimension": "累计交互频次",
             "user_val": f"{user_total_txs} 笔",
             "whale_val": f"{bm['total_txs_required']} 笔",
             "status": "PASS" if r_txs >= 1.0 else "GAP",
-            "gap_advice": f"还差 {bm['total_txs_required'] - user_total_txs} 笔，建议每周低 Gas 时段平滑补刀 2-3 笔" if r_txs < 1.0 else "笔数充足",
+            "gap_advice": f"还差 {bm['total_txs_required'] - user_total_txs} 笔，建议每周低 Gas 时段平滑补刀 2-3 笔"
+            if r_txs < 1.0
+            else "笔数充足",
         },
         {
             "dimension": "跨链资金体量",
             "user_val": f"${user_bridged_usd:.0f}",
             "whale_val": f"${bm['bridged_volume_usd_required']:.0f}",
             "status": "PASS" if r_volume >= 1.0 else "GAP",
-            "gap_advice": f"建议单笔大额或反复循环增加 ${bm['bridged_volume_usd_required'] - user_bridged_usd:.0f} 跨链流水" if r_volume < 1.0 else "过桥流水已满档",
+            "gap_advice": f"建议单笔大额或反复循环增加 ${bm['bridged_volume_usd_required'] - user_bridged_usd:.0f} 跨链流水"
+            if r_volume < 1.0
+            else "过桥流水已满档",
         },
         {
             "dimension": "快照留存余额",
             "user_val": f"{user_retained_eth:.3f} ETH",
             "whale_val": f"{bm['retained_balance_eth_required']:.2f} ETH",
             "status": "PASS" if r_balance >= 1.0 else "GAP",
-            "gap_advice": "务必常驻 > 0.05 ETH，禁止在刷完后把钱包提成 0 余额（极易被反女巫系统打死）" if r_balance < 1.0 else "底仓健康",
+            "gap_advice": "务必常驻 > 0.05 ETH，禁止在刷完后把钱包提成 0 余额（极易被反女巫系统打死）"
+            if r_balance < 1.0
+            else "底仓健康",
         },
     ]
 
@@ -142,7 +155,11 @@ def compare_wallet_with_whale(
         "benchmark_used": bm["name"],
         "target_project": target_project,
         "match_score": composite_score,
-        "match_tier": "TOP_WHALE_TIER" if composite_score >= 85 else "ACTIVE_HUNTER" if composite_score >= 60 else "NEEDS_UPGRADE",
+        "match_tier": "TOP_WHALE_TIER"
+        if composite_score >= 85
+        else "ACTIVE_HUNTER"
+        if composite_score >= 60
+        else "NEEDS_UPGRADE",
         "gap_analysis": gap_details,
         "action_plan_for_target": [
             f"针对 {target_project}：制定 6 个月持续周期计划，分散在每周四/周日低 Gas 交互",

@@ -29,8 +29,8 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"warn: stdout reconfigure skipped: {exc!r}", file=sys.stderr)
 
 from app.config import settings
 
@@ -123,17 +123,12 @@ def run_viability_audit(*, apply_changes: bool = False) -> dict[str, Any]:
 
             # 检查是否需要对 FARM 项目进行门禁降级拦截
             new_label = current_label
-            downgraded = False
             if current_label == "FARM" and tier == "unviable":
-                if UNBACKED_POINTS_MACHINE in res["reasons"]:
-                    new_label = "IGNORE"
-                else:
-                    new_label = "WATCH"
+                new_label = "IGNORE" if UNBACKED_POINTS_MACHINE in res["reasons"] else "WATCH"
 
                 if LOW_RUNWAY_RISK not in reasons_list:
                     reasons_list.append(LOW_RUNWAY_RISK)
 
-                downgraded = True
                 downgraded_projects.append(
                     {
                         "id": project_id,
@@ -187,10 +182,10 @@ def main() -> None:
     args = parser.parse_args()
 
     mode_str = "【真实应用模式 (APPLY)】" if args.apply else "【预览诊断模式 (DRY-RUN)】"
-    print(f"\n{'='*60}")
-    print(f" Web3 Airdrop Alpha - 项目存活率与跑道门禁批量审计")
+    print(f"\n{'=' * 60}")
+    print(" Web3 Airdrop Alpha - 项目存活率与跑道门禁批量审计")
     print(f" 运行模式: {mode_str}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     report = run_viability_audit(apply_changes=args.apply)
 
@@ -200,37 +195,43 @@ def main() -> None:
     downgraded = report["downgraded_projects"]
 
     print(f"总计扫描项目: {total} 个")
-    print(f"存活等级分布:")
-    print(f"  - 资金充裕 (viable)   : {tiers.get('viable', 0):>4} ({tiers.get('viable', 0)/max(total, 1)*100:.1f}%)")
-    print(f"  - 跑道观察 (borderline): {tiers.get('borderline', 0):>4} ({tiers.get('borderline', 0)/max(total, 1)*100:.1f}%)")
-    print(f"  - 存活预警 (unviable)  : {tiers.get('unviable', 0):>4} ({tiers.get('unviable', 0)/max(total, 1)*100:.1f}%)")
+    print("存活等级分布:")
+    print(
+        f"  - 资金充裕 (viable)   : {tiers.get('viable', 0):>4} ({tiers.get('viable', 0) / max(total, 1) * 100:.1f}%)"
+    )
+    print(
+        f"  - 跑道观察 (borderline): {tiers.get('borderline', 0):>4} ({tiers.get('borderline', 0) / max(total, 1) * 100:.1f}%)"
+    )
+    print(
+        f"  - 存活预警 (unviable)  : {tiers.get('unviable', 0):>4} ({tiers.get('unviable', 0) / max(total, 1) * 100:.1f}%)"
+    )
 
-    print(f"\n存活预警风险触发明细:")
+    print("\n存活预警风险触发明细:")
     print(f"  - 零融资纯积分盘 (UNBACKED_POINTS_MACHINE): {reasons.get(UNBACKED_POINTS_MACHINE, 0):>4}")
     print(f"  - 微额融资无背书 (LOW_FUNDING_UNVIABLE)   : {reasons.get(LOW_FUNDING_UNVIABLE, 0):>4}")
     print(f"  - 跑道资金已耗尽 (RUNWAY_DEPLETED)        : {reasons.get(RUNWAY_DEPLETED, 0):>4}")
 
-    print(f"\nFARM 降级拦截:")
+    print("\nFARM 降级拦截:")
     print(f"  - 触发门禁降级项目数: {len(downgraded)} 个")
 
     if downgraded:
-        print(f"\n被降级项目明细 (前 20 项):")
+        print("\n被降级项目明细 (前 20 项):")
         print(f"  {'ID':<24} | {'原标签':<6} -> {'新标签':<6} | {'主要风险原因'}")
-        print(f"  {'-'*24}-+-{'-'*6}----{'-'*6}-+-{'-'*40}")
+        print(f"  {'-' * 24}-+-{'-' * 6}----{'-' * 6}-+-{'-' * 40}")
         for p in downgraded[:20]:
             r_str = "; ".join(p["reasons_zh"]) if p["reasons_zh"] else ", ".join(p["reasons"])
             print(f"  {p['id']:<24} | {p['from_label']:<6} -> {p['to_label']:<6} | {r_str}")
         if len(downgraded) > 20:
             print(f"  ... 另有 {len(downgraded) - 20} 个项目被降级。")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if not args.apply:
         print("[提示] 当前为 DRY-RUN 预览模式，未修改数据库。")
         print("如需将上述降级与存活等级持久化至数据库，请运行:")
         print("  backend/venv/Scripts/python.exe backend/scripts/audit_viability.py --apply")
     else:
         print("[成功] 数据库已成功更新！全库已完成存活率硬门禁清洗与降级。")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

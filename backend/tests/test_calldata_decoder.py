@@ -1,4 +1,3 @@
-import pytest
 from app.services.calldata_decoder import decode_calldata
 
 
@@ -12,7 +11,7 @@ def test_decode_calldata_native_transfer():
 def test_decode_calldata_erc20_transfer():
     # 0xa9059cbb + 32-byte recipient + 32-byte amount (1000)
     to_hex = "0000000000000000000000002222222222222222222222222222222222222222"
-    amt_hex = "00000000000000000000000000000000000000000000000000000000000003e8" # 1000
+    amt_hex = "00000000000000000000000000000000000000000000000000000000000003e8"  # 1000
     calldata = f"0xa9059cbb{to_hex}{amt_hex}"
 
     res = decode_calldata("0xdac17f958d2ee523a2206206994597c13d831ec7", calldata)

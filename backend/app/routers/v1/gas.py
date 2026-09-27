@@ -10,20 +10,21 @@ GET /api/v1/gas/{chain}
 """
 
 from typing import Any, Literal
-from fastapi import APIRouter, HTTPException, Path, Query
-from pydantic import BaseModel, Field
-import structlog
 
+import structlog
+from fastapi import APIRouter, Body, HTTPException, Path, Query
+from pydantic import BaseModel, Field
+
+from app.services.gas_alert_engine import (
+    create_rule,
+    delete_rule,
+    evaluate_active_alerts,
+    get_all_rules,
+    toggle_rule,
+)
 from app.services.gas_tracker import (
     get_all_chains_gas_summary,
     get_chain_gas_status,
-)
-from app.services.gas_alert_engine import (
-    get_all_rules,
-    create_rule,
-    delete_rule,
-    toggle_rule,
-    evaluate_active_alerts,
 )
 
 logger = structlog.get_logger(__name__)
@@ -82,7 +83,7 @@ def remove_gas_alert_rule(
 @router.patch("/alerts/rules/{rule_id}", summary="切换规则启用/禁用状态")
 def switch_gas_alert_rule(
     rule_id: str = Path(..., description="规则 ID"),
-    req: ToggleGasRuleRequest = ...,
+    req: ToggleGasRuleRequest = Body(...),
 ) -> dict[str, Any]:
     """修改指定规则的启用开关."""
     updated = toggle_rule(rule_id, req.enabled)

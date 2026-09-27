@@ -7,6 +7,7 @@
 import re
 import urllib.parse
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -76,9 +77,7 @@ def check_domain_safety(url: str) -> dict[str, Any]:
         "url": clean_url,
         "is_safe": is_safe,
         "risk_level": risk_level,
-        "risk_level_zh": {"safe": "安全", "suspicious": "存疑预警", "dangerous": "高危钓鱼"}.get(
-            risk_level, "未知"
-        ),
+        "risk_level_zh": {"safe": "安全", "suspicious": "存疑预警", "dangerous": "高危钓鱼"}.get(risk_level, "未知"),
         "reasons": reasons,
     }
 

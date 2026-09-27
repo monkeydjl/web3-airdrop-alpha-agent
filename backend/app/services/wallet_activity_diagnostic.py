@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -26,7 +27,8 @@ def diagnose_wallet_health(
     addr = wallet_address.lower().strip()
 
     # 如果部分参数未传入，基于地址哈希生成确定性的链上真实模拟指纹
-    h_int = int(hashlib.md5(addr.encode("utf-8")).hexdigest(), 16)
+    # md5 在此只做非加密用途的确定性散列（不涉安全），usedforsecurity=False 显式声明
+    h_int = int(hashlib.md5(addr.encode("utf-8"), usedforsecurity=False).hexdigest(), 16)
 
     months = active_months if active_months is not None else max(1, (h_int % 9) + 1)
     txs = tx_count if tx_count is not None else max(5, (h_int % 80) + 12)
@@ -61,7 +63,6 @@ def diagnose_wallet_health(
 
     # 2. 交互合约多样性得分 (Contract Breadth)
     # 合约数越接近 tx 数，或合约数 >= 20 为佳
-    contract_ratio = contracts / max(1, txs)
     if contracts >= 25:
         score_contracts = 95
         contract_detail = f"交互过 {contracts} 个独立智能合约，链上行为丰富度极高"
@@ -108,12 +109,8 @@ def diagnose_wallet_health(
 
     # 综合健康度加权计算 (0-100)
     overall_score = round(
-        score_longevity * 0.25 +
-        score_contracts * 0.25 +
-        score_protos * 0.20 +
-        score_gas * 0.15 +
-        score_chains * 0.15,
-        1
+        score_longevity * 0.25 + score_contracts * 0.25 + score_protos * 0.20 + score_gas * 0.15 + score_chains * 0.15,
+        1,
     )
 
     # 女巫风险评级
@@ -146,9 +143,13 @@ def diagnose_wallet_health(
     # 精准补刀行动指南 (Actionable Guide)
     actionable_guide = []
     if "governance" not in protos:
-        actionable_guide.append("前往 Snapshot.org 绑定钱包，在 Arbitrum/Starknet/Uniswap 等持币 DAO 投下 1 票（零 Gas）。")
+        actionable_guide.append(
+            "前往 Snapshot.org 绑定钱包，在 Arbitrum/Starknet/Uniswap 等持币 DAO 投下 1 票（零 Gas）。"
+        )
     if contracts < 15:
-        actionable_guide.append("在目标链体验 2-3 个新兴头部协议（如借贷 Aave/Radiant 存入 $10，或在 Uniswap V3 提供微量流动性）。")
+        actionable_guide.append(
+            "在目标链体验 2-3 个新兴头部协议（如借贷 Aave/Radiant 存入 $10，或在 Uniswap V3 提供微量流动性）。"
+        )
     if distinct_chains_count < 3:
         actionable_guide.append("使用 Across 或 Stargate 跨出一次 $15+ 资产至 Base 或 Optimism，保留一定残存 Gas。")
     if months < 6:

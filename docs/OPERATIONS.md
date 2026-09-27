@@ -429,7 +429,7 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 
 ### 4.3 采集源故障
 
-采集共注册 **16 个源**。**「注册了」不等于「在采」** —— 每个源要真正执行，
+采集共注册 **17 个源**。**「注册了」不等于「在采」** —— 每个源要真正执行，
 必须三个条件同时成立：
 
 1. `XXX_ENABLED` 开关为真；
@@ -443,7 +443,8 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 |---|---|---|
 | `defillama` | `DEFILLAMA_ENABLED` | ❌ 免费无 Key |
 | `coingecko` | `COINGECKO_ENABLED` | ❌ 免费额度够用 |
-| `github` | `GITHUB_ENABLED` | ✅ `GITHUB_TOKEN` |
+| `github` | `GITHUB_ENABLED` | ❌ 无 token 时走未认证公开搜索（限流 1 rps；配置 `GITHUB_TOKEN` 可提升配额） |
+| `github_curated` | `GITHUB_ENABLED` | ❌ 抓公开 curated 列表无需 Key（与 `github` 共用同一开关） |
 | `cryptorank` | `CRYPTORANK_ENABLED` | ✅ `CRYPTORANK_API_KEY` |
 | `etherscan` | `ETHERSCAN_ENABLED` | ✅ `ETHERSCAN_API_KEY` |
 | `rootdata` | `ROOTDATA_ENABLED` | ✅ `ROOTDATA_API_KEY` |
@@ -833,6 +834,7 @@ curl http://localhost:18080/health
 |---|---|
 | `defillama` | `0 8 * * *` |
 | `github` | `30 8 * * *` |
+| `github_curated` | `30 3 * * *` |
 | `coingecko` | `0 9 * * *` |
 | `cryptorank` | `15 9 * * *` |
 | `rootdata` | `45 9 * * *` |

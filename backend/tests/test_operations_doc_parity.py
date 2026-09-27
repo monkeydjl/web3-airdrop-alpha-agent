@@ -155,6 +155,8 @@ def _collection_cron_from_settings() -> dict[str, str]:
     mapping = {
         "defillama": settings.defillama_cron,
         "github": settings.github_cron,
+        # github_curated 与 scheduler.py 同一写法：settings 尚无该字段时用相同回退。
+        "github_curated": getattr(settings, "github_curated_cron", "30 3 * * *"),
         "coingecko": settings.coingecko_cron,
         "cryptorank": settings.cryptorank_cron,
         "rootdata": settings.rootdata_cron,
@@ -944,7 +946,8 @@ class TestParsersFailLoudly:
     def test_collection_gating_parser_finds_all_sources(self):
         gating = _collection_gating_from_code()
         assert gating["defillama"] == ("defillama_enabled", False)
-        assert gating["github"] == ("github_enabled", True)
+        # b8ccc5a 起 github 无 token 也可走未认证公开搜索，is_enabled() 只看开关。
+        assert gating["github"] == ("github_enabled", False)
 
     def test_block_parser_rejects_missing_anchor(self):
         with pytest.raises(AssertionError, match="找不到标记"):

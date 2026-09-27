@@ -6,6 +6,7 @@
 
 import datetime
 from typing import Any
+
 import httpx
 import structlog
 
@@ -67,7 +68,7 @@ def generate_sybil_defense_dossier(
 ) -> dict[str, Any]:
     """为指定钱包生成标准防女巫申诉存证报告."""
     addr = wallet_address.strip()
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     date_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # 1. 链上探测
@@ -113,7 +114,7 @@ def generate_sybil_defense_dossier(
 
     # 3. 构造专业英文 + 中文双语申诉 Markdown
     md_lines = [
-        f"# Web3 Airdrop Sybil Defense & Independence Dossier",
+        "# Web3 Airdrop Sybil Defense & Independence Dossier",
         f"> **Generated for**: `{project_name}` Airdrop Review Board",
         f"> **Wallet Address**: `{addr}`",
         f"> **Submission Date**: {date_str}",
@@ -137,12 +138,12 @@ def generate_sybil_defense_dossier(
         "|---|---|---|---|",
     ]
 
-    for c_key, c_val in chains.items():
+    for _c_key, c_val in chains.items():
         c_name = c_val["name"]
         nonce = c_val["nonce"]
-        bal = f"{c_val['balance']:.4f} {c_val['symbol']}"
+        bal_text = f"{c_val['balance']:.4f} {c_val['symbol']}"
         status = "✅ Active" if c_val["active"] else "⚪ Dormant"
-        md_lines.append(f"| {c_name} | {nonce} | {bal} | {status} |")
+        md_lines.append(f"| {c_name} | {nonce} | {bal_text} | {status} |")
 
     md_lines.extend(
         [

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -38,7 +39,9 @@ PRESET_PLAYBOOKS: list[dict[str, Any]] = [
                 "action": "swap",
                 "title": "在 Ambient DEX 兑换 20 USDC",
                 "target": "Ambient DEX CrocSwapDex",
-                "contract": "0xaaaaaaaacb71bf2c8cae522ea5fa455571a74106",
+                # 真实地址，来源：docs.ambient.finance/developers/deployed-contracts
+                # （官方 vanity 地址，前 8 位同为 a 非占位标记）
+                "contract": "0xaaaaAAAACB71BF2C8CaE522EA5fa455571A74106",
                 "gas_usd": 0.28,
                 "notes": "产生一笔真实 DEX Swap 记录与 Marks 基础积分",
             },
@@ -85,27 +88,27 @@ PRESET_PLAYBOOKS: list[dict[str, Any]] = [
                 "action": "swap",
                 "title": "在 MonadSwap 进行 MON/WMON/USDC 互换",
                 "target": "MonadSwap Router",
-                "contract": "0x7777777777777777777777777777777777777777",
+                "contract": "0xTBD-REPLACE-ME",
                 "gas_usd": 0.0,
-                "notes": "触发 10,000 TPS 极速链上撮合",
+                "notes": "触发 10,000 TPS 极速链上撮合；合约地址待登记真实值",
             },
             {
                 "step_no": 3,
                 "action": "lp",
                 "title": "添加 MON-USDC 极低金额流动性池",
                 "target": "MonadSwap Pool",
-                "contract": "0x8888888888888888888888888888888888888888",
+                "contract": "0xTBD-REPLACE-ME",
                 "gas_usd": 0.0,
-                "notes": "成为流动性提供者 (LP)",
+                "notes": "成为流动性提供者 (LP)；合约地址待登记真实值",
             },
             {
                 "step_no": 4,
                 "action": "nft_mint",
                 "title": "铸造 Monad 创世社区测试勋章",
                 "target": "Monad Community NFT",
-                "contract": "0x9999999999999999999999999999999999999999",
+                "contract": "0xTBD-REPLACE-ME",
                 "gas_usd": 0.0,
-                "notes": "点亮创世交互勋章",
+                "notes": "点亮创世交互勋章；合约地址待登记真实值",
             },
         ],
     },
@@ -141,9 +144,9 @@ PRESET_PLAYBOOKS: list[dict[str, Any]] = [
                 "action": "stake",
                 "title": "将资产放入 Zerolend 质押池",
                 "target": "Zerolend Pool",
-                "contract": "0x2222222222222222222222222222222222222222",
+                "contract": "0xTBD-REPLACE-ME",
                 "gas_usd": 0.60,
-                "notes": "双重博取 Zerolend 与 Linea 空投",
+                "notes": "双重博取 Zerolend 与 Linea 空投；合约地址待登记真实值",
             },
         ],
     },
@@ -155,6 +158,36 @@ def list_playbook_templates() -> list[dict[str, Any]]:
     return PRESET_PLAYBOOKS
 
 
+def is_faucet_sentinel_addr(addr: str) -> bool:
+    """faucet 等无合约交互步骤允许使用的零地址哨兵."""
+    return (addr or "").strip().lower() in {
+        "",
+        "0x0",
+        "0x" + "0" * 40,
+    }
+
+
+def _is_placeholder_contract(addr: str) -> bool:
+    """识别审计中发现的占位假合约地址与未登记地址.
+
+    判据（保守，避免误杀真实地址）：
+    - 空 / 非 0x 开头 / 长度不对 → 未登记
+    - 显式 0xTBD 前缀 → 待登记
+    - 全部 40 位 hex 为同一字符 → 占位（历史模板的 0x7777777777.../0x8888...）
+      注意：不能只看前 8 位——Ambient 官方 vanity 地址（如 Scroll 的
+      0xaaaaAAAACB71...，docs.ambient.finance/developers/deployed-contracts）
+      开头也是重复字符，前缀判定会误杀真实协议。
+    """
+    a = (addr or "").strip()
+    if not a or not a.startswith("0x") or len(a) < 10:
+        return True
+    if a.upper().startswith("0XTBD"):
+        return True
+    hex_body = a[2:]
+    # 全长同一字符 → 占位（0x7777...7777 / 0x8888...8888）
+    return len(hex_body) >= 8 and len(set(hex_body.lower())) == 1
+
+
 def validate_and_generate_playbook_script(
     playbook_id: str | None = None,
     custom_title: str | None = None,
@@ -162,18 +195,22 @@ def validate_and_generate_playbook_script(
     jitter_range_seconds: tuple[int, int] = (30, 90),
     language: str = "python",
 ) -> dict[str, Any]:
-    """校验任务流各步骤，计算总 Gas 预算，并生成带随机延迟的安全执行脚本."""
+    """校验任务流各步骤，计算总 Gas 预算，并生成带随机延迟的安全执行脚本.
+
+    审计 P1 修复：步骤合约地址为占位（0x7777.../未登记）时不再生成可执行
+    脚本——此前占位地址会直接进入生成代码，用户照抄会向无效合约发交易。
+    """
     # 匹配模板或使用自定义
     steps: list[dict[str, Any]] = []
     title = custom_title or "Custom Multi-Step Playbook"
-    
+
     if playbook_id:
         for pb in PRESET_PLAYBOOKS:
             if pb["id"] == playbook_id:
                 steps = pb["steps"]
                 title = pb["title"]
                 break
-                
+
     if not steps and custom_steps:
         steps = custom_steps
 
@@ -181,6 +218,27 @@ def validate_and_generate_playbook_script(
         # 默认 fallback
         steps = PRESET_PLAYBOOKS[0]["steps"]
         title = PRESET_PLAYBOOKS[0]["title"]
+
+    # 占位合约校验：链上交互步骤必须有真实合约；faucet 类步骤（无合约交互）
+    # 允许零地址哨兵，不视为占位。
+    placeholder_steps = [
+        s.get("title", f"Step {i}")
+        for i, s in enumerate(steps, 1)
+        if not is_faucet_sentinel_addr(str(s.get("contract", "")))
+        and _is_placeholder_contract(str(s.get("contract", "")))
+    ]
+    if placeholder_steps:
+        return {
+            "ok": False,
+            "error": {
+                "code": "PLACEHOLDER_CONTRACT",
+                "message": (
+                    "以下步骤未登记真实合约地址，拒绝生成可执行脚本（防止向占位/无效合约发交易）："
+                    + "; ".join(placeholder_steps)
+                ),
+                "placeholder_steps": placeholder_steps,
+            },
+        }
 
     total_gas = sum(float(s.get("gas_usd", 0.0)) for s in steps)
     min_jitter, max_jitter = jitter_range_seconds
@@ -197,7 +255,7 @@ def validate_and_generate_playbook_script(
     # Target Contract: {c_addr}
     # TODO: Build calldata and sign with local signer
     # execute_tx(w3, account, "{c_addr}", data=b"...")
-    
+
     # Anti-Sybil random delay before next step
     delay = random.uniform({min_jitter}, {max_jitter})
     logger.info(f"Sleeping for {{delay:.1f}}s to avoid cluster detection...")
@@ -225,10 +283,10 @@ def run_pipeline():
     if not w3.is_connected():
         logger.error("Failed to connect to RPC")
         return
-        
+
     logger.info("Starting Playbook: {title}")
     logger.info("Total steps: {len(steps)} | Estimated Gas: ${total_gas:.2f}")
-{''.join(steps_code_lines)}
+{"".join(steps_code_lines)}
 
     logger.info("Playbook execution completed successfully!")
 
@@ -237,6 +295,7 @@ if __name__ == "__main__":
 '''
 
     return {
+        "ok": True,
         "title": title,
         "step_count": len(steps),
         "steps": steps,

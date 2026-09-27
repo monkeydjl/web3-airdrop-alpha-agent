@@ -10,9 +10,6 @@ Verifies the complete integration and cross-feature workflows of:
 from __future__ import annotations
 
 import json
-import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -144,17 +141,21 @@ class TestV3CoreFullLifecycleE2E:
                     )
                     """,
                     (
-                        json.dumps({
-                            "source": "seed",
-                            "no_token_yet": True,
-                            "has_testnet": True,
-                            "has_points_program": True,
-                            "farming_cost": "high",
-                        }),
-                        json.dumps({
-                            "overall_risk_score": 35,
-                            "sybil_difficulty": "high",
-                        }),
+                        json.dumps(
+                            {
+                                "source": "seed",
+                                "no_token_yet": True,
+                                "has_testnet": True,
+                                "has_points_program": True,
+                                "farming_cost": "high",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "overall_risk_score": 35,
+                                "sybil_difficulty": "high",
+                            }
+                        ),
                     ),
                 )
 
@@ -170,17 +171,21 @@ class TestV3CoreFullLifecycleE2E:
                     )
                     """,
                     (
-                        json.dumps({
-                            "source": "seed",
-                            "no_token_yet": True,
-                            "has_testnet": True,
-                            "has_points_program": True,
-                            "farming_cost": "low",
-                        }),
-                        json.dumps({
-                            "overall_risk_score": 20,
-                            "sybil_difficulty": "low",
-                        }),
+                        json.dumps(
+                            {
+                                "source": "seed",
+                                "no_token_yet": True,
+                                "has_testnet": True,
+                                "has_points_program": True,
+                                "farming_cost": "low",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "overall_risk_score": 20,
+                                "sybil_difficulty": "low",
+                            }
+                        ),
                     ),
                 )
 
@@ -196,14 +201,18 @@ class TestV3CoreFullLifecycleE2E:
                     )
                     """,
                     (
-                        json.dumps({
-                            "source": "seed",
-                            "no_token_yet": False,
-                            "veto": "already_launched",
-                        }),
-                        json.dumps({
-                            "overall_risk_score": 15,
-                        }),
+                        json.dumps(
+                            {
+                                "source": "seed",
+                                "no_token_yet": False,
+                                "veto": "already_launched",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "overall_risk_score": 15,
+                            }
+                        ),
                     ),
                 )
                 conn.commit()
@@ -226,7 +235,9 @@ class TestV3CoreFullLifecycleE2E:
             assert "path_differentiation" in rule_ids
 
             # Query Multi-Wallet Strategy for Low-Friction Infra Project (Cluster scale)
-            res_infra = client_alpha.get("/api/v1/projects/proj_infra_fuel/multi-wallet-strategy", headers=admin_headers)
+            res_infra = client_alpha.get(
+                "/api/v1/projects/proj_infra_fuel/multi-wallet-strategy", headers=admin_headers
+            )
             assert res_infra.status_code == 200
             strat_infra = res_infra.json()["data"]
             assert strat_infra["status"] == "recommended"
@@ -348,7 +359,7 @@ class TestV3CoreFullLifecycleE2E:
                         f"""
                         INSERT INTO projects (id, name, sector, stage, score, label, confidence, url)
                         VALUES ('zero_proj_{i}', 'Zero Project {i}', 'DeFi', 'mainnet', 0, 'IGNORE', 0.9, 'https://zero.io')
-                        """
+                        """  # noqa: S608 — 测试内固定字面量 INSERT
                     )
                 conn.execute(
                     """
@@ -396,7 +407,6 @@ class TestV3CoreFullLifecycleE2E:
             assert res_tm.status_code == 200
             res_an = client_beta.get("/api/v1/anomalies", headers=auth_headers)
             assert res_an.status_code == 200
-
 
 
 class TestV3CoreEdgeCases:

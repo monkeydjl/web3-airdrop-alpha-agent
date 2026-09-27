@@ -224,22 +224,19 @@ def test_no_unregistered_mojibake_in_repo(checker):
 
 
 def test_workspace_pytest_tmp_is_excluded_from_repository_scan(checker, tmp_path) -> None:
-    """仓库内的 pytest 临时目录不能被编码门禁扫描。
+    """pytest 临时目录绝不能被编码门禁扫描。
 
-    `backend/tests/conftest.py` 为绕开沙箱目录锁，把 pytest 的 `tmp_path` 重定向
-    到仓库内的 `data/pytest_tmp`。本文件里有测试会**特意**写入坏编码样本来验证
-    检测器；若 `iter_repo_files()` 把它们当成仓库源码，全量套件就会依赖执行顺序
-    随机变红 —— 而 CI 是全新 checkout、看不到历史残留，所以这个失效模式只在本地
-    复现，极难定位。
+    历史上 `backend/tests/conftest.py` 把 tmp_path 重定向到仓库内的
+    `data/pytest_tmp`（绕开沙箱目录锁），本文件里有测试会**特意**写入坏编码
+    样本来验证检测器；若 `iter_repo_files()` 把它们当成仓库源码，全量套件就会
+    依赖执行顺序随机变红。SKIP_DIRS 中的 "pytest_tmp" 即为此而设，保留。
 
-    该目录的清理是 best-effort 且异常被吞，残留会累积（发现本问题时已有 921 个
-    目录 / 435MB），因此排除必须做在扫描器一侧，不能指望清理。
+    2026-09-23 起 tmp_path 优先落在系统临时目录（仓库目录上 SQLite DDL 慢
+    ~12 倍，实测见 conftest 注释）；前提断言相应放宽为「不在仓库内」。
     """
-    # 先确认 conftest 的重定向仍然生效；若哪天改回系统临时目录，本测试的前提消失。
-    assert tmp_path.parent.name == "pytest_tmp", (
-        f"conftest 的 tmp_path 重定向已变化（父目录 = {tmp_path.parent.name}），"
-        "请同步检查 check_encoding.py 的排除列表是否还对得上"
-    )
+    # tmp_path 不得在仓库内：无论落在系统 TEMP 还是 data/pytest_tmp，
+    # 门禁扫描都不应看到它。
+    assert REPO_ROOT not in tmp_path.parents, f"tmp_path 落在仓库内（{tmp_path}），门禁排除列表需同步核对"
 
     poison = tmp_path / "intentionally-bad.ps1"
     # 含中文的 .ps1 且无 BOM —— 同时命中四型判据，是最容易误报的样本

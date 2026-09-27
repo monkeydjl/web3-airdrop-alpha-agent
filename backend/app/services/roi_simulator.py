@@ -148,12 +148,26 @@ def simulate_portfolio_allocation(
             """
             SELECT id, name, score, stage, sector, meta
             FROM projects
-            WHERE (source != 'historical_backfill' OR source IS NULL)
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
             ORDER BY score DESC
-            LIMIT 15
+            LIMIT 25
             """
         )
-        farm_projects = [signals_view(dict_from_row(r)) for r in cursor.fetchall()]
+        rows = cursor.fetchall()
+        farm_projects = [signals_view(dict_from_row(r)) for r in rows]
+
+        if not farm_projects:
+            # Fallback to top scored projects if FARM empty
+            cursor = conn.execute(
+                """
+                SELECT id, name, score, stage, sector, meta
+                FROM projects
+                WHERE (source != 'historical_backfill' OR source IS NULL)
+                ORDER BY score DESC
+                LIMIT 15
+                """
+            )
+            farm_projects = [signals_view(dict_from_row(r)) for r in cursor.fetchall()]
 
     budget = max(20.0, float(total_budget_usd))
     hours = max(1.0, float(weekly_hours))
@@ -165,8 +179,16 @@ def simulate_portfolio_allocation(
     # 2. Testnet Alpha (consumes low gas, high ROI multiple)
     # 3. Community / Faucet Grinds (zero gas, time only)
 
-    restaking_projects = [p for p in farm_projects if any(k in str(p.get("sector") or "").lower() for k in ("restaking", "staking", "yield", "defi"))]
-    testnet_projects = [p for p in farm_projects if p not in restaking_projects and (p.get("stage") == "testnet" or "testnet" in str(p.get("name")).lower())]
+    restaking_projects = [
+        p
+        for p in farm_projects
+        if any(k in str(p.get("sector") or "").lower() for k in ("restaking", "staking", "yield", "defi"))
+    ]
+    testnet_projects = [
+        p
+        for p in farm_projects
+        if p not in restaking_projects and (p.get("stage") == "testnet" or "testnet" in str(p.get("name")).lower())
+    ]
     other_projects = [p for p in farm_projects if p not in restaking_projects and p not in testnet_projects]
 
     remaining_budget = budget
@@ -179,17 +201,19 @@ def simulate_portfolio_allocation(
         res_hours = round(hours * 0.25, 1)
         remaining_budget -= res_budget
         remaining_hours -= res_hours
-        allocations.append({
-            "project_id": p_res["id"],
-            "project_name": p_res["name"],
-            "score": p_res.get("score", 75),
-            "role": "核心本金沉淀 (质押/金库生息)",
-            "allocated_budget_usd": res_budget,
-            "allocated_hours_weekly": res_hours,
-            "expected_multiple": 2.2,
-            "expected_reward_usd": round(res_budget * 2.2, 1),
-            "priority": "HIGH",
-        })
+        allocations.append(
+            {
+                "project_id": p_res["id"],
+                "project_name": p_res["name"],
+                "score": p_res.get("score", 75),
+                "role": "核心本金沉淀 (质押/金库生息)",
+                "allocated_budget_usd": res_budget,
+                "allocated_hours_weekly": res_hours,
+                "expected_multiple": 2.2,
+                "expected_reward_usd": round(res_budget * 2.2, 1),
+                "priority": "HIGH",
+            }
+        )
 
     # 2. Allocate Gas budget to top 2 Testnets
     testnet_candidates = (testnet_projects + other_projects)[:2]
@@ -197,35 +221,39 @@ def simulate_portfolio_allocation(
         per_gas = round(remaining_budget * 0.70 / len(testnet_candidates), 1) if len(testnet_candidates) > 0 else 0
         per_hrs = round(remaining_hours * 0.60 / len(testnet_candidates), 1) if len(testnet_candidates) > 0 else 0
         for p_t in testnet_candidates:
-            allocations.append({
-                "project_id": p_t["id"],
-                "project_name": p_t["name"],
-                "score": p_t.get("score", 72),
-                "role": "高弹性测试网 (Gas 交互与合约部署)",
-                "allocated_budget_usd": per_gas,
-                "allocated_hours_weekly": per_hrs,
-                "expected_multiple": 8.5,
-                "expected_reward_usd": round(max(15.0, per_gas * 8.5 + 180.0), 1),
-                "priority": "HIGH",
-            })
+            allocations.append(
+                {
+                    "project_id": p_t["id"],
+                    "project_name": p_t["name"],
+                    "score": p_t.get("score", 72),
+                    "role": "高弹性测试网 (Gas 交互与合约部署)",
+                    "allocated_budget_usd": per_gas,
+                    "allocated_hours_weekly": per_hrs,
+                    "expected_multiple": 8.5,
+                    "expected_reward_usd": round(max(15.0, per_gas * 8.5 + 180.0), 1),
+                    "priority": "HIGH",
+                }
+            )
             remaining_budget -= per_gas
             remaining_hours -= per_hrs
 
     # 3. Allocate remaining to zero-cost faucet/community tasks
-    faucet_candidates = (other_projects + testnet_projects)[len(testnet_candidates):len(testnet_candidates) + 2]
+    faucet_candidates = (other_projects + testnet_projects)[len(testnet_candidates) : len(testnet_candidates) + 2]
     for p_f in faucet_candidates:
         f_hrs = round(max(0.5, remaining_hours / max(1, len(faucet_candidates))), 1)
-        allocations.append({
-            "project_id": p_f["id"],
-            "project_name": p_f["name"],
-            "score": p_f.get("score", 70),
-            "role": "零成本领水与社群交互 (0 Gas 保本)",
-            "allocated_budget_usd": 0.0,
-            "allocated_hours_weekly": f_hrs,
-            "expected_multiple": 20.0,
-            "expected_reward_usd": 120.0,
-            "priority": "MEDIUM",
-        })
+        allocations.append(
+            {
+                "project_id": p_f["id"],
+                "project_name": p_f["name"],
+                "score": p_f.get("score", 70),
+                "role": "零成本领水与社群交互 (0 Gas 保本)",
+                "allocated_budget_usd": 0.0,
+                "allocated_hours_weekly": f_hrs,
+                "expected_multiple": 20.0,
+                "expected_reward_usd": 120.0,
+                "priority": "MEDIUM",
+            }
+        )
 
     total_expected_return = sum(a["expected_reward_usd"] for a in allocations)
     portfolio_roi = round(total_expected_return / max(1.0, budget), 2)

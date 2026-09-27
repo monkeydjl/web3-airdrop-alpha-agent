@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
-from starlette.requests import Request
 
 from app.auth import (
     ALL_ROLES,
@@ -163,7 +162,7 @@ class TestRBACPermissionEngine:
             ("POST", "/api/v1/watchlist/proj-1"),
         ]
         for method, path in allowed_cases:
-            allowed, reason = check_role_permission(ROLE_ANONYMOUS, method, path)
+            allowed, _reason = check_role_permission(ROLE_ANONYMOUS, method, path)
             assert allowed is True, f"Anonymous should be allowed for {method} {path}"
 
         # Anonymous forbidden operations (admin-only, run, re-score)
@@ -175,7 +174,7 @@ class TestRBACPermissionEngine:
             ("POST", "/api/v1/collections/github/trigger"),
         ]
         for method, path in forbidden_cases:
-            allowed, reason = check_role_permission(ROLE_ANONYMOUS, method, path)
+            allowed, _reason = check_role_permission(ROLE_ANONYMOUS, method, path)
             assert allowed is False, f"Anonymous should be forbidden for {method} {path}"
 
     def test_unknown_role_is_rejected(self) -> None:
@@ -191,7 +190,7 @@ class TestRequireRoleDependency:
         dep = require_role(ROLE_ADMIN, ROLE_ANALYST)
 
         class MockRequest:
-            class state:
+            class state:  # noqa: N801 — 小写以匹配 auth.py 里 getattr(request.state, ...) 的属性名
                 user_role = ROLE_ANALYST
 
         req = MockRequest()
@@ -202,7 +201,7 @@ class TestRequireRoleDependency:
         dep = require_role(ROLE_ADMIN)
 
         class MockRequest:
-            class state:
+            class state:  # noqa: N801 — 小写以匹配 auth.py 里 getattr(request.state, ...) 的属性名
                 user_role = ROLE_VIEWER
 
         req = MockRequest()

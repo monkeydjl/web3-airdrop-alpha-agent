@@ -62,7 +62,12 @@ _JOB_OWNER: dict[str, str] = {
     "analysis_run_queue": "SCHEDULER_ENABLED",
     "archive_cleanup": "ARCHIVE_SCHEDULER_ENABLED",
     "notify_digest": "NOTIFY_ENABLED",
-    "vitals_probe"       : "VITALS_SCHEDULER_ENABLED",
+    "vitals_probe": "VITALS_SCHEDULER_ENABLED",
+    # 02d8708 起 scheduler.start() 无条件注册 daily_alpha_digest（自身无独立
+    # 开关；诊断端点的"应当注册"也因此不列它 —— 见 _expected_jobs 注释）。
+    # 但 owner_switch 仍必须答得出"找谁"：这个 job 随统一调度器启停，
+    # 答案是总开关 SCHEDULER_ENABLED。
+    "daily_alpha_digest": "SCHEDULER_ENABLED",
 }
 _COLLECTION_SWITCH = "COLLECTION_SCHEDULER_ENABLED"
 

@@ -19,7 +19,7 @@ UNBACKED_POINTS_MACHINE = "UNBACKED_POINTS_MACHINE"
 
 ViabilityTier = Literal["viable", "borderline", "unviable"]
 
-VIABILITY_TIER_ZH: dict[ViabilityTier, str] = {
+VIABILITY_TIER_ZH: dict[str, str] = {
     "viable": "资金充裕",
     "borderline": "跑道观察",
     "unviable": "存活预警",
@@ -75,9 +75,8 @@ def evaluate_project_viability(
 
     # 1. 检验：微额融资且无知名机构背书
     # 在熊市中，融资金额 < $3M 且无 Tier-1/Tier-2 机构背书的项目很难撑到 TGE 发币
-    if funding_total_usd is not None and 0 < funding_total_usd < 3_000_000:
-        if tier_norm not in ("tier1", "tier2"):
-            reasons.append("LOW_FUNDING_UNVIABLE")
+    if funding_total_usd is not None and 0 < funding_total_usd < 3_000_000 and tier_norm not in ("tier1", "tier2"):
+        reasons.append("LOW_FUNDING_UNVIABLE")
 
     # 2. 检验：跑道资金耗尽（上次融资久远 + 融资金额偏小 + 开发停摆或无 TVL）
     months_ago = _months_since(funding_last_date, now=now)
@@ -122,4 +121,8 @@ def evaluate_project_viability(
         "reasons": tuple(reasons),
         "reasons_zh": reasons_zh,
         "recommendation_zh": recommendation_zh,
+        # 透传输入供调用方审计（funding_rounds / stage 当前不参与判定，
+        # 但保留在签名中以兼容既有调用点；暴露出来避免「传了但被静默丢弃」）
+        "funding_rounds": funding_rounds,
+        "stage": stage,
     }

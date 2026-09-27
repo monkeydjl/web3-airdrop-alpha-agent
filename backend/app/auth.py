@@ -36,8 +36,9 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import bcrypt
 import jwt
@@ -47,8 +48,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.config import settings
-
 from app.db import connection_scope
+
 logger = structlog.get_logger(__name__)
 
 # Paths that stay open even with API key enabled
@@ -61,10 +62,10 @@ PUBLIC_PREFIXES = (
     "/version",
     "/api/v1/webhook",
     "/api/v1/auth/anonymous",  # 匿名 token 签发端点
-    "/api/v1/auth/register",   # 用户注册
-    "/api/v1/auth/login",      # 用户登录
-    "/api/v1/auth/refresh",    # 刷新 token
-    "/api/v1/ha/status",       # HA 状态与负载均衡健康探测（公开只读）
+    "/api/v1/auth/register",  # 用户注册
+    "/api/v1/auth/login",  # 用户登录
+    "/api/v1/auth/refresh",  # 刷新 token
+    "/api/v1/ha/status",  # HA 状态与负载均衡健康探测（公开只读）
 )
 
 # 需要管理员权限的端点（匿名 token 不可访问），**不分方法**——整个前缀都锁。
@@ -407,6 +408,7 @@ def verify_token(token: str) -> dict[str, Any] | None:
         return None
 
     # 解析 payload
+    payload: dict[str, Any]
     try:
         payload_json = _b64url_decode(payload_b64).decode("utf-8")
         payload = json.loads(payload_json)
@@ -418,7 +420,7 @@ def verify_token(token: str) -> dict[str, Any] | None:
     if not isinstance(exp, int) or exp < int(time.time()):
         return None
 
-    return cast(dict[str, Any], payload)
+    return payload
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -574,7 +576,7 @@ def decode_and_verify_jwt(token: str, expected_type: str | None = None) -> dict[
     if jti and is_jti_blacklisted(jti):
         return None
 
-    return cast(dict[str, Any], payload)
+    return payload
 
 
 def is_admin_token(provided: str) -> bool:
@@ -646,6 +648,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
         # 1b. 动态可撤销 API Key (V3, ROADMAP §25.3.3)
         if provided.startswith("ak_"):
+
             def _verify_ak(raw_key: str) -> dict[str, Any] | None:
                 from app.repositories.api_key import ApiKeyRepository
 
@@ -804,7 +807,7 @@ def get_current_user(request: Request) -> dict[str, Any]:
     }
 
 
-def require_role(*allowed_roles: str):
+def require_role(*allowed_roles: str) -> Callable[[Request], str]:
     """FastAPI 依赖注入：检查当前请求用户是否属于指定角色之一。
 
     用于端点函数显式限定访问角色：
@@ -827,4 +830,3 @@ def require_role(*allowed_roles: str):
         return role
 
     return _dependency
-

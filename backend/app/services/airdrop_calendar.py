@@ -6,6 +6,7 @@
 
 import datetime
 from typing import Any
+
 import structlog
 
 from app.db import connection_scope, dict_from_row
@@ -26,10 +27,10 @@ def get_calendar_events() -> list[dict[str, Any]]:
             """
         ).fetchall()
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
 
         # 示例/预热的重要项目里程碑清单（当数据库信号中缺少显式时间字段时提供真实行业节点支撑）
-        CURATED_MILESTONES = {
+        curated_milestones: dict[str, list[dict[str, Any]]] = {
             "berachain": [
                 {
                     "type": "tge",
@@ -77,7 +78,7 @@ def get_calendar_events() -> list[dict[str, Any]]:
             pid = str(record.get("id") or "").lower()
             name = str(record.get("name") or "").lower()
 
-            for key, m_list in CURATED_MILESTONES.items():
+            for key, m_list in curated_milestones.items():
                 if (key in pid or key in name) and key not in matched_names:
                     matched_names.add(key)
                     for m in m_list:
@@ -113,7 +114,7 @@ def get_calendar_events() -> list[dict[str, Any]]:
 
         # 默认补充通用行业里程碑，确保任何时候日历均丰富可用
         if len(events) < 4:
-            fallback_events = [
+            fallback_events: list[dict[str, Any]] = [
                 {
                     "project_id": "linea",
                     "project_name": "Linea",
@@ -205,7 +206,8 @@ def generate_icalendar_stream(events: list[dict[str, Any]]) -> str:
                     "END:VEVENT",
                 ]
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug("airdrop_calendar.ics_event_skipped", error=repr(exc))
             continue
 
     lines.append("END:VCALENDAR")

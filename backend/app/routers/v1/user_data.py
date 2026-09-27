@@ -139,8 +139,8 @@ def export_user_data(request: Request) -> UserExportResponse:
                 parsed = json.loads(raw_prefs)
                 if isinstance(parsed, dict):
                     prefs_dict = parsed
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("user_data.prefs_parse_skipped", error=repr(exc))
 
         feedback_rows = _safe_query(
             conn,

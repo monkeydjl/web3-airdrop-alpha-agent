@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -126,7 +127,7 @@ KNOWN_SELECTORS: dict[str, dict[str, Any]] = {
         ],
         "category": "EIP-2612 离线无 Gas 签名授权",
         "base_risk": "caution",
-    }
+    },
 }
 
 MAX_UINT256_STR = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
@@ -173,7 +174,9 @@ def decode_calldata(
     decoded_params: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    chunks = [raw_params_hex[i:i+64] for i in range(0, len(raw_params_hex), 64) if len(raw_params_hex[i:i+64]) == 64]
+    chunks = [
+        raw_params_hex[i : i + 64] for i in range(0, len(raw_params_hex), 64) if len(raw_params_hex[i : i + 64]) == 64
+    ]
 
     if known and known.get("params"):
         param_defs = known["params"]
@@ -192,13 +195,17 @@ def decode_calldata(
                     if pdef["name"] in ["amount", "value"] and (num_val >= int("0xffffffffffffffffffffffff", 16)):
                         val_repr = "MAX_UINT256 (无限额度)"
                         safety_rating = "caution"
-                        warnings.append("⚠️ 检测到无限额度 (Unlimited Allowance) 授权，请确认调用方为知名协议，防范授权被盗。")
+                        warnings.append(
+                            "⚠️ 检测到无限额度 (Unlimited Allowance) 授权，请确认调用方为知名协议，防范授权被盗。"
+                        )
 
-                decoded_params.append({
-                    "name": pdef["name"],
-                    "type": pdef["type"],
-                    "value": val_repr,
-                })
+                decoded_params.append(
+                    {
+                        "name": pdef["name"],
+                        "type": pdef["type"],
+                        "value": val_repr,
+                    }
+                )
     else:
         # 未知签名通用按槽位展示
         for idx, chunk in enumerate(chunks):
@@ -209,11 +216,13 @@ def decode_calldata(
             else:
                 val = str(int(chunk, 16))
                 t = "uint256 / bytes32 (推测)"
-            decoded_params.append({
-                "name": f"param_{idx + 1}",
-                "type": t,
-                "value": val,
-            })
+            decoded_params.append(
+                {
+                    "name": f"param_{idx + 1}",
+                    "type": t,
+                    "value": val,
+                }
+            )
 
     # 4. 关键风险规则
     if safety_rating == "critical":

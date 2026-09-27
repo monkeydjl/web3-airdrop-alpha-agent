@@ -274,6 +274,19 @@ def _discovery_meta(fixture: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
+def _sync_direct(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """to_thread 的同步替身：不经线程池直接执行，返回可 await 的裸协程。
+
+    调用方是 `await asyncio.to_thread(...)`，必须返回可 await 对象；
+    用一次性裸协程包装，不碰事件循环，保住 _run_coro_sync 的 socket-free 契约。
+    """
+
+    async def _done() -> Any:
+        return fn(*args, **kwargs)
+
+    return _done()
+
+
 def _run_coro_sync(coro: Any) -> Any:
     """Drive plain coroutine chains without an asyncio event loop (socket-free)."""
     stack: list[Any] = [coro]
@@ -460,20 +473,6 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
     prev_auto_c = coll_mod.settings.collection_auto_run_enabled
     try:
         coll_mod.settings.collection_auto_run_enabled = False
-        with (
-            patch.object(coll_mod, "_build_registry", lambda: _FakeReg()),
-            patch.object(coll_mod, "CollectionRepository", _ManualRepo),
-            patch.object(coll_mod, "connection_scope", _manual_scope),
-            patch.object(coll_mod.asyncio, "to_thread", lambda fn, *a, **k: _sync_direct(fn, *a, **k)),
-            patch(
-                "app.opportunity.economic_repository.EconomicSnapshotRepository",
-                boom_ctor,
-            ),
-        ):
-            response = _run_coro_sync(coll_mod.trigger_collection(source_id="defillama"))
-        if response.ok is not True:
-            return False
-        data = response.model_dump().get("data") or {}
 
         # 734f0a7 起手动触发路径的持久化移入 asyncio.to_thread；
         # _run_coro_sync 是无事件循环的裸协程驱动器（socket-free），
@@ -488,6 +487,24 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
             finally:
                 conn_m.close()
 
+        with (
+            patch.object(coll_mod, "_build_registry", lambda: _FakeReg()),
+            patch.object(coll_mod, "CollectionRepository", _ManualRepo),
+            patch.object(coll_mod, "connection_scope", _manual_scope),
+            patch.object(coll_mod.asyncio, "to_thread", lambda fn, *a, **k: _sync_direct(fn, *a, **k)),
+            patch(
+                "app.opportunity.economic_repository.EconomicSnapshotRepository",
+                boom_ctor,
+            ),
+        ):
+            # 必须显式传 payload=None + auto_run=False：直调（非 HTTP）时
+            # FastAPI 的默认值是 Query(None)/Body(None) 标记对象 —— 非 None 且真值，
+            # 会 hit 「auto_run is not None」分支并触发真实分析管线
+            # （orchestrator 的 gather/semaphore 无事件循环不可驱动）。
+            response = _run_coro_sync(coll_mod.trigger_collection(source_id="defillama", payload=None, auto_run=False))
+        if response.ok is not True:
+            return False
+        data = response.model_dump().get("data") or {}
         if data.get("source_id") != "defillama":
             return False
         if data.get("items_collected") != 1:

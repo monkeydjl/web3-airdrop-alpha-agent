@@ -11,6 +11,7 @@ to extract comprehensive raises/funding data:
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,10 +104,8 @@ def parse_defillama_raises(raises_raw: list[dict[str, Any]]) -> dict[str, Any]:
 
     last_round_date_iso = None
     if last_date_ts:
-        try:
+        with contextlib.suppress(OSError, ValueError, OverflowError):
             last_round_date_iso = datetime.fromtimestamp(last_date_ts, tz=UTC).strftime("%Y-%m-%d")
-        except (OSError, ValueError, OverflowError):
-            pass
 
     lead_investors = sorted(lead_investors_set)
     investors = sorted(all_investors_set)

@@ -103,7 +103,7 @@
 
 ---
 
-## 3. 16 个采集器的真实落点
+## 3. 17 个采集器的真实落点
 
 **上一版这张表的 10 个路径全是错的**（都写成
 `{source}_collector.py` 并标「计划实现位置」）。真实文件与类名：
@@ -114,6 +114,7 @@
 |---|---|---|
 | `defillama` | `backend/app/collectors/defillama.py` | `DefiLlamaCollector` |
 | `github` | `backend/app/collectors/github.py` | `GitHubCollector` |
+| `github_curated` | `backend/app/collectors/github_curated.py` | `GitHubCuratedCollector` |
 | `coingecko` | `backend/app/collectors/coingecko.py` | `CoinGeckoCollector` |
 | `twitter_kol` | `backend/app/collectors/twitter.py` | `TwitterKolCollector` |
 | `twitter_keyword` | `backend/app/collectors/twitter.py` | `TwitterKeywordCollector` |

@@ -4,8 +4,9 @@ GET /api/v1/projects/compare?ids=proj1,proj2
 """
 
 from typing import Any
-from fastapi import APIRouter, HTTPException, Query
+
 import structlog
+from fastapi import APIRouter, HTTPException, Query
 
 from app.services.project_comparison import compare_projects
 
@@ -26,7 +27,7 @@ def get_comparison(
         data = compare_projects(project_ids)
         return data
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error("api.projects.compare_failed", ids=ids, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Comparison failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {e}") from e

@@ -4,9 +4,10 @@
 并支持处理 /alpha, /gas, /faucets 等实时双向交互指令。
 """
 
+from typing import Any
+
 import httpx
 import structlog
-from typing import Any
 
 from app.db import connection_scope, dict_from_row
 
@@ -78,16 +79,16 @@ def handle_bot_command(command: str) -> dict[str, Any]:
         return {"ok": True, "command": root_cmd, "reply": "\n".join(lines)}
 
     elif root_cmd == "faucets":
-        from app.services.faucet_registry import list_faucets
+        from app.services.faucet_registry import list_faucets_with_status
 
-        faucets = list_faucets()
-        alive = [f for f in faucets if f.get("status") in ("available", "healthy")]
+        faucets = list_faucets_with_status()
+        ready = [f for f in faucets if f.get("status") == "ready"]
 
-        lines = [f"💧 *当前高可用测试网水龙头 (存活 {len(alive)}/{len(faucets)})*\n"]
-        for f in alive[:6]:
+        lines = [f"💧 *当前高可用测试网水龙头 (可领取 {len(ready)}/{len(faucets)})*\n"]
+        for f in ready[:6]:
             lines.append(
-                f"• *{f.get('network_name')}* ({f.get('faucet_type', '公开')})\n"
-                f"   单次领水: `{f.get('drip_amount')}` | [立即前往]({f.get('faucet_url')})"
+                f"• *{f.get('name')}* ({f.get('chain_name', f.get('chain', ''))})\n"
+                f"   配额: `{f.get('daily_quota', '')}` | [立即前往]({f.get('url')})"
             )
         return {"ok": True, "command": root_cmd, "reply": "\n\n".join(lines)}
 

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -44,7 +45,11 @@ _PROTOCOLS: dict[str, dict[str, Any]] = {
             "active": 20_000,
         },
         "boost_strategies": [
-            {"pool": "Proof of Humanity (PoH) 认证", "multiplier": "核心门槛", "desc": "完成人脸/生物实人认证解锁空投资格"},
+            {
+                "pool": "Proof of Humanity (PoH) 认证",
+                "multiplier": "核心门槛",
+                "desc": "完成人脸/生物实人认证解锁空投资格",
+            },
             {"pool": "SyncSwap / Velocore 交易流动性", "multiplier": "2.0x", "desc": "原生 DEX 提供稳定币对"},
             {"pool": "Lendle / ZeroLend 借贷存款", "multiplier": "1.8x", "desc": "借贷协议供应资产"},
         ],
@@ -159,7 +164,9 @@ def estimate_points_airdrop(
         tier_label = "⭐ 先锋主力梯队 (Top 5%)"
         percentile_text = "前 5% 主力猎人"
         next_target = thresh["whale"] - pts
-        sprint_advice = f"距离冲刺「巨鲸头部梯队」还需约 {int(next_target):,} 积分，建议配置下方加权加速池提升每日积分产出。"
+        sprint_advice = (
+            f"距离冲刺「巨鲸头部梯队」还需约 {int(next_target):,} 积分，建议配置下方加权加速池提升每日积分产出。"
+        )
     elif pts >= thresh["active"]:
         tier = "active"
         tier_label = "🎯 活跃中坚梯队 (Top 20%)"
@@ -171,7 +178,9 @@ def estimate_points_airdrop(
         tier_label = "🌱 基础低保梯队 (Top 50%)"
         percentile_text = "前 50% 基础参与"
         next_target = thresh["active"] - pts
-        sprint_advice = f"当前积分处于低保边缘，建议至少补足 {int(next_target):,} 积分进入活跃中坚档，避免触碰快照最低空投门槛。"
+        sprint_advice = (
+            f"当前积分处于低保边缘，建议至少补足 {int(next_target):,} 积分进入活跃中坚档，避免触碰快照最低空投门槛。"
+        )
 
     return {
         "ok": True,

@@ -14,18 +14,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
 
 import pytest
 from starlette.requests import Request
 
 from app.auth import (
-    blacklist_token_jti,
     hash_password,
     is_jti_blacklisted,
 )
-from app.db import DbConnection, dict_from_row
-from app.repositories.user import BlacklistedJtiRepository, SessionRepository, UserRepository
+from app.db import DbConnection
+from app.repositories.user import UserRepository
 from app.routers.v1.user_data import delete_user_account, export_user_data
 
 
@@ -147,6 +145,8 @@ def db_conn(monkeypatch, tmp_path):
     def _get_conn() -> DbConnection:
         conn = sqlite3.connect(str(db_file), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        return DbConnection(conn, kind="sqlite")
+
     import contextlib
 
     @contextlib.contextmanager
@@ -163,8 +163,6 @@ def db_conn(monkeypatch, tmp_path):
         finally:
             if conn is None:
                 db.close()
-
-        return DbConnection(conn, kind="sqlite")
 
     with _get_conn() as init_conn:
         _setup_test_db(init_conn._raw)

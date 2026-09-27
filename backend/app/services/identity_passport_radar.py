@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -120,13 +121,13 @@ PASSPORT_STAMPS_CATALOG: list[dict[str, Any]] = [
 def evaluate_wallet_identity(wallet_address: str) -> dict[str, Any]:
     """根据钱包地址模拟评估链上人机身份得分与凭证状态."""
     clean_addr = wallet_address.strip().lower()
-    
+
     # 模拟真实多维度激活情况 (基于地址哈希伪随机，保证同一地址结果幂等稳定)
     hash_val = sum(ord(c) for c in clean_addr)
-    
+
     active_stamps: list[dict[str, Any]] = []
     missing_stamps: list[dict[str, Any]] = []
-    
+
     total_score = 0.0
     for idx, stamp in enumerate(PASSPORT_STAMPS_CATALOG):
         # 模拟部分戳记已激活
@@ -139,7 +140,7 @@ def evaluate_wallet_identity(wallet_address: str) -> dict[str, Any]:
 
     rounded_score = round(total_score, 2)
     is_human_verified = rounded_score >= 20.0
-    
+
     if rounded_score >= 28.0:
         tier = "ELITE_HUMAN"
         tier_desc = "顶级真人猎人 (防女巫免疫，享最高空投乘数)"
@@ -164,17 +165,14 @@ def evaluate_wallet_identity(wallet_address: str) -> dict[str, Any]:
         "missing_stamps_count": len(missing_stamps),
         "active_stamps": active_stamps,
         "missing_stamps": missing_stamps,
-        "recommended_next_stamps": sorted(
-            missing_stamps,
-            key=lambda x: (x["cost_usd"], -x["weight"])
-        )[:4],
+        "recommended_next_stamps": sorted(missing_stamps, key=lambda x: (x["cost_usd"], -x["weight"]))[:4],
     }
 
 
 # 预先在模块加载阶段按性价比（分值/成本）排好序，避免每次 API 调用重复排序
 _PRECOMPUTED_STAMPING_GUIDE: list[dict[str, Any]] = sorted(
     PASSPORT_STAMPS_CATALOG,
-    key=lambda s: (s["weight"] / (s["cost_usd"] + 0.2)),
+    key=lambda s: s["weight"] / (s["cost_usd"] + 0.2),
     reverse=True,
 )
 

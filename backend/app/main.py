@@ -86,10 +86,10 @@ def create_app(
         if db_override is None:
             init_db()
 
+        # Connection ownership: borrowed override never closed; else app-owned once.
         # 所有权契约的权威定义在 app.db.connection_scope（消费者统一走它）；此处是
         # app 生命周期的 own/borrow 持有方，作用域横跨整个 lifespan（含 yield），
         # 故用 try/finally 直接实现。
-        # Connection ownership: borrowed override never closed; else app-owned once.
         # Close-protecting try/finally is active from the moment ownership is acquired
         # so pre-yield startup failures still close an app-owned connection exactly once.
         if db_override is not None:
@@ -202,6 +202,7 @@ def create_app(
                                 source_id=source_id,
                                 reason="no_new_items",
                             )
+
                 from app.services.leader_election import LeaderElector
 
                 unified_scheduler = UnifiedScheduler(
@@ -223,11 +224,11 @@ def create_app(
                         conn_factory=(lambda: db_override) if db_override is not None else get_connection,
                         on_promoted=on_promoted,
                         on_demoted=on_demoted,
+                        enabled=settings.ha_enabled,
                         # db_override is a borrowed shared connection owned by this
                         # lifespan (closed once in the finally below, and only when
                         # app_owns_conn); the elector must not close it per use.
                         owns_connections=db_override is None,
-                        enabled=settings.ha_enabled,
                     )
                 else:
                     active_elector.on_promoted = on_promoted
@@ -540,59 +541,61 @@ def create_app(
         api_keys,
         archive,
         auth,
+        bot,
+        bridge,
+        bridge_liquidity,
+        calldata,
         collections,
+        comparison,
+        daily_briefing,
         dashboard,
+        diagnostic,
         export_import,
+        faucets,
         feedback,
         funding,
+        gas,
         ha,
+        identity,
+        impermanent_loss,
         insights,
         interactions,
+        lineage,
         llm,
+        mev_rpc,
         notifications,
         notify,
+        onchain,
         opportunity,
+        ops,
         participation,
+        paymaster,
+        playbook,
+        pnl,
+        points,
         projects,
         public_config,
         quarantine,
         roi,
         run,
+        scripts,
+        security,
+        sell_off,
         skip,
-        user_profile,
-        user_preferences,
+        smart_money,
+        sybil_dossier,
+        team_studio,
+        unlocks,
         user_data,
+        user_preferences,
+        user_profile,
         watched_wallets,
         watchlist,
         webhook,
-        onchain,
-        faucets,
-        ops,
-        gas,
-        calendar as calendar_router,
-        bot,
-        sybil_dossier,
-        security,
-        pnl,
-        scripts,
-        smart_money,
-        bridge,
-        comparison,
-        unlocks,
-        sell_off,
-        diagnostic,
-        lineage,
-        calldata,
-        points,
-        daily_briefing,
-        mev_rpc,
-        bridge_liquidity,
-        playbook,
-        team_studio,
-        identity,
         whale_mirror,
-        impermanent_loss,
-        paymaster,
+    )
+    from app.routers.v1 import (
+        calendar as calendar_router,
     )
 
     # 别名，避免与本模块顶部 `from app.scheduler import UnifiedScheduler`

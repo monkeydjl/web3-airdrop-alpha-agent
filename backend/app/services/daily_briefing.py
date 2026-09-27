@@ -6,21 +6,22 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
 import structlog
 
 from app.db import connection_scope, dict_from_row
 from app.services.gas_tracker import get_all_chains_gas_summary
-from app.services.token_unlock_radar import get_upcoming_unlocks
 from app.services.smart_money_radar import get_smart_money_and_social_feed
+from app.services.token_unlock_radar import get_upcoming_unlocks
 
 logger = structlog.get_logger(__name__)
 
 
 def generate_daily_briefing() -> dict[str, Any]:
     """生成今日链上 Alpha 晚报与次日行动待办清单."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     date_str = now.strftime("%Y-%m-%d")
 
     # 1. 查询数据库最新高分项目 Top 3
@@ -52,9 +53,10 @@ def generate_daily_briefing() -> dict[str, Any]:
     gas_summary = get_all_chains_gas_summary()
     recs = gas_summary.get("recommendations", {})
     gas_advice = recs.get("current_recommendation", "主网 Gas 处于常态波动区间，建议错峰交互。")
-    weekly_windows = recs.get("best_weekly_windows", [
-        {"period": "周日凌晨 02:00-06:00 UTC", "savings": "节省 ~45% Gas", "desc": "全网交易低谷"}
-    ])
+    weekly_windows = recs.get(
+        "best_weekly_windows",
+        [{"period": "周日凌晨 02:00-06:00 UTC", "savings": "节省 ~45% Gas", "desc": "全网交易低谷"}],
+    )
 
     # 3. 获取近期代币解锁抛压
     unlocks = get_upcoming_unlocks(limit=2, min_pressure="high")
@@ -81,26 +83,34 @@ def generate_daily_briefing() -> dict[str, Any]:
     for action in top_three_actions:
         md_lines.append(f"- {action}")
 
-    md_lines.extend([
-        "",
-        "## 💎 今日综合评分榜首协议",
-    ])
+    md_lines.extend(
+        [
+            "",
+            "## 💎 今日综合评分榜首协议",
+        ]
+    )
     for idx, p in enumerate(top_projects, 1):
-        md_lines.append(f"{idx}. **{p['name']}** [{p.get('sector', 'Web3')}] —— 综合得分: **{p.get('score', 90)}分** ({p.get('label', 'FARM')})")
+        md_lines.append(
+            f"{idx}. **{p['name']}** [{p.get('sector', 'Web3')}] —— 综合得分: **{p.get('score', 90)}分** ({p.get('label', 'FARM')})"
+        )
 
-    md_lines.extend([
-        "",
-        "## ⛽ 全网 Gas 黄金时段预测",
-        f"- **当前操作指南**: {gas_advice}",
-    ])
+    md_lines.extend(
+        [
+            "",
+            "## ⛽ 全网 Gas 黄金时段预测",
+            f"- **当前操作指南**: {gas_advice}",
+        ]
+    )
     for w in weekly_windows[:2]:
         md_lines.append(f"- **极佳低谷窗口**: `{w['period']}` —— {w['savings']} ({w['desc']})")
 
     if unlocks:
-        md_lines.extend([
-            "",
-            "## 🔓 重点代币解锁与抛压雷达",
-        ])
+        md_lines.extend(
+            [
+                "",
+                "## 🔓 重点代币解锁与抛压雷达",
+            ]
+        )
         for u in unlocks:
             md_lines.append(
                 f"- **{u['project_name']} (${u['token_symbol']})**: 预计 `{u['unlock_date']}` 解锁 "
@@ -108,18 +118,24 @@ def generate_daily_briefing() -> dict[str, Any]:
             )
 
     if whale_txs:
-        md_lines.extend([
-            "",
-            "## 🐋 过去 24 小时巨鲸聪明钱动向",
-        ])
+        md_lines.extend(
+            [
+                "",
+                "## 🐋 过去 24 小时巨鲸聪明钱动向",
+            ]
+        )
         for wt in whale_txs:
-            md_lines.append(f"- **[{wt.get('whale_label', '聪慧巨鲸')}]**: {wt.get('action_detail', '链上交互')} (金额: {wt.get('amount_usd', '大单')})")
+            md_lines.append(
+                f"- **[{wt.get('whale_label', '聪慧巨鲸')}]**: {wt.get('action_detail', '链上交互')} (金额: {wt.get('amount_usd', '大单')})"
+            )
 
-    md_lines.extend([
-        "",
-        "---",
-        "*报告由 Web3 Airdrop Alpha Agent 全自动链上感知管线生成 · 投资有风险，交互需理性*",
-    ])
+    md_lines.extend(
+        [
+            "",
+            "---",
+            "*报告由 Web3 Airdrop Alpha Agent 全自动链上感知管线生成 · 投资有风险，交互需理性*",
+        ]
+    )
 
     markdown_content = "\n".join(md_lines)
 

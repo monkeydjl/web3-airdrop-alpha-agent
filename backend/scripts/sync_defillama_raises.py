@@ -31,8 +31,8 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"warn: stdout reconfigure skipped: {exc!r}", file=sys.stderr)
 
 from app.config import settings
 
@@ -72,7 +72,9 @@ async def run_sync_defillama_raises(
         slug_map = build_protocols_slug_map(protocols)
 
         # Load projects
-        cursor = conn.execute("SELECT id, name, sector, stage, score, label, reason, meta FROM projects ORDER BY score DESC")
+        cursor = conn.execute(
+            "SELECT id, name, sector, stage, score, label, reason, meta FROM projects ORDER BY score DESC"
+        )
         rows = cursor.fetchall()
         if limit > 0:
             rows = rows[:limit]
@@ -111,7 +113,10 @@ async def run_sync_defillama_raises(
             is_improvement = (
                 (new_amount > existing_amount)
                 or (not existing_funding.get("funding_investors") and bool(new_investors))
-                or (existing_funding.get("funding_tier") in (None, "none", "unknown") and new_tier in ("tier1", "tier2", "tier3"))
+                or (
+                    existing_funding.get("funding_tier") in (None, "none", "unknown")
+                    and new_tier in ("tier1", "tier2", "tier3")
+                )
             )
 
             if not is_improvement:
@@ -122,7 +127,11 @@ async def run_sync_defillama_raises(
             # Merge safely: keep higher amount, union investors, choose best tier
             final_amount = max(new_amount, existing_amount)
             final_investors = list(dict.fromkeys([*existing_funding.get("funding_investors", []), *new_investors]))
-            final_leads = list(dict.fromkeys([*existing_funding.get("funding_lead_investors", []), *proto_funding.get("lead_investors", [])]))
+            final_leads = list(
+                dict.fromkeys(
+                    [*existing_funding.get("funding_lead_investors", []), *proto_funding.get("lead_investors", [])]
+                )
+            )
             final_tier = (
                 "tier1"
                 if "tier1" in (new_tier, existing_funding.get("funding_tier"))
@@ -207,7 +216,9 @@ async def run_sync_defillama_raises(
             conn.commit()
             print(f"\n[APPLIED] Successfully updated {enriched_funding_count} projects in database.")
         else:
-            print(f"\n[DRY-RUN] Preview complete. {enriched_funding_count} projects can be enriched (run with --apply to commit).")
+            print(
+                f"\n[DRY-RUN] Preview complete. {enriched_funding_count} projects can be enriched (run with --apply to commit)."
+            )
 
         return {
             "ok": True,

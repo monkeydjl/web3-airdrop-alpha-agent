@@ -6,6 +6,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from app.db import get_connection, init_db
 from app.main import create_app
 
@@ -43,7 +44,9 @@ def test_batch3_api_endpoints():
     client = TestClient(app)
 
     import time
+
     from app.services.faucet_registry import _PROBE_CACHE
+
     _PROBE_CACHE["timestamp"] = time.time()
     _PROBE_CACHE["data"] = [
         {

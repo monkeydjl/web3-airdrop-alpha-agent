@@ -19,7 +19,7 @@ def test_calculate_bridge_routes_l2_to_l2():
     res = calculate_bridge_routes(
         source_chain="arbitrum",
         target_chain="base",
-        token="ETH",
+        asset="ETH",
         amount=0.5,
     )
     assert res["ok"] is True
@@ -36,7 +36,7 @@ def test_calculate_bridge_routes_l1_to_l2():
     res = calculate_bridge_routes(
         source_chain="ethereum",
         target_chain="optimism",
-        token="USDC",
+        asset="USDC",
         amount=1000.0,
     )
     assert res["ok"] is True

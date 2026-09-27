@@ -101,7 +101,6 @@ class TestUserSystemFullLifecycleE2E:
         assert admin_reg.status_code == 200
         admin_data = admin_reg.json()
         admin_token = admin_data["access_token"]
-        admin_id = admin_data["user"]["id"]
         assert admin_data["user"]["role"] == "admin"
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -181,8 +180,7 @@ class TestUserSystemFullLifecycleE2E:
             json={"refresh_token": dev_a_refresh},
         )
         assert refresh_res.status_code == 200
-        refreshed_token = refresh_res.json()["access_token"]
-        refreshed_headers = {"Authorization": f"Bearer {refreshed_token}"}
+        assert refresh_res.json()["access_token"]
 
         # 2.4 Multi-device login: Viewer logs in on Device B
         login_dev_b = client.post(
@@ -324,29 +322,41 @@ class TestUserSystemFullLifecycleE2E:
         # =========================================================================
 
         # 5.1 Viewer is restricted from writing business records (RBAC: Viewer is read-only)
-        assert client.post(
-            "/api/v1/feedback",
-            headers=viewer_headers,
-            json={"project_id": "e2e_proj_1", "signal": "useful"},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/v1/feedback",
+                headers=viewer_headers,
+                json={"project_id": "e2e_proj_1", "signal": "useful"},
+            ).status_code
+            == 403
+        )
 
-        assert client.post(
-            "/api/v1/watchlist/e2e_proj_1",
-            headers=viewer_headers,
-            json={"note": "Viewer watching"},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/v1/watchlist/e2e_proj_1",
+                headers=viewer_headers,
+                json={"note": "Viewer watching"},
+            ).status_code
+            == 403
+        )
 
-        assert client.post(
-            "/api/v1/projects/e2e_proj_2/skip",
-            headers=viewer_headers,
-            json={"reason": "Viewer skipping"},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/v1/projects/e2e_proj_2/skip",
+                headers=viewer_headers,
+                json={"reason": "Viewer skipping"},
+            ).status_code
+            == 403
+        )
 
-        assert client.post(
-            "/api/v1/interactions",
-            headers=viewer_headers,
-            json={"project_id": "e2e_proj_1", "status": "active"},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/v1/interactions",
+                headers=viewer_headers,
+                json={"project_id": "e2e_proj_1", "status": "active"},
+            ).status_code
+            == 403
+        )
 
         # But Viewer CAN submit telemetry/click events
         viewer_ev = client.post(
@@ -444,7 +454,9 @@ class TestUserSystemFullLifecycleE2E:
         assert adm_fb_2["count"] == 1
 
         # Admin filters by user_id
-        adm_filtered = client.get(f"/api/v1/feedback/e2e_proj_1?user_id={analyst_id}", headers=admin_headers).json()["data"]
+        adm_filtered = client.get(f"/api/v1/feedback/e2e_proj_1?user_id={analyst_id}", headers=admin_headers).json()[
+            "data"
+        ]
         assert adm_filtered["count"] == 1
         assert adm_filtered["items"][0]["note"] == "Analyst feedback via API Key"
 
@@ -528,27 +540,21 @@ class TestUserSystemFullLifecycleE2E:
             assert fb_rows[0][2] == "useful"
 
             # Events hard deleted for analyst
-            events_cnt = conn.execute(
-                "SELECT COUNT(*) FROM events WHERE user_id = ?", (analyst_id,)
-            ).fetchone()[0]
+            events_cnt = conn.execute("SELECT COUNT(*) FROM events WHERE user_id = ?", (analyst_id,)).fetchone()[0]
             assert events_cnt == 0
 
             # Viewer's event on e2e_proj_1 still exists
-            viewer_events_cnt = conn.execute(
-                "SELECT COUNT(*) FROM events WHERE user_id = ?", (viewer_id,)
-            ).fetchone()[0]
+            viewer_events_cnt = conn.execute("SELECT COUNT(*) FROM events WHERE user_id = ?", (viewer_id,)).fetchone()[
+                0
+            ]
             assert viewer_events_cnt == 1
 
             # Watchlist hard deleted
-            wl_cnt = conn.execute(
-                "SELECT COUNT(*) FROM watchlist WHERE user_id = ?", (analyst_id,)
-            ).fetchone()[0]
+            wl_cnt = conn.execute("SELECT COUNT(*) FROM watchlist WHERE user_id = ?", (analyst_id,)).fetchone()[0]
             assert wl_cnt == 0
 
             # Skips hard deleted
-            skip_cnt = conn.execute(
-                "SELECT COUNT(*) FROM project_skips WHERE user_id = ?", (analyst_id,)
-            ).fetchone()[0]
+            skip_cnt = conn.execute("SELECT COUNT(*) FROM project_skips WHERE user_id = ?", (analyst_id,)).fetchone()[0]
             assert skip_cnt == 0
 
             # Interactions hard deleted

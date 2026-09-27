@@ -125,11 +125,18 @@ _PROBE_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": []}
 def probe_faucets_liveness(force_refresh: bool = False) -> list[dict[str, Any]]:
     """Probe real-time HTTP reachability and latency for all registered faucets."""
     import time
+
     import httpx
 
     now = time.time()
-    if not force_refresh and _PROBE_CACHE["data"] and (now - _PROBE_CACHE["timestamp"] < 60.0):
-        return _PROBE_CACHE["data"]
+    cached = _PROBE_CACHE.get("data")
+    if (
+        not force_refresh
+        and isinstance(cached, list)
+        and bool(cached)
+        and now - float(_PROBE_CACHE["timestamp"]) < 60.0
+    ):
+        return cached
 
     results = []
     for faucet in FREE_FAUCETS:
@@ -223,9 +230,7 @@ def list_faucets_with_status(
         rows = cursor.fetchall()
         claims: dict[str, dict[str, Any]] = {}
         for r in rows:
-            if hasattr(r, "keys"):
-                d = dict(r)
-            elif isinstance(r, dict):
+            if hasattr(r, "keys") or isinstance(r, dict):
                 d = dict(r)
             else:
                 d = {"faucet_id": r[0], "claimed_at": r[1], "cooldown_hours": r[2]}
@@ -290,26 +295,26 @@ def record_faucet_claim(
         now = datetime.now(UTC)
 
         # Upsert claim
-        cursor = conn.execute(
+        cursor = c.execute(
             "SELECT claim_id FROM faucet_claims WHERE user_id = ? AND faucet_id = ?",
             (user_id, faucet_id),
         )
         existing = cursor.fetchone()
         if existing:
-            conn.execute(
+            c.execute(
                 "UPDATE faucet_claims SET claimed_at = ?, cooldown_hours = ? WHERE user_id = ? AND faucet_id = ?",
                 (now.isoformat(), cooldown_h, user_id, faucet_id),
             )
         else:
             claim_id = f"clm-{uuid.uuid4().hex[:12]}"
-            conn.execute(
+            c.execute(
                 "INSERT INTO faucet_claims (claim_id, user_id, faucet_id, claimed_at, cooldown_hours) VALUES (?, ?, ?, ?, ?)",
                 (claim_id, user_id, faucet_id, now.isoformat(), cooldown_h),
             )
-        conn.commit()
+        c.commit()
 
-        # Return updated faucet status
-        faucets = list_faucets_with_status(conn, user_id=user_id)
+        # Return updated faucet status（注入场景下 c 是借用连接，复用安全）
+        faucets = list_faucets_with_status(c, user_id=user_id)
         return next((f for f in faucets if f["id"] == faucet_id), {})
 
 
@@ -325,7 +330,7 @@ def reset_faucet_claim(
             "DELETE FROM faucet_claims WHERE user_id = ? AND faucet_id = ?",
             (user_id, faucet_id),
         )
-        conn.commit()
+        c.commit()
         return True
 
 
@@ -335,7 +340,7 @@ async def check_faucets_liveness(
 ) -> list[dict[str, Any]]:
     """Check liveness and balance status across faucets."""
     import time
-    import httpx
+
     from app.services.public_rpc_verifier import get_wallet_balance_and_nonce
 
     targets = FREE_FAUCETS
@@ -373,16 +378,18 @@ async def check_faucets_liveness(
                     health = "depleted"
                     health_zh = "暂时枯竭"
 
-                results.append({
-                    "id": f_id,
-                    "name": f["name"],
-                    "chain": chain,
-                    "health": health,
-                    "health_zh": health_zh,
-                    "vault_balance_eth": bal,
-                    "latency_ms": latency_ms,
-                    "checked_at": now_iso,
-                })
+                results.append(
+                    {
+                        "id": f_id,
+                        "name": f["name"],
+                        "chain": chain,
+                        "health": health,
+                        "health_zh": health_zh,
+                        "vault_balance_eth": bal,
+                        "latency_ms": latency_ms,
+                        "checked_at": now_iso,
+                    }
+                )
             else:
                 # Ping HTTP endpoint
                 try:
@@ -402,19 +409,20 @@ async def check_faucets_liveness(
                     health = "degraded"
                     health_zh = "连接超时"
 
-                results.append({
-                    "id": f_id,
-                    "name": f["name"],
-                    "chain": chain,
-                    "health": health,
-                    "health_zh": health_zh,
-                    "vault_balance_eth": None,
-                    "latency_ms": latency_ms,
-                    "checked_at": now_iso,
-                })
+                results.append(
+                    {
+                        "id": f_id,
+                        "name": f["name"],
+                        "chain": chain,
+                        "health": health,
+                        "health_zh": health_zh,
+                        "vault_balance_eth": None,
+                        "latency_ms": latency_ms,
+                        "checked_at": now_iso,
+                    }
+                )
     finally:
         if own_client:
             await client.aclose()
 
     return results
-

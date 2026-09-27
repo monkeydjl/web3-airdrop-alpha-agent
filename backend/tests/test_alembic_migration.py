@@ -61,6 +61,13 @@ _EXPECTED_TABLES = {
     "roi_outcomes",
     # 领取监控的自有地址（迁移 0009，ACTION_LOOP_DESIGN §5）
     "watched_wallets",
+    # V3 用户认证与 API Key（迁移 0011/0012，734f0a7）
+    "users",
+    "sessions",
+    "blacklisted_jti",
+    "api_keys",
+    # HA leader 选举（734f0a7 起在 init_db 建表；alembic 链外，upgrade head 后同样存在）
+    "leader_election",
 }
 
 # 每个迁移引入的表 —— 可回滚性测试按「回滚到 N ⇒ 移除 N 之后全部表」推导，
@@ -74,8 +81,11 @@ _REVISION_TABLES: dict[str, set[str]] = {
     "0008": set(),
     "0009": {"watched_wallets"},
     "0010": {"project_skips"},
+    # V3 用户认证（0011）与动态 API Key（0012），734f0a7 引入
+    "0011": {"users", "sessions", "blacklisted_jti"},
+    "0012": {"api_keys"},
 }
-_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]
+_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"]
 
 
 def _tables_removed_after(revision: str) -> set[str]:
@@ -147,12 +157,16 @@ def test_alembic_upgrade_creates_all_tables(tmp_path: Path) -> None:
 
 
 def test_alembic_downgrade_base_drops_all_tables(tmp_path: Path) -> None:
-    """upgrade head 后 downgrade base 删除全部用户表。"""
+    """upgrade head 后 downgrade base 删除全部 alembic 链内的用户表。
+
+    leader_election 由 init_db 建表（不在 alembic 链内），downgrade 不会删除它，
+    从预期集合中排除。
+    """
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     assert _get_user_tables(db_path) == _EXPECTED_TABLES
     _run_alembic("downgrade", "base", db_path=db_path)
-    assert _get_user_tables(db_path) == set()
+    assert _get_user_tables(db_path) == {"leader_election"}
 
 
 def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:

@@ -7,22 +7,46 @@
 """
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 
 def generate_interaction_scripts(
-    project_name: str = "Story Protocol",
+    project_name: str,
     task_type: str = "contract_mint",
-    contract_address: str = "0x7777777254eeb25477b68fb85ed929f73a960582",
-    rpc_url: str = "https://odyssey.storyrpc.io",
+    contract_address: str = "",
+    rpc_url: str = "",
     jitter_min: int = 15,
     jitter_max: int = 60,
 ) -> dict[str, Any]:
-    """生成防女巫交互代码模版."""
+    """生成防女巫交互代码模版.
+
+    合约地址与 RPC 由调用方显式提供（必填语义由路由层 Pydantic 校验强化）。
+    此前这里内置了一个写死的示例合约地址（0x7777...），用户照抄生成的脚本
+    会向任意无关合约发交易；审计后移除默认值，缺失时返回校验失败而非生成
+    危险脚本。
+    """
     c_addr = contract_address.strip()
     rpc = rpc_url.strip()
+
+    if not c_addr or not c_addr.startswith("0x"):
+        return {
+            "ok": False,
+            "error": {
+                "code": "CONTRACT_ADDRESS_REQUIRED",
+                "message": "必须提供目标交互合约地址 (0x 开头)。脚本会真实向该合约发交易，拒绝使用占位默认值。",
+            },
+        }
+    if not rpc:
+        return {
+            "ok": False,
+            "error": {
+                "code": "RPC_URL_REQUIRED",
+                "message": "必须提供目标网络 RPC 节点地址。",
+            },
+        }
 
     # 1. Foundry Cast 模版
     foundry_script = f"""# [Foundry Cast] 一键单行链上交互模版 (项目: {project_name})

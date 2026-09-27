@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -26,11 +27,11 @@ def calculate_amm_impermanent_loss(
     """测算 AMM 流动性池的无常损失与手续费抵扣后的实际盈亏."""
     deposit = max(1.0, float(initial_deposit_usd))
     k = max(0.01, 1.0 + (price_change_pct / 100.0))  # 价格变化倍数
-    
+
     # 基础恒定乘积 IL = 2 * sqrt(k) / (1 + k) - 1
     base_il_ratio = (2.0 * math.sqrt(k)) / (1.0 + k) - 1.0
     base_il_pct = round(abs(base_il_ratio) * 100.0, 2)
-    
+
     # 若为 Uni V3 集中流动性，无常损失会被杠杆区间放大
     if is_concentrated_v3 and price_upper_bound_ratio > price_lower_bound_ratio:
         # 集中倍数模拟
@@ -73,11 +74,11 @@ def check_lending_health_factor(
     """监控借贷仓位健康因子 (Health Factor)，并推演以太坊清算价格底线."""
     total_collateral_usd = collateral_amount * collateral_price_usd
     borrow = max(1.0, float(borrowed_usd))
-    
+
     # HF = (抵押物总值 * 清算阈值) / 借款额
     max_borrowable_at_liquidation = total_collateral_usd * liquidation_threshold
     health_factor = round(max_borrowable_at_liquidation / borrow, 2)
-    
+
     # 清算价格: CollateralPrice_liq = Borrow / (CollateralAmount * LiquidationThreshold)
     liquidation_price = round(borrow / (collateral_amount * liquidation_threshold), 2)
     price_drop_to_liquidation_pct = round(
@@ -115,7 +116,9 @@ def check_lending_health_factor(
             "repay_usd_to_reach_1_8_hf": max(0.0, round(borrow - (max_borrowable_at_liquidation / 1.8), 2)),
             "add_eth_to_reach_1_8_hf": max(
                 0.0,
-                round(((borrow * 1.8) - max_borrowable_at_liquidation) / (collateral_price_usd * liquidation_threshold), 3),
+                round(
+                    ((borrow * 1.8) - max_borrowable_at_liquidation) / (collateral_price_usd * liquidation_threshold), 3
+                ),
             ),
         },
     }

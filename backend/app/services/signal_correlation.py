@@ -44,9 +44,8 @@ def calculate_consensus(signals: list[dict[str, Any]]) -> dict[str, Any]:
             sources_set.add(src)
         if stype:
             signal_types_set.add(stype)
-        if "testnet" in stype or "testnet" in str(s.get("signal_data") or "").lower():
-            if src:
-                testnet_sources.add(src)
+        if ("testnet" in stype or "testnet" in str(s.get("signal_data") or "").lower()) and src:
+            testnet_sources.add(src)
 
     sources = sorted(sources_set)
     signal_types = sorted(signal_types_set)
@@ -95,7 +94,7 @@ def correlate_signals_for_project(
 
     with connection_scope(conn) as c:
         since_dt = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
-        cursor = conn.execute(
+        cursor = c.execute(
             """
             SELECT signal_source, signal_type, signal_strength, captured_at, signal_data
             FROM project_signals
@@ -108,9 +107,7 @@ def correlate_signals_for_project(
         signals: list[dict[str, Any]] = []
         for r in rows:
             # support dict or tuple row
-            if isinstance(r, dict):
-                signals.append(dict(r))
-            elif hasattr(r, "keys"):
+            if isinstance(r, dict) or hasattr(r, "keys"):
                 signals.append(dict(r))
             else:
                 signals.append(
@@ -132,7 +129,7 @@ def batch_correlate_signals(
     """Batch correlate all project signals within the window in a single query."""
     with connection_scope(conn) as c:
         since_dt = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
-        cursor = conn.execute(
+        cursor = c.execute(
             """
             SELECT project_id, signal_source, signal_type, signal_strength, captured_at, signal_data
             FROM project_signals

@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from app.auth import get_current_user
-from app.services.user_scope import DEFAULT_USER
 from app.services.faucet_registry import (
     FREE_FAUCETS,
     list_faucets_with_status,
@@ -15,6 +14,7 @@ from app.services.faucet_registry import (
     record_faucet_claim,
     reset_faucet_claim,
 )
+from app.services.user_scope import DEFAULT_USER
 
 router = APIRouter(tags=["faucets"])
 
@@ -148,4 +148,3 @@ async def get_faucets_health(
             "depleted_count": sum(1 for f in res if f["health"] == "depleted"),
         },
     }
-

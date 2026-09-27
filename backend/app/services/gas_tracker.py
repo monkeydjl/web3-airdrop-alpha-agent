@@ -5,6 +5,7 @@
 
 import time
 from typing import Any
+
 import httpx
 import structlog
 
@@ -195,7 +196,7 @@ def get_all_chains_gas_summary() -> dict[str, Any]:
     chains_data = {}
     eth_status = "cheap"
 
-    for chain_key in SUPPORTED_CHAINS.keys():
+    for chain_key in SUPPORTED_CHAINS:
         status_data = get_chain_gas_status(chain_key)
         chains_data[chain_key] = status_data
         if chain_key == "ethereum":
@@ -214,7 +215,11 @@ def get_all_chains_gas_summary() -> dict[str, Any]:
         ),
         "best_weekly_windows": [
             {"period": "周六至周日全天 (UTC)", "savings": "省约 45%~65% Gas", "desc": "美欧机构休息，链上活动低谷"},
-            {"period": "工作日 UTC 01:00 - 06:00 (北京时间 09:00 - 14:00)", "savings": "省约 30%~50% Gas", "desc": "美洲交易下线，亚洲盘平稳期"},
+            {
+                "period": "工作日 UTC 01:00 - 06:00 (北京时间 09:00 - 14:00)",
+                "savings": "省约 30%~50% Gas",
+                "desc": "美洲交易下线，亚洲盘平稳期",
+            },
         ],
         "high_friction_alert": "工作日 UTC 14:00 - 18:00 (美股开盘与欧美主流重叠期)，费率常呈突发脉冲式拉升，应避免批量密集交互。",
     }

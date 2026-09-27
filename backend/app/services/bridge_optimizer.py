@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-SUPPORTED_CHAINS = {
+SUPPORTED_CHAINS: dict[str, dict[str, Any]] = {
     "ethereum": {"name": "Ethereum L1", "type": "l1", "avg_gas_usd": 3.80},
     "arbitrum": {"name": "Arbitrum One", "type": "l2_rollup", "avg_gas_usd": 0.03},
     "base": {"name": "Base", "type": "l2_rollup", "avg_gas_usd": 0.02},
@@ -21,7 +21,7 @@ SUPPORTED_CHAINS = {
     "blast": {"name": "Blast", "type": "l2_rollup", "avg_gas_usd": 0.03},
 }
 
-SUPPORTED_PROTOCOLS = [
+SUPPORTED_PROTOCOLS: list[dict[str, Any]] = [
     {
         "id": "across",
         "name": "Across Protocol",
@@ -101,7 +101,7 @@ def get_supported_bridge_chains() -> list[dict[str, Any]]:
 def calculate_bridge_routes(
     source_chain: str,
     target_chain: str,
-    token: str = "ETH",
+    asset: str = "ETH",
     amount: float = 1.0,
 ) -> dict[str, Any]:
     """计算跨链路由方案对比并给出极佳路径."""
@@ -113,7 +113,7 @@ def calculate_bridge_routes(
     if dst not in SUPPORTED_CHAINS:
         dst = "base"
 
-    token_upper = token.upper().strip()
+    token_upper = asset.upper().strip()
     # 模拟估算基础汇率 (ETH $2600, USDC $1.0)
     token_price_usd = 2600.0 if "ETH" in token_upper else 1.0
     transfer_value_usd = max(1.0, amount * token_price_usd)

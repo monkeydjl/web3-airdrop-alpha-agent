@@ -6,6 +6,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from app.db import init_db
 from app.main import create_app
 
@@ -22,8 +23,7 @@ def test_batch7_api_endpoints():
     assert resp_guide.json()["data"]["total"] >= 8
 
     resp_eval = client.post(
-        "/api/v1/identity/evaluate",
-        json={"wallet_address": "0x5555555555555555555555555555555555555555"}
+        "/api/v1/identity/evaluate", json={"wallet_address": "0x5555555555555555555555555555555555555555"}
     )
     assert resp_eval.status_code == 200
     assert resp_eval.json()["ok"] is True
@@ -45,7 +45,7 @@ def test_batch7_api_endpoints():
             "user_bridged_usd": 4500.0,
             "user_retained_eth": 0.03,
             "target_project": "Story Protocol",
-        }
+        },
     )
     assert resp_comp.status_code == 200
     assert resp_comp.json()["ok"] is True
@@ -60,7 +60,7 @@ def test_batch7_api_endpoints():
             "is_concentrated_v3": True,
             "fee_apy_pct": 35.0,
             "holding_days": 30,
-        }
+        },
     )
     assert resp_il.status_code == 200
     assert resp_il.json()["ok"] is True
@@ -74,7 +74,7 @@ def test_batch7_api_endpoints():
             "collateral_price_usd": 3200.0,
             "liquidation_threshold": 0.825,
             "borrowed_usd": 8000.0,
-        }
+        },
     )
     assert resp_lend.status_code == 200
     assert resp_lend.json()["ok"] is True
@@ -91,7 +91,7 @@ def test_batch7_api_endpoints():
         json={
             "campaign_id": "base_daily_checkin",
             "user_address": "0x7777777777777777777777777777777777777777",
-        }
+        },
     )
     assert resp_pm_sim.status_code == 200
     assert resp_pm_sim.json()["ok"] is True

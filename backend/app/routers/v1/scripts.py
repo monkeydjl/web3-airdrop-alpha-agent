@@ -4,9 +4,10 @@ POST /api/v1/scripts/generate
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.script_forge import generate_interaction_scripts
 
@@ -15,10 +16,13 @@ router = APIRouter(prefix="/scripts", tags=["scripts"])
 
 
 class ScriptRequest(BaseModel):
-    project_name: str = Field("Story Protocol", description="项目名称")
+    project_name: str = Field(..., min_length=1, description="项目名称")
     task_type: str = Field("contract_mint", description="任务类型")
-    contract_address: str = Field("0x7777777254eeb25477b68fb85ed929f73a960582", description="交互合约地址")
-    rpc_url: str = Field("https://odyssey.storyrpc.io", description="RPC 节点地址")
+    # 必填：脚本会真实向该合约发交易，绝不内置占位地址（审计 P1）
+    contract_address: str = Field(
+        ..., pattern=r"^0x[0-9a-fA-F]{40}$", description="目标交互合约地址 (0x 开头 40 位十六进制，必填)"
+    )
+    rpc_url: str = Field(..., min_length=8, description="目标网络 RPC 节点地址 (必填)")
     jitter_min: int = Field(15, ge=1, le=300, description="防女巫随机延迟下限 (秒)")
     jitter_max: int = Field(60, ge=5, le=1800, description="防女巫随机延迟上限 (秒)")
 

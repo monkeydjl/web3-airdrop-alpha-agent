@@ -429,11 +429,12 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     for legacy_event in (
         "duration-observed",
         "scored-metric",
-        "gauges-updated",
         "raw-marked",
-        "pipeline.completed",
     ):
         assert events.index(legacy_event) < events.index("to-thread")
+    # P1-4 (734f0a7)：gauges 更新已移入 to_thread，其余旧同步事件必须在其之前；
+    # shadow-evaluated 是第二个 to_thread 调用（opportunity shadow），晚于第一个。
+    assert events.count("to-thread") >= 2
     assert events.index("to-thread") < events.index("shadow-evaluated")
     rollout_metric.assert_called_once_with(True, 1.0)
     assert result["opportunity_shadow"] == EMPTY_SHADOW_STATS
@@ -560,7 +561,11 @@ async def test_opportunity_shadow_does_not_run_without_database_saves(monkeypatc
         save_to_db=False,
     )
 
-    to_thread.assert_not_called()
+    # P1-4 (734f0a7) 后 gauges 更新也走 to_thread，save_to_db=False 不再意味着
+    # 完全无 to_thread；契约收窄为：to_thread 只被 gauges 调用，
+    # 绝不用于 opportunity shadow（试算/dry-run 无落库不得评估）。
+    assert to_thread.call_count == 1
+    assert "_update_gauges" in str(to_thread.call_args_list[0])
 
 
 @pytest.mark.asyncio

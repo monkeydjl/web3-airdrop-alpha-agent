@@ -6,6 +6,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from app.db import init_db
 from app.main import create_app
 
@@ -45,7 +46,7 @@ def test_batch4_api_endpoints():
             "threshold_gwei": 30.0,
             "label": "Polygon Quick Mint",
             "enabled": True,
-        }
+        },
     )
     assert resp_add_rule.status_code == 200
     created_rule = resp_add_rule.json()["data"]
@@ -66,7 +67,7 @@ def test_batch4_api_endpoints():
             "initial_price_usd": 3.2,
             "sector": "infrastructure",
             "persona": "balanced",
-        }
+        },
     )
     assert resp_simulate.status_code == 200
     sim_data = resp_simulate.json()
@@ -85,7 +86,7 @@ def test_batch4_api_endpoints():
             "protocol_types": ["dex", "bridge", "lending"],
             "total_gas_spent_eth": 0.045,
             "chains_active": ["ethereum", "arbitrum", "base"],
-        }
+        },
     )
     assert resp_diag.status_code == 200
     diag_data = resp_diag.json()

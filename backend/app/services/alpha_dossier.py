@@ -78,13 +78,14 @@ def generate_alpha_dossier(project_id: str) -> dict[str, Any]:
 
     raw_reasons = _parse_field(row.get("reason"))
     reasons = raw_reasons if isinstance(raw_reasons, list) else ([str(raw_reasons)] if raw_reasons else [])
-    raw_sub = _parse_field(row.get("sub_scores"))
-    sub_scores = raw_sub if isinstance(raw_sub, dict) else {}
 
     # 1. 融资与背书
     raw_meta = _parse_field(row.get("meta"))
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    signals = meta.get("signals") if isinstance(meta.get("signals"), dict) else {}
+    # isinstance 检查必须作用于局部变量：直接写 meta.get(...) 两次时，
+    # mypy 无法把第一次的收窄应用到第二次调用上（16 个 union-attr 的根源）
+    raw_signals = meta.get("signals")
+    signals = raw_signals if isinstance(raw_signals, dict) else {}
     funding_total = signals.get("funding_total_usd") or signals.get("total_raised_usd")
     funding_rounds = signals.get("funding_rounds") or 0
     funding_tier = signals.get("funding_tier") or "unrated"
@@ -155,7 +156,6 @@ def generate_alpha_dossier(project_id: str) -> dict[str, Any]:
 
     # 5. 多钱包防女巫策略
     wallet_strat = generate_multi_wallet_strategy(row)
-    wallet_strat_dict = wallet_strat.to_dict()
 
     # 6. 保姆级交互清单与水龙头
     tasks_dict = generate_participation_tasks(row)
@@ -268,63 +268,88 @@ def generate_alpha_dossier(project_id: str) -> dict[str, Any]:
     # 7. 实时 Gas 极佳交互窗口建议
     try:
         from app.services.gas_tracker import get_best_gas_windows
+
         gas_win = get_best_gas_windows()
-        md_lines.extend([
-            "",
-            "---",
-            "",
-            "## 7. ⛽ 全链实时 Gas 极佳交互窗口建议",
-            f"- **当前全网交互时段评估**: `{gas_win.get('best_time_window_utc', '周末全天 / UTC 02:00-08:00')}`",
-            f"- **预期节省 Gas 比例**: `{gas_win.get('savings_percentage', '45%~65%')}`",
-            "- **交互时机建议**:",
-        ])
+        md_lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "## 7. ⛽ 全链实时 Gas 极佳交互窗口建议",
+                f"- **当前全网交互时段评估**: `{gas_win.get('best_time_window_utc', '周末全天 / UTC 02:00-08:00')}`",
+                f"- **预期节省 Gas 比例**: `{gas_win.get('savings_percentage', '45%~65%')}`",
+                "- **交互时机建议**:",
+            ]
+        )
         for tip in gas_win.get("recommendations", [])[:3]:
             md_lines.append(f"  - 💡 {tip}")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("alpha_dossier.gas_window_skipped", error=repr(exc))
 
     # 8. 智能合约与防钓鱼安全体检
     if url:
         try:
             from app.services.security_sentinel import check_domain_safety
+
             sec = check_domain_safety(url)
-            md_lines.extend([
-                "",
-                "---",
-                "",
-                "## 8. 🛡️ 智能合约与防钓鱼安全体检",
-                f"- **官网域名安全评级**: **{sec.get('risk_level_zh', '安全')}** (`{sec.get('risk_level')}`)",
-                f"- **防同形异义词伪装**: {'✅ 未检出 Punycode 仿冒' if not sec.get('is_homograph_attack') else '🚨 存在仿冒高危'}",
-                f"- **权威认证通道**: {sec.get('advisory', '已通过官方域名白名单交叉验证')}",
-            ])
-        except Exception:
-            pass
+            md_lines.extend(
+                [
+                    "",
+                    "---",
+                    "",
+                    "## 8. 🛡️ 智能合约与防钓鱼安全体检",
+                    f"- **官网域名安全评级**: **{sec.get('risk_level_zh', '安全')}** (`{sec.get('risk_level')}`)",
+                    f"- **防同形异义词伪装**: {'✅ 未检出 Punycode 仿冒' if not sec.get('is_homograph_attack') else '🚨 存在仿冒高危'}",
+                    f"- **权威认证通道**: {sec.get('advisory', '已通过官方域名白名单交叉验证')}",
+                ]
+            )
+        except Exception as exc:
+            logger.debug("alpha_dossier.security_section_skipped", error=repr(exc))
 
     # 9. CLI 自动化交互脚本速查 (Foundry / Web3.py)
+    # 诚实口径：不再编造「示例合约地址」生成可执行脚本——项目数据里没有
+    # 真实合约地址时，只给脚本骨架与安全须知，绝不输出可直接照抄的命令。
+    project_contract = str(signals.get("interaction_contract") or "").strip()
     try:
         from app.services.script_forge import generate_interaction_scripts
-        sample_contract = "0x7777777254eeb25477b68fb85ed929f73a960582"
-        scripts_res = generate_interaction_scripts(
-            project_name=name,
-            contract_address=sample_contract,
-            rpc_url="https://rpc.ankr.com/eth",
-            jitter_min=15,
-            jitter_max=60,
-        )
-        foundry_cmd = scripts_res.get("scripts", {}).get("foundry_cast", "")
-        md_lines.extend([
-            "",
-            "---",
-            "",
-            "## 9. ⚡ 防女巫 CLI 自动化交互脚本建议",
-            "- **本地密钥安全隔离**: 严格通过环境变量读取本地私钥，杜绝服务侧采集；",
-            "- **Foundry 一键执行示例**:",
-            "```bash",
-            foundry_cmd.strip() if foundry_cmd else "cast send <CONTRACT> \"interact()\" --private-key $PRIVATE_KEY",
-            "```",
-        ])
-    except Exception:
-        pass
+
+        if project_contract.startswith("0x"):
+            scripts_res = generate_interaction_scripts(
+                project_name=name,
+                contract_address=project_contract,
+                rpc_url="https://rpc.ankr.com/eth",
+                jitter_min=15,
+                jitter_max=60,
+            )
+            foundry_cmd = scripts_res.get("scripts", {}).get("foundry_cast", "")
+            md_lines.extend(
+                [
+                    "",
+                    "---",
+                    "",
+                    "## 9. ⚡ 防女巫 CLI 自动化交互脚本建议",
+                    "- **本地密钥安全隔离**: 严格通过环境变量读取本地私钥，杜绝服务侧采集；",
+                    "- **Foundry 一键执行示例**:",
+                    "```bash",
+                    foundry_cmd.strip()
+                    if foundry_cmd
+                    else 'cast send <CONTRACT> "interact()" --private-key $PRIVATE_KEY',
+                    "```",
+                ]
+            )
+        else:
+            md_lines.extend(
+                [
+                    "",
+                    "---",
+                    "",
+                    "## 9. ⚡ 防女巫 CLI 自动化交互脚本建议",
+                    "- 该项目数据中未登记可信的目标交互合约地址，为避免误导不生成可直接执行的脚本。",
+                    "- 请在确认官方合约地址后，使用 `/api/v1/scripts/generate` 显式传入合约与 RPC 生成模板。",
+                ]
+            )
+    except Exception as exc:
+        logger.debug("alpha_dossier.script_section_skipped", error=repr(exc))
 
     md_lines.extend(
         [
@@ -360,4 +385,3 @@ def generate_alpha_dossier(project_id: str) -> dict[str, Any]:
         "markdown": dossier_markdown,
         "summary": summary,
     }
-

@@ -23,6 +23,15 @@ def _twitter_enabled(monkeypatch):
     """启用 Twitter 并配置测试 token。"""
     monkeypatch.setattr(settings, "twitter_enabled", True)
     monkeypatch.setattr(settings, "twitter_bearer_token", "test_bearer_token")
+    # 令牌桶用真实时钟：twitter_kol/keyword 的默认配置是 0.2 rps / burst 1，
+    # 桶空时每个请求要真等 ~5s 补票——本文件被测的是采集逻辑（HTTP 已被
+    # respx mock），不是限流器。把测试内的限流提速，否则单个采集用例
+    # 白等 ~30s（pytest --durations 2026-09-24 实测）。setitem 用后自动还原。
+    from app.collectors import rate_limiter as _rl
+
+    _fast = _rl.RateLimitConfig(requests_per_second=1000.0, burst=100)
+    monkeypatch.setitem(_rl.TokenBucketRateLimiter.DEFAULTS, "twitter_kol", _fast)
+    monkeypatch.setitem(_rl.TokenBucketRateLimiter.DEFAULTS, "twitter_keyword", _fast)
 
 
 def sample_tweet(

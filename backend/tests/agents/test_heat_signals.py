@@ -120,6 +120,7 @@ class TestHeatSignalProvider:
         @contextlib.contextmanager
         def mock_scope(*args, **kwargs):
             raise RuntimeError("DB connection failed")
+            yield  # pragma: no cover
 
         monkeypatch.setattr(
             "app.agents.heat_signals.connection_scope",

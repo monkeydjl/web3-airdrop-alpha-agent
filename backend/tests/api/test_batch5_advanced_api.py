@@ -6,6 +6,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from app.db import init_db
 from app.main import create_app
 
@@ -24,7 +25,7 @@ def test_batch5_api_endpoints():
                 "0x2222222222222222222222222222222222222222",
                 "0x3333333333333333333333333333333333333333",
             ]
-        }
+        },
     )
     assert resp_lineage.status_code == 200
     data_lineage = resp_lineage.json()
@@ -39,7 +40,7 @@ def test_batch5_api_endpoints():
             "contract_address": "0x6b175474e89094c44da98b954eedeac495271d0f",
             "calldata": "0xa9059cbb00000000000000000000000012345678901234567890123456789012345678900000000000000000000000000000000000000000000000000000000000000064",
             "value_eth": 0.0,
-        }
+        },
     )
     assert resp_calldata.status_code == 200
     data_calldata = resp_calldata.json()
@@ -59,7 +60,7 @@ def test_batch5_api_endpoints():
             "user_points": 30000,
             "capital_invested_usd": 1500,
             "days_active": 40,
-        }
+        },
     )
     assert resp_estimate.status_code == 200
     data_estimate = resp_estimate.json()

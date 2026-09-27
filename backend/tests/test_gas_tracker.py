@@ -9,7 +9,7 @@ from app.services.gas_tracker import (
 
 def test_supported_chains_configuration():
     """验证所有链配置包含必要阈值与 RPC URL."""
-    for chain_key, cfg in SUPPORTED_CHAINS.items():
+    for _chain_key, cfg in SUPPORTED_CHAINS.items():
         assert "cheap_threshold" in cfg
         assert "expensive_threshold" in cfg
         assert cfg["cheap_threshold"] < cfg["expensive_threshold"]

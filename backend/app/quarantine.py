@@ -31,10 +31,13 @@ def quarantine_raw(
             cur = c.execute(
                 """
                 UPDATE raw_projects
-                SET processed = 1, processed_at = CURRENT_TIMESTAMP
+                SET quarantined = 1,
+                    quarantine_reason = ?,
+                    processed = 1,
+                    processed_at = CURRENT_TIMESTAMP
                 WHERE raw_id = ?
                 """,
-                (raw_id,),
+                (reason[:500], raw_id),
             )
             # If table lacks quarantined cols (old test DBs), fall back to processed only
             if (cur.rowcount or 0) == 0:
@@ -85,26 +88,25 @@ def release_quarantine(raw_id: str, *, conn: DbConnection | None = None) -> bool
     """Clear quarantine and re-queue for analysis."""
     with connection_scope(conn) as c:
         try:
-            cur = conn.execute(
+            cur = c.execute(
                 """
                 UPDATE raw_projects
-                SET processed = 1, processed_at = CURRENT_TIMESTAMP
+                SET quarantined = 0,
+                    quarantine_reason = NULL,
+                    processed = 0,
+                    processed_at = NULL
                 WHERE raw_id = ?
                 """,
                 (raw_id,),
             )
-            conn.commit()
+            c.commit()
             ok = (cur.rowcount or 0) > 0
             if ok:
-                logger.info(
-                    "quarantine.fallback_processed",
-                    raw_id=raw_id,
-                    error=str(e)[:120],
-                )
+                logger.info("quarantine.released", raw_id=raw_id)
             return ok
         except Exception:
             with suppress(Exception):
-                conn.rollback()
+                c.rollback()
             raise
 
 

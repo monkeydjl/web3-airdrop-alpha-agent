@@ -1,13 +1,9 @@
 """Unit tests for row-level data isolation logic (W12-10)."""
 
-import pytest
-
 from app.services.user_scope import (
-    DEFAULT_USER,
     _ALLOWED_TABLES,
+    DEFAULT_USER,
     build_user_scope_filter,
-    owned_project_ids,
-    owned_project_ids_where,
 )
 
 
@@ -28,13 +24,15 @@ class TestUserScopeFilterBuilder:
 
     def test_default_user_includes_null(self) -> None:
         clause, params = build_user_scope_filter(user_id=DEFAULT_USER, role="viewer")
-        assert clause == "(user_id = ? OR user_id IS NULL)"
-        assert params == [DEFAULT_USER]
+        # 1b4b76f 起 default/anonymous 查询额外纳入 default 用户的记录：
+        # (user_id = 当前身份 OR user_id = 'default' OR user_id IS NULL)。
+        assert clause == "(user_id = ? OR user_id = ? OR user_id IS NULL)"
+        assert params == [DEFAULT_USER, DEFAULT_USER]
 
     def test_anonymous_user_includes_null(self) -> None:
         clause, params = build_user_scope_filter(user_id="anonymous", role="anonymous")
-        assert clause == "(user_id = ? OR user_id IS NULL)"
-        assert params == ["anonymous"]
+        assert clause == "(user_id = ? OR user_id = ? OR user_id IS NULL)"
+        assert params == ["anonymous", DEFAULT_USER]
 
     def test_named_user_strictly_isolated(self) -> None:
         clause, params = build_user_scope_filter(user_id="usr_alice", role="analyst")

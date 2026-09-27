@@ -402,7 +402,11 @@ async def test_archive_alone_still_starts_scheduler(monkeypatch):
     sched.start()
     try:
         assert sched.scheduler.running
-        assert [j["id"] for j in sched.get_jobs()] == ["archive_cleanup"]
+        # 02d8708 起无条件注册 daily_alpha_digest（自身无独立开关），
+        # 单开归档时实际 jobs = archive_cleanup + daily_alpha_digest。
+        # APScheduler 的 get_jobs() 顺序不保证（下一次触发时间排序，与注册顺序
+        # 和触发间隔有关），断言集合而非列表，避免顺序耦合的随机红。
+        assert {j["id"] for j in sched.get_jobs()} == {"archive_cleanup", "daily_alpha_digest"}
     finally:
         sched.shutdown(wait=False)
 
@@ -522,6 +526,8 @@ async def test_vitals_alone_still_starts_scheduler(monkeypatch):
     sched.start()
     try:
         assert sched.scheduler.running
-        assert [j["id"] for j in sched.get_jobs()] == ["vitals_probe"]
+        # 同上：daily_alpha_digest 无条件注册，单开 vitals 时实际两个 job。
+        # 同上：APScheduler get_jobs() 顺序不保证，断言集合避免顺序耦合随机红。
+        assert {j["id"] for j in sched.get_jobs()} == {"vitals_probe", "daily_alpha_digest"}
     finally:
         sched.shutdown(wait=False)

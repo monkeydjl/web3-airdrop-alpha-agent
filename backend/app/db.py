@@ -10,8 +10,8 @@ Reference:
 """
 
 from __future__ import annotations
-import contextlib
 
+import contextlib
 import re
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator
@@ -162,6 +162,7 @@ def get_connection() -> DbConnection:
         return _connect_postgres()
     return _connect_sqlite()
 
+
 @contextlib.contextmanager
 def connection_scope(
     conn: DbConnection | None = None,
@@ -215,7 +216,6 @@ def connection_scope(
     finally:
         if should_close:
             db.close()
-
 
 
 def _connect_sqlite() -> DbConnection:

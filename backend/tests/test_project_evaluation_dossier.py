@@ -6,13 +6,13 @@ Endpoints:
 """
 
 import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import get_connection, init_db
 from app.main import create_app
-from app.repository import ProjectRepository
 
 
 @pytest.fixture
@@ -39,19 +39,21 @@ def client(monkeypatch, tmp_path):
                 "WATCH",
                 0.75,
                 "defillama",
-                json.dumps({
-                    "signals": {
-                        "has_testnet": True,
-                        "has_points_program": True,
-                        "no_token_yet": True,
-                        "total_raised_usd": 12000000,
-                        "monthly_burn_rate_usd": 250000,
-                        "farming_days": 180,
-                        "gas_spent_usd": 45,
-                        "tvl_deposited_usd": 500,
-                    },
-                    "funding_note": "$12M Series A led by Paradigm",
-                }),
+                json.dumps(
+                    {
+                        "signals": {
+                            "has_testnet": True,
+                            "has_points_program": True,
+                            "no_token_yet": True,
+                            "total_raised_usd": 12000000,
+                            "monthly_burn_rate_usd": 250000,
+                            "farming_days": 180,
+                            "gas_spent_usd": 45,
+                            "tvl_deposited_usd": 500,
+                        },
+                        "funding_note": "$12M Series A led by Paradigm",
+                    }
+                ),
             ),
         )
         conn.commit()
