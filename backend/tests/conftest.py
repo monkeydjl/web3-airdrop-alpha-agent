@@ -154,17 +154,26 @@ def tmp_path(request):
 # 侥幸避开，并行下顺序不定必炸）。worker 会话开始时直接删库文件再
 # init_db()，等价于 CI 每次都是全新库，跨轮次确定性。串行单进程
 # （master）不删除，保持既有行为。
+# xdist worker 会话开始时直接删库文件再 init_db()，等价于 CI 每次都是
+# 全新库，跨轮次确定性。
+#
+# 串行（master）进程也要保证 schema 存在：不少用例（如 test_daily_briefing）
+# 直连 DB_PATH 却从不 init_db()，过去靠仓库里历史残留的 data/test.db 带着
+# 旧 schema 侥幸通过——全新 checkout / CI runner 上首个串行用例必红
+#（no such table）。串行路径不删库（保留既有行为与跨运行残留数据），
+# 只做幂等 init_db() 补齐缺失表。
 def pytest_configure(config):
-    if hasattr(config, "workerinput"):  # 仅 xdist worker 进程
+    from app.db import init_db
+
+    if hasattr(config, "workerinput"):  # xdist worker：删库重建
         import contextlib
 
         db_file = pathlib.Path(os.environ["DB_PATH"])
         for suffix in ("", "-wal", "-shm"):
             with contextlib.suppress(OSError):
                 db_file.with_name(db_file.name + suffix).unlink()
-        from app.db import init_db
 
-        init_db()
+    init_db()
 
 
 # ── fetcher 磁盘缓存必须每个测试前清空 ──────────────────────────
