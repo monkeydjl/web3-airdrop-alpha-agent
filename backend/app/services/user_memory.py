@@ -14,7 +14,7 @@ from typing import Any
 
 import structlog
 
-from app.db import DbConnection, get_connection
+from app.db import DbConnection, connection_scope
 from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
@@ -62,7 +62,7 @@ class UserProfileMemoryService:
         if self._conn is not None:
             return self._build_profile(self._conn, uid, now_iso)
 
-        with get_connection() as conn:
+        with connection_scope() as conn:
             return self._build_profile(conn, uid, now_iso)
 
     def clear_user_profile(self, user_id: str | None = None) -> bool:

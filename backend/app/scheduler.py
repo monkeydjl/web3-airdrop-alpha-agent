@@ -165,18 +165,15 @@ class UnifiedScheduler:
             return
 
         try:
-            from app.db import get_connection
+            from app.db import connection_scope
 
             def _check_op() -> bool:
-                conn = get_connection()
-                try:
+                with connection_scope() as conn:
                     row = conn.execute(
                         "SELECT enabled FROM data_sources WHERE source_id = ?",
                         (source_id,),
                     ).fetchone()
                     return row is None or bool(row["enabled"])
-                finally:
-                    conn.close()
 
             # P1-4: 同步 DB 读取移出主事件循环
             if not await asyncio.to_thread(_check_op):
@@ -371,20 +368,18 @@ class UnifiedScheduler:
         失败已经作为一行 `status=failed` 记进历史了。
         """
         from app.archive import RawDataArchiver
-        from app.db import get_connection
+        from app.db import connection_scope
         from app.repositories.archive_runs import TRIGGER_SCHEDULER
 
-        conn = get_connection()
-        try:
-            result = RawDataArchiver().run_and_record(conn, trigger=TRIGGER_SCHEDULER)
-            self._logger.info(
-                "unified_scheduler.archive_completed",
-                **result.to_dict(),
-            )
-        except Exception as e:
-            self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
-        finally:
-            conn.close()
+        with connection_scope() as conn:
+            try:
+                result = RawDataArchiver().run_and_record(conn, trigger=TRIGGER_SCHEDULER)
+                self._logger.info(
+                    "unified_scheduler.archive_completed",
+                    **result.to_dict(),
+                )
+            except Exception as e:
+                self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
 
     # ── 官网活性探测 job（vitals，2026-09-08）──────
     #

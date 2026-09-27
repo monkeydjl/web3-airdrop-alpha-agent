@@ -86,6 +86,9 @@ def create_app(
         if db_override is None:
             init_db()
 
+        # 所有权契约的权威定义在 app.db.connection_scope（消费者统一走它）；此处是
+        # app 生命周期的 own/borrow 持有方，作用域横跨整个 lifespan（含 yield），
+        # 故用 try/finally 直接实现。
         # Connection ownership: borrowed override never closed; else app-owned once.
         # Close-protecting try/finally is active from the moment ownership is acquired
         # so pre-yield startup failures still close an app-owned connection exactly once.
@@ -449,16 +452,16 @@ def create_app(
         降级时返回 503：k8s/负载均衡器的探针按**状态码**判活，恒返回 200 会让
         流量继续打进一个连不上数据库的实例。响应体保持不变，仍带 ok/status。
         """
-        from app.db import backend_name, get_connection
+        from app.db import backend_name, connection_scope
 
         db_status = "unknown"
         try:
-            conn = get_connection()
-            try:
+            # 探针自建短作用域连接（own）：scope finally 保证 close 恰一次，
+            # 不触碰 lifespan 的 app 级共享连接。短作用域语义与全仓消费者一致，
+            # 不再是白名单内的第三个手写 finally-close 点。
+            with connection_scope() as conn:
                 conn.execute("SELECT 1")
                 db_status = "ok"
-            finally:
-                conn.close()
         except Exception as e:
             db_status = f"error:{type(e).__name__}"
             logger.warning("health.db_check_failed", error=str(e))

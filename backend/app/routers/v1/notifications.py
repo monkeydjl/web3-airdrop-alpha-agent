@@ -25,7 +25,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import get_current_user
-from app.db import get_connection
+from app.db import connection_scope
 from app.services.claim_watch import claim_notification_items
 
 router = APIRouter(tags=["notifications"])
@@ -293,12 +293,9 @@ def get_notifications(request: Request) -> NotificationsResponse:
     user_id = user.get("user_id") or "anonymous"
     window_start = _window_start_str()
 
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         items = _collect_items(conn, window_start)
         read_ids = _load_read_ids(conn, user_id)
-    finally:
-        conn.close()
 
     for item in items:
         item["read"] = item["id"] in read_ids
@@ -323,8 +320,7 @@ def mark_notifications_read(body: MarkReadRequest, request: Request) -> MarkRead
     user = get_current_user(request)
     user_id = user.get("user_id") or "anonymous"
 
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         ids = list(dict.fromkeys([i for i in body.ids if i]))  # 去重保序
         if body.all:
             window_start = _window_start_str()
@@ -343,7 +339,5 @@ def mark_notifications_read(body: MarkReadRequest, request: Request) -> MarkRead
             )
             marked += 1
         conn.commit()
-    finally:
-        conn.close()
 
     return MarkReadResponse(ok=True, data={"marked": marked, "ids": ids})

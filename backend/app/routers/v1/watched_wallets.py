@@ -33,7 +33,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.db import get_connection
+from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["watched-wallets"])
@@ -135,7 +135,7 @@ def _not_found(wallet_id: int) -> None:
 )
 def list_watched_wallets() -> dict[str, Any]:
     """全量列出，按登记时间倒序。"""
-    with get_connection() as conn:
+    with connection_scope() as conn:
         rows = conn.execute(
             "SELECT id, address, label, chain, active, created_at "
             "FROM watched_wallets ORDER BY created_at DESC, id DESC"
@@ -162,7 +162,7 @@ def create_watched_wallet(body: WalletCreate) -> dict[str, Any]:
     address = _normalize_address(body.address)
     chain = _validate_chain(body.chain)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         existing = conn.execute(
             "SELECT id FROM watched_wallets WHERE address = ?",
             (address,),
@@ -219,7 +219,7 @@ def update_watched_wallet(wallet_id: int, body: WalletUpdate) -> dict[str, Any]:
     chain = _validate_chain(body.chain) if body.chain is not None else None
     changed = sum(1 for value in (body.label, body.chain, body.active) if value is not None)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         current = conn.execute(
             "SELECT id FROM watched_wallets WHERE id = ?",
             (wallet_id,),
@@ -259,7 +259,7 @@ def delete_watched_wallet(wallet_id: int) -> dict[str, Any]:
     做成硬删是因为这张表没有历史价值 —— 命中记录存在 notify_log 里，
     不依赖本表存活。
     """
-    with get_connection() as conn:
+    with connection_scope() as conn:
         row = conn.execute(
             "SELECT address FROM watched_wallets WHERE id = ?",
             (wallet_id,),

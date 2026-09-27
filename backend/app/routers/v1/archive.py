@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.db import DbConnection, get_connection, scalar
+from app.db import DbConnection, connection_scope, scalar
 from app.repositories.archive_runs import ArchiveRunRepository
 
 logger = structlog.get_logger(__name__)
@@ -141,7 +141,7 @@ def get_archive_runs(
 ) -> ArchiveRunsResponse:
     """返回归档运行历史 + 待清理规模 + 调度配置。"""
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             repo = ArchiveRunRepository(conn)
             runs = repo.list_recent(limit=limit)
             counts = repo.counts()

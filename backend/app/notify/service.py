@@ -21,7 +21,7 @@ from typing import Any
 import structlog
 
 from app.config import settings
-from app.db import get_connection
+from app.db import connection_scope
 from app.metrics import (
     NOTIFY_EVENT_TYPES,
     NOTIFY_EVENTS_EVALUATED,
@@ -90,7 +90,7 @@ async def dispatch_pending(*, limit: int | None = None) -> dict[str, int]:
     effective_limit = limit if limit is not None else settings.notify_max_per_run
 
     def _load() -> list[dict[str, Any]]:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             return _pending_rows(conn, channel, effective_limit)
 
     # 同步 DB 读移出事件循环（2026-08-30 审核 P1-4 的同款教训）
@@ -105,7 +105,7 @@ async def dispatch_pending(*, limit: int | None = None) -> dict[str, int]:
             attempts = int(row.get("attempts") or 0)
 
             def _record_failure(row_id: int = int(row["id"]), a: int = attempts, err: str = error) -> None:
-                with get_connection() as conn:
+                with connection_scope() as conn:
                     _mark_failed(conn, row_id, a, err)
                     conn.commit()
 
@@ -116,7 +116,7 @@ async def dispatch_pending(*, limit: int | None = None) -> dict[str, int]:
         else:
 
             def _record_sent(row_id: int = int(row["id"])) -> None:
-                with get_connection() as conn:
+                with connection_scope() as conn:
                     _mark_sent(conn, row_id)
                     conn.commit()
 
@@ -130,7 +130,7 @@ async def dispatch_pending(*, limit: int | None = None) -> dict[str, int]:
 
 def _collect_and_store(*, include_digest: bool) -> int:
     """同步评估 + 入库，返回新入队的行数。"""
-    with get_connection() as conn:
+    with connection_scope() as conn:
         events = evaluate_events(conn, include_digest=include_digest)
         inserted = 0
         for event in events:

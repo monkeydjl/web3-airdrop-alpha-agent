@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth import ROLE_ADMIN, get_current_user
-from app.db import get_connection
+from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
 
@@ -80,7 +80,7 @@ def add_to_watchlist(
         uid = body.user_id or _DEFAULT_USER
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             # 检查项目是否存在
             row = conn.execute(
                 "SELECT id, name FROM projects WHERE id = ?",
@@ -156,7 +156,7 @@ def remove_from_watchlist(
         uid = user_id or _DEFAULT_USER
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             cursor = conn.execute(
                 "DELETE FROM watchlist WHERE project_id = ? AND user_id = ?",
                 (project_id, uid),
@@ -213,7 +213,7 @@ def list_watchlist(
         uid = user_id or _DEFAULT_USER
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             # 总数
             total_row = conn.execute(
                 "SELECT COUNT(*) FROM watchlist WHERE user_id = ?",

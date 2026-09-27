@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import uuid
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,7 +132,18 @@ def test_interaction_unvetoes_no_participation_path_project(client: TestClient):
         INSERT INTO projects (id, name, sector, stage, score, label, veto, reason, confidence, source)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("proj-no-path", "NoPathProject", "DeFi", "testnet", 72, "WATCH", "no_participation_path", '["no verified participation path"]', 0.8, "seed"),
+        (
+            "proj-no-path",
+            "NoPathProject",
+            "DeFi",
+            "testnet",
+            72,
+            "WATCH",
+            "no_participation_path",
+            '["no verified participation path"]',
+            0.8,
+            "seed",
+        ),
     )
     conn.commit()
     conn.close()
@@ -195,11 +207,32 @@ def test_create_unknown_project_404(client: TestClient):
     assert r.status_code == 404
 
 
+def _scope_over(interactions, conn_factory):
+    """构造镜像 app.db.connection_scope own 契约的 fake scope（供 monkeypatch）。"""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _fake_scope(conn=None, *, factory=None, owns=None):
+        if factory is not None:
+            db = factory()
+        elif conn is not None:
+            db = conn
+        else:
+            db = conn_factory()
+        try:
+            yield db
+        finally:
+            if conn is None:
+                db.close()
+
+    return _fake_scope
+
+
 def test_modern_sqlite_create_uses_insert_returning(monkeypatch, client: TestClient):
     from app.routers.v1 import interactions
 
     statements = []
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
 
     class RecordingConnection:
         kind = "sqlite"
@@ -225,8 +258,8 @@ def test_modern_sqlite_create_uses_insert_returning(monkeypatch, client: TestCli
 
     monkeypatch.setattr(
         interactions,
-        "get_connection",
-        lambda: RecordingConnection(original_get_connection()),
+        "connection_scope",
+        _scope_over(interactions, lambda: RecordingConnection(original_get_connection())),
     )
 
     response = client.post("/api/v1/interactions", json={"project_id": "proj-1"})
@@ -239,7 +272,7 @@ def test_modern_sqlite_create_uses_insert_returning(monkeypatch, client: TestCli
 def test_old_sqlite_fallback_returns_own_insert_before_commit(monkeypatch, client: TestClient):
     from app.routers.v1 import interactions
 
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
     raw = original_get_connection()
     raw.execute(
         """CREATE TRIGGER insert_decoy AFTER INSERT ON interactions
@@ -266,7 +299,7 @@ def test_modern_sqlite_patch_uses_update_returning(monkeypatch, client: TestClie
     created = client.post("/api/v1/interactions", json={"project_id": "proj-1"})
     interaction_id = created.json()["data"]["id"]
     statements = []
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
 
     class RecordingConnection:
         kind = "sqlite"
@@ -290,7 +323,11 @@ def test_modern_sqlite_patch_uses_update_returning(monkeypatch, client: TestClie
         def close(self):
             self.connection.close()
 
-    monkeypatch.setattr(interactions, "get_connection", lambda: RecordingConnection(original_get_connection()))
+    monkeypatch.setattr(
+        interactions,
+        "connection_scope",
+        _scope_over(interactions, lambda: RecordingConnection(original_get_connection())),
+    )
 
     response = client.patch(f"/api/v1/interactions/{interaction_id}", json={"note": "returned atomically"})
 
@@ -305,7 +342,7 @@ def test_old_sqlite_patch_reads_updated_row_before_commit(monkeypatch, client: T
     created = client.post("/api/v1/interactions", json={"project_id": "proj-1"})
     interaction_id = created.json()["data"]["id"]
     events = []
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
 
     class OrderedConnection:
         kind = "sqlite"
@@ -334,7 +371,11 @@ def test_old_sqlite_patch_reads_updated_row_before_commit(monkeypatch, client: T
             self.connection.close()
 
     monkeypatch.setattr(interactions.sqlite3, "sqlite_version_info", (3, 34, 0))
-    monkeypatch.setattr(interactions, "get_connection", lambda: OrderedConnection(original_get_connection()))
+    monkeypatch.setattr(
+        interactions,
+        "connection_scope",
+        _scope_over(interactions, lambda: OrderedConnection(original_get_connection())),
+    )
 
     response = client.patch(f"/api/v1/interactions/{interaction_id}", json={"note": "fallback"})
 
@@ -347,7 +388,7 @@ def test_patch_response_is_the_atomic_update_snapshot_not_later_state(monkeypatc
 
     created = client.post("/api/v1/interactions", json={"project_id": "proj-1"})
     interaction_id = created.json()["data"]["id"]
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
 
     class ConcurrentCommitConnection:
         kind = "sqlite"
@@ -377,8 +418,8 @@ def test_patch_response_is_the_atomic_update_snapshot_not_later_state(monkeypatc
 
     monkeypatch.setattr(
         interactions,
-        "get_connection",
-        lambda: ConcurrentCommitConnection(original_get_connection()),
+        "connection_scope",
+        _scope_over(interactions, lambda: ConcurrentCommitConnection(original_get_connection())),
     )
 
     response = client.patch(f"/api/v1/interactions/{interaction_id}", json={"note": "patch-snapshot"})
@@ -398,7 +439,7 @@ def test_patch_rolls_back_when_atomic_readback_fails(monkeypatch, client: TestCl
 
     created = client.post("/api/v1/interactions", json={"project_id": "proj-1"})
     interaction_id = created.json()["data"]["id"]
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
     state = {"rolled_back": False}
 
     class BrokenReturningCursor:
@@ -432,11 +473,19 @@ def test_patch_rolls_back_when_atomic_readback_fails(monkeypatch, client: TestCl
         def close(self):
             self.connection.close()
 
-    monkeypatch.setattr(interactions, "get_connection", lambda: BrokenConnection(original_get_connection()))
+    monkeypatch.setattr(
+        interactions,
+        "connection_scope",
+        _scope_over(interactions, lambda: BrokenConnection(original_get_connection())),
+    )
 
     with pytest.raises(RuntimeError, match="readback failed"):
         asyncio.run(
-            interactions.update_interaction(interaction_id=interaction_id, body=InteractionUpdate(note="not committed"))
+            interactions.update_interaction(
+                interaction_id=interaction_id,
+                req=SimpleNamespace(state=SimpleNamespace()),  # get_current_user 只 getattr state，匿名即可
+                body=InteractionUpdate(note="not committed"),
+            )
         )
 
     assert state["rolled_back"] is True
@@ -503,10 +552,14 @@ def test_postgres_patch_locks_row_before_merged_validation(monkeypatch):
         def close(self):
             statements.append("close")
 
-    monkeypatch.setattr(interactions, "get_connection", PostgresConnection)
+    monkeypatch.setattr(interactions, "connection_scope", _scope_over(interactions, PostgresConnection))
 
     # 该处理器现为同步函数（FastAPI 自动交线程池执行），直接调用即可
-    result = interactions.update_interaction(interaction_id=1, body=InteractionUpdate(note="locked"))
+    result = interactions.update_interaction(
+        interaction_id=1,
+        req=SimpleNamespace(state=SimpleNamespace()),
+        body=InteractionUpdate(note="locked"),
+    )
 
     assert result["ok"] is True
     assert statements[0] == "begin"
@@ -529,7 +582,7 @@ def test_concurrent_reason_clear_and_disqualify_preserve_invariant(monkeypatch, 
     second_attempted_lock = threading.Event()
     connection_number = 0
     number_lock = threading.Lock()
-    original_get_connection = interactions.get_connection
+    original_get_connection = get_connection
 
     class CoordinatedConnection:
         kind = "sqlite"
@@ -570,14 +623,18 @@ def test_concurrent_reason_clear_and_disqualify_preserve_invariant(monkeypatch, 
         raw.execute("PRAGMA foreign_keys=ON")
         return CoordinatedConnection(DbConnection(raw, kind="sqlite"), number)
 
-    monkeypatch.setattr(interactions, "get_connection", coordinated_connection)
+    monkeypatch.setattr(interactions, "connection_scope", _scope_over(interactions, coordinated_connection))
     results = []
 
     def patch(body):
         try:
             results.append(
                 asyncio.run(
-                    interactions.update_interaction(interaction_id=interaction_id, body=InteractionUpdate(**body))
+                    interactions.update_interaction(
+                        interaction_id=interaction_id,
+                        req=SimpleNamespace(state=SimpleNamespace()),
+                        body=InteractionUpdate(**body),
+                    )
                 )
             )
         except Exception as error:

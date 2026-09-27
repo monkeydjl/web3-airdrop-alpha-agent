@@ -41,8 +41,7 @@ def compare_projects(project_ids: list[str]) -> dict[str, Any]:
 
     clean_ids = [pid.strip() for pid in project_ids if pid.strip()][:3]
 
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         placeholders = ",".join("?" for _ in clean_ids)
         rows = conn.execute(
             f"""
@@ -50,12 +49,10 @@ def compare_projects(project_ids: list[str]) -> dict[str, Any]:
                    sub_scores, reason, meta, narrative_json, source, url
             FROM projects
             WHERE id IN ({placeholders})
-            """,
+            """,  # noqa: S608 — 占位符按数量生成，取值全部绑定
             clean_ids,
         ).fetchall()
         projects = [dict_from_row(r) for r in rows]
-    finally:
-        conn.close()
 
     if not projects:
         raise ValueError(f"No projects found matching IDs: {clean_ids}")

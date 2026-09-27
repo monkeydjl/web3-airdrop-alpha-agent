@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.db import DbConnection, get_connection
+from app.db import DbConnection, connection_scope
 
 
 def calculate_consensus(signals: list[dict[str, Any]]) -> dict[str, Any]:
@@ -93,12 +93,7 @@ def correlate_signals_for_project(
     if not project_id:
         return calculate_consensus([])
 
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
+    with connection_scope(conn) as c:
         since_dt = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
         cursor = conn.execute(
             """
@@ -128,9 +123,6 @@ def correlate_signals_for_project(
                     }
                 )
         return calculate_consensus(signals)
-    finally:
-        if own_conn:
-            conn.close()
 
 
 def batch_correlate_signals(
@@ -138,12 +130,7 @@ def batch_correlate_signals(
     window_days: int = 14,
 ) -> dict[str, dict[str, Any]]:
     """Batch correlate all project signals within the window in a single query."""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
+    with connection_scope(conn) as c:
         since_dt = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
         cursor = conn.execute(
             """
@@ -179,6 +166,3 @@ def batch_correlate_signals(
         for pid, sigs in grouped.items():
             out[pid] = calculate_consensus(sigs)
         return out
-    finally:
-        if own_conn:
-            conn.close()

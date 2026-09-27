@@ -15,7 +15,7 @@ from typing import Any, cast
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.db import get_connection
+from app.db import connection_scope
 from app.repository import ProjectRepository
 
 router = APIRouter(tags=["insights"])
@@ -84,14 +84,11 @@ def get_insights() -> InsightsResponse:
         InsightsResponse 包含各类聚合指标
     """
     # 单条连接完成全部聚合：分组计数交给数据库，只把窄投影搬进 Python
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         repo = ProjectRepository(conn)
         raw_label_counts = repo.aggregate_counts("label")
         raw_sector_counts = repo.aggregate_counts("sector")
         projects = repo.list_insight_rows()
-    finally:
-        conn.close()
 
     # 归一空值分桶，保持与旧的 Python 端聚合完全一致的输出
     label_counts: defaultdict[str, int] = defaultdict(int)

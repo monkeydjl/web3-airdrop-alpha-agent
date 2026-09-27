@@ -19,7 +19,7 @@ from app.auth import (
     blacklist_token_jti,
     get_current_user,
 )
-from app.db import DbConnection, dict_from_row, get_connection
+from app.db import DbConnection, connection_scope, dict_from_row
 from app.repositories.user import UserRepository
 
 logger = structlog.get_logger(__name__)
@@ -97,7 +97,7 @@ def export_user_data(request: Request) -> UserExportResponse:
     auth_user = _get_authenticated_user(request)
     user_id = str(auth_user["user_id"])
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         user_repo = UserRepository(conn)
         user_row = user_repo.get_by_id(user_id)
         if not user_row:
@@ -226,7 +226,7 @@ def delete_user_account(request: Request) -> UserDeleteResponse:
     user_id = str(auth_user["user_id"])
     jwt_jti = auth_user.get("jwt_jti")
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         user_repo = UserRepository(conn)
         user = user_repo.get_by_id(user_id)
         if not user and user_id != "admin":

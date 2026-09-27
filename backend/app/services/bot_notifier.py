@@ -8,7 +8,7 @@ import httpx
 import structlog
 from typing import Any
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
@@ -36,8 +36,7 @@ def handle_bot_command(command: str) -> dict[str, Any]:
         return {"ok": True, "command": root_cmd, "reply": help_text}
 
     elif root_cmd == "alpha":
-        conn = get_connection()
-        try:
+        with connection_scope() as conn:
             rows = conn.execute(
                 """
                 SELECT id, name, sector, score, label, stage
@@ -47,8 +46,6 @@ def handle_bot_command(command: str) -> dict[str, Any]:
                 """
             ).fetchall()
             projects = [dict_from_row(r) for r in rows]
-        finally:
-            conn.close()
 
         if not projects:
             reply = "🔍 暂未检索到 FARM 级项目，系统持续扫描中。"

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 import structlog
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 from app.services.gas_tracker import get_all_chains_gas_summary
 from app.services.token_unlock_radar import get_upcoming_unlocks
 from app.services.smart_money_radar import get_smart_money_and_social_feed
@@ -26,19 +26,18 @@ def generate_daily_briefing() -> dict[str, Any]:
     # 1. 查询数据库最新高分项目 Top 3
     top_projects: list[dict[str, Any]] = []
     try:
-        conn = get_connection()
-        cursor = conn.execute(
-            """
-            SELECT id, name, sector, stage, score, label, reason, url
-            FROM projects
-            WHERE label = 'FARM'
-            ORDER BY score DESC
-            LIMIT 3
-            """
-        )
-        for row in cursor.fetchall():
-            top_projects.append(dict_from_row(row))
-        conn.close()
+        with connection_scope() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, name, sector, stage, score, label, reason, url
+                FROM projects
+                WHERE label = 'FARM'
+                ORDER BY score DESC
+                LIMIT 3
+                """
+            )
+            for row in cursor.fetchall():
+                top_projects.append(dict_from_row(row))
     except Exception as e:
         logger.warning("failed_to_fetch_top_projects_for_daily_briefing", error=str(e))
 

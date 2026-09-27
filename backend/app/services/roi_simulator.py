@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 from app.repository import ProjectRepository
 from app.services.project_signals import signals_view
 
@@ -142,21 +142,8 @@ def simulate_portfolio_allocation(
     risk_appetite: str = "balanced",
 ) -> dict[str, Any]:
     """Optimize capital and time allocation across top active FARM projects."""
-    conn = get_connection()
-    cursor = conn.execute(
-        """
-        SELECT id, name, score, stage, sector, meta
-        FROM projects
-        WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
-        ORDER BY score DESC
-        LIMIT 25
-        """
-    )
-    rows = cursor.fetchall()
-    farm_projects = [signals_view(dict_from_row(r)) for r in rows]
-
-    if not farm_projects:
-        # Fallback to top scored projects if FARM empty
+    # 存量泄漏修复：此前连接从不关闭；现由 connection_scope 保证 close 恰一次。
+    with connection_scope() as conn:
         cursor = conn.execute(
             """
             SELECT id, name, score, stage, sector, meta

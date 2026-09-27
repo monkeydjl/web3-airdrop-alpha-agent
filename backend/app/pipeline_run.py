@@ -22,6 +22,7 @@ from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import run_orchestrator
 from app.collectors.persistence import CollectionRepository
 from app.config import settings
+from app.db import connection_scope
 from app.inflight import QUEUE_DRAIN_KEY, QueueDrainInProgressError, claim_run
 from app.metrics import (
     PIPELINE_DURATION,
@@ -313,10 +314,9 @@ async def _run_pipeline(
             PROJECTS_BY_LABEL.labels(label=state.label).inc()
 
     try:
-        from app.db import get_connection
 
         def _update_gauges() -> None:
-            with get_connection() as conn:
+            with connection_scope() as conn:
                 update_db_gauges(conn)
 
         # P1-4: 同步 DB 读取移出主事件循环

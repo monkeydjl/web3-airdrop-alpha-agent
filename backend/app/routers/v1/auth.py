@@ -34,7 +34,7 @@ from app.auth import (
     verify_token,
 )
 from app.config import settings
-from app.db import get_connection
+from app.db import connection_scope
 from app.repositories.user import SessionRepository, UserRepository
 
 logger = structlog.get_logger(__name__)
@@ -171,7 +171,7 @@ def register(body: RegisterRequest) -> Any:
     if not valid_pwd:
         return _error(400, "WEAK_PASSWORD", pwd_err)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         user_repo = UserRepository(conn)
         if user_repo.get_by_email(email) is not None:
             return _error(400, "EMAIL_ALREADY_REGISTERED", "Email is already registered")
@@ -234,7 +234,7 @@ def register(body: RegisterRequest) -> Any:
 def login(body: LoginRequest) -> Any:
     """用户登录端点。"""
     email = body.email.strip()
-    with get_connection() as conn:
+    with connection_scope() as conn:
         user_repo = UserRepository(conn)
         user = user_repo.get_by_email(email)
 
@@ -297,7 +297,7 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
 
     refresh_token_hash = hash_refresh_token(body.refresh_token)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         session_repo = SessionRepository(conn)
         session = session_repo.get_by_token_hash(refresh_token_hash)
 
@@ -350,7 +350,7 @@ def logout(request: Request, body: LogoutRequest | None = None) -> Any:
         blacklist_token_jti(jwt_jti)
 
     if body and body.refresh_token:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             session_repo = SessionRepository(conn)
             session_repo.revoke_by_token_hash(hash_refresh_token(body.refresh_token))
 
@@ -376,7 +376,7 @@ def logout_all(request: Request) -> Any:
     if jwt_jti:
         blacklist_token_jti(jwt_jti)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         session_repo = SessionRepository(conn)
         revoked_count = session_repo.revoke_all_user_sessions(user_id)
 
@@ -409,7 +409,7 @@ def get_me(request: Request) -> Any:
             created_at=None,
         )
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         user_repo = UserRepository(conn)
         user = user_repo.get_by_id(user_id)
         if not user:

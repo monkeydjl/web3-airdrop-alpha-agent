@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import ROLE_ADMIN, get_current_user
 from app.config import settings
-from app.db import dict_from_row, get_connection, insert_returning_id
+from app.db import connection_scope, dict_from_row, insert_returning_id
 from app.metrics import record_feedback
 from app.services.project_signals import parse_meta
 from app.services.user_scope import DEFAULT_USER, build_user_scope_filter, owned_project_ids, owned_project_ids_where
@@ -157,7 +157,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
     try:
         updated_label: str | None = None
         updated_veto: str | None = None
-        with get_connection() as conn:
+        with connection_scope() as conn:
             feedback_id = insert_returning_id(
                 conn,
                 """
@@ -384,7 +384,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
     project_ids = [item.project_id for item in request.items]
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             # 先校验项目存在，再写入。
             placeholders = ",".join("?" for _ in set(project_ids))
             rows = conn.execute(
@@ -506,7 +506,7 @@ def get_pending_review(
         uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             # 已有 outcome 的项目不再需要标记。
             # 走统一的归属过滤（user_scope）：此前这里完全没有用户过滤，
             # 与 /action-queue 的口径不一致 —— 多用户启用后会把别人标过的项目
@@ -601,7 +601,7 @@ def get_feedback(
     sql += " ORDER BY created_at DESC"
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
 
             feedback_list = [dict(row) for row in rows]
@@ -655,7 +655,7 @@ def submit_event(request: EventRequest, req: Request) -> FeedbackResponse:
         uid = request.user_id or "anonymous"
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             event_id = insert_returning_id(
                 conn,
                 """
@@ -744,7 +744,7 @@ def list_events(
     where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             count_row = conn.execute(
                 f"SELECT COUNT(*) FROM events{where_sql}",  # noqa: S608
                 tuple(params),
@@ -797,7 +797,7 @@ def get_calibration_status() -> FeedbackResponse:
     min_samples = 200  # WEIGHT_CALIBRATION.md §3.3
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             # 反馈总数
             total_row = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()
             total_feedback = int(total_row[0]) if total_row else 0

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.db import get_connection
+from app.db import connection_scope
 from app.notify.senders import get_sender
 
 logger = structlog.get_logger(__name__)
@@ -100,7 +100,7 @@ def notify_log(
     query += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         rows = [dict(r) for r in conn.execute(query, tuple(params)).fetchall()]
 
     return _ok({"items": rows, "count": len(rows)})

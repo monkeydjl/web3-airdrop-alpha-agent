@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Path, Request
 from pydantic import BaseModel
 
 from app.auth import ROLE_ADMIN, get_current_user
-from app.db import get_connection
+from app.db import connection_scope
 from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
@@ -52,7 +52,7 @@ def skip_project(req: Request, project_id: str = Path(...), body: SkipRequest | 
         uid = (body.user_id if body else None) or DEFAULT_USER
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             if not _project_exists(conn, project_id):
                 raise HTTPException(
                     status_code=404,
@@ -105,7 +105,7 @@ def unskip_project(req: Request, project_id: str = Path(...), user_id: str | Non
         uid = user_id or DEFAULT_USER
 
     try:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             row = conn.execute(
                 "SELECT id FROM project_skips WHERE project_id = ? AND user_id = ?",
                 (project_id, uid),

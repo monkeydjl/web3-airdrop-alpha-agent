@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import ALL_ROLES, ROLE_ADMIN, get_current_user, hash_password
-from app.db import get_connection
+from app.db import connection_scope
 from app.repositories.api_key import ApiKeyRepository
 
 logger = structlog.get_logger(__name__)
@@ -131,7 +131,7 @@ def list_api_keys(
 ) -> ApiKeyListResponse:
     user_id, role = _get_auth_context(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = ApiKeyRepository(conn)
         if all and role == ROLE_ADMIN:
             records = repo.list_all(include_revoked=include_revoked)
@@ -185,7 +185,7 @@ def create_api_key(
     if body.expires_in_days:
         expires_at = datetime.now(UTC) + timedelta(days=body.expires_in_days)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = ApiKeyRepository(conn)
         record = repo.create_key(
             key_id=key_id,
@@ -220,7 +220,7 @@ def revoke_api_key(
 ) -> ApiKeyRevokeResponse:
     user_id, user_role = _get_auth_context(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = ApiKeyRepository(conn)
         record = repo.get_by_id(key_id)
         if not record or record.get("is_revoked"):

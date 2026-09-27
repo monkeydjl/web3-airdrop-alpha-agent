@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 from app.repository import is_zero_cost_opportunity
 from app.services.project_signals import funding_public_view, parse_meta
 
@@ -35,7 +35,17 @@ def generate_alpha_digest(
     Returns:
         Dict with markdown content and structured summary statistics.
     """
-    conn = get_connection()
+    # 存量泄漏修复：此前连接从不关闭；现由 connection_scope 保证 close 恰一次。
+    with connection_scope() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, name, sector, stage, score, label, reason, sub_scores, meta, updated_at
+            FROM projects
+            WHERE (source != 'historical_backfill' OR source IS NULL)
+            ORDER BY score DESC
+            """
+        )
+        rows = cursor.fetchall()
     now = datetime.now(UTC)
     date_str = now.strftime("%Y-%m-%d")
 

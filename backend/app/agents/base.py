@@ -389,18 +389,15 @@ class BaseAgent(ABC):
         查询失败或无默认版本时返回 None（不影响 LLM 调用）。
         """
         try:
-            from app.db import get_connection
+            from app.db import connection_scope
             from app.repositories.v2 import PromptVersionsRepository
 
-            conn = get_connection()
-            try:
+            with connection_scope() as conn:
                 repo = PromptVersionsRepository(conn)
                 row = repo.get_default(self.name, prompt_key)
                 if row:
                     return f"{row.get('version', 'unknown')}"
                 return None
-            finally:
-                conn.close()
         except Exception:
             return None
 

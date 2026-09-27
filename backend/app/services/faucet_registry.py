@@ -11,7 +11,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.db import DbConnection, get_connection
+import httpx
+
+from app.db import DbConnection, connection_scope
 
 DEFAULT_USER = "default"
 
@@ -208,14 +210,9 @@ def list_faucets_with_status(
     user_id: str = DEFAULT_USER,
 ) -> list[dict[str, Any]]:
     """List all available faucets with the user's real-time cooldown status."""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
-        ensure_faucet_claims_table(conn)
-        cursor = conn.execute(
+    with connection_scope(conn) as c:
+        ensure_faucet_claims_table(c)
+        cursor = c.execute(
             """
             SELECT faucet_id, claimed_at, cooldown_hours
             FROM faucet_claims
@@ -278,9 +275,6 @@ def list_faucets_with_status(
             result.append(item)
 
         return result
-    finally:
-        if own_conn:
-            conn.close()
 
 
 def record_faucet_claim(
@@ -289,13 +283,8 @@ def record_faucet_claim(
     faucet_id: str = "",
 ) -> dict[str, Any]:
     """Record that the user has claimed from the specified faucet."""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
-        ensure_faucet_claims_table(conn)
+    with connection_scope(conn) as c:
+        ensure_faucet_claims_table(c)
         faucet_meta = next((f for f in FREE_FAUCETS if f["id"] == faucet_id), None)
         cooldown_h = faucet_meta["cooldown_hours"] if faucet_meta else 24
         now = datetime.now(UTC)
@@ -322,9 +311,6 @@ def record_faucet_claim(
         # Return updated faucet status
         faucets = list_faucets_with_status(conn, user_id=user_id)
         return next((f for f in faucets if f["id"] == faucet_id), {})
-    finally:
-        if own_conn:
-            conn.close()
 
 
 def reset_faucet_claim(
@@ -333,22 +319,14 @@ def reset_faucet_claim(
     faucet_id: str = "",
 ) -> bool:
     """Reset a faucet claim back to ready."""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
-        ensure_faucet_claims_table(conn)
-        conn.execute(
+    with connection_scope(conn) as c:
+        ensure_faucet_claims_table(c)
+        c.execute(
             "DELETE FROM faucet_claims WHERE user_id = ? AND faucet_id = ?",
             (user_id, faucet_id),
         )
         conn.commit()
         return True
-    finally:
-        if own_conn:
-            conn.close()
 
 
 async def check_faucets_liveness(

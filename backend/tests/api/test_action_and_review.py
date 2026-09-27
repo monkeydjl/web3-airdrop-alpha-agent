@@ -335,7 +335,7 @@ class TestFeedbackBatch:
 
         import app.routers.v1.feedback as fb
 
-        real_get_connection = fb.get_connection
+        real_get_connection = get_connection
 
         class _FailingCommitConn:
             """代理真实连接，但 commit 时抛错。"""
@@ -349,7 +349,9 @@ class TestFeedbackBatch:
             def commit(self):
                 raise RuntimeError("simulated commit failure")
 
-        class _Ctx:
+        class _Scope:
+            """镜像 connection_scope 的 own 契约，但产出 commit 失败的代理连接。"""
+
             def __enter__(self):
                 self._cm = real_get_connection()
                 return _FailingCommitConn(self._cm.__enter__())
@@ -357,7 +359,7 @@ class TestFeedbackBatch:
             def __exit__(self, *exc):
                 return self._cm.__exit__(*exc)
 
-        monkeypatch.setattr(fb, "get_connection", lambda: _Ctx())
+        monkeypatch.setattr(fb, "connection_scope", lambda *a, **k: _Scope())
 
         res = client.post(
             "/api/v1/feedback/batch",

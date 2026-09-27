@@ -11,7 +11,7 @@ from typing import Any
 
 import structlog
 
-from app.db import DbConnection, get_connection
+from app.db import DbConnection, connection_scope
 from app.repositories.v2 import ProjectHistoryRepository
 from app.repository import ProjectRepository
 
@@ -67,7 +67,7 @@ class ProjectEvolutionService:
         if self._conn is not None:
             return self._build_evolution(self._conn, project_id, limit=limit)
 
-        with get_connection() as conn:
+        with connection_scope() as conn:
             return self._build_evolution(conn, project_id, limit=limit)
 
     def format_evolution_context(self, project_id: str) -> str:

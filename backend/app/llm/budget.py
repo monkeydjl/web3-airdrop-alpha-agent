@@ -208,21 +208,13 @@ def _row_to_spend(row: Any) -> DailySpend:
     )
 
 
-def _open_repo() -> tuple[Any, LLMSpendRepository]:
-    from app.db import get_connection
-
-    conn = get_connection()
-    return conn, LLMSpendRepository(conn)
-
-
 def get_daily_spend(spend_date: str | None = None) -> DailySpend:
     """读取某天累计（默认今天）。DB 不可用时抛异常，由调用方决定方向。"""
+    from app.db import connection_scope
+
     day = spend_date or today_utc()
-    conn, repo = _open_repo()
-    try:
-        return repo.get(day)
-    finally:
-        conn.close()
+    with connection_scope() as conn:
+        return LLMSpendRepository(conn).get(day)
 
 
 def check_budget(*, budget_usd: float) -> BudgetDecision:
@@ -277,17 +269,16 @@ def record_spend(*, cost_usd: Decimal, prompt_tokens: int, completion_tokens: in
     让"少记了多少次"可被观测。
     """
     try:
-        conn, repo = _open_repo()
-        try:
-            repo.add(
+        from app.db import connection_scope
+
+        with connection_scope() as conn:
+            LLMSpendRepository(conn).add(
                 spend_date=today_utc(),
                 cost_usd=cost_usd,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )
             return True
-        finally:
-            conn.close()
     except Exception as exc:
         logger.error(
             "llm.budget.record_failed",

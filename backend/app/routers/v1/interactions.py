@@ -18,7 +18,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.auth import ROLE_ADMIN, get_current_user
-from app.db import dict_from_row, get_connection, scalar
+from app.db import connection_scope, dict_from_row, scalar
 from app.repository import ProjectRepository
 from app.services.project_signals import parse_meta
 from app.services.user_scope import build_user_scope_filter
@@ -394,7 +394,9 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
     elif current_user["user_id"] != "anonymous":
         uid = current_user["user_id"]
     else:
-        uid = body.user_id
+        # 匿名（MVP 无凭证放行）不采信 body.user_id：属主字段写入后，
+        # PATCH 的属主校验会让同一匿名身份永远 404，自己都改不了自己的记录。
+        uid = None
 
     score_at = project.get("score")
     label_at = project.get("label")
@@ -407,16 +409,17 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
     started = body.started_at.isoformat() if body.started_at else now[:10]
     ended = body.ended_at.isoformat() if body.ended_at else None
 
-    conn = get_connection()
-    try:
-        linkage: tuple[str | None, str | None, str | None] = (None, None, None)
-        if body.opportunity_assessment_id is not None:
-            linkage = _canonical_assessment_linkage(conn, body.opportunity_assessment_id, body.project_id)
+    # 事务顺序契约：rollback（except）→ close（scope finally），与旧 try/finally 等价。
+    with connection_scope() as conn:
+        try:
+            linkage: tuple[str | None, str | None, str | None] = (None, None, None)
+            if body.opportunity_assessment_id is not None:
+                linkage = _canonical_assessment_linkage(conn, body.opportunity_assessment_id, body.project_id)
             if (body.opportunity_model_version is not None and body.opportunity_model_version != linkage[1]) or (
                 body.opportunity_profile_version is not None and body.opportunity_profile_version != linkage[2]
             ):
                 raise HTTPException(status_code=422, detail="Assessment version mismatch")
-        insert_sql = """
+            insert_sql = """
             INSERT INTO interactions (
                 project_id, user_id, status, started_at, ended_at,
                 cost_usd, profit_usd, hours_spent, activities, note, outcome,
@@ -428,118 +431,116 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
                 opportunity_profile_version, outcome_observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
-        supports_returning = conn.kind == "postgres" or sqlite3.sqlite_version_info >= (3, 35, 0)
-        if supports_returning:
-            insert_sql += " RETURNING *"
-        cur = conn.execute(
-            insert_sql,
-            (
-                body.project_id,
-                uid,
-                body.status,
-                started,
-                ended,
-                body.cost_usd,
-                body.profit_usd,
-                body.hours_spent,
-                body.activities,
-                body.note,
-                body.outcome or "pending",
-                score_at,
-                label_at,
-                now,
-                now,
-                body.wallet_cohort_id,
-                body.wallet_count,
-                body.actual_hard_cost_usd,
-                body.actual_time_minutes,
-                body.eligibility_result,
-                body.survival_result,
-                body.disqualification_reason,
-                body.reward_received_usd,
-                body.claim_cost_usd,
-                *linkage,
-                outcome_observed_at.isoformat() if outcome_observed_at else None,
-            ),
-        )
-        if supports_returning:
-            row = cur.fetchone()
-        else:
-            iid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            row = conn.execute("SELECT * FROM interactions WHERE id = ?", (iid,)).fetchone()
-
-        # 实时联动项目主表状态：真实交互记录证实用户已参与该项目
-        proj_row = conn.execute("SELECT * FROM projects WHERE id = ?", (body.project_id,)).fetchone()
-        if proj_row:
-            p_dict = dict_from_row(proj_row)
-            p_meta = parse_meta(p_dict.get("meta"))
-            p_signals = p_meta.get("signals") if isinstance(p_meta.get("signals"), dict) else {}
-            p_signals["has_interaction"] = True
-            p_signals["interaction_count"] = int(p_signals.get("interaction_count") or 0) + 1
-
-            p_label = p_dict.get("label")
-            p_veto = p_dict.get("veto")
-            p_stage = p_dict.get("stage")
-            p_score = int(p_dict.get("score") or 0)
-
-            raw_reason = p_dict.get("reason")
-            reasons_list: list[str] = []
-            if raw_reason:
-                try:
-                    parsed = json.loads(raw_reason)
-                    reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
-                except Exception:
-                    reasons_list = [str(raw_reason)]
-
-            # 若项目曾因缺少参与路径被 veto，用户实际交互直接证实参与有效，自动解除否决
-            if p_veto == "no_participation_path":
-                p_veto = None
-                p_signals["manual_verified_path"] = True
-                p_signals["has_points_program"] = True
-                if p_score >= 65:
-                    p_label = "FARM"
-                reasons_list = [r for r in reasons_list if "no verified participation path" not in r.lower()]
-                note_msg = "已记录参与投入：参与路径已确认有效"
-                if note_msg not in reasons_list:
-                    reasons_list.insert(0, note_msg)
-
-            # 若交互记录了 outcome 为 airdropped
-            if body.outcome == "airdropped":
-                p_stage = "ended"
-                p_veto = "already_launched"
-                p_meta["outcome"] = "airdropped"
-                outcome_msg = "实际结果复盘：已完成空投"
-                if outcome_msg not in reasons_list:
-                    reasons_list.insert(0, outcome_msg)
-
-            p_meta["signals"] = p_signals
-            p_meta_json = json.dumps(p_meta, ensure_ascii=False)
-            p_reason_json = json.dumps(reasons_list, ensure_ascii=False)
-
-            conn.execute(
-                """
-                UPDATE projects
-                SET label = ?, veto = ?, stage = ?, meta = ?, reason = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (p_label, p_veto, p_stage, p_meta_json, p_reason_json, datetime.now(UTC), body.project_id),
+            supports_returning = conn.kind == "postgres" or sqlite3.sqlite_version_info >= (3, 35, 0)
+            if supports_returning:
+                insert_sql += " RETURNING *"
+            cur = conn.execute(
+                insert_sql,
+                (
+                    body.project_id,
+                    uid,
+                    body.status,
+                    started,
+                    ended,
+                    body.cost_usd,
+                    body.profit_usd,
+                    body.hours_spent,
+                    body.activities,
+                    body.note,
+                    body.outcome or "pending",
+                    score_at,
+                    label_at,
+                    now,
+                    now,
+                    body.wallet_cohort_id,
+                    body.wallet_count,
+                    body.actual_hard_cost_usd,
+                    body.actual_time_minutes,
+                    body.eligibility_result,
+                    body.survival_result,
+                    body.disqualification_reason,
+                    body.reward_received_usd,
+                    body.claim_cost_usd,
+                    *linkage,
+                    outcome_observed_at.isoformat() if outcome_observed_at else None,
+                ),
             )
+            if supports_returning:
+                row = cur.fetchone()
+            else:
+                iid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                row = conn.execute("SELECT * FROM interactions WHERE id = ?", (iid,)).fetchone()
 
-        conn.commit()
-        item = _row_to_item(row) if row else {"project_id": body.project_id}
-        logger.info(
-            "interaction.created",
-            id=item.get("id"),
-            project_id=body.project_id,
-            status=body.status,
-            user_id=uid,
-        )
-        return {"ok": True, "data": item}
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+            # 实时联动项目主表状态：真实交互记录证实用户已参与该项目
+            proj_row = conn.execute("SELECT * FROM projects WHERE id = ?", (body.project_id,)).fetchone()
+            if proj_row:
+                p_dict = dict_from_row(proj_row)
+                p_meta = parse_meta(p_dict.get("meta"))
+                p_signals = p_meta.get("signals") if isinstance(p_meta.get("signals"), dict) else {}
+                p_signals["has_interaction"] = True
+                p_signals["interaction_count"] = int(p_signals.get("interaction_count") or 0) + 1
+
+                p_label = p_dict.get("label")
+                p_veto = p_dict.get("veto")
+                p_stage = p_dict.get("stage")
+                p_score = int(p_dict.get("score") or 0)
+
+                raw_reason = p_dict.get("reason")
+                reasons_list: list[str] = []
+                if raw_reason:
+                    try:
+                        parsed = json.loads(raw_reason)
+                        reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                    except Exception:
+                        reasons_list = [str(raw_reason)]
+
+                # 若项目曾因缺少参与路径被 veto，用户实际交互直接证实参与有效，自动解除否决
+                if p_veto == "no_participation_path":
+                    p_veto = None
+                    p_signals["manual_verified_path"] = True
+                    p_signals["has_points_program"] = True
+                    if p_score >= 65:
+                        p_label = "FARM"
+                    reasons_list = [r for r in reasons_list if "no verified participation path" not in r.lower()]
+                    note_msg = "已记录参与投入：参与路径已确认有效"
+                    if note_msg not in reasons_list:
+                        reasons_list.insert(0, note_msg)
+
+                # 若交互记录了 outcome 为 airdropped
+                if body.outcome == "airdropped":
+                    p_stage = "ended"
+                    p_veto = "already_launched"
+                    p_meta["outcome"] = "airdropped"
+                    outcome_msg = "实际结果复盘：已完成空投"
+                    if outcome_msg not in reasons_list:
+                        reasons_list.insert(0, outcome_msg)
+
+                p_meta["signals"] = p_signals
+                p_meta_json = json.dumps(p_meta, ensure_ascii=False)
+                p_reason_json = json.dumps(reasons_list, ensure_ascii=False)
+
+                conn.execute(
+                    """
+                    UPDATE projects
+                    SET label = ?, veto = ?, stage = ?, meta = ?, reason = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (p_label, p_veto, p_stage, p_meta_json, p_reason_json, datetime.now(UTC), body.project_id),
+                )
+
+            conn.commit()
+            item = _row_to_item(row) if row else {"project_id": body.project_id}
+            logger.info(
+                "interaction.created",
+                id=item.get("id"),
+                project_id=body.project_id,
+                status=body.status,
+                user_id=uid,
+            )
+            return {"ok": True, "data": item}
+        except Exception:
+            conn.rollback()
+            raise
 
 
 @router.get("/interactions")
@@ -551,8 +552,7 @@ def list_interactions(
     user_id: str | None = Query(None, description="用户标识过滤（仅管理员可用）"),
 ) -> dict[str, Any]:
     """List interaction logs (optionally filter by project / status / user)."""
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         current_user = get_current_user(req)
         scope_clause, scope_params = build_user_scope_filter(
             user_id=current_user["user_id"],
@@ -591,15 +591,12 @@ def list_interactions(
             ).fetchone()
         )
         return {"ok": True, "data": {"items": items, "total": total, "count": len(items)}}
-    finally:
-        conn.close()
 
 
 @router.get("/interactions/summary")
 def interactions_summary() -> dict[str, Any]:
     """Aggregate stats for calibration / ops."""
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         total = int(scalar(conn.execute("SELECT COUNT(*) FROM interactions").fetchone()) or 0)
         by_status = {
             dict_from_row(r).get("status"): dict_from_row(r).get("c")
@@ -649,8 +646,6 @@ def interactions_summary() -> dict[str, Any]:
                 },
             },
         }
-    finally:
-        conn.close()
 
 
 @router.get("/projects/{project_id}/interactions")
@@ -684,157 +679,160 @@ def update_interaction(
     sets = ", ".join(f"{k} = ?" for k in fields)
     values = [*fields.values(), interaction_id]
 
-    conn = get_connection()
-    try:
-        conn.begin_serialized_write()
-        select_sql = "SELECT * FROM interactions WHERE id = ?"
-        if conn.kind == "postgres":
-            select_sql += " FOR UPDATE"
-        existing = conn.execute(select_sql, (interaction_id,)).fetchone()
-        if existing is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "NOT_FOUND", "message": "Interaction not found"},
-            )
-        current = dict_from_row(existing)
-        current_user = get_current_user(req)
-        if current_user["role"] != ROLE_ADMIN:
-            if current.get("user_id") and current.get("user_id") != current_user["user_id"]:
+    # 事务顺序契约：rollback（except）→ close（scope finally），与旧 try/finally 等价。
+    with connection_scope() as conn:
+        try:
+            conn.begin_serialized_write()
+            select_sql = "SELECT * FROM interactions WHERE id = ?"
+            if conn.kind == "postgres":
+                select_sql += " FOR UPDATE"
+            existing = conn.execute(select_sql, (interaction_id,)).fetchone()
+            if existing is None:
                 raise HTTPException(
                     status_code=404,
                     detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                 )
-        if "status" in fields:
-            _validate_status_transition(current.get("status"), fields["status"])
-        final_survival = fields.get("survival_result", current.get("survival_result"))
-        final_reason = fields.get("disqualification_reason", current.get("disqualification_reason"))
-        if final_survival == "disqualified" and not (final_reason and final_reason.strip()):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "INVALID_OUTCOME",
-                    "message": "Disqualified survival requires a reason",
-                },
-            )
-        supplied_linkage = body.model_fields_set.intersection(_LINKAGE_FIELDS)
-        if "opportunity_assessment_id" in supplied_linkage:
-            assessment_id = fields["opportunity_assessment_id"]
-            if assessment_id is None:
-                linkage: tuple[str | None, str | None, str | None] = (
-                    None,
-                    None,
-                    None,
+            current = dict_from_row(existing)
+            current_user = get_current_user(req)
+            if (
+                current_user["role"] != ROLE_ADMIN
+                and current.get("user_id")
+                and current.get("user_id") != current_user["user_id"]
+            ):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                 )
-            else:
-                linkage = _canonical_assessment_linkage(conn, assessment_id, current["project_id"])
-                if (
-                    "opportunity_model_version" in supplied_linkage
-                    and fields["opportunity_model_version"] != linkage[1]
-                ) or (
-                    "opportunity_profile_version" in supplied_linkage
-                    and fields["opportunity_profile_version"] != linkage[2]
-                ):
-                    raise HTTPException(status_code=422, detail="Assessment version mismatch")
-            fields.update(
-                {
-                    "opportunity_assessment_id": linkage[0],
-                    "opportunity_model_version": linkage[1],
-                    "opportunity_profile_version": linkage[2],
-                }
+            if "status" in fields:
+                _validate_status_transition(current.get("status"), fields["status"])
+            final_survival = fields.get("survival_result", current.get("survival_result"))
+            final_reason = fields.get("disqualification_reason", current.get("disqualification_reason"))
+            if final_survival == "disqualified" and not (final_reason and final_reason.strip()):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "INVALID_OUTCOME",
+                        "message": "Disqualified survival requires a reason",
+                    },
+                )
+            supplied_linkage = body.model_fields_set.intersection(_LINKAGE_FIELDS)
+            if "opportunity_assessment_id" in supplied_linkage:
+                assessment_id = fields["opportunity_assessment_id"]
+                if assessment_id is None:
+                    linkage: tuple[str | None, str | None, str | None] = (
+                        None,
+                        None,
+                        None,
+                    )
+                else:
+                    linkage = _canonical_assessment_linkage(conn, assessment_id, current["project_id"])
+                    if (
+                        "opportunity_model_version" in supplied_linkage
+                        and fields["opportunity_model_version"] != linkage[1]
+                    ) or (
+                        "opportunity_profile_version" in supplied_linkage
+                        and fields["opportunity_profile_version"] != linkage[2]
+                    ):
+                        raise HTTPException(status_code=422, detail="Assessment version mismatch")
+                fields.update(
+                    {
+                        "opportunity_assessment_id": linkage[0],
+                        "opportunity_model_version": linkage[1],
+                        "opportunity_profile_version": linkage[2],
+                    }
+                )
+                sets = ", ".join(f"{k} = ?" for k in fields)
+                values = [*fields.values(), interaction_id]
+            supports_returning = conn.kind == "postgres" or sqlite3.sqlite_version_info >= (3, 35, 0)
+            # SQL fragments come only from closed Pydantic/internal field allowlists.
+            update_sql = f"UPDATE interactions SET {sets} WHERE id = ?"  # noqa: S608
+            if supports_returning:
+                update_sql += " RETURNING *"
+            cur = conn.execute(
+                update_sql,
+                tuple(values),
             )
-            sets = ", ".join(f"{k} = ?" for k in fields)
-            values = [*fields.values(), interaction_id]
-        supports_returning = conn.kind == "postgres" or sqlite3.sqlite_version_info >= (3, 35, 0)
-        # SQL fragments come only from closed Pydantic/internal field allowlists.
-        update_sql = f"UPDATE interactions SET {sets} WHERE id = ?"  # noqa: S608
-        if supports_returning:
-            update_sql += " RETURNING *"
-        cur = conn.execute(
-            update_sql,
-            tuple(values),
-        )
-        if supports_returning:
-            row = cur.fetchone()
-        else:
+            if supports_returning:
+                row = cur.fetchone()
+            else:
+                if (cur.rowcount or 0) == 0:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                    )
+                row = conn.execute("SELECT * FROM interactions WHERE id = ?", (interaction_id,)).fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                )
+
+            if fields.get("outcome") == "airdropped":
+                proj_id = current.get("project_id")
+                if proj_id:
+                    p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
+                    if p_row:
+                        p_dict = dict_from_row(p_row)
+                        p_meta = parse_meta(p_dict.get("meta"))
+                        p_meta["outcome"] = "airdropped"
+                        p_meta["airdropped_at"] = datetime.now(UTC).isoformat()
+                        p_raw_reason = p_dict.get("reason")
+                        p_reasons: list[str] = []
+                        if p_raw_reason:
+                            try:
+                                parsed = json.loads(p_raw_reason)
+                                p_reasons = parsed if isinstance(parsed, list) else [str(parsed)]
+                            except Exception:
+                                p_reasons = [str(p_raw_reason)]
+                        outcome_msg = "实际结果复盘：已完成空投"
+                        if outcome_msg not in p_reasons:
+                            p_reasons.insert(0, outcome_msg)
+                        conn.execute(
+                            """
+                            UPDATE projects
+                            SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                json.dumps(p_meta, ensure_ascii=False),
+                                json.dumps(p_reasons, ensure_ascii=False),
+                                datetime.now(UTC),
+                                proj_id,
+                            ),
+                        )
+
+            conn.commit()
+            return {"ok": True, "data": _row_to_item(row)}
+        except Exception:
+            conn.rollback()
+            raise
+
+
+@router.delete("/interactions/{interaction_id}")
+def delete_interaction(req: Request, interaction_id: int = Path(...)) -> dict[str, Any]:
+    with connection_scope() as conn:
+        try:
+            current_user = get_current_user(req)
+            if current_user["role"] != ROLE_ADMIN:
+                existing = conn.execute("SELECT user_id FROM interactions WHERE id = ?", (interaction_id,)).fetchone()
+                if not existing:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                    )
+                if existing[0] and existing[0] != current_user["user_id"]:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={"code": "NOT_FOUND", "message": "Interaction not found"},
+                    )
+            cur = conn.execute("DELETE FROM interactions WHERE id = ?", (interaction_id,))
+            conn.commit()
             if (cur.rowcount or 0) == 0:
                 raise HTTPException(
                     status_code=404,
                     detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                 )
-            row = conn.execute("SELECT * FROM interactions WHERE id = ?", (interaction_id,)).fetchone()
-        if row is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "NOT_FOUND", "message": "Interaction not found"},
-            )
-
-        if fields.get("outcome") == "airdropped":
-            proj_id = current.get("project_id")
-            if proj_id:
-                p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
-                if p_row:
-                    p_dict = dict_from_row(p_row)
-                    p_meta = parse_meta(p_dict.get("meta"))
-                    p_meta["outcome"] = "airdropped"
-                    p_meta["airdropped_at"] = datetime.now(UTC).isoformat()
-                    p_raw_reason = p_dict.get("reason")
-                    p_reasons: list[str] = []
-                    if p_raw_reason:
-                        try:
-                            parsed = json.loads(p_raw_reason)
-                            p_reasons = parsed if isinstance(parsed, list) else [str(parsed)]
-                        except Exception:
-                            p_reasons = [str(p_raw_reason)]
-                    outcome_msg = "实际结果复盘：已完成空投"
-                    if outcome_msg not in p_reasons:
-                        p_reasons.insert(0, outcome_msg)
-                    conn.execute(
-                        """
-                        UPDATE projects
-                        SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
-                        WHERE id = ?
-                        """,
-                        (
-                            json.dumps(p_meta, ensure_ascii=False),
-                            json.dumps(p_reasons, ensure_ascii=False),
-                            datetime.now(UTC),
-                            proj_id,
-                        ),
-                    )
-
-        conn.commit()
-        return {"ok": True, "data": _row_to_item(row)}
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-@router.delete("/interactions/{interaction_id}")
-def delete_interaction(req: Request, interaction_id: int = Path(...)) -> dict[str, Any]:
-    conn = get_connection()
-    try:
-        current_user = get_current_user(req)
-        if current_user["role"] != ROLE_ADMIN:
-            existing = conn.execute("SELECT user_id FROM interactions WHERE id = ?", (interaction_id,)).fetchone()
-            if not existing:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
-                )
-            if existing[0] and existing[0] != current_user["user_id"]:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"code": "NOT_FOUND", "message": "Interaction not found"},
-                )
-        cur = conn.execute("DELETE FROM interactions WHERE id = ?", (interaction_id,))
-        conn.commit()
-        if (cur.rowcount or 0) == 0:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "NOT_FOUND", "message": "Interaction not found"},
-            )
-        return {"ok": True, "data": {"deleted": True, "id": interaction_id}}
-    finally:
-        conn.close()
+            return {"ok": True, "data": {"deleted": True, "id": interaction_id}}
+        except Exception:
+            conn.rollback()
+            raise

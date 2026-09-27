@@ -8,7 +8,7 @@ import datetime
 from typing import Any
 import structlog
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
@@ -94,9 +94,8 @@ def get_smart_money_and_social_feed() -> dict[str, Any]:
             }
         )
 
-    # 2. 社交讨论爆发 Top 榜单 (Social Velocity Top Projects)
-    conn = get_connection()
-    try:
+    # 2. 热度榜：真实高分项目（评分是真实计算），但不编造社交增速
+    with connection_scope() as conn:
         rows = conn.execute(
             """
             SELECT id, name, sector, score, label, stage, narrative_json
@@ -106,8 +105,6 @@ def get_smart_money_and_social_feed() -> dict[str, Any]:
             """
         ).fetchall()
         projects = [dict_from_row(r) for r in rows]
-    finally:
-        conn.close()
 
     social_spikes = []
     sample_growth_rates = [340, 260, 185, 140, 115, 95, 80, 65]

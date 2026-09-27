@@ -147,12 +147,31 @@ def db_conn(monkeypatch, tmp_path):
     def _get_conn() -> DbConnection:
         conn = sqlite3.connect(str(db_file), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+    import contextlib
+
+    @contextlib.contextmanager
+    def _scope(conn=None, *, factory=None, owns=None):
+        """镜像 app.db.connection_scope 的 own/borrow 契约，但连到测试库。"""
+        if factory is not None:
+            db = factory()
+        elif conn is not None:
+            db = conn
+        else:
+            db = _get_conn()
+        try:
+            yield db
+        finally:
+            if conn is None:
+                db.close()
+
         return DbConnection(conn, kind="sqlite")
 
     with _get_conn() as init_conn:
         _setup_test_db(init_conn._raw)
 
-    monkeypatch.setattr("app.routers.v1.user_data.get_connection", _get_conn)
+    # user_data 已迁移到 connection_scope()（隐式 own 分支内部调 get_connection），
+    # 按「monkeypatch 消费点」惯例 patch 消费点而非其依赖。
+    monkeypatch.setattr("app.routers.v1.user_data.connection_scope", _scope)
     monkeypatch.setattr("app.db.get_connection", _get_conn)
     yield _get_conn
 

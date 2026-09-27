@@ -114,13 +114,16 @@ class TestHeatSignalProvider:
         """DB 查询失败时返回 1.0。"""
         provider = HeatSignalProvider(ttl=300, lookback_hours=1)
 
-        # Mock get_connection 抛异常
-        def mock_get_connection():
+        # Mock connection_scope 抛异常（heat_signals 现经 connection_scope 建连）
+        import contextlib
+
+        @contextlib.contextmanager
+        def mock_scope(*args, **kwargs):
             raise RuntimeError("DB connection failed")
 
         monkeypatch.setattr(
-            "app.agents.heat_signals.get_connection",
-            mock_get_connection,
+            "app.agents.heat_signals.connection_scope",
+            mock_scope,
         )
 
         multiplier = provider.get_multiplier("DeFi")

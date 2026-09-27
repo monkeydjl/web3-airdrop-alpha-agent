@@ -25,6 +25,7 @@ from app.collectors.base import CollectorResult, RawDiscovery, RawSignal
 from app.collectors.etherscan import _KNOWN_NOISE_CONTRACTS
 from app.collectors.persistence import CollectionRepository
 from app.config import settings
+from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
 
@@ -152,10 +153,9 @@ def _process_claim_watch(payload: dict[str, Any]) -> bool:
     等于把那些保障重写一遍。
     """
     try:
-        from app.db import get_connection
         from app.services.claim_watch import evaluate_claim_candidate, record_claim_candidate
 
-        with get_connection() as conn:
+        with connection_scope() as conn:
             event = evaluate_claim_candidate(conn, payload)
             if event is None:
                 return False

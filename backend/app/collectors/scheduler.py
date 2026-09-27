@@ -124,18 +124,15 @@ class CollectionScheduler:
 
         # Honor operator toggle in data_sources.enabled (default on if no row).
         try:
-            from app.db import get_connection
+            from app.db import connection_scope
 
             def _check_op() -> bool:
-                conn = get_connection()
-                try:
+                with connection_scope() as conn:
                     row = conn.execute(
                         "SELECT enabled FROM data_sources WHERE source_id = ?",
                         (source_id,),
                     ).fetchone()
                     return row is None or bool(row["enabled"])
-                finally:
-                    conn.close()
 
             # P1-4: 同步 DB 读取移出主事件循环
             if not await asyncio.to_thread(_check_op):

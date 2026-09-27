@@ -36,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 from app.services.project_signals import parse_meta
 
 logger = structlog.get_logger(__name__)
@@ -171,7 +171,7 @@ def create_roi_entry(
     user = get_current_user(request)
     _require_amount(body)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         _require_project(conn, project_id)
         # RETURNING 而非 lastrowid：psycopg3 没有 lastrowid（db.py 有注释）。
         row = conn.execute(
@@ -202,7 +202,7 @@ def create_roi_outcome(
     """写入一行 roi_outcomes。"""
     user = get_current_user(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         _require_project(conn, project_id)
         row = conn.execute(
             """
@@ -291,7 +291,7 @@ def get_project_roi(project_id: str, request: Request) -> dict[str, Any]:
     """返回明细 + 小计。小计同样不给时间定价。"""
     user = get_current_user(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         entries = [
             _entry_row_to_dict(r)
             for r in conn.execute(
@@ -340,7 +340,7 @@ def get_roi_summary(request: Request) -> dict[str, Any]:
     user = get_current_user(request)
     uid = user["user_id"]
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         entry_rows = conn.execute(
             """
             SELECT project_id,
@@ -438,7 +438,7 @@ def delete_roi_outcome(outcome_id: int, request: Request) -> dict[str, Any]:
 def _delete_owned(kind: str, record_id: int, user_id: str) -> None:
     """按 user_id 归属删除。表名来自闭表，值全部参数化。"""
     table = _ROI_TABLES[kind]
-    with get_connection() as conn:
+    with connection_scope() as conn:
         cursor = conn.execute(
             f"DELETE FROM {table} WHERE id = ? AND user_id = ?",  # noqa: S608
             (record_id, user_id),

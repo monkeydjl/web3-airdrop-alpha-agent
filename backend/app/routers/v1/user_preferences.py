@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import get_current_user
-from app.db import get_connection
+from app.db import connection_scope
 from app.repositories.user import UserRepository
 
 logger = structlog.get_logger(__name__)
@@ -161,7 +161,7 @@ def _parse_preferences_dict(raw: str | None) -> dict[str, Any]:
 def get_user_preferences(request: Request) -> UserPreferencesResponse:
     user_id = _get_authenticated_user_id(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = UserRepository(conn)
         user = _ensure_user(repo, user_id)
         raw_prefs = user.get("preferences")
@@ -182,7 +182,7 @@ def put_user_preferences(request: Request, body: UserPreferencesPutPayload) -> U
     payload_dict = body.model_dump()
     json_str = json.dumps(payload_dict, ensure_ascii=False)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = UserRepository(conn)
         _ensure_user(repo, user_id)
         repo.update_preferences(user_id, json_str)
@@ -200,7 +200,7 @@ def put_user_preferences(request: Request, body: UserPreferencesPutPayload) -> U
 def patch_user_preferences(request: Request, body: UserPreferencesPatchPayload) -> UserPreferencesResponse:
     user_id = _get_authenticated_user_id(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = UserRepository(conn)
         user = _ensure_user(repo, user_id)
         current = _parse_preferences_dict(user.get("preferences"))
@@ -252,7 +252,7 @@ def patch_user_preferences(request: Request, body: UserPreferencesPatchPayload) 
 def delete_user_preferences(request: Request) -> UserPreferencesResponse:
     user_id = _get_authenticated_user_id(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         repo = UserRepository(conn)
         _ensure_user(repo, user_id)
         repo.update_preferences(user_id, "{}")

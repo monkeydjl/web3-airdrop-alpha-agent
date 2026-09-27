@@ -16,7 +16,7 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.db import get_connection
+from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["dashboard"])
@@ -90,8 +90,7 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
         "shadow": {"saved_today": 0, "label_counts": {"FARM": 0, "WATCH": 0, "IGNORE": 0}},
     }
 
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         # ── 今日采集运行（collection_logs）──────────────────────────
         # 注意 started_at 存储格式可能是 ISO 字符串或 TIMESTAMP，统一用字符串前缀比较。
         cursor = conn.execute(
@@ -175,8 +174,6 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
             # 记 debug 而不是静默 pass：否则真正的 SQL/schema 故障也会被吞掉，
             # 表现为面板恒显 0 而无从排查。
             logger.debug("dashboard.shadow_block_unavailable", error=str(exc))
-    finally:
-        conn.close()
 
     return DashboardOverviewResponse(ok=True, data=data)
 
@@ -187,10 +184,9 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
     description="汇总今日最新测试网挖掘、FARM 头部重点项目与系统核心 Alpha 变动简讯。",
 )
 def get_daily_flash() -> dict[str, Any]:
-    from app.db import dict_from_row, get_connection
+    from app.db import dict_from_row
 
-    conn = get_connection()
-    try:
+    with connection_scope() as conn:
         now = datetime.now(UTC)
         date_str = now.strftime("%Y-%m-%d")
 
@@ -250,6 +246,3 @@ def get_daily_flash() -> dict[str, Any]:
                 ],
             },
         }
-    finally:
-        conn.close()
-

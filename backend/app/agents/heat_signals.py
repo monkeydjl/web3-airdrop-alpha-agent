@@ -22,7 +22,7 @@ import time
 import structlog
 
 from app.config import settings
-from app.db import get_connection
+from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
 
@@ -94,8 +94,7 @@ class HeatSignalProvider:
 
     def _compute_multiplier(self, sector: str) -> float:
         """从 DB 聚合信号并计算乘子。"""
-        conn = get_connection()
-        try:
+        with connection_scope() as conn:
             # 查询近 N 小时内该 sector 相关项目的信号
             # 通过 raw_projects 关联 sector，再 JOIN project_signals
             lookback = self._lookback
@@ -154,8 +153,6 @@ class HeatSignalProvider:
             ).fetchone()
 
             kol_count = int(kol_row["cnt"]) if kol_row and kol_row["cnt"] else 0
-        finally:
-            conn.close()
 
         # 无信号时返回中性乘子
         total_signals = twitter_count + funding_count + kol_count

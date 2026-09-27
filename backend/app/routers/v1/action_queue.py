@@ -15,7 +15,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.db import get_connection
+from app.db import connection_scope
 from app.repository import ProjectRepository
 from app.services.action_queue import build_action_queue
 from app.services.user_scope import DEFAULT_USER, owned_project_ids
@@ -68,7 +68,7 @@ def get_action_queue(
             sort_order="desc",
         )
 
-        with get_connection() as conn:
+        with connection_scope() as conn:
             engaged = owned_project_ids(conn, "interactions", uid)
             watched = owned_project_ids(conn, "watchlist", uid)
 

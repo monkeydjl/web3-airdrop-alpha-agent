@@ -10,10 +10,11 @@ Reference:
 """
 
 from __future__ import annotations
+import contextlib
 
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -160,6 +161,61 @@ def get_connection() -> DbConnection:
     if is_postgres():
         return _connect_postgres()
     return _connect_sqlite()
+
+@contextlib.contextmanager
+def connection_scope(
+    conn: DbConnection | None = None,
+    *,
+    factory: Callable[[], DbConnection] | None = None,
+    owns: bool | None = None,
+) -> Iterator[DbConnection]:
+    """Borrow/own 连接所有权契约的统一作用域（app 级唯一权威实现）。
+
+    全仓约定（见 main.py lifespan、CollectionRepository._should_close、
+    _as_db_connection、connection_scope 的各消费者；CONVENTIONS.md §13.3）：
+
+    - **own**（factory 每次新建 / conn 为 None）→ 作用域退出时 close 恰一次，
+      不 close 即泄漏；
+    - **borrow**（注入的共享连接）→ 永不在此关闭，由所有者在自己的生命周期
+      终点关闭（如 lifespan finally），借用方多次使用也不得碰 close。
+
+    用法一（短作用域，等价旧的 ``with get_connection() as conn:``）::
+
+        with connection_scope() as conn:  # own: close 恰一次
+            ...
+
+    用法二（factory 风格消费者，如 LeaderElector.conn_factory)::
+
+        with connection_scope(
+            factory=self.conn_factory, owns=self.owns_connections
+        ) as conn:
+            ...
+
+    所有权判定：显式 ``owns`` 优先（factory 形态必传：factory 产物默认按
+    own 处理，但工厂可能返回借用连接，所有权只有调用方知道）；未传时由
+    注入形态推导——``conn`` 注入即 borrow（None→own 自建）。``conn`` 与
+    ``factory`` 互斥（都给以 ValueError 拒绝），``owns`` 只能与 ``factory``
+    同用，与 ``conn`` 同用视为误用以 ValueError 拒绝。
+    """
+    if conn is not None and factory is not None:
+        raise ValueError("connection_scope takes conn or factory, not both")
+    if conn is not None and owns is not None:
+        raise ValueError("owns is only valid with factory (injected conn is always borrowed)")
+    if factory is not None:
+        db = factory()
+        should_close = owns is not False
+    elif conn is not None:
+        db = conn
+        should_close = False  # injected conn is always borrowed
+    else:
+        db = get_connection()
+        should_close = True
+    try:
+        yield db
+    finally:
+        if should_close:
+            db.close()
+
 
 
 def _connect_sqlite() -> DbConnection:
@@ -1468,7 +1524,11 @@ def _postgres_ddl() -> str:
 
 
 def _as_db_connection(conn: Any) -> tuple[DbConnection, bool]:
-    """Normalize optional conn to DbConnection. Returns (conn, owns_lifecycle)."""
+    """Normalize optional conn to DbConnection. Returns (conn, owns_lifecycle).
+
+    薄包装：所有权判定统一走 ``connection_scope`` 同源约定 —— None 即 own
+    （新建并自管生命周期），注入即 borrow（调用方负责关闭，本 helper 永不 close）。
+    """
     if conn is None:
         return get_connection(), True
     if isinstance(conn, DbConnection):

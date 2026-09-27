@@ -48,6 +48,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.config import settings
 
+from app.db import connection_scope
 logger = structlog.get_logger(__name__)
 
 # Paths that stay open even with API key enabled
@@ -505,7 +506,7 @@ def blacklist_token_jti(
     if expires_at is None:
         expires_at = datetime.fromtimestamp(time.time() + 7 * 86400, tz=UTC)
 
-    from app.db import DbConnection, get_connection
+    from app.db import DbConnection
     from app.repositories.user import BlacklistedJtiRepository
 
     def _do_write(c: DbConnection) -> None:
@@ -516,7 +517,7 @@ def blacklist_token_jti(
         _do_write(conn)
     else:
         try:
-            with get_connection() as c:
+            with connection_scope() as c:
                 _do_write(c)
         except Exception as exc:
             logger.warning("auth.blacklist_persist_failed", jti=jti, error=str(exc))
@@ -529,7 +530,7 @@ def is_jti_blacklisted(jti: str, conn: Any | None = None) -> bool:
     if jti in _BLACKLISTED_JTIS:
         return True
 
-    from app.db import DbConnection, get_connection
+    from app.db import DbConnection
     from app.repositories.user import BlacklistedJtiRepository
 
     def _do_check(c: DbConnection) -> bool:
@@ -540,7 +541,7 @@ def is_jti_blacklisted(jti: str, conn: Any | None = None) -> bool:
         if conn is not None:
             res = _do_check(conn)
         else:
-            with get_connection() as c:
+            with connection_scope() as c:
                 res = _do_check(c)
         if res:
             _BLACKLISTED_JTIS.add(jti)
@@ -646,10 +647,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         # 1b. 动态可撤销 API Key (V3, ROADMAP §25.3.3)
         if provided.startswith("ak_"):
             def _verify_ak(raw_key: str) -> dict[str, Any] | None:
-                from app.db import get_connection
                 from app.repositories.api_key import ApiKeyRepository
 
-                with get_connection() as conn:
+                with connection_scope() as conn:
                     repo = ApiKeyRepository(conn)
                     record = repo.find_active_key_by_raw(raw_key)
                     if record:

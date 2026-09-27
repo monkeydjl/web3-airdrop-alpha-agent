@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
-from app.db import get_connection
+from app.db import connection_scope
 from app.repository import ProjectRepository
 from app.services.participation_tasks import generate_participation_tasks
 from app.services.project_signals import signals_view
@@ -148,7 +148,7 @@ def create_participation_plan(
     seed = bool(body.seed_from_generated) if body else True
     note = body.note if body else None
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         project = conn.execute(
             "SELECT id FROM projects WHERE id = ?",
             (project_id,),
@@ -259,7 +259,7 @@ def list_participation_plans(
         params.append(status)
     query += " ORDER BY id DESC"
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         plans = [dict(r) for r in conn.execute(query, tuple(params)).fetchall()]
         out: list[dict[str, Any]] = []
         for plan in plans:
@@ -290,7 +290,7 @@ def patch_participation_plan(
     """更新 plan；status 迁移必须落在 _PLAN_TRANSITIONS 闭表内。"""
     user = get_current_user(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         plan = _get_owned_plan(conn, plan_id, user["user_id"])
 
         updates: list[str] = ["updated_at = ?"]
@@ -335,7 +335,7 @@ def patch_participation_task(
     """更新任务；plan 归属校验同 plan 级（不匹配 404）。"""
     user = get_current_user(request)
 
-    with get_connection() as conn:
+    with connection_scope() as conn:
         owned = conn.execute(
             """
             SELECT t.id FROM participation_tasks t
@@ -397,7 +397,7 @@ def patch_participation_task(
 )
 def delete_participation_plan(plan_id: int, request: Request) -> dict[str, Any]:
     user = get_current_user(request)
-    with get_connection() as conn:
+    with connection_scope() as conn:
         _get_owned_plan(conn, plan_id, user["user_id"])
         conn.execute("DELETE FROM participation_tasks WHERE plan_id = ?", (plan_id,))
         conn.execute("DELETE FROM participation_plans WHERE id = ?", (plan_id,))
@@ -472,7 +472,7 @@ async def auto_check_tasks_onchain(
 
     target_address = wallet_address.strip().lower() if wallet_address else None
     if not target_address:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             row = conn.execute(
                 "SELECT address FROM watched_wallets WHERE active = 1 ORDER BY id ASC LIMIT 1"
             ).fetchone()
@@ -525,7 +525,7 @@ async def auto_check_tasks_onchain(
 
     updated_task_ids = []
     if has_activity and auto_commit:
-        with get_connection() as conn:
+        with connection_scope() as conn:
             plan_row = conn.execute(
                 "SELECT id FROM participation_plans WHERE project_id = ? AND user_id = ?",
                 (project_id, uid),

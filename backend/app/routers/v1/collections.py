@@ -22,7 +22,7 @@ from app.collectors.factory import get_default_registry
 from app.collectors.persistence import CollectionRepository
 from app.collectors.registry import CollectorRegistry
 from app.config import settings
-from app.db import DbConnection, get_connection, scalar
+from app.db import DbConnection, connection_scope, scalar
 from app.inflight import QueueDrainInProgressError, claim_run, collect_key
 
 logger = structlog.get_logger(__name__)
@@ -333,8 +333,8 @@ async def trigger_collection(
                 },
             )
 
-        conn = get_connection()
-        try:
+        # own 连接：作用域覆盖 collect + 持久化 + 自动分析（finally close 等价）。
+        with connection_scope() as conn:
             result = await collector.collect()
 
             # 持久化到 raw_projects 与 economic 处理（P1-4: 移出主事件循环）
@@ -412,5 +412,3 @@ async def trigger_collection(
                     "auto_run_skipped": auto_run_skipped,
                 },
             )
-        finally:
-            conn.close()

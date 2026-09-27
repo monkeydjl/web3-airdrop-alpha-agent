@@ -8,17 +8,16 @@ import datetime
 from typing import Any
 import structlog
 
-from app.db import dict_from_row, get_connection
+from app.db import connection_scope, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
 
 def get_calendar_events() -> list[dict[str, Any]]:
     """从数据库项目中聚合所有已知的里程碑时间节点."""
-    conn = get_connection()
     events: list[dict[str, Any]] = []
 
-    try:
+    with connection_scope() as conn:
         rows = conn.execute(
             """
             SELECT id, name, sector, stage, score, label, meta
@@ -165,9 +164,6 @@ def get_calendar_events() -> list[dict[str, Any]]:
 
         # 按截止时间先后排序
         events.sort(key=lambda x: x["hours_remaining"])
-
-    finally:
-        conn.close()
 
     return events
 

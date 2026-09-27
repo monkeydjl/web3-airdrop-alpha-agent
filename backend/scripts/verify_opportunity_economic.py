@@ -463,7 +463,8 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         with (
             patch.object(coll_mod, "_build_registry", lambda: _FakeReg()),
             patch.object(coll_mod, "CollectionRepository", _ManualRepo),
-            patch.object(coll_mod, "get_connection", lambda: conn_m),
+            patch.object(coll_mod, "connection_scope", _manual_scope),
+            patch.object(coll_mod.asyncio, "to_thread", lambda fn, *a, **k: _sync_direct(fn, *a, **k)),
             patch(
                 "app.opportunity.economic_repository.EconomicSnapshotRepository",
                 boom_ctor,
@@ -473,6 +474,20 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
         if response.ok is not True:
             return False
         data = response.model_dump().get("data") or {}
+
+        # 734f0a7 起手动触发路径的持久化移入 asyncio.to_thread；
+        # _run_coro_sync 是无事件循环的裸协程驱动器（socket-free），
+        # 无法驱动 to_thread。此处把 to_thread 降级为同步直调：
+        # 语义等价（调用方 await 它的结果），只是不经线程池。
+        @contextlib.contextmanager
+        def _manual_scope(conn=None, *, factory=None, owns=None):  # noqa: ARG001
+            # 镜像 app.db.connection_scope own 契约：无注入时产出 conn_m，
+            # 退出时 close 恰一次（与生产 trigger_collection 的 close 语义一致）。
+            try:
+                yield conn_m
+            finally:
+                conn_m.close()
+
         if data.get("source_id") != "defillama":
             return False
         if data.get("items_collected") != 1:

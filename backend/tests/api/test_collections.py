@@ -22,6 +22,27 @@ from app.inflight import (
 from app.main import create_app
 
 
+def _fake_scope(conn_factory):
+    """镜像 app.db.connection_scope own 契约的 fake（供 monkeypatch coll_mod）。"""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _scope(conn=None, *, factory=None, owns=None):
+        if factory is not None:
+            db = factory()
+        elif conn is not None:
+            db = conn
+        else:
+            db = conn_factory()
+        try:
+            yield db
+        finally:
+            if conn is None:
+                db.close()
+
+    return _scope
+
+
 @pytest.fixture
 def client(tmp_path):
     """创建测试客户端，每个测试使用独立数据库。"""
@@ -377,7 +398,7 @@ class TestManualTriggerEconomicIntegration:
         collector = _FakeCollector("defillama")
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
         monkeypatch.setattr(coll_mod, "CollectionRepository", TrackingRepo)
-        monkeypatch.setattr(coll_mod, "get_connection", lambda: conn)
+        monkeypatch.setattr(coll_mod, "connection_scope", _fake_scope(lambda: conn))
         monkeypatch.setattr(
             "app.opportunity.economic_repository.EconomicSnapshotRepository",
             lambda c=None, *a, **k: type("S", (), {"__init__": lambda self, *a, **k: None})(),
@@ -455,7 +476,7 @@ class TestManualTriggerEconomicIntegration:
         collector = _FakeCollector("defillama")
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
         monkeypatch.setattr(coll_mod, "CollectionRepository", FailingRepo)
-        monkeypatch.setattr(coll_mod, "get_connection", lambda: TrackingConn())
+        monkeypatch.setattr(coll_mod, "connection_scope", _fake_scope(lambda: TrackingConn()))
         monkeypatch.setattr("app.opportunity.economic_integration.process_persisted_collection", process_mock)
 
         with contextlib.suppress(Exception):
@@ -519,7 +540,7 @@ class TestManualTriggerEconomicIntegration:
         collector = _FakeCollector("defillama")
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
         monkeypatch.setattr(coll_mod, "CollectionRepository", Repo)
-        monkeypatch.setattr(coll_mod, "get_connection", lambda: TrackingConn())
+        monkeypatch.setattr(coll_mod, "connection_scope", _fake_scope(lambda: TrackingConn()))
 
         mock_writer = MagicMock()
         mock_writer.process = writer_process
@@ -639,7 +660,7 @@ class TestManualTriggerEconomicIntegration:
         registry = _FakeRegistry({source_id: collector})
         monkeypatch.setattr(coll_mod, "_build_registry", lambda: registry)
         monkeypatch.setattr(coll_mod, "CollectionRepository", Repo)
-        monkeypatch.setattr(coll_mod, "get_connection", lambda: TrackingConn())
+        monkeypatch.setattr(coll_mod, "connection_scope", _fake_scope(lambda: TrackingConn()))
         monkeypatch.setattr("app.pipeline_run.execute_analysis_pipeline", fake_pipeline)
 
         if fail_stage == "construction":
