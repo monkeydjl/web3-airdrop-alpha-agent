@@ -5,13 +5,20 @@ POST /api/v1/pnl/records
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.airdrop_pnl import (
     add_harvest_record,
     get_pnl_summary,
+)
+from app.utils.data_quality import mark_simulated
+
+_PNL_NOTE = (
+    "内置样例记录为行业公开战绩演示数据；用户手动录入的账本已持久化到 SQLite，"
+    "但汇总数字非实时资产数据（价格以录入时点为准）。"
 )
 
 logger = structlog.get_logger(__name__)
@@ -30,11 +37,11 @@ class HarvestRecordRequest(BaseModel):
 
 @router.get("/summary", summary="获取空投真实收益汇总、RoI 与猎人荣誉段位")
 def get_summary() -> dict[str, Any]:
-    """汇总已领取的空投价值、净利润与战绩段位."""
-    return get_pnl_summary()
+    """汇总已领取的空投价值、净利润与战绩段位（演示口径，见 _PNL_NOTE）."""
+    return mark_simulated(get_pnl_summary(), note=_PNL_NOTE)
 
 
 @router.post("/records", summary="记录一笔新到账的空投代币")
 def record_harvest(req: HarvestRecordRequest) -> dict[str, Any]:
-    """录入新空投资产."""
-    return add_harvest_record(req.model_dump())
+    """录入新空投资产（已持久化，重启不再丢失）."""
+    return mark_simulated(add_harvest_record(req.model_dump()), note=_PNL_NOTE)

@@ -6,14 +6,33 @@
 """
 
 from fastapi.testclient import TestClient
-from app.db import init_db
+
+from app.db import get_connection, init_db
 from app.main import create_app
+
+
+def _clear_team_studio_tables() -> None:
+    """防御性清空 team studio 两张表：前面执行的测试文件可能已注册操作员/任务."""
+    from app.services.team_studio_manager import ensure_team_studio_tables
+
+    conn = get_connection()
+    try:
+        ensure_team_studio_tables(conn)
+        conn.execute("DELETE FROM team_studio_operators")
+        conn.execute("DELETE FROM team_studio_tasks")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_batch6_api_endpoints():
     init_db()
     app = create_app()
     client = TestClient(app)
+
+    # Team Studio 已落 SQLite，前面执行的测试文件可能已注册操作员——
+    # 防御性清空两张表，保证本测试从空态断言起步。
+    _clear_team_studio_tables()
 
     # 1. MEV RPC
     resp_nodes = client.get("/api/v1/mev-rpc/nodes")
@@ -22,10 +41,7 @@ def test_batch6_api_endpoints():
     assert data_nodes["ok"] is True
     assert data_nodes["data"]["total"] >= 4
 
-    resp_bench = client.post(
-        "/api/v1/mev-rpc/benchmark",
-        json={"node_id": "flashbots_protect"}
-    )
+    resp_bench = client.post("/api/v1/mev-rpc/benchmark", json={"node_id": "flashbots_protect"})
     assert resp_bench.status_code == 200
     data_bench = resp_bench.json()
     assert data_bench["ok"] is True
@@ -45,7 +61,7 @@ def test_batch6_api_endpoints():
             "to_chain": "Arbitrum",
             "asset": "USDC",
             "amount_usd": 5000.0,
-        }
+        },
     )
     assert resp_bridge_sim.status_code == 200
     data_sim = resp_bridge_sim.json()
@@ -65,7 +81,7 @@ def test_batch6_api_endpoints():
             "playbook_id": "playbook_scroll_marks",
             "jitter_min": 30,
             "jitter_max": 60,
-        }
+        },
     )
     assert resp_pb_gen.status_code == 200
     data_gen = resp_pb_gen.json()
@@ -73,14 +89,16 @@ def test_batch6_api_endpoints():
     assert data_gen["data"]["step_count"] == 4
     assert len(data_gen["data"]["executable_code"]) > 100
 
-    # 4. Team Studio
+    # 4. Team Studio（诚实口径：空态起步，无内置虚构操作员）
     resp_studio = client.get("/api/v1/team-studio/dashboard")
     assert resp_studio.status_code == 200
     data_studio = resp_studio.json()
     assert data_studio["ok"] is True
-    assert data_studio["data"]["summary"]["active_operators_count"] >= 3
+    assert data_studio["data"]["summary"]["active_operators_count"] == 0
+    assert data_studio["data_quality"]["quality"] == "simulated"
 
-    resp_task = client.post(
+    # 未注册的操作员派单必须被拒绝（不再有内置 op_alice）
+    resp_task_unknown = client.post(
         "/api/v1/team-studio/assign-task",
         json={
             "title": "Hyperliquid Funding Rate Hedge",
@@ -88,12 +106,12 @@ def test_batch6_api_endpoints():
             "operator_id": "op_alice",
             "target_wallet_count": 15,
             "priority": "high",
-        }
+        },
     )
-    assert resp_task.status_code == 200
-    data_task = resp_task.json()
-    assert data_task["ok"] is True
-    assert data_task["data"]["success"] is True
+    assert resp_task_unknown.status_code == 200
+    data_task_unknown = resp_task_unknown.json()
+    assert data_task_unknown["ok"] is False
+    assert data_task_unknown["error"]["code"] == "OPERATOR_NOT_FOUND"
 
     resp_op = client.post(
         "/api/v1/team-studio/operator",
@@ -103,9 +121,25 @@ def test_batch6_api_endpoints():
             "role": "Compliance Officer",
             "assigned_wallets": 5,
             "assigned_projects": ["Scroll", "Linea"],
-        }
+        },
     )
     assert resp_op.status_code == 200
     data_op = resp_op.json()
     assert data_op["ok"] is True
     assert data_op["data"]["action"] == "created"
+
+    # 注册成功后派单才可能成功
+    resp_task = client.post(
+        "/api/v1/team-studio/assign-task",
+        json={
+            "title": "Hyperliquid Funding Rate Hedge",
+            "project": "Hyperliquid",
+            "operator_id": "op_eva",
+            "target_wallet_count": 15,
+            "priority": "high",
+        },
+    )
+    assert resp_task.status_code == 200
+    data_task = resp_task.json()
+    assert data_task["ok"] is True
+    assert data_task["data"]["success"] is True

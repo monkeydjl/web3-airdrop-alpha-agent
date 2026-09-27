@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 interface ScriptForgeModalProps {
   initialProjectName?: string;
@@ -13,10 +14,11 @@ export function ScriptForgeModal({
   onClose,
 }: ScriptForgeModalProps) {
   const [projectName, setProjectName] = useState(initialProjectName);
-  const [contractAddress, setContractAddress] = useState('0x7777777254eeb25477b68fb85ed929f73a960582');
-  const [rpcUrl, setRpcUrl] = useState('https://odyssey.storyrpc.io');
+  const [contractAddress, setContractAddress] = useState('');
+  const [rpcUrl, setRpcUrl] = useState('');
   const [jitterMin, setJitterMin] = useState(15);
   const [jitterMax, setJitterMax] = useState(60);
+  const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'foundry_cast' | 'web3_py' | 'viem_ts'>('web3_py');
   const [scripts, setScripts] = useState<Record<string, string> | null>(null);
@@ -24,23 +26,38 @@ export function ScriptForgeModal({
   const [copied, setCopied] = useState(false);
 
   const handleGenerate = async () => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(contractAddress.trim())) {
+      setError('请先填入真实的目标交互合约地址（0x 开头 40 位十六进制）——脚本会真实向该合约发交易，不再内置占位地址。');
+      setScripts(null);
+      return;
+    }
+    if (!rpcUrl.trim()) {
+      setError('请填入目标网络的 RPC 节点地址。');
+      setScripts(null);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
-      const res = await apiFetch<{ ok: boolean; scripts: Record<string, string> }>('/scripts/generate', {
+      const res = await apiFetch<{ ok: boolean; scripts?: Record<string, string>; error?: { message: string } }>('/scripts/generate', {
         method: 'POST',
         body: JSON.stringify({
           project_name: projectName,
-          contract_address: contractAddress,
-          rpc_url: rpcUrl,
+          contract_address: contractAddress.trim(),
+          rpc_url: rpcUrl.trim(),
           jitter_min: Number(jitterMin),
           jitter_max: Number(jitterMax),
         }),
       });
       if (res?.scripts) {
         setScripts(res.scripts);
+      } else if (res?.error) {
+        setError(res.error.message);
+        setScripts(null);
       }
-    } catch {
-      // 捕获异常
+    } catch (e: any) {
+      setError(e?.message || '生成失败');
+      setScripts(null);
     } finally {
       setLoading(false);
     }
@@ -72,6 +89,7 @@ export function ScriptForgeModal({
           <h2 className="text-sm font-bold text-ink flex items-center gap-2">
             <span>⚡</span>
             <span>自动化交互 CLI 脚本与防女巫模板工坊</span>
+            <SimulatedDataBadge note="脚本为模板生成工具；Jitter 等防女巫参数是经验配置，非保证匿名。" />
           </h2>
           <p className="text-xs text-ink-muted mt-0.5">
             一键生成内置随机时间离散度 (Jitter) 与微量 Gas 扰动的开源安全执行脚本
@@ -101,13 +119,15 @@ export function ScriptForgeModal({
           </div>
 
           <div className="space-y-1">
-            <label className="text-[11px] font-semibold text-ink-muted">目标交互智能合约地址</label>
+            <label className="text-[11px] font-semibold text-ink-muted">目标交互智能合约地址（必填）</label>
             <input
               type="text"
               value={contractAddress}
               onChange={(e) => setContractAddress(e.target.value)}
+              placeholder="0x…（请填入经核实的官方合约地址）"
               className="input font-mono text-xs w-full"
             />
+            <div className="text-[10px] text-amber-400/80">⚠️ 脚本会真实向该地址发交易，请自行核实合约来源；不再提供占位默认值。</div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-surface-2 border border-line">
@@ -171,6 +191,10 @@ export function ScriptForgeModal({
               </button>
             </div>
           </div>
+
+          {error && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2.5 text-[11px] text-red-400">{error}</div>
+          )}
 
           {/* 脚本展示区 */}
           {scripts && (

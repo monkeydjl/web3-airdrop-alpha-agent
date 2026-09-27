@@ -6,6 +6,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from app.main import create_app
 
 
@@ -71,10 +72,11 @@ def test_batch2_api_endpoints():
     assert "foundry_cast" in scripts_data["scripts"]
     assert "viem_ts" in scripts_data["scripts"]
 
-    # 4. Smart Money Radar
+    # 4. Smart Money Radar（诚实口径：编造巨鲸动态已移除，如实为空）
     res_sm = client.get("/api/v1/smart-money/feed")
     assert res_sm.status_code == 200
     sm_data = res_sm.json()
     assert sm_data["ok"] is True
-    assert len(sm_data["smart_money_activities"]) > 0
+    assert sm_data["smart_money_activities"] == []
+    assert sm_data["data_quality"]["quality"] == "simulated"
     assert "social_velocity_spikes" in sm_data

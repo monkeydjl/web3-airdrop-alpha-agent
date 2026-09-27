@@ -1,98 +1,51 @@
-"""Smart Money Radar & Social Heat Velocity Service (聪明钱巨鲸潜伏与社交讨论爆发雷达).
+"""Smart Money Radar & Social Heat Service (聪明钱监控目标与社交热度榜).
 
-监控知名头部巨鲸/VC 关联地址最新交互未知协议，并结合全网社交讨论环比加速度 (Social Velocity)，
-捕获处于爆发临界点或巨鲸暗中建仓潜伏的早期 Alpha。
+诚实口径（2026-09-23 审计，docs/EXPANSION_AUDIT_REPORT.md）：
+
+此服务历史上返回**编造的巨鲸动态**（「Vitalik 向 Farcaster 签名信令 12 小时前」
+「Paradigm 存入 500 stETH」等）与硬编码的社交增速数组，全部以实时口吻呈现。
+巨鲸链上监控需要真实的链上数据供给（索引器/Alchemy 事件流等），在没有数据源
+之前，如实表现为 0 条动态，而不是编故事：
+
+- ``smart_money_activities``：**恒为空列表**——占位形态保留，待接入真实
+  数据源后填充。
+- ``tracked_whales``：公开、可验证的知名地址白名单（Vitalik 等公开人物地址
+  是链上事实），性质是静态知识清单，不是动态情报。
+- ``social_velocity_spikes``：返回数据库中的真实高分项目，但**不再编造增速
+  百分比**——排序与「热度榜」位置直接采用项目综合评分（真实数据），缺失的
+  社交增速字段如实为 ``None`` 并在 ``note`` 中说明。
 """
 
-import datetime
+from __future__ import annotations
+
 from typing import Any
+
 import structlog
 
 from app.db import connection_scope, dict_from_row
 
 logger = structlog.get_logger(__name__)
 
-# 知名聪明钱 / 顶级空投工作室跟踪样本
-SMART_MONEY_PROFILES = [
+# 公开可验证的知名地址白名单（静态知识，非动态情报）。
+# 仅收录地址本身是公开事实的对象；任何「该地址最近做了什么」的描述
+# 在接入真实链上数据源之前一律不出。
+TRACKED_WHALE_PROFILES: list[dict[str, Any]] = [
     {
         "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
         "label": "Vitalik Buterin (以太坊创始人)",
-        "tier": "Tier-0 Legend",
-    },
-    {
-        "address": "0x00000000Ae347930bD1E7B0F35588b92280f9e75",
-        "label": "Paradigm Venture Fund",
-        "tier": "Tier-1 Top VC",
-    },
-    {
-        "address": "0x7111F9723223A54d6F86C2e3995F7004F2f61e71",
-        "label": "Alpha Hunter Whales Studio",
-        "tier": "Studio Alpha",
-    },
-    {
-        "address": "0xdbf5e9c5206d0d44a840e69888d1d86d5e1a31d9",
-        "label": "Wintermute Research",
-        "tier": "Market Maker",
-    },
-]
-
-# 动态生成的近期聪明钱潜伏异动记录
-CURATED_SMART_MONEY_ACTIVITIES = [
-    {
-        "whale_label": "Paradigm Venture Fund",
-        "whale_address": "0x00000000Ae347930bD1E7B0F35588b92280f9e75",
-        "target_project": "Symbiotic",
-        "action": "初次向协议核算智能合约存入 500 stETH",
-        "est_value_usd": 1_650_000,
-        "time_offset_hours": 3,
-        "signal_type": "whale_accumulation",
-        "insight": "顶级机构大额进入质押池，往往预示大额融资或官方积分首季启动",
-    },
-    {
-        "whale_label": "Alpha Hunter Whales Studio",
-        "whale_address": "0x7111F9723223A54d6F86C2e3995F7004F2f61e71",
-        "target_project": "Story Protocol",
-        "action": "批量注册 12 个独立 IP 节点许可证",
-        "est_value_usd": 3_500,
-        "time_offset_hours": 7,
-        "signal_type": "early_position",
-        "insight": "头部专业工作室集中部署 Odyssey 测试网交互，权重极大",
-    },
-    {
-        "whale_label": "Vitalik Buterin",
-        "whale_address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-        "target_project": "Farcaster",
-        "action": "链上调用 Mini-App 合约并签署社交身份信令",
-        "est_value_usd": 0,
-        "time_offset_hours": 12,
-        "signal_type": "founder_active",
-        "insight": "精神领袖高频交互去中心化社交，赛道关注度急剧上升",
+        "tier": "public_figure",
     },
 ]
 
 
 def get_smart_money_and_social_feed() -> dict[str, Any]:
-    """汇总聪明钱最新链上异动与社交讨论暴增榜."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    """返回聪明钱监控目标清单与基于真实评分的项目热度榜.
 
-    # 1. 整理聪明钱动态
-    activities = []
-    for item in CURATED_SMART_MONEY_ACTIVITIES:
-        act_time = now - datetime.timedelta(hours=item["time_offset_hours"])
-        activities.append(
-            {
-                "id": f"act-{item['target_project'].lower()}-{item['time_offset_hours']}",
-                "whale_label": item["whale_label"],
-                "whale_address": item["whale_address"],
-                "target_project": item["target_project"],
-                "action": item["action"],
-                "est_value_usd": item["est_value_usd"],
-                "time_iso": act_time.isoformat(),
-                "time_ago": f"{item['time_offset_hours']} 小时前",
-                "signal_type": item["signal_type"],
-                "insight": item["insight"],
-            }
-        )
+    老版本在此返回编造的巨鲸动态与假增速，已按诚实口径清理：
+    动态为空、增速不编造，榜单排序使用真实的项目综合评分。
+    """
+    # 1. 巨鲸动态：无真实数据源，如实为空（占位形态待接入后填充）
+    activities: list[dict[str, Any]] = []
 
     # 2. 热度榜：真实高分项目（评分是真实计算），但不编造社交增速
     with connection_scope() as conn:
@@ -107,9 +60,7 @@ def get_smart_money_and_social_feed() -> dict[str, Any]:
         projects = [dict_from_row(r) for r in rows]
 
     social_spikes = []
-    sample_growth_rates = [340, 260, 185, 140, 115, 95, 80, 65]
-    for i, p in enumerate(projects):
-        rate = sample_growth_rates[i] if i < len(sample_growth_rates) else 50
+    for p in projects:
         social_spikes.append(
             {
                 "project_id": p["id"],
@@ -117,16 +68,18 @@ def get_smart_money_and_social_feed() -> dict[str, Any]:
                 "sector": p.get("sector") or "Web3",
                 "score": p.get("score"),
                 "label": p.get("label"),
-                "social_velocity_growth_pct": rate,
-                "velocity_status": "explosive" if rate >= 150 else "trending",
-                "primary_narrative": "热门叙事早期爆发" if rate >= 150 else "社群持续渗透",
+                # 社交增速需要真实社交数据源；接入前如实为 None，不编数
+                "social_velocity_growth_pct": None,
+                # 榜单排序依据 = 项目综合评分（真实数据）
+                "velocity_rank_basis": "project_score",
+                "primary_narrative": None,
             }
         )
 
     return {
         "ok": True,
         "smart_money_activities": activities,
+        "tracked_whales": TRACKED_WHALE_PROFILES,
         "social_velocity_spikes": social_spikes,
-        "tracked_whales_count": len(SMART_MONEY_PROFILES),
-        "timestamp": int(now.timestamp()),
+        "tracked_whales_count": len(TRACKED_WHALE_PROFILES),
     }

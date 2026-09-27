@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-09-21 随零成本增强更新）
+### 2.1 写操作的鉴权分布（实测，2026-09-25 随扩展功能批次更新）
 
-全仓共 **54 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **84 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
 | 管理员专用 | 13 |
 | 无鉴权（公开） | 5 |
-| 匿名 token 可调 | 36 |
+| 匿名 token 可调 | 66 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -253,6 +253,62 @@
 | POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
 | GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |
 | POST / DELETE | `/api/v1/faucets/{faucet_id}/claim` | v1 | 零成本增强（2026-09-21） | 打卡标记水龙头已领取 / 重置冷却 |
+| GET | `/api/v1/faucets/health` | v1 | 扩展功能（2026-09-22） | 全部水龙头健康探测汇总（实网探测，较慢） |
+| GET | `/api/v1/faucets/probe` | v1 | 扩展功能（2026-09-22） | 探测单个水龙头可用性（实网探测） |
+| GET | `/api/v1/gas/{chain}` | v1 | 扩展功能（2026-09-22） | 指定链实时 Gas 价格（动态路径） |
+| GET | `/api/v1/gas/summary` | v1 | 扩展功能（2026-09-22） | 全链 Gas 价格汇总 |
+| GET | `/api/v1/gas/alerts/active` | v1 | 扩展功能（2026-09-22） | 当前触发的 Gas 告警列表 |
+| GET / POST | `/api/v1/gas/alerts/rules` | v1 | 扩展功能（2026-09-22） | Gas 告警规则列表 / 新建规则（SQLite 持久化） |
+| PATCH / DELETE | `/api/v1/gas/alerts/rules/{rule_id}` | v1 | 扩展功能（2026-09-22） | 修改 / 删除 Gas 告警规则 |
+| POST | `/api/v1/bot/command` | v1 | 扩展功能（2026-09-22） | Telegram Bot 指令路由（需 BOT_TOKEN，未配置返回 503） |
+| POST | `/api/v1/bot/test-send` | v1 | 扩展功能（2026-09-22） | Bot 测试消息发送（需 BOT_TOKEN） |
+| GET | `/api/v1/bridge/supported-chains` | v1 | 扩展功能（2026-09-22） | 跨链桥支持的链列表（静态知识标注） |
+| POST | `/api/v1/bridge/route` | v1 | 扩展功能（2026-09-22） | 跨链路线推荐（静态费率表标注 simulated） |
+| GET | `/api/v1/bridge-liquidity/overview` | v1 | 扩展功能（2026-09-22） | 桥流动性总览（真实 DefiLlama Yields 数据） |
+| POST | `/api/v1/bridge-liquidity/simulate-route` | v1 | 扩展功能（2026-09-22） | 桥路线流动性模拟（真实池子数据） |
+| GET | `/api/v1/calendar/events` | v1 | 扩展功能（2026-09-22） | 空投日历事件列表（真实数据供给） |
+| GET | `/api/v1/calendar/export.ics` | v1 | 扩展功能（2026-09-22） | 导出日历 ICS 文件 |
+| POST | `/api/v1/calldata/decode` | v1 | 扩展功能（2026-09-22） | 交易 calldata 解码（4byte 目录匹配） |
+| GET | `/api/v1/daily-briefing/today` | v1 | 扩展功能（2026-09-22） | 今日 Alpha 简报（定时任务产出） |
+| GET | `/api/v1/dashboard/daily-flash` | v1 | 扩展功能（2026-09-22） | Dashboard 每日快讯聚合 |
+| POST | `/api/v1/diagnostic/wallet` | v1 | 扩展功能（2026-09-22） | 钱包体检诊断（实网 RPC 查询） |
+| POST | `/api/v1/identity/evaluate` | v1 | 扩展功能（2026-09-22） | 身份 stamping 评估 |
+| GET | `/api/v1/identity/stamping-guide` | v1 | 扩展功能（2026-09-22） | 身份 stamping 攻略 |
+| POST | `/api/v1/il-sentinel/calculate-il` | v1 | 扩展功能（2026-09-22） | 无常损失计算（数学模型） |
+| POST | `/api/v1/il-sentinel/check-lending-health` | v1 | 扩展功能（2026-09-22） | 借贷健康度检查（实网查询） |
+| POST | `/api/v1/lineage/detect` | v1 | 扩展功能（2026-09-22） | 女巫资金谱系检测（仅分析用户声明的关联） |
+| POST | `/api/v1/mev-rpc/benchmark` | v1 | 扩展功能（2026-09-22） | MEV RPC 延迟基准测试（实网探测） |
+| GET | `/api/v1/mev-rpc/nodes` | v1 | 扩展功能（2026-09-22） | MEV RPC 节点列表 |
+| POST | `/api/v1/onchain/sybil-check` | v1 | 扩展功能（2026-09-22） | 链上女巫行为检查（实网查询） |
+| GET | `/api/v1/onchain/sybil-topology` | v1 | 扩展功能（2026-09-22） | 链上女巫拓扑分析（实网查询） |
+| POST | `/api/v1/participation/tasks/auto-check` | v1 | 扩展功能（2026-09-22） | 参与任务自动核验（实网查询） |
+| GET | `/api/v1/paymaster/active-sponsorships` | v1 | 扩展功能（2026-09-22） | 活跃 Paymaster 赞助列表（标注 simulated） |
+| POST | `/api/v1/paymaster/simulate-gasless-tx` | v1 | 扩展功能（2026-09-22） | 无 Gas 交易模拟（标注 simulated） |
+| GET | `/api/v1/playbook/templates` | v1 | 扩展功能（2026-09-22） | 参与剧本模板列表 |
+| POST | `/api/v1/playbook/validate-and-generate` | v1 | 扩展功能（2026-09-22） | 校验并生成参与剧本 |
+| GET | `/api/v1/pnl/summary` | v1 | 扩展功能（2026-09-22） | PnL 收益汇总（演示口径，标注 simulated） |
+| POST | `/api/v1/pnl/records` | v1 | 扩展功能（2026-09-22） | 录入空投到账记录（SQLite 持久化） |
+| POST | `/api/v1/points/estimate` | v1 | 扩展功能（2026-09-22） | 积分估值估算（公式口径标注） |
+| GET | `/api/v1/points/supported-protocols` | v1 | 扩展功能（2026-09-22） | 支持积分估值的协议列表 |
+| GET | `/api/v1/projects/compare` | v1 | 扩展功能（2026-09-22） | 多项目对比 |
+| GET | `/api/v1/projects/personas` | v1 | 扩展功能（2026-09-22） | 用户角色画像预设 |
+| POST | `/api/v1/roi/simulate/portfolio` | v1 | 扩展功能（2026-09-22） | 组合级 ROI 模拟（公式口径标注） |
+| GET | `/api/v1/roi/simulate/{project_id}` | v1 | 扩展功能（2026-09-22） | 单项目 ROI 模拟（公式口径标注） |
+| POST | `/api/v1/scripts/generate` | v1 | 扩展功能（2026-09-22） | 生成参与脚本（模板渲染） |
+| POST | `/api/v1/security/approvals` | v1 | 扩展功能（2026-09-22） | 安全审批列表 / 新建审批 |
+| POST | `/api/v1/security/domain-check` | v1 | 扩展功能（2026-09-22） | 钓鱼域名检查（本地规则） |
+| POST | `/api/v1/security/poison-tokens` | v1 | 扩展功能（2026-09-22） | 假币（poison token）检查（本地规则） |
+| POST | `/api/v1/sell-off/simulate` | v1 | 扩展功能（2026-09-22） | 抛压模拟（公式口径标注） |
+| GET | `/api/v1/smart-money/feed` | v1 | 扩展功能（2026-09-22） | 聪明钱动态流（诚实口径：无数据源时返回空列表，标注 simulated） |
+| POST | `/api/v1/sybil/generate-dossier` | v1 | 扩展功能（2026-09-22） | 防女巫申诉存证报告生成（实网 RPC 探测 + 模板渲染，无 LLM） |
+| POST | `/api/v1/team-studio/assign-task` | v1 | 扩展功能（2026-09-22） | 多操作员任务分配（内存态，重启即失） |
+| GET | `/api/v1/team-studio/dashboard` | v1 | 扩展功能（2026-09-22） | 多操作员看板（内存态，重启即失） |
+| POST | `/api/v1/team-studio/operator` | v1 | 扩展功能（2026-09-22） | 录入 / 更新操作员（内存态，重启即失） |
+| GET | `/api/v1/unlocks/schedule` | v1 | 扩展功能（2026-09-22） | 代币解锁时间表（真实 DefiLlama 数据） |
+| GET | `/api/v1/unlocks/project/{project_id}` | v1 | 扩展功能（2026-09-22） | 单项目解锁详情（真实 DefiLlama 数据） |
+| GET | `/api/v1/watched-wallets/{wallet_id}/activity` | v1 | 扩展功能（2026-09-22） | 监控钱包动态（实网查询） |
+| GET | `/api/v1/whale-mirror/benchmarks` | v1 | 扩展功能（2026-09-22） | 跟单基准列表（标注 simulated） |
+| POST | `/api/v1/whale-mirror/compare` | v1 | 扩展功能（2026-09-22） | 跟单对比分析（标注 simulated） |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |

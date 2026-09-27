@@ -5,13 +5,18 @@ GET /api/v1/unlocks/project/{project_id}
 """
 
 from typing import Any
-from fastapi import APIRouter, HTTPException, Query, Path
+
 import structlog
+from fastapi import APIRouter, HTTPException, Path, Query
 
 from app.services.token_unlock_radar import (
-    get_upcoming_unlocks,
     get_project_unlock_details,
+    get_upcoming_unlocks,
 )
+from app.utils.data_quality import mark_simulated, mark_simulated_list_response
+
+# 解锁日程为静态演示数据，且日期为「now + N 天」滚动生成，永不真实
+_UNLOCK_NOTE = "解锁日程为演示数据：日期由「当前日期 + 固定偏移」滚动生成，并非真实解锁时间线。"
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/unlocks", tags=["unlocks"])
@@ -25,11 +30,8 @@ def get_unlock_schedule(
 ) -> dict[str, Any]:
     """返回全生态即将到来的代币解锁日程、释放金额与抛压风险评级."""
     items = get_upcoming_unlocks(limit=limit, min_pressure=min_pressure, sort_by=sort_by)
-    return {
-        "ok": True,
-        "count": len(items),
-        "data": items,
-    }
+    resp = mark_simulated_list_response(items, note=_UNLOCK_NOTE, count=len(items))
+    return resp
 
 
 @router.get("/project/{project_id}", summary="获取指定项目的专属代币解锁与抛压建议")
@@ -40,7 +42,4 @@ def get_single_project_unlock(
     detail = get_project_unlock_details(project_id)
     if not detail:
         raise HTTPException(status_code=404, detail=f"未找到项目 '{project_id}' 的代币解锁数据模型")
-    return {
-        "ok": True,
-        "data": detail,
-    }
+    return mark_simulated({"ok": True, "data": detail}, note=_UNLOCK_NOTE)

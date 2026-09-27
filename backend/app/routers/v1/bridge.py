@@ -5,14 +5,18 @@ POST /api/v1/bridge/route
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.bridge_optimizer import (
     calculate_bridge_routes,
     get_supported_bridge_chains,
 )
+from app.utils.data_quality import mark_simulated
+
+_BRIDGE_NOTE = "跨链费率/时长为静态估算参数（未接桥 API），报价仅供教学对比。"
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/bridge", tags=["bridge"])
@@ -27,8 +31,8 @@ class BridgeRouteRequest(BaseModel):
 
 @router.get("/supported-chains", summary="获取支持的跨链网络与基础 Gas 特征")
 def list_chains() -> dict[str, Any]:
-    """返回所有支持比对的链及其平均 Gas 成本."""
-    return {"ok": True, "chains": get_supported_bridge_chains()}
+    """返回所有支持比对的链及其平均 Gas 成本（静态演示参数）."""
+    return mark_simulated({"ok": True, "chains": get_supported_bridge_chains()}, note=_BRIDGE_NOTE)
 
 
 @router.post("/route", summary="智能计算全网跨链最优费率与防女巫资金归集路线")
@@ -37,7 +41,7 @@ def compute_route(req: BridgeRouteRequest) -> dict[str, Any]:
     result = calculate_bridge_routes(
         source_chain=req.source_chain,
         target_chain=req.target_chain,
-        token=req.token,
+        asset=req.token,
         amount=req.amount,
     )
-    return {"ok": True, "data": result}
+    return mark_simulated({"ok": True, "data": result}, note=_BRIDGE_NOTE)

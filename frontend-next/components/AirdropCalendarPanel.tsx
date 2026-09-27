@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { StatCard } from './ui';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 export interface CalendarEvent {
   id: string;
@@ -68,6 +69,13 @@ export function AirdropCalendarPanel() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* 顶部统计卡片 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <h2 className="text-sm font-bold text-ink flex items-center gap-2 m-0">
+          <span>📅</span>
+          <span>空投里程碑日历</span>
+        </h2>
+        <SimulatedDataBadge note="里程碑日期由「当前日期 + 固定偏移」滚动生成维持倒计时展示，并非经核实的真实快照/TGE 时间；导出到日历前请自行核实。" />
+      </div>
       <div className="stat-grid">
         <StatCard label="总里程碑事件" value={events.length} accent="brand" hint="全库已收录时间节点" />
         <StatCard label="48h 紧急截止" value={urgentCount} accent="watch" hint="快照/认领倒计时中" />

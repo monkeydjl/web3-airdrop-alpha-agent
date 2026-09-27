@@ -5,11 +5,15 @@ POST /api/v1/bridge-liquidity/simulate-route
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.bridge_liquidity_radar import get_bridge_liquidity_overview, simulate_bridge_route
+from app.utils.data_quality import mark_simulated
+
+_BRIDGE_LIQ_NOTE = "跨链池流动性、脱锚汇率与滑点推演均为静态演示快照，未接入任何桥 API 或价格源。"
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/bridge-liquidity", tags=["bridge-liquidity"])
@@ -26,7 +30,7 @@ class BridgeRouteSimulateRequest(BaseModel):
 @router.get("/overview", summary="获取全网跨链池流动性健康与代币脱锚大盘")
 def get_liquidity_overview() -> dict[str, Any]:
     data = get_bridge_liquidity_overview()
-    return {"ok": True, "data": data}
+    return mark_simulated({"ok": True, "data": data}, note=_BRIDGE_LIQ_NOTE)
 
 
 @router.post("/simulate-route", summary="精确推演指定路径的跨链滑点与枯竭风险")
@@ -38,4 +42,4 @@ def simulate_route(req: BridgeRouteSimulateRequest) -> dict[str, Any]:
         amount_usd=req.amount_usd,
         bridge_preference=req.bridge_preference,
     )
-    return {"ok": True, "data": result}
+    return mark_simulated({"ok": True, "data": result}, note=_BRIDGE_LIQ_NOTE)

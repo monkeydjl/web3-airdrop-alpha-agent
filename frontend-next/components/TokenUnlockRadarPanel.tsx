@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { SimulatedDataBadge } from "@/components/SimulatedDataBadge";
 
 interface UnlockItem {
   project_id: string;
@@ -50,6 +51,7 @@ export default function TokenUnlockRadarPanel() {
   const [unlocks, setUnlocks] = useState<UnlockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataQuality, setDataQuality] = useState<any>(null);
   const [selectedPressure, setSelectedPressure] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("date");
 
@@ -66,6 +68,7 @@ export default function TokenUnlockRadarPanel() {
       const json = await apiFetch<any>(`/unlocks/schedule?${params.toString()}`);
       if (json?.ok && Array.isArray(json.data)) {
         setUnlocks(json.data);
+        setDataQuality(json.data_quality ?? null);
       }
     } catch (e: any) {
       setError(e.message || "加载代币解锁日程失败");
@@ -95,6 +98,7 @@ export default function TokenUnlockRadarPanel() {
             <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
               Cliff & Vesting Radar
             </span>
+            <SimulatedDataBadge dataQuality={dataQuality} />
           </div>
           <p className="text-xs text-slate-400 mt-1">
             监控主流协议早期投资人与团队巨额份额到期解锁，提前防范二级市场流动性抽干与做空冲击

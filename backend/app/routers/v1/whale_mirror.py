@@ -5,11 +5,15 @@ POST /api/v1/whale-mirror/compare
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.whale_mirror_backtester import compare_wallet_with_whale, list_whale_benchmarks
+from app.utils.data_quality import mark_simulated
+
+_WHALE_NOTE = "「历史基准」为社区流传的软性经验数字（非经核实的链上统计），对比结果仅供教学参考。"
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/whale-mirror", tags=["whale-mirror"])
@@ -28,7 +32,10 @@ class WhaleCompareRequest(BaseModel):
 @router.get("/benchmarks", summary="获取所有历史顶级空投胜利者行为基准")
 def get_benchmarks() -> dict[str, Any]:
     benchmarks = list_whale_benchmarks()
-    return {"ok": True, "data": {"benchmarks": benchmarks, "total": len(benchmarks)}}
+    return mark_simulated(
+        {"ok": True, "data": {"benchmarks": benchmarks, "total": len(benchmarks)}},
+        note=_WHALE_NOTE,
+    )
 
 
 @router.post("/compare", summary="对比本地钱包与顶级巨鲸标准并生成补刀清单")
@@ -42,4 +49,4 @@ def compare_with_whale(req: WhaleCompareRequest) -> dict[str, Any]:
         user_retained_eth=req.user_retained_eth,
         target_project=req.target_project,
     )
-    return {"ok": True, "data": result}
+    return mark_simulated({"ok": True, "data": result}, note=_WHALE_NOTE)

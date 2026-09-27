@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 export function SmartMoneyRadarPanel() {
   const [data, setData] = useState<any | null>(null);
@@ -32,10 +33,11 @@ export function SmartMoneyRadarPanel() {
         <div>
           <h2 className="text-sm font-bold text-ink flex items-center gap-2">
             <span>🌐</span>
-            <span>聪明钱巨鲸潜伏与社交讨论爆发雷达</span>
+            <span>聪明钱监控目标与项目热度榜</span>
+            <SimulatedDataBadge dataQuality={data?.data_quality} />
           </h2>
           <p className="text-xs text-ink-muted mt-0.5">
-            监控顶级 VC、加密领袖与头部空投工作室最新初次交互未知协议
+            监控目标为公开白名单；热度榜按真实项目评分排序。巨鲸动态需接入链上数据源后开放
           </p>
         </div>
         <button
@@ -62,6 +64,11 @@ export function SmartMoneyRadarPanel() {
           </div>
 
           <div className="space-y-2.5">
+            {(!data?.smart_money_activities || data.smart_money_activities.length === 0) && (
+              <div className="p-4 rounded-xl border border-dashed border-line text-xs text-ink-muted text-center">
+                🐋 巨鲸链上动态暂无真实数据源——接入链上监控后开放，不再展示编造动态。
+              </div>
+            )}
             {data?.smart_money_activities?.map((act: any) => (
               <div
                 key={act.id}
@@ -97,11 +104,10 @@ export function SmartMoneyRadarPanel() {
         </div>
 
         {/* 右栏：全网社交讨论爆发榜 */}
-        <div className="lg:col-span-5 space-y-3">
-          <span className="text-xs font-bold text-ink flex items-center gap-1.5">
-            <span>🔥</span>
-            <span>24h 社交讨论环比增速飙升榜</span>
-          </span>
+        <div className="lg:col-span-5 space-y-3">            <span className="text-xs font-bold text-ink flex items-center gap-1.5">
+              <span>🔥</span>
+              <span>项目综合评分热度榜</span>
+            </span>
 
           <div className="rounded-xl border border-line bg-surface-2 divide-y divide-line/60 overflow-hidden text-xs">
             {data?.social_velocity_spikes?.map((sp: any, idx: number) => (
@@ -117,15 +123,15 @@ export function SmartMoneyRadarPanel() {
                     </Link>
                     <span className="text-[10px] font-mono text-ink-muted">({sp.sector})</span>
                   </div>
-                  <div className="text-[10px] text-ink-faint">{sp.primary_narrative}</div>
+                  <div className="text-[10px] text-ink-faint">{sp.label ? String(sp.label) : ''}</div>
                 </div>
 
                 <div className="text-right">
-                  <span className="font-mono text-xs font-black text-rose-400 flex items-center gap-0.5">
-                    <span>▲</span>
-                    <span>+{sp.social_velocity_growth_pct}%</span>
+                  <span className="font-mono text-xs font-black text-brand-400 flex items-center gap-0.5">
+                    <span>⭐</span>
+                    <span>{sp.score ?? '—'} 分</span>
                   </span>
-                  <div className="text-[10px] text-ink-faint font-mono">24h 讨论增速</div>
+                  <div className="text-[10px] text-ink-faint font-mono">综合评分排序</div>
                 </div>
               </div>
             ))}

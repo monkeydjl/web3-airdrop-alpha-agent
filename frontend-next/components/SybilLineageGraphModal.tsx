@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { SimulatedDataBadge } from "@/components/SimulatedDataBadge";
 
 interface NodeItem {
   id: string;
@@ -21,15 +22,18 @@ interface LinkItem {
 
 interface LineageResult {
   ok: boolean;
+  data_quality?: { quality?: string; note?: string };
   wallets_analyzed: number;
-  isolation_score: number;
-  risk_level: "safe" | "moderate" | "critical";
+  lineage_status?: string;
+  isolation_score: number | null;
+  risk_level: string | null;
   sybil_cluster_detected: boolean;
-  analysis_summary: string;
+  analysis_summary?: string;
   nodes: NodeItem[];
   links: LinkItem[];
   fatal_red_flags: string[];
   recommendations: string[];
+  education?: { critical_rules: string[] };
 }
 
 interface Props {
@@ -90,11 +94,12 @@ export default function SybilLineageGraphModal({ isOpen, onClose }: Props) {
           <div className="flex items-center gap-3">
             <span className="text-2xl">🕸️</span>
             <div>
-              <h3 className="text-lg font-bold text-slate-100">
-                多地址女巫资金血缘图谱与关联网络检测器
+              <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                <span>多钱包隔离自查与防关联教学图谱</span>
+                <SimulatedDataBadge dataQuality={result?.data_quality} />
               </h3>
               <p className="text-xs text-slate-400">
-                扫描同一母号 Gas 分发、中心化归集与交叉互转连通环，防范多号被全网批量女巫标记
+                真实血缘检测需要链上数据源；当前版本提供结构性自查（基于你显式声明的关联）与隔离教学红线
               </p>
             </div>
           </div>
@@ -168,47 +173,52 @@ export default function SybilLineageGraphModal({ isOpen, onClose }: Props) {
 
         {result && (
           <div className="space-y-5">
-            {/* Top Score & Result Banner */}
+            {/* Top Score & Result Banner —— isolation_score 仅在用户声明关联时才有意义 */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-5 rounded-2xl bg-slate-950/50 border border-slate-800">
               <div className="sm:col-span-1 flex flex-col items-center justify-center p-3 text-center border-b sm:border-b-0 sm:border-r border-slate-800">
-                <div className="text-xs text-slate-400 mb-1">资金链物理隔离得分</div>
-                <div
-                  className={`text-5xl font-extrabold font-mono ${
-                    result.isolation_score >= 80
-                      ? "text-emerald-400"
-                      : result.isolation_score >= 60
-                      ? "text-amber-400"
-                      : "text-rose-400"
-                  }`}
-                >
-                  {result.isolation_score}
-                </div>
+                <div className="text-xs text-slate-400 mb-1">资金链隔离自查</div>
+                {result.isolation_score != null ? (
+                  <div
+                    className={`text-5xl font-extrabold font-mono ${
+                      result.isolation_score >= 80
+                        ? "text-emerald-400"
+                        : result.isolation_score >= 60
+                        ? "text-amber-400"
+                        : "text-rose-400"
+                    }`}
+                  >
+                    {result.isolation_score}
+                  </div>
+                ) : (
+                  <div className="text-2xl font-bold font-mono text-slate-400 mt-2">待链上数据源</div>
+                )}
                 <div className="text-[10px] text-slate-500 mt-1">
-                  已检测 {result.wallets_analyzed} 个钱包
+                  已自查 {result.wallets_analyzed} 个钱包
                 </div>
               </div>
 
               <div className="sm:col-span-2 flex flex-col justify-center space-y-2 pl-0 sm:pl-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400">网络拓扑聚类状态:</span>
+                  <span className="text-xs text-slate-400">自查结论:</span>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                      result.risk_level === "safe"
-                        ? "bg-emerald-950/60 text-emerald-300 border-emerald-500/40"
-                        : result.risk_level === "moderate"
-                        ? "bg-amber-950/60 text-amber-300 border-amber-500/40"
-                        : "bg-rose-950/60 text-rose-300 border-rose-500/40"
+                      result.risk_level === null
+                        ? "bg-slate-800/60 text-slate-300 border-slate-600/40"
+                        : result.risk_level === "user_declared_risk"
+                        ? "bg-rose-950/60 text-rose-300 border-rose-500/40"
+                        : "bg-emerald-950/60 text-emerald-300 border-emerald-500/40"
                     }`}
                   >
-                    {result.risk_level === "safe"
-                      ? "✅ 物理隔离良好 (无连通图)"
-                      : result.risk_level === "moderate"
-                      ? "⚠️ 发现轻度关联边 (需留意)"
-                      : "🚨 强连通女巫集群 (致命红线)"}
+                    {result.risk_level === null
+                      ? "ℹ️ 未发现声明关联（真实检测需链上数据）"
+                      : result.risk_level === "user_declared_risk"
+                      ? "🚨 存在你声明的关联 (致命红线)"
+                      : "✅ 结构自查通过"}
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  {result.analysis_summary}
+                  {result.analysis_summary ||
+                    "服务端不猜测链上事实；只有你显式声明的关联才会被标记。可在输入中附加 declared_links 声明确知的关联。"}
                 </p>
               </div>
             </div>
@@ -320,6 +330,16 @@ export default function SybilLineageGraphModal({ isOpen, onClose }: Props) {
                   </li>
                 ))}
               </ul>
+              {result.education?.critical_rules && result.education.critical_rules.length > 0 && (
+                <div className="pt-2 border-t border-indigo-500/20">
+                  <div className="text-[11px] font-bold text-indigo-300/80 mb-1">防关联教学红线：</div>
+                  <ul className="space-y-1 text-[11px] text-slate-400 pl-1 list-disc list-inside">
+                    {result.education.critical_rules.map((rule, idx) => (
+                      <li key={idx}>{rule}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         )}

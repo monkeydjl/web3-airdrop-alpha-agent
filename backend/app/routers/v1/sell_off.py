@@ -4,11 +4,13 @@ POST /api/v1/sell-off/simulate
 """
 
 from typing import Any, Literal
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.sell_off_simulator import simulate_sell_off_strategies
+from app.utils.data_quality import mark_simulated
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/sell-off", tags=["sell-off"])
@@ -26,9 +28,13 @@ class SellOffSimulationRequest(BaseModel):
 @router.post("/simulate", summary="模拟空投领取代币的 4 种止盈出局策略与期望回报")
 def simulate_exit_strategy(req: SellOffSimulationRequest) -> dict[str, Any]:
     """根据领取代币数量、初始价值、赛道特征与风险画像，模拟 4 种不同止盈策略的回报与裁决分析."""
-    return simulate_sell_off_strategies(
+    result = simulate_sell_off_strategies(
         token_amount=req.token_amount,
         initial_price_usd=req.initial_price_usd,
         sector=req.sector,
         persona=req.persona,
+    )
+    return mark_simulated(
+        result,
+        note="策略收益基于赛道级别的假设性漂移系数（非真实历史回测），仅供教学对比，不构成任何决策依据。",
     )

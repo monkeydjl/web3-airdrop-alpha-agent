@@ -137,6 +137,40 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/projects/{project_id}/evaluate"): (
         "即时全链路重新评估单个项目，100% 规则确定性计算，不花钱、不产生外部 API 成本，更新项目画像与决策快照。"
     ),
+    # ── 扩展功能批次（2026-09-22，扩展审计报告 A/B/C/D 级 28 服务）──
+    # 全部为纯计算/模拟/模板渲染端点：不触外部付费 API、不改共享系统状态，
+    # 响应体一律带 mark_simulated 诚实标注；受 LLM 预算门与限流器统一约束，
+    # 与 ai-brief 同口径（锁角色挡不住管理员自己刷额度）。
+    ("POST", "/api/v1/bot/command"): "Bot 指令路由（需 BOT_TOKEN，未配置返 503），只读指令文本渲染。",
+    ("POST", "/api/v1/bot/test-send"): "Bot 测试消息发送（需 BOT_TOKEN），运维自检用途。",
+    ("POST", "/api/v1/bridge/route"): "跨链路线推荐，静态费率表计算，标注 simulated。",
+    ("POST", "/api/v1/bridge-liquidity/simulate-route"): "桥路线流动性模拟，读真实 DefiLlama 池子，只读计算。",
+    ("POST", "/api/v1/calldata/decode"): "交易 calldata 解码，4byte 目录匹配，纯计算。",
+    ("POST", "/api/v1/diagnostic/wallet"): "钱包体检，实网 RPC 只读查询，不改系统数据。",
+    ("POST", "/api/v1/gas/alerts/rules"): "新建 Gas 告警规则（SQLite 持久化，个人告警配置）。",
+    ("PATCH", "/api/v1/gas/alerts/rules/{rule_id}"): "切换 Gas 告警规则启用状态，同上。",
+    ("DELETE", "/api/v1/gas/alerts/rules/{rule_id}"): "删除 Gas 告警规则，同上。",
+    ("POST", "/api/v1/identity/evaluate"): "身份 stamping 评估，公开凭据模型计算，不花钱。",
+    ("POST", "/api/v1/il-sentinel/calculate-il"): "无常损失计算，纯数学模型。",
+    ("POST", "/api/v1/il-sentinel/check-lending-health"): "借贷健康度检查，实网只读查询。",
+    ("POST", "/api/v1/lineage/detect"): "女巫资金谱系分析，只处理用户显式声明的关联，不猜链上事实。",
+    ("POST", "/api/v1/mev-rpc/benchmark"): "MEV RPC 延迟探测，实网只读，不改系统数据。",
+    ("POST", "/api/v1/onchain/sybil-check"): "链上女巫风险自检，实网只读查询。",
+    ("POST", "/api/v1/participation/tasks/auto-check"): "参与任务自动核验，实网只读查询。",
+    ("POST", "/api/v1/paymaster/simulate-gasless-tx"): "无 Gas 交易模拟，标注 simulated，不提交链上交易。",
+    ("POST", "/api/v1/playbook/validate-and-generate"): "参与剧本校验与生成，模板渲染，纯计算。",
+    ("POST", "/api/v1/pnl/records"): "录入自己的空投到账记录（SQLite 持久化），不触发花钱动作。",
+    ("POST", "/api/v1/points/estimate"): "积分估值推演，公式口径计算，标注 simulated。",
+    ("POST", "/api/v1/roi/simulate/portfolio"): "组合级 ROI 模拟，公式口径，不改系统数据。",
+    ("POST", "/api/v1/scripts/generate"): "参与脚本生成，模板渲染，纯计算。",
+    ("POST", "/api/v1/security/approvals"): "钱包授权风险扫描，实网只读查询。",
+    ("POST", "/api/v1/security/domain-check"): "钓鱼域名检查，本地规则计算。",
+    ("POST", "/api/v1/security/poison-tokens"): "假币下毒排查，本地规则计算。",
+    ("POST", "/api/v1/sell-off/simulate"): "抛压模拟，公式口径计算，标注 simulated。",
+    ("POST", "/api/v1/sybil/generate-dossier"): "防女巫申诉存证生成，实网 RPC 只读探测 + 模板渲染，无 LLM 成本。",
+    ("POST", "/api/v1/team-studio/assign-task"): "多操作员任务分配（内存态演示，重启即失，无共享状态）。",
+    ("POST", "/api/v1/team-studio/operator"): "录入操作员（内存态演示，重启即失，无共享状态）。",
+    ("POST", "/api/v1/whale-mirror/compare"): "跟单对比分析，标注 simulated，纯计算。",
 }
 
 
@@ -336,6 +370,24 @@ class TestMiddlewareActuallyEnforcesTheRules:
         monkeypatch.setattr(settings, "auth_token_secret", self.TOKEN_SECRET)
         monkeypatch.setattr(settings, "app_env", "testing")
         init_db()
+        # 这组只测鉴权中间件（401/403 才算回归，500 也算通过），但
+        # `POST /collections/defillama/trigger` 鉴权放行后会让真实采集器
+        # 真出网（pytest --durations 2026-09-24 实测单例 42s，烧在 DNS/超时）。
+        # 把注册表单例里 defillama 的 collect() 换成空结果桩：断网不破坏
+        # "管理员能打到业务层" 的契约，生产行为不受影响（monkeypatch 自动还原）。
+        from app.collectors.base import CollectorResult
+        from app.collectors.factory import get_default_registry
+
+        async def _no_network_collect():
+            result = CollectorResult(source_id="defillama")
+            # collection_logs.started_at/finished_at 是 NOT NULL，真实采集器会填
+            from datetime import UTC, datetime
+
+            result.started_at = datetime.now(UTC)
+            result.finished_at = datetime.now(UTC)
+            return result
+
+        monkeypatch.setattr(get_default_registry().get("defillama"), "collect", _no_network_collect)
         return TestClient(create_app(db_override=lambda: None))
 
     def _anon_token(self, client: TestClient) -> str:

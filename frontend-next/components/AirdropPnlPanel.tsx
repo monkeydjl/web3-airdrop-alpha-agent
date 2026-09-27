@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { StatCard } from './ui';
 import SellOffSimulatorModal from '@/components/SellOffSimulatorModal';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 export function AirdropPnlPanel() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dataQuality, setDataQuality] = useState<any>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
   const [copiedTrophy, setCopiedTrophy] = useState(false);
@@ -27,6 +29,7 @@ export function AirdropPnlPanel() {
       const res = await apiFetch<any>('/pnl/summary');
       if (res?.ok) {
         setData(res);
+        setDataQuality(res.data_quality ?? null);
       }
     } catch {
       // 捕获异常
@@ -95,6 +98,7 @@ export function AirdropPnlPanel() {
               <span className="text-xs font-mono font-bold uppercase tracking-wider text-brand-400">
                 Airdrop Harvest & PnL Ledger
               </span>
+              <SimulatedDataBadge dataQuality={dataQuality} />
               <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
                 {data?.hunter_tier_badge || '段位评估中'}
               </span>

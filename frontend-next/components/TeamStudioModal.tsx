@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 interface StudioOperator {
   operator_id: string;
@@ -60,12 +61,15 @@ export default function TeamStudioModal({ isOpen, onClose }: TeamStudioModalProp
   const [taskWallets, setTaskWallets] = useState(15);
   const [submitting, setSubmitting] = useState(false);
 
+  const [dataQuality, setDataQuality] = useState<any>(null);
+
   const fetchDashboard = () => {
     setLoading(true);
-    apiFetch<{ data: StudioDashboardData }>('/team-studio/dashboard')
+    apiFetch<{ data: StudioDashboardData; data_quality?: any }>('/team-studio/dashboard')
       .then((res) => {
         if (res?.data) {
           setData(res.data);
+          setDataQuality(res.data_quality ?? null);
         }
       })
       .catch((err) => console.error('Failed to load studio dashboard', err))
@@ -113,9 +117,12 @@ export default function TeamStudioModal({ isOpen, onClose }: TeamStudioModalProp
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">👥</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">团队/工作室多操作员协同与任务看板</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2">
+                <span>团队/工作室多操作员协同与任务看板</span>
+                <SimulatedDataBadge dataQuality={dataQuality} />
+              </h3>
               <p className="text-xs text-ink-muted">
-                钱包矩阵分配、跨协议任务派发、成员完成率跟踪与防交叉转账女巫隔离审计
+                钱包矩阵分配、跨协议任务派发与成员完成率跟踪；数据存内存（重启即失）
               </p>
             </div>
           </div>
@@ -165,14 +172,23 @@ export default function TeamStudioModal({ isOpen, onClose }: TeamStudioModalProp
                 </div>
               </div>
 
-              {/* Sybil Isolation Status Banner */}
-              <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between text-xs text-emerald-400">
-                <span className="flex items-center gap-2">
-                  <span>🛡️</span>
-                  <span><strong>隔离合规审计：</strong>{data.summary.sybil_isolation_rating}</span>
-                </span>
-                <span className="text-[11px] font-mono opacity-80">Zero Cross-Funding</span>
-              </div>
+              {/* Sybil Isolation Status Banner —— 无真实数据源时诚实空缺 */}
+              {data.summary.sybil_isolation_rating ? (
+                <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between text-xs text-emerald-400">
+                  <span className="flex items-center gap-2">
+                    <span>🛡️</span>
+                    <span><strong>隔离合规审计：</strong>{data.summary.sybil_isolation_rating}</span>
+                  </span>
+                  <span className="text-[11px] font-mono opacity-80">Zero Cross-Funding</span>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl border border-line bg-surface-2/40 text-xs text-ink-muted flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>🛡️</span>
+                    <span><strong>隔离合规审计：</strong>暂无真实操作/链上日志数据源，不输出评级。</span>
+                  </span>
+                </div>
+              )}
 
               {/* Operators Workload Grid */}
               <div>
