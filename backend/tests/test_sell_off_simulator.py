@@ -1,4 +1,3 @@
-import pytest
 from app.services.sell_off_simulator import simulate_sell_off_strategies
 
 

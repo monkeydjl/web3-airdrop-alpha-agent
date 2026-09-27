@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -188,7 +189,7 @@ def benchmark_rpc_node(node_id: str | None = None, custom_url: str | None = None
 
     # 模拟真实连通性测试 (通常在 30-90ms 之间波动)
     simulated_latency = selected.get("latency_ms", 60)
-    
+
     # 评定综合等级
     if selected.get("anti_sandwich") and selected.get("mev_refund"):
         rating = "A+"

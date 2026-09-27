@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-import pytest
-
 from app.db import dict_from_row, get_connection
 from app.opportunity.decision import LOW_RUNWAY_RISK
 from app.services.viability_gate import UNBACKED_POINTS_MACHINE

@@ -14,8 +14,6 @@ Covers:
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.opportunity.decision import (
     LOW_RUNWAY_RISK,
     decide,

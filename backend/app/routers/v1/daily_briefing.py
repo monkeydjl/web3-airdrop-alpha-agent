@@ -4,8 +4,9 @@ GET /api/v1/daily-briefing/today
 """
 
 from typing import Any
-from fastapi import APIRouter
+
 import structlog
+from fastapi import APIRouter
 
 from app.services.daily_briefing import generate_daily_briefing
 

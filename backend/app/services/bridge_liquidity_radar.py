@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -136,7 +137,7 @@ def get_bridge_liquidity_overview() -> dict[str, Any]:
     """获取全网跨链池流动性健康全景与代币挂钩情况."""
     healthy_count = sum(1 for p in PRESET_BRIDGE_POOLS if p["status"] == "HEALTHY")
     warning_count = sum(1 for p in PRESET_BRIDGE_POOLS if p["status"] != "HEALTHY")
-    
+
     return {
         "timestamp": int(time.time()),
         "summary": {
@@ -159,7 +160,7 @@ def simulate_bridge_route(
 ) -> dict[str, Any]:
     """输入资金量，精确推演不同跨链路径的滑点、到账时效与枯竭风险."""
     amt = max(1.0, float(amount_usd))
-    
+
     # 模拟滑点与池子深度计算
     if amt <= 2000:
         slippage_pct = 0.02

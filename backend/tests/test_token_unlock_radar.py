@@ -1,8 +1,7 @@
-import pytest
 from app.services.token_unlock_radar import (
     calculate_pressure_rating,
-    get_upcoming_unlocks,
     get_project_unlock_details,
+    get_upcoming_unlocks,
 )
 
 

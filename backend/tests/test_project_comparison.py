@@ -1,6 +1,7 @@
 """Unit tests for Project Comparison Service."""
 
 import pytest
+
 from app.db import get_connection, init_db
 from app.services.project_comparison import compare_projects
 

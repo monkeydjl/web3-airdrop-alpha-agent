@@ -102,6 +102,7 @@ class UnifiedScheduler:
         if self.scheduler.running:
             self._is_shutting_down = True
             import contextlib
+
             from apscheduler.schedulers.base import SchedulerNotRunningError
 
             with contextlib.suppress(SchedulerNotRunningError):

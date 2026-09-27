@@ -4,9 +4,10 @@ POST /api/v1/calldata/decode
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.calldata_decoder import decode_calldata
 

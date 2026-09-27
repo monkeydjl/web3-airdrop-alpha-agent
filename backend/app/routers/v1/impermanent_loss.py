@@ -5,9 +5,10 @@ POST /api/v1/il-sentinel/check-lending-health
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.impermanent_loss_sentinel import (
     calculate_amm_impermanent_loss,

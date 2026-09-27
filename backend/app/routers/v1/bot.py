@@ -5,9 +5,10 @@ POST /api/v1/bot/test-send - 测试向 Discord / Telegram 发送通知
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.bot_notifier import (
     handle_bot_command,

@@ -6,9 +6,10 @@ POST /api/v1/security/poison-tokens
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.security_sentinel import (
     check_domain_safety,

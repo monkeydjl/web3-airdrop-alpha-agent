@@ -4,9 +4,10 @@ POST /api/v1/sybil/generate-dossier
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.sybil_defense_dossier import generate_sybil_defense_dossier
 

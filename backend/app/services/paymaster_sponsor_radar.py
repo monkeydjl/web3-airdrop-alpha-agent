@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -98,10 +99,10 @@ def simulate_gasless_tx(
         (c for c in ACTIVE_PAYMASTER_SPONSORSHIPS if c["campaign_id"] == campaign_id),
         ACTIVE_PAYMASTER_SPONSORSHIPS[0],
     )
-    
+
     clean_addr = user_address.strip()
     is_eligible = len(clean_addr) == 42 and clean_addr.startswith("0x")
-    
+
     return {
         "campaign_id": campaign["campaign_id"],
         "protocol": campaign["protocol"],

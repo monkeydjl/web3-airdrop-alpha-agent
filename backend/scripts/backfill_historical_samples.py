@@ -146,7 +146,7 @@ async def main() -> int:
 
         total_projects = scalar(conn.execute("SELECT COUNT(*) FROM projects").fetchone())
         total_feedback = scalar(conn.execute("SELECT COUNT(*) FROM feedback").fetchone())
-        print(f"\n✅ 回溯注入完成!")
+        print("\n✅ 回溯注入完成!")
         print(f"   - 本次写入 feedback: {fb_inserted} 条")
         print(f"   - 当前库中 projects 总数: {total_projects}")
         print(f"   - 当前库中 feedback 总数: {total_feedback}")

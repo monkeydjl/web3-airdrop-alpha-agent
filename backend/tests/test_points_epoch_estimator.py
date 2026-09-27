@@ -1,7 +1,6 @@
-import pytest
 from app.services.points_epoch_estimator import (
-    get_supported_protocols,
     estimate_points_airdrop,
+    get_supported_protocols,
 )
 
 

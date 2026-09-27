@@ -1,4 +1,3 @@
-import pytest
 from app.services.daily_briefing import generate_daily_briefing
 
 

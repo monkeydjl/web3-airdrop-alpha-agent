@@ -9,8 +9,6 @@ Covers:
 
 from datetime import UTC, datetime
 
-import pytest
-
 from app.opportunity.decision import (
     EXIT_RECOMMENDED,
     HEAVY_CAPITAL_LOCKUP,
@@ -28,7 +26,7 @@ from app.opportunity.models import (
     RiskSet,
     SignedMoneyRange,
 )
-from app.opportunity.profile import DEFAULT_PROFILE, OpportunityProfile
+from app.opportunity.profile import DEFAULT_PROFILE
 from app.services.anti_pua import (
     calculate_fatigue_index,
     classify_capital_friction_tier,

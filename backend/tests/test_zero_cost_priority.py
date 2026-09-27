@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.repository import ProjectRepository, is_zero_cost_opportunity
+from app.repository import is_zero_cost_opportunity
 from app.services.participation_tasks import generate_participation_tasks
 
 

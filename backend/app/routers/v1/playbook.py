@@ -5,9 +5,10 @@ POST /api/v1/playbook/validate-and-generate
 """
 
 from typing import Any
+
+import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-import structlog
 
 from app.services.playbook_orchestrator import (
     list_playbook_templates,

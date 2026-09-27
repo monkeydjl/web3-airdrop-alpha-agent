@@ -1,4 +1,3 @@
-import pytest
 from app.services.wallet_activity_diagnostic import diagnose_wallet_health
 
 

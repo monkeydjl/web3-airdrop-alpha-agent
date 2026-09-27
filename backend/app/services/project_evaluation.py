@@ -12,6 +12,7 @@ Orchestrates full re-evaluation for a single project:
 from __future__ import annotations
 
 from typing import Any
+
 import structlog
 
 from app.agents.base import AgentContext, RawProject
