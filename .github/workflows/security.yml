@@ -51,6 +51,13 @@ jobs:
           # 此前全是浮动 >=，审计的是"某个可能版本"，结果不可复现。
           # requirements.lock.txt 分支保留：若将来改用 pip-compile 产出全量
           # 锁文件（含间接依赖），优先审计它。
+          #
+          # 本地 Windows 复现注意：requirements*.txt 含中文注释（UTF-8），
+          # 而 Windows 默认 ANSI 代码页（如 GBK）会让 pip-audit 内部的
+          # pip_requirements_parser 抛 UnicodeDecodeError —— 看起来像依赖
+          # 有问题，其实是编码。CI（Linux）默认 UTF-8 无此问题；本地复现
+          # 请带 PYTHONUTF8=1，例如：
+          #   PYTHONUTF8=1 python -m pip_audit -r backend/requirements.txt
           if [ -f backend/requirements.lock.txt ]; then
             pip-audit -r backend/requirements.lock.txt --strict
           else

@@ -40,7 +40,7 @@
 
 **三档分类**：FARM (>= 65) / WATCH (50-64) / IGNORE (< 50)
 
-Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curbed-multiwallet-v1`，评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
+Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curated-multiwallet-v1`，评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
 
 ---
 
