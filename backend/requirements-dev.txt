@@ -16,6 +16,9 @@
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
+# 并行测试（pytest -n N）。conftest.py 已按 worker 隔离 DB_PATH 并在每个
+# worker 会话开始时重建独立库——没有这两条，并行下固定 ID 用例会随机红。
+pytest-xdist==3.8.0
 
 # ── 测试替身 / 造数据 ──
 respx==0.23.1

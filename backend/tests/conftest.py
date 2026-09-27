@@ -17,6 +17,7 @@
 # init kwargs，优先级高于环境变量，仍会正常触发拒绝逻辑。
 import os
 import pathlib
+import tempfile
 import uuid
 
 os.environ["APP_ENV"] = "test"
@@ -26,7 +27,21 @@ os.environ["HOST"] = "127.0.0.1"
 # Override DB_PATH to a workspace-writable location for tests.
 # .env may set DB_PATH=/app/data/app.db (Docker path) which doesn't exist on
 # the host. Tests that don't use tmp_path will fall through to this default.
-os.environ.setdefault("DB_PATH", str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "test.db"))
+# xdist 安全：每 worker 用独立文件名，避免并发 worker 争写同一个 data/test.db。
+# （写同一 SQLite 文件虽有 WAL + busy_timeout，但 schema/seed 互相踩踏会让
+#  用例随机红——文件级隔离是唯一可靠口径。）
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")
+_DB_SUFFIX = f"test_{_XDIST_WORKER}.db" if _XDIST_WORKER else "test.db"
+_DB_DEFAULT = str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / _DB_SUFFIX)
+if _XDIST_WORKER:
+    # worker：强制覆盖。xdist controller 先加载一次 conftest（此时 worker
+    # 尚未设置，suffix 为空），worker 继承 controller 环境后再 setdefault
+    # 早已失效——8 个 worker 会全部写同一个 data/test.db（实测残留 86MB），
+    # 文件级隔离形同虚设，且跨轮次残留固定 ID 数据撞 UNIQUE。
+    os.environ["DB_PATH"] = _DB_DEFAULT
+else:
+    # 串行：保留原 setdefault 语义，尊重显式指定的 DB_PATH。
+    os.environ.setdefault("DB_PATH", _DB_DEFAULT)
 
 # ── 把 SEED_FALLBACK_ENABLED 钉在测试值上 ────────────────────────
 # `seed_fallback_enabled` 的类默认值是 True，但 pydantic-settings 会读仓库根
@@ -60,16 +75,42 @@ os.environ["SEED_FALLBACK_ENABLED"] = "true"
 # 落到生产缓存目录，也不会跨 checkout 泄漏。
 os.environ.setdefault(
     "FETCHER_CACHE_DIR",
-    str(pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "pytest_cache_dir"),
+    str(
+        pathlib.Path(__file__).resolve().parent.parent.parent
+        / "data"
+        / (f"pytest_cache_dir_{_XDIST_WORKER}" if _XDIST_WORKER else "pytest_cache_dir")
+    ),
 )
 
 # ── Override tmp_path to avoid sandbox-locked dirs ──────────────────
 # DSH sandbox locks directories created by pytest's internal TempPathFactory.
 # We override tmp_path and tmp_path_factory to use workspace-writable dirs
 # that we create ourselves (which are NOT locked).
-import pytest
+import pytest  # noqa: E402  # 必须在环境变量设置之后导入（conftest 的时序要求）
 
 _WORKSPACE_TMP = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "pytest_tmp"
+_SYSTEM_TMP = pathlib.Path(os.environ.get("TEMP") or tempfile.gettempdir())
+
+# 本机实测（2026-09-23）：同一份 ~30KB SQLite DDL，落在仓库目录（data/pytest_tmp）
+# 每个 API 用例要 ~4s，落在系统临时目录只要 ~0.3s（~12 倍差）。慢的不是 fixture
+# 也不是 TestClient，而是仓库目录上的 SQLite 文件 IO——典型的实时杀毒/索引服务
+# 对仓库路径的实时扫描放大了每条 DDL 的提交成本。
+# 策略：优先用系统临时目录（快）；仅在探测到系统临时目录不可写时回退仓库目录
+# （保留当年 DSH 沙箱锁定 pytest 默认临时目录时的兼容性）。
+
+
+def _pick_tmp_base() -> pathlib.Path:
+    """选择 per-test 临时目录的根：系统 TEMP 可写则优先，否则回退仓库内目录。"""
+    probe = _SYSTEM_TMP / f"pytest_probe_{uuid.uuid4().hex[:8]}"
+    try:
+        probe.mkdir(parents=True, exist_ok=True)
+        probe.rmdir()
+        return _SYSTEM_TMP
+    except OSError:
+        return _WORKSPACE_TMP
+
+
+_TMP_BASE = _pick_tmp_base()
 
 
 @pytest.fixture
@@ -77,7 +118,8 @@ def tmp_path(request):
     """Override tmp_path to use a workspace-writable directory.
 
     DSH sandbox may lock pytest's default temp dirs. This fixture creates
-    per-test dirs under data/pytest_tmp/ which are writable.
+    per-test dirs under a writable base (system TEMP preferred for speed;
+    falls back to data/pytest_tmp/ inside the workspace).
     """
     _WORKSPACE_TMP.mkdir(parents=True, exist_ok=True)
     # Use test name + uuid for uniqueness
@@ -94,7 +136,7 @@ def tmp_path(request):
     )
     # Truncate to avoid path length issues on Windows
     test_name = test_name[:80]
-    d = _WORKSPACE_TMP / f"{test_name}_{uuid.uuid4().hex[:8]}"
+    d = _TMP_BASE / f"{test_name}_{uuid.uuid4().hex[:8]}"
     d.mkdir(parents=True, exist_ok=True)
     yield d
     # Cleanup (best-effort)
@@ -103,6 +145,26 @@ def tmp_path(request):
 
     with contextlib.suppress(Exception):
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ── xdist worker 启动时重置本 worker 独立库并建好 schema ──────
+# 每个 worker 的 DB_PATH 是独立文件（见上方 DB_PATH 强制赋值）。但文件
+# 跨运行持久：上一轮残留的 usr_alice/key_1234 等固定 ID 行会让本轮
+# 的 INSERT 撞 UNIQUE（串行模式靠其他文件的清理 fixture 顺序性擦库
+# 侥幸避开，并行下顺序不定必炸）。worker 会话开始时直接删库文件再
+# init_db()，等价于 CI 每次都是全新库，跨轮次确定性。串行单进程
+# （master）不删除，保持既有行为。
+def pytest_configure(config):
+    if hasattr(config, "workerinput"):  # 仅 xdist worker 进程
+        import contextlib
+
+        db_file = pathlib.Path(os.environ["DB_PATH"])
+        for suffix in ("", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                db_file.with_name(db_file.name + suffix).unlink()
+        from app.db import init_db
+
+        init_db()
 
 
 # ── fetcher 磁盘缓存必须每个测试前清空 ──────────────────────────
