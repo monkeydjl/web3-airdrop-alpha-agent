@@ -33,6 +33,17 @@
 （跨文件顺序耦合）。修复三选一：tmp_path 重定向自管库 / 同文件
 INSERT 自播种后读回 / 核查后登记 READS_DEFAULT_DB_WHITELIST。
 
+**规则三（替身目标漂移 / 2026-09-29 专项审计新增）**
+
+tests 内 ``patch("app.db.get_connection", ...)`` → 报违规。§13.3 迁移后
+消费路径走 ``connection_scope``，但其 own 分支经**模块全局名**调
+``get_connection()``——patch 它经这条**活缝隙**看似生效，实则把测试钉死
+在实现细节上：own 分支改为函数内 import / 直连工厂时 patch 静默失效，
+测试开始碰真实默认库或测错路径。修复：patch 消费点（消费者模块的
+``connection_scope`` 名字；函数内 import 时等价于
+``app.db.connection_scope`` 本体）。被测对象就是 db.py 本体的可登记
+PATCH_GET_CONNECTION_WHITELIST（须附理由）。
+
 退出码：发现违规 → 1（CI 失败）；否则 0。纯标准库实现，与
 check_connection_hygiene.py 同款 ``_force_utf8_stdio`` 防护（Windows
 ANSI 代码页下 print 中文/emoji 不崩）。
@@ -122,6 +133,18 @@ WHITELIST = {
 # （写路径经 repository 封装，静态规则不可见），或读到的结果与库内容
 # 无关。逐个核查后登记，禁止无注释豁免。
 READS_DEFAULT_DB_WHITELIST: dict[str, str] = {}
+
+# 规则三（替身目标漂移）豁免：key 在 PATCH_GET_CONNECTION_WHITELIST 中
+# 则豁免「tests 内 patch app.db.get_connection」判定。豁免必须附理由：
+# - tests/test_db_init.py：被测对象就是 get_connection/init_db 本体
+#   （db.py 的单测），patch 它是测试手段不是消费点误置；
+# - tests/test_gdpr.py：db_conn fixture 双保险（已 patch 消费点
+#   app.routers.v1.user_data.connection_scope，get_connection 是底座
+#   兼容层，消费点 patch 惯例已遵守）。
+PATCH_GET_CONNECTION_WHITELIST: dict[str, str] = {
+    "tests/test_db_init.py": "被测对象就是 db.py 本体，patch 是测试手段",
+    "tests/test_gdpr.py": "消费点 connection_scope 已 patch，get_connection 是双保险兼容层",
+}
 
 
 def _self_sufficiency_signals(tree: ast.AST, strings: set[str]) -> list[str]:
@@ -222,11 +245,65 @@ def check_residue_reads(path: Path) -> list[str] | None:
     return sorted(needs)
 
 
+def check_stub_target_drift(path: Path) -> list[str] | None:
+    """规则三：tests 内 patch ``app.db.get_connection`` → 替身目标漂移。
+
+    背景（2026-09-29 专项审计）：§13.3 迁移后消费路径走 connection_scope，
+    但 connection_scope 的 own 分支是 ``db = get_connection()``（模块全局
+    运行时解析），patch app.db.get_connection 经这条**活缝隙**仍会生效——
+    看似隔离，实则把测试钉死在一个实现细节上：own 分支一旦改为函数内
+    import、直连工厂或连接池，patch 静默失效，测试开始碰真实默认库或
+    测错路径。正确做法是 patch 消费点（消费者模块的 connection_scope
+    名字；函数内 import 时等价于 app.db.connection_scope 本体）。
+
+    判定（两种形态，覆盖裸 patch 与方法调用）：
+    1. dotted 字符串目标：``patch("app.db.get_connection", ...)`` /
+       ``monkeypatch.setattr("app.db.get_connection", ...)`` ——
+       函数名是裸 Name（``from unittest.mock import patch``）或方法
+       Attribute（``mock.patch`` / ``monkeypatch.setattr``）都要抓；
+    2. 模块+名分离：``setattr(db_module, "get_connection", ...)``。
+    已知盲区（docstring 记录）：``patch.object(db_module, ...)`` 形态
+    不检测（罕见，出现时靠人工审查兜底）。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    hits: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # 裸名（from unittest.mock import patch / as mock_patch）与方法名都算
+        if isinstance(func, ast.Name):
+            call_name = func.id
+        elif isinstance(func, ast.Attribute):
+            call_name = func.attr
+        else:
+            continue
+        is_patch_call = call_name == "setattr" or call_name.startswith("patch")
+        if not is_patch_call or not node.args:
+            continue
+        # 形态一：dotted 字符串 "app.db.get_connection"
+        target = node.args[0]
+        if isinstance(target, ast.Constant) and target.value == "app.db.get_connection":
+            hits.append(f"line {node.lineno}: {call_name}('app.db.get_connection', ...)")
+            continue
+        # 形态二：setattr(<db 模块名>, "get_connection", ...)
+        if call_name == "setattr" and len(node.args) >= 2:
+            base, name_arg = node.args[0], node.args[1]
+            if isinstance(name_arg, ast.Constant) and name_arg.value == "get_connection":
+                base_is_db = (isinstance(base, ast.Name) and base.id in {"db", "db_module", "db_mod", "dbm"}) or (
+                    isinstance(base, ast.Attribute) and base.attr == "db"
+                )
+                if base_is_db:
+                    hits.append(f"line {node.lineno}: setattr(<db 模块>, 'get_connection', ...)")
+    return hits or None
+
+
 def main() -> int:
     _force_utf8_stdio()
 
     violations: list[tuple[Path, list[str]]] = []
     residue: list[tuple[Path, list[str]]] = []
+    stub_drift: list[tuple[Path, list[str]]] = []
     scanned = 0
     for path in sorted(TESTS_DIR.rglob("test_*.py")):
         scanned += 1
@@ -239,6 +316,10 @@ def main() -> int:
                 hit = check_residue_reads(path)
                 if hit:
                     residue.append((path, hit))
+            if rel not in PATCH_GET_CONNECTION_WHITELIST:
+                hit = check_stub_target_drift(path)
+                if hit:
+                    stub_drift.append((path, hit))
         except SyntaxError as exc:  # pragma: no cover — tests/ 不应有语法错误
             print(f"::error::{path.relative_to(BACKEND_DIR)} 语法错误: {exc}")
             return 1
@@ -273,6 +354,29 @@ def main() -> int:
             "  2. 同文件内先 INSERT 自建数据再读回（全新空库上也要成立）；\n"
             "  3. 确认读的是本文件经 repository 写入的数据后，登记"
             " READS_DEFAULT_DB_WHITELIST（须附理由）。"
+        )
+    if stub_drift:
+        failed = True
+        print(
+            "\n❌ 替身目标漂移守卫发现违规（tests 内 patch app.db.get_connection）：\n"
+            "\n"
+            "  connection_scope 的 own 分支经模块全局名调 get_connection()，\n"
+            "  patch 它看似生效、实则把测试钉死在实现细节上（own 分支改为\n"
+            "  函数内 import / 直连工厂时静默失效，测试开始碰真实默认库）。\n"
+        )
+        for path, hits in stub_drift:
+            rel = path.relative_to(BACKEND_DIR).as_posix()
+            print(f"  {rel}")
+            for hit in hits:
+                print(f"    {hit}")
+        print(
+            "\n修复方式：改为 patch 消费点——\n"
+            "  - 消费者模块顶部 import connection_scope → patch\n"
+            "    '<消费者模块>.connection_scope'；\n"
+            "  - 消费者函数内 from app.db import connection_scope → patch\n"
+            "    'app.db.connection_scope'（名字解析源）。\n"
+            "  被测对象就是 db.py 本体的（如 test_db_init）可登记\n"
+            "  PATCH_GET_CONNECTION_WHITELIST（须附理由）。"
         )
     if failed:
         return 1

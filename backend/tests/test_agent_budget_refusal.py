@@ -75,6 +75,26 @@ def _result(**kwargs) -> LLMResult:
     return LLMResult(**base)
 
 
+def _patch_scope(db):
+    """patch 消费点等价目标 app.db.connection_scope（§13.3 惯例 + 守卫规则三）。
+
+    llm/budget.py 与 agents/base.py 都在**函数内** ``from app.db import
+    connection_scope`` —— 名字解析源是 app.db.connection_scope 本体。
+    db 为 None 时替身在进入时抛异常（= DB 不可用语义，等价旧写法
+    patch get_connection 返回 None 的意图）；否则 yield db（生命周期
+    归 fixture，替身永不 close）。
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _scope(conn=None, *, factory=None, owns=None):
+        if db is None:
+            raise RuntimeError("DB unavailable (test stub)")
+        yield db
+
+    return patch("app.db.connection_scope", _scope)
+
+
 async def _run(result: LLMResult, agent: BaseAgent | None = None):
     """跑一次 llm_enhance，同时捕获 structlog 事件。返回 (返回值, 事件列表)。"""
     # _resolve_prompt_version 里对 None 连接查表会抛异常，但它自带
@@ -82,7 +102,7 @@ async def _run(result: LLMResult, agent: BaseAgent | None = None):
     agent = agent or _RefusalTestAgent("TestAgent")
     state = _state()
     with (
-        patch("app.db.get_connection", return_value=None),
+        _patch_scope(None),
         patch("app.llm.client.llm_chat", new_callable=AsyncMock, return_value=result),
         capture_logs() as events,
     ):
@@ -145,7 +165,7 @@ class TestBudgetRefusalIsDistinctFromFailure:
         assert agent_llm is recorder
 
         with (
-            patch("app.db.get_connection", return_value=None),
+            _patch_scope(None),
             patch(
                 "app.llm.client.llm_chat",
                 new_callable=AsyncMock,
@@ -167,7 +187,7 @@ class TestBudgetRefusalIsDistinctFromFailure:
         agent = _RefusalTestAgent("TestAgent")
         state = _state()
         with (
-            patch("app.db.get_connection", return_value=db_conn),
+            _patch_scope(db_conn),
             patch(
                 "app.llm.client.llm_chat",
                 new_callable=AsyncMock,

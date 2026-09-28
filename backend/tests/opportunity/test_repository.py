@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db import DbConnection, _postgres_ddl, init_db
+from app.db import DbConnection, _as_db_connection, _postgres_ddl, init_db
 from app.opportunity.models import EvidenceRecord, OpportunityAssessment
 from app.opportunity.repository import OpportunityRepository
 
@@ -602,7 +602,19 @@ def test_repository_context_does_not_close_borrowed_connection():
 def test_repository_context_closes_owned_connection(monkeypatch):
     raw = _connection()
     owned = DbConnection(raw, kind="sqlite")
-    monkeypatch.setattr("app.db.get_connection", lambda: owned)
+
+    # 消费点 patch（§13.3 惯例 + 守卫规则三）：OpportunityRepository 的 own
+    # 路径是 __init__ → _as_db_connection(None) → get_connection()。按模块
+    # 绑定 patch 消费点 app.opportunity.repository._as_db_connection，仅把
+    # None（own）分支路由到替身连接；注入连接（borrow）仍走真实判定。
+    # 不 patch app.db.get_connection——那是经 connection_scope own 分支的
+    # 实现细节缝隙，替换工厂后静默失效。
+    real_as_db_connection = _as_db_connection
+
+    def _scoped_as_db_connection(conn=None):
+        return (owned, True) if conn is None else real_as_db_connection(conn)
+
+    monkeypatch.setattr("app.opportunity.repository._as_db_connection", _scoped_as_db_connection)
 
     with OpportunityRepository() as repo:
         repo.add_evidence(_evidence())

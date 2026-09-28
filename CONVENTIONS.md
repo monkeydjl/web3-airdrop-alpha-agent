@@ -644,6 +644,16 @@ def init_db(conn: sqlite3.Connection) -> None:
   或自管库重定向（monkeypatch `settings.db_path` 到 tmp_path / `:memory:`）。
   直读不播种意味着全新空库上要么读空集红、要么依赖其他文件留下的行
   （跨文件顺序耦合，xdist 随机红的同源问题）。
+- **规则三（替身目标漂移）**：tests 内
+  `patch("app.db.get_connection", ...)` 违规。§13.3 迁移后消费路径走
+  `connection_scope`，但其 own 分支经模块全局名调 `get_connection()`——
+  patch 它经这条**活缝隙**看似生效，实则把测试钉死在实现细节上
+  （own 分支改为函数内 import / 直连工厂时静默失效，测试开始碰真实
+  默认库或测错路径）。改为 patch 消费点：消费者模块顶部 import 的
+  patch `<模块>.connection_scope`；函数内 `from app.db import
+  connection_scope` 的 patch `app.db.connection_scope`（名字解析源）。
+  被测对象就是 db.py 本体的（如 test_db_init）登记
+  `PATCH_GET_CONNECTION_WHITELIST`（须附理由）。
 
 豁免登记规范（脚本内 `WHITELIST` / `READS_DEFAULT_DB_WHITELIST`）：
 豁免是例外不是惯例，登记必须附理由注释；新增豁免前先跑对应文件于

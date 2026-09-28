@@ -147,7 +147,7 @@ standalone 关停契约违背（非新回归），第 3 层修复使其恢复绿
 
 | 防线 | 载体 | 触发时机 | 已知边界 |
 |---|---|---|---|
-| 静态守卫（新违规进不来） | `scripts/check_test_db_bootstrap.py`：规则一 schema 来源（直连 DB_PATH 须有自救建库路径）+ 规则二数据来源（SELECT 表读须自播种/重定向） | 每次 push/PR：ci.yml lint job + release.yml test-gate，与连接卫生守卫同位；违规 exit 1 | 纯静态 AST：经 service 层间接用默认库的文件看不见 |
+| 静态守卫（新违规进不来） | `scripts/check_test_db_bootstrap.py`：规则一 schema 来源（直连 DB_PATH 须有自救建库路径）+ 规则二数据来源（SELECT 表读须自播种/重定向）+ 规则三替身目标漂移（tests 内 patch app.db.get_connection 违规，经 connection_scope own 分支的活缝隙钉死实现细节） | 每次 push/PR：ci.yml lint job + release.yml test-gate，与连接卫生守卫同位；违规 exit 1 | 纯静态 AST：经 service 层间接用默认库的文件看不见；patch.object(db_module, ...) 形态不检 |
 | 动态空库酸测（盲区复验） | `scripts/verify_test_db_isolation.py`：动态枚举灰区（复用守卫 AST 函数，零硬编码清单）+ 逐文件删库串行单跑 | 人工：改守卫规则 / 登记豁免后必跑；CI 为 workflow_dispatch 手动按钮（独立 workflow，不在 PR 必过链） | `--changed` 定向选择器不完备（同上边界）→ app/ DB 信号提示不阻断；全量才是完备口径 |
 | 豁免登记纪律 | 守卫脚本内 `WHITELIST` / `READS_DEFAULT_DB_WHITELIST`（豁免须附理由注释） | 新增豁免前：`--only` 定向空库验证理由成立再登记 | 红 = 登记理由不成立，修测试不是改酸测 |
 
@@ -158,6 +158,12 @@ standalone 关停契约违背（非新回归），第 3 层修复使其恢复绿
 改守卫/测试基础设施后先跑 `scripts/check_ci_parity.py`（CI lint job
 同款一键自检，配 `tests/test_ci_parity.py` 钉在全量套件）——25 提交
 整体回归曾抓出「只验 format 未验 check」的 11 个 lint 错，勿再犯。
+2026-09-29 专项审计：5 文件 12 处 patch app.db.get_connection 经
+connection_scope own 分支的活缝隙隐性生效——test_prompt_version（5 处）
+与 test_agent_budget_refusal（3 处）已改为 patch 消费点
+app.db.connection_scope，test_repository own 生命周期用例改为按模块
+绑定 patch _as_db_connection，test_db_init / test_gdpr 登记豁免
+（附理由）；守卫规则三已入库防新增。
 
 命令速查（backend/ 下）：
 

@@ -88,11 +88,19 @@ class TestLLMChatPromptVersion:
 
 
 class TestBaseAgentResolvePromptVersion:
-    """BaseAgent._resolve_prompt_version() queries prompt_versions table."""
+    """BaseAgent._resolve_prompt_version() queries prompt_versions table.
+
+    隔离口径（§13.3 消费点 patch 惯例）：_resolve_prompt_version 在**函数内**
+    ``from app.db import connection_scope``——模块属性 app.agents.base.connection_scope
+    不存在，每次调用时从 app.db 解析名字，因此消费点等价于
+    app.db.connection_scope（权威实现本体）。只 patch app.db.get_connection
+    也能经 connection_scope own 分支的活缝隙生效，但那是对实现细节的隐式
+    耦合（own 分支改为直连工厂时静默失效），守卫规则三禁止。
+    """
 
     def test_resolve_returns_none_when_no_default(self, db_conn):
         """Returns None when no default prompt version exists for agent."""
-        with patch("app.db.get_connection", return_value=db_conn):
+        with _patch_scope(db_conn):
             agent = _make_test_agent()
             version = agent._resolve_prompt_version()
             assert version is None
@@ -112,14 +120,14 @@ class TestBaseAgentResolvePromptVersion:
             is_default=True,
         )
 
-        with patch("app.db.get_connection", return_value=db_conn):
+        with _patch_scope(db_conn):
             agent = _make_test_agent()
             version = agent._resolve_prompt_version()
             assert version == "v1.5"
 
     def test_resolve_returns_none_on_db_error(self):
         """Returns None when DB connection fails (graceful degradation)."""
-        with patch("app.db.get_connection", side_effect=Exception("DB unavailable")):
+        with patch("app.db.connection_scope", side_effect=Exception("DB unavailable")):
             agent = _make_test_agent()
             version = agent._resolve_prompt_version()
             assert version is None
@@ -164,7 +172,7 @@ class TestBaseAgentLLMEnhancePromptVersion:
         # refused_reason 区分预算拦截与真失败），所以这里 patch 的是
         # llm_chat，返回值也从裸字符串变成 LLMResult。
         with (
-            patch("app.db.get_connection", return_value=db_conn),
+            _patch_scope(db_conn),
             patch(
                 "app.llm.client.llm_chat",
                 new_callable=AsyncMock,
@@ -194,7 +202,7 @@ class TestBaseAgentLLMEnhancePromptVersion:
         agent = _make_test_agent()
 
         with (
-            patch("app.db.get_connection", return_value=db_conn),
+            _patch_scope(db_conn),
             patch(
                 "app.llm.client.llm_chat",
                 new_callable=AsyncMock,
@@ -207,6 +215,29 @@ class TestBaseAgentLLMEnhancePromptVersion:
 
 
 # ── Helper ───────────────────────────────────────
+
+
+def _patch_scope(db):
+    """patch 消费点等价目标 app.db.connection_scope（函数内 import 解析源）。"""
+    return patch("app.db.connection_scope", _borrow_scope(db))
+
+
+def _borrow_scope(db):
+    """复刻 connection_scope 的 borrow 形态：yield 注入连接、不 close。
+
+    消费点 patch 用（app.db.connection_scope，函数内 import 的解析源），
+    db 的生命周期由 fixture 管理。签名兼容 connection_scope 的三形态
+    （conn 注入 / factory / 无参），被测代码走 own 无参分支时把 db
+    当 own 处理的副作用由本替身消除（不 close，fixture 负责生命周期）。
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _scope(conn=None, *, factory=None, owns=None):
+        assert factory is None, "本替身不支持 factory 形态"
+        yield db if conn is None else conn
+
+    return _scope
 
 
 def _make_test_agent() -> BaseAgent:
