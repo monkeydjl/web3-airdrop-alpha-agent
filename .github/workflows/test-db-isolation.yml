@@ -1,0 +1,101 @@
+# ──────────────────────────────────────────────
+# Test DB Isolation (Acid) — Web3 Airdrop Alpha Agent System
+# ──────────────────────────────────────────────
+# 触发器: 仅 workflow_dispatch（手动）
+# 内容: verify_test_db_isolation.py —— 守卫静态盲区的动态酸测
+# ──────────────────────────────────────────────
+#
+# 为什么是独立 workflow、且不进 PR 门：
+#
+# `check_test_db_bootstrap.py`（ci.yml lint 阶段）是纯静态 AST 守卫，经
+# service 层间接使用默认库的文件它看不见（CONVENTIONS §13.4 已知边界），
+# 这层靠逐文件空库酸测覆盖。但酸测是**串行逐文件删库单跑**，全量约
+# 4-5 分钟——放进每个 PR 的必过链会把 CI 拖慢一个量级，而它验证的东西
+# 并不随每个 commit 变化。所以做成手动触发的可选检查：
+#
+#   - 不在 ci.yml 里 → branch protection 的必过检查名单零改动；
+#   - 不进普通 PR run → 没有常驻 skipped job 的噪音；
+#   - 需要时在 Actions 页手动 dispatch，跑完红绿即结论。
+#
+# 什么时候按这个按钮：
+#   1. 新增/修改守卫规则、调整 WHITELIST / READS_DEFAULT_DB_WHITELIST 之后
+#      （登记豁免前跑 --only 定向核实，登记后跑全量确认零回归）；
+#   2. 怀疑某文件有跨文件顺序耦合（xdist 随机红同源问题）时定向复验；
+#   3. 定期健康检查（参照 security.yml 的教训：只能等事件的检查，
+#      想验证一次修复得先凑一个提交——纯 dispatch workflow 无此问题，
+#      改它自己之后直接 dispatch 即可验证）。
+#
+# 红的意义：某文件在全新空库上依赖了残留数据 → 豁免登记理由不成立或
+# 守卫漏报。修测试，不是改酸测。
+#
+# 平台说明：脚本用 sys.executable 与 __file__ 推导全部路径，Windows 本地
+# （venv/Scripts/python.exe）与本 workflow（Linux setup-python）跑的是同一
+# 份逻辑；脚本内部已钉 PYTHONUTF8=1。
+
+name: Test DB Isolation (Acid)
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "只跑指定测试文件（空格分隔的 backend 相对路径；留空 = 全量灰区 + 探针抽样）"
+        required: false
+        type: string
+        default: ""
+      probe-count:
+        description: "探针桶抽样数量（默认 5；0 = 跳过探针）"
+        required: false
+        type: string
+        default: "5"
+      probe-seed:
+        description: "探针抽样随机种子（默认固定值，同树重跑结果稳定）"
+        required: false
+        type: string
+        default: "20260928"
+
+jobs:
+  acid-test:
+    name: Empty-DB Acid Test (verify_test_db_isolation)
+    runs-on: ubuntu-latest
+    # 全量实测 4-5 分钟（本地 Windows）；30 分钟上限是给 CI 慢机器的余量，
+    # 不是预期耗时。
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          # 与 ci.yml 同款缓存键：pytest 与被测 app 的依赖都来自这两个文件
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 酸测本质是跑 pytest，依赖口径必须与正式测试链一致：
+          # 同一份 requirements 锁定，结果才可对照
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run empty-DB acid test
+        env:
+          # 走 env 再经 shell 展开，而不是 ${{ inputs.* }} 直接内插进命令：
+          # 输入值永不进入命令行解析层（workflow_dispatch 输入是人工键入的）
+          ONLY: ${{ inputs.only }}
+          PROBE_COUNT: ${{ inputs.probe-count }}
+          PROBE_SEED: ${{ inputs.probe-seed }}
+        run: |
+          set -euo pipefail
+          ARGS=""
+          if [ -n "$ONLY" ]; then
+            # --only 是 nargs="+"，空格分隔多文件一次传入
+            ARGS="--only $ONLY"
+          fi
+          python scripts/verify_test_db_isolation.py $ARGS \
+            --probe-count "$PROBE_COUNT" --probe-seed "$PROBE_SEED"
