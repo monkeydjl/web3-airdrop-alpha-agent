@@ -31,6 +31,11 @@
 （``git ls-files --others``）。改动过的文件不问桶归属全部跑（守卫会拦
 的也会标出）；没改动就跳过。适合 dispatch 前快速定向复验。
 
+定向跑的已知盲区：只看改动的测试文件，经 service 层间接使用默认库的
+部分不在选集里。因此 ``--changed`` 会额外扫 app/ diff 新增行的默认库
+行为信号（启发式），命中时打印「建议跑全量」提示——不阻断，定向跑
+照常执行。
+
 退出码：任一文件 pytest 非零退出 → 1；否则 0。纯标准库实现，无
 --timeout（仓库未装 pytest-timeout，传了会让 pytest exit=4）。Windows
 GBK 控制台沿用守卫同款 _force_utf8_stdio 防护。
@@ -46,6 +51,7 @@ import argparse
 import ast
 import os
 import random
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -240,6 +246,40 @@ def _changed_test_files(repo_root: Path, base: str) -> list[str]:
     return sorted(set(out))
 
 
+# app/ diff 新增行的默认库行为信号（启发式，--changed 提示用）。
+# 已知误报：类型注解里的 get_connection/init_db 也会命中（mypy 批次会
+# 误提示）——提示不阻断，宁可多提醒不漏提醒。刻意不含裸 "repository"
+# （import 行就命中，纯噪音）。
+_APP_DB_SIGNAL_RE = re.compile(
+    r"sqlite3|DB_PATH|db_path|get_connection|connection_scope|init_db|"
+    r"CREATE TABLE|INSERT INTO|DELETE FROM|UPDATE \w+ SET"
+)
+
+
+def _app_db_signal_files(repo_root: Path, base: str) -> list[tuple[str, set[str]]]:
+    """扫描 vs 基线的 app/ diff 新增行里的默认库行为信号，返回 (文件, 信号)。"""
+    diff = _git(repo_root, "diff", "--unified=0", base, "--", "backend/app/")
+    current = ""
+    hits: dict[str, set[str]] = {}
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[6:].removeprefix("backend/")
+            continue
+        if line.startswith("+") and not line.startswith("+++") and current:
+            found = set(_APP_DB_SIGNAL_RE.findall(line))
+            if found:
+                hits.setdefault(current, set()).update(found)
+    # 未跟踪新 app 文件不在 diff 里，整文件内容算新增行
+    for name in _git(repo_root, "ls-files", "--others", "--exclude-standard").splitlines():
+        posix = Path(name).as_posix()
+        if posix.startswith("backend/app/") and posix.endswith(".py"):
+            text = (repo_root / name).read_text(encoding="utf-8", errors="replace")
+            found = set(_APP_DB_SIGNAL_RE.findall(text))
+            if found:
+                hits.setdefault(posix.removeprefix("backend/"), set()).update(found)
+    return sorted(hits.items())
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -338,6 +378,17 @@ def main(argv: list[str] | None = None) -> int:
     elif args.changed:
         repo_root = BACKEND_DIR.parent
         base = _resolve_base(repo_root, args.base)
+        # 轻量提示（不强制）：app/ 改动含默认库行为信号 → 建议跑全量。
+        # 反向选择器不完备（经 service 层间接用库的测试静态不可见），
+        # 2026-09-29 审计结论：真实 DB 变更提交的反向选集≈全量，全量才是
+        # 完备口径；定向跑的剩余风险由本提示显式暴露而非静默。
+        hinted = _app_db_signal_files(repo_root, base)
+        if hinted:
+            print("💡 本次改动涉及 app/ 的默认库行为信号（启发式 diff 扫描）：")
+            for rel, sig in hinted:
+                print(f"   {rel}: {', '.join(sorted(sig))}")
+            print("   建议跑全量酸测（去掉 --changed）：经 service 层间接使用")
+            print("   默认库的测试静态不可见，定向选集不含它们。本提示不阻断。\n")
         rels = _changed_test_files(repo_root, base)
         if not rels:
             print(f"✅ 基线 {base} 以来没有改动的测试文件，无需酸测")
