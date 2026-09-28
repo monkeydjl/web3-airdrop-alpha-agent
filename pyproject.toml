@@ -103,7 +103,10 @@ src = ["backend", "tests"]
 # ARG = flake8-unused-arguments
 # RUF = ruff-specific rules
 # S = bandit security rules (对齐 SECURITY.md §8.1：禁 eval/exec、禁硬编码密钥、禁弱哈希)
-select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG", "RUF", "S"]
+# T201 = flake8-print（禁 print）——§16 审查清单「无 print/input 残留」的机器化：
+# app/ 是服务端代码，输出走 structlog，print 只允许出现在 __main__ demo 块
+#（per-file-ignores 按文件豁免）与 scripts/ CLI 工具、tests/ 诊断输出。
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG", "RUF", "S", "T201"]
 ignore = [
     "E501",    # Line too long (handled by formatter)
     "RUF001",  # Full-width punctuation is valid in Chinese user-facing strings
@@ -114,19 +117,26 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S110", "ARG001", "ARG002"]  # Allow assert in tests and unused pytest fixtures
+"tests/**/*.py" = ["S101", "S110", "ARG001", "ARG002", "T201"]  # Allow assert in tests and unused pytest fixtures
 # 测试里的 "密钥" 全是本地假值（test-hmac-secret-… / "Bearer" 方案名），
 # S105/S106 在此无意义；S110 允许清理阶段静默失败。
-"backend/tests/**/*.py" = ["ARG001", "ARG002", "ARG005", "S105", "S106", "S110"]
+"backend/tests/**/*.py" = ["ARG001", "ARG002", "ARG005", "S105", "S106", "S110", "T201"]
 # sqlite3.Row 的 `in` 检查的是**值**而不是键（'name' in row 为 False，'alpha' in row 为 True），
 # 所以 `"col" in row.keys()` 是列存在性检查的唯一正确写法。照 SIM118 改成 `"col" in row`
 # 会让所有可选列静默变成 None —— 这是行为破坏，不是风格问题。
 "backend/app/routers/v1/collections.py" = ["SIM118", "B008"]  # SIM118: sqlite3.Row 的 in 检查值而非键；B008: FastAPI requires Body calls in parameter defaults
 "backend/app/routers/v1/gas.py" = ["B008"]  # FastAPI requires Body calls in parameter defaults
 "backend/app/routers/v1/watchlist.py" = ["SIM118"]
-"backend/scripts/*.py" = ["E402"]  # Scripts update sys.path before importing the local app package
+"backend/scripts/*.py" = ["E402", "T201"]  # Scripts update sys.path before importing the local app package; CLI 工具 print 是合法输出
+"scripts/*.py" = ["E402", "T201"]  # 同上（从 backend/ 目录跑 ruff 时的路径形态）
 "backend/app/config.py" = ["S104"]  # Containerized API defaults to listening on all interfaces
 "backend/app/repository.py" = ["S608"]  # Dynamic SQL fragments use fixed columns and bound values
+# T201 豁免：__main__ demo 块（手动冒烟入口）——print 是 demo 的合法输出。
+# 覆盖全部 10 个含 demo 块的文件（2026-09-29 T201 启用时逐文件核实过：
+# app/ 的真实 print 调用全部在 ``if __name__ == "__main__":`` 之后）。
+# 新文件要加 demo print 须把路径加进本组并确认是 demo 块——避免豁免面
+# 无序扩张；服务端运行路径的输出走 structlog（§10）。
+"backend/app/{agents/{base,collector,narrative,risk,team,tokenomics},collectors/{defillama,twitter},services/script_forge,utils/{fetcher,normalize}}.py" = ["T201"]
 "backend/app/routers/v1/export_import.py" = ["B008"]  # FastAPI requires File calls in parameter defaults
 "backend/app/routers/v1/opportunity.py" = ["B008"]  # FastAPI requires Depends calls in parameter defaults
 "backend/app/routers/v1/projects.py" = ["B008"]  # FastAPI requires Query calls in parameter defaults

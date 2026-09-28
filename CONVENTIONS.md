@@ -221,6 +221,10 @@ class NarrativeResult(BaseModel):
 
 - 使用 **ruff** 格式化（相当于 Black + isort 的超集）。
 - 行宽 **120 字符**。
+- **print/input 由 T201 机器拦截**（§16「无 print 残留」的机器化）：服务端
+  代码（`app/`）输出走 structlog（§10），print 只允许出现在 `__main__`
+  demo 块（pyproject per-file-ignores 按文件豁免，新增须确认是 demo 块）、
+  `scripts/` CLI 工具与 tests/ 诊断输出。
 - 在 `pyproject.toml` 中锁定配置：
 
 ```toml
