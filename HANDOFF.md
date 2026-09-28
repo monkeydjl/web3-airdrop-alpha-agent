@@ -1,8 +1,9 @@
 # HANDOFF — 2026-09-25（17.1.26 收尾 2026-09-26）
 
-> 接续 2026-08-22 版（历史脉络见文末引用）。本版记录 9 月下旬三波工作：
+> 接续 2026-08-22 版（历史脉络见文末引用）。本版记录 9 月下旬四波工作：
 > **① CI 口径差排查与修复**、**② 测试提速 + xdist 并行**、
-> **③ 存量文档漂移（parity 守卫）修绿**（✅ 已完成，14 失败清零）。
+> **③ 存量文档漂移（parity 守卫）修绿**（✅ 已完成，14 失败清零）、
+> **④ 测试数据库守卫体系**（静态守卫双规则 + 空库酸测 + 豁免纪律）。
 
 ## 项目当前状态
 
@@ -135,6 +136,47 @@ HANDOFF 旧版遗留的「决定 Python 版本口径」待办仍值得单独收�
 
 修复期间曾使 `test_main_lifespan.py` 2 用例变红，定位后确认是暴露既有的
 standalone 关停契约违背（非新回归），第 3 层修复使其恢复绿。
+
+---
+
+## ④ 测试数据库守卫体系（✅ 已完成，2026-09-28/29）
+
+测试文件直连 `DB_PATH` 却隐式依赖两类侥幸路径——历史残留 `data/test.db`
+带着旧 schema、conftest 会话级兕底 `init_db`——全新 checkout 上「单跑一个
+文件」必红；残留行依赖则是 xdist 随机红的同源问题。三道防线，全部落地：
+
+| 防线 | 载体 | 触发时机 | 已知边界 |
+|---|---|---|---|
+| 静态守卫（新违规进不来） | `scripts/check_test_db_bootstrap.py`：规则一 schema 来源（直连 DB_PATH 须有自救建库路径）+ 规则二数据来源（SELECT 表读须自播种/重定向） | 每次 push/PR：ci.yml lint job + release.yml test-gate，与连接卫生守卫同位；违规 exit 1 | 纯静态 AST：经 service 层间接用默认库的文件看不见 |
+| 动态空库酸测（盲区复验） | `scripts/verify_test_db_isolation.py`：动态枚举灰区（复用守卫 AST 函数，零硬编码清单）+ 逐文件删库串行单跑 | 人工：改守卫规则 / 登记豁免后必跑；CI 为 workflow_dispatch 手动按钮（独立 workflow，不在 PR 必过链） | `--changed` 定向选择器不完备（同上边界）→ app/ DB 信号提示不阻断；全量才是完备口径 |
+| 豁免登记纪律 | 守卫脚本内 `WHITELIST` / `READS_DEFAULT_DB_WHITELIST`（豁免须附理由注释） | 新增豁免前：`--only` 定向空库验证理由成立再登记 | 红 = 登记理由不成立，修测试不是改酸测 |
+
+规范文本在 `CONVENTIONS.md` §13.4。首跑基线：34 灰区 + 5 探针抽样共
+39 文件全新空库全绿（2026-09-28）。反向 `--changed`（按 app 源文件反查
+测试）已评估不做：真实 DB 变更提交的反向选集 ≈ 全量，省不了时间反而
+给人虚假安全感；其剩余风险由 app/ DB 信号提示显式暴露（不阻断）。
+
+命令速查（backend/ 下）：
+
+```
+venv/Scripts/python.exe scripts/check_test_db_bootstrap.py     # 静态守卫（CI 同命令）
+venv/Scripts/python.exe scripts/verify_test_db_isolation.py    # 全量酸测 ~4-5 分钟
+venv/Scripts/python.exe scripts/verify_test_db_isolation.py --changed           # 定向：本次改动三路并集
+venv/Scripts/python.exe scripts/verify_test_db_isolation.py --only tests/xxx.py # 单文件（带桶归属标注）
+```
+
+- `--changed` 口径：vs `@{upstream}` 已提交未推送 + 工作区/暂存 + 未跟踪
+  新文件；无 upstream 须显式 `--base`
+- CI 手动 workflow：`.github/workflows/test-db-isolation.yml`，inputs
+  only / changed / base / probe-count / probe-seed；checkout `fetch-depth: 0`
+  （`--changed` 要 diff upstream 基线）；不在 ci.yml → 分支保护必过检查名单零改动
+
+守卫相关陷阱（重申 + 新增）：
+
+- 清库删**仓库根** `data/test.db{,-wal,-shm}`，不是 `backend/data/`（曾误删致假绿）
+- 酸测**不要带 `--timeout`**：仓库未装 pytest-timeout，传了 pytest exit=4
+- 守卫体系全部工作尚在本地未推送：推送前 CI 上 `--changed` 的默认基线
+  （`origin/master`）会把全部改动当「本次改动」，workflow 按钮也推送后才出现
 
 ---
 
