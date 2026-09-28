@@ -657,7 +657,11 @@ AST 函数，零硬编码清单）+ 探针抽样，逐文件删仓库根 `data/t
 标注）或 `--changed`（三路并集：vs `@{upstream}` 已提交未推送 + 工作区 +
 未跟踪；无 upstream 的分支须显式 `--base`）。CI 侧由手动触发的独立
 workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
-不在 PR 必过链（分支保护名单零改动）。
+不在 PR 必过链（分支保护名单零改动）。本地改守卫/测试基础设施后，
+先跑 `backend/scripts/check_ci_parity.py`（CI lint job 同命令同顺序的
+一键自检 + 酸测枚举加码腿），配套 `tests/test_ci_parity.py` 把它钉进
+全量套件——防止再犯「只验 ruff format 没验 ruff check」的提交事故
+（2026-09-29 整体回归抓出 11 个 E402/I001 的教训）。
 
 ---
 

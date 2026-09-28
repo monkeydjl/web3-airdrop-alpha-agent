@@ -155,6 +155,9 @@ standalone 关停契约违背（非新回归），第 3 层修复使其恢复绿
 39 文件全新空库全绿（2026-09-28）。反向 `--changed`（按 app 源文件反查
 测试）已评估不做：真实 DB 变更提交的反向选集 ≈ 全量，省不了时间反而
 给人虚假安全感；其剩余风险由 app/ DB 信号提示显式暴露（不阻断）。
+改守卫/测试基础设施后先跑 `scripts/check_ci_parity.py`（CI lint job
+同款一键自检，配 `tests/test_ci_parity.py` 钉在全量套件）——25 提交
+整体回归曾抓出「只验 format 未验 check」的 11 个 lint 错，勿再犯。
 
 命令速查（backend/ 下）：
 
