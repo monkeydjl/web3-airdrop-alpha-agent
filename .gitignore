@@ -98,6 +98,8 @@ Desktop.ini
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+# 洁净度快照（conftest 会话结束时生成，机器可 diff 的默认库足迹基线）
+data/test.db.cleanliness.json
 # 注意这里不能写 `backend/data/`（带尾斜杠）：那样 git 会整个目录不再进入，
 # 后面的 `!` 例外全部失效。用 `backend/data/*` 逐项排除，才能对子目录开白名单。
 backend/data/*

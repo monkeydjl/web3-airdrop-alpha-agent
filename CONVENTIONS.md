@@ -673,9 +673,15 @@ AST 函数，零硬编码清单）+ 探针抽样，逐文件删仓库根 `data/t
 workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
 不在 PR 必过链（分支保护名单零改动）。本地改守卫/测试基础设施后，
 先跑 `backend/scripts/check_ci_parity.py`（CI lint job 同命令同顺序的
-一键自检 + 酸测枚举加码腿），配套 `tests/test_ci_parity.py` 把它钉进
-全量套件——防止再犯「只验 ruff format 没验 ruff check」的提交事故
-（2026-09-29 整体回归抓出 11 个 E402/I001 的教训）。
+一键自检 + 酸测枚举加码腿），配套 `tests/test_ci_parity.py` 把它钉进  全量套件——防止再犯「只验 ruff format 没验 ruff check」的提交事故
+  （2026-09-29 整体回归抓出 11 个 E402/I001 的教训）。
+- **默认库洁净度快照**（conftest 会话结束钩子）：每轮全量跑完把默认库
+  各业务表行数快照到 `data/test.db.cleanliness.json`，与上一轮不同时
+  打印 diff（非阻断）。设计取舍：绝对口径「任何行即红」实测不可行——
+  规则一/二的合规模式本就允许写默认库自播种读回，且 xdist worker 子集
+  下会话级归因不成立（首版两次重设计，2693 误报的教训成文于 conftest
+  注释）。快照把洁净度从二值断言降为**可审阅的漂移追踪**：意外的新表/
+  暴增行即污染信号，人工核查后才进入基线。
 
 ---
 
