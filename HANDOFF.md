@@ -187,7 +187,8 @@ venv/Scripts/python.exe scripts/verify_test_db_isolation.py --only tests/xxx.py 
   默认库足迹快照到 `data/test.db.cleanliness.json` 与上轮 diff（非阻断，
   意外新增表/暴增行 = 污染信号）。「任何行即红」的绝对洁净度断言实测
   不可行（规则一/二合规模式本就写默认库自播种；xdist 归因不成立），
-  两版误报教训成文于 conftest 注释——不要再试第三版
+  两版误报教训成文于 conftest 注释 + `docs/testing-default-db-cleanliness.md`
+  （含误报规模与表分布数据）——不要再试第三版
 - 酸测**不要带 `--timeout`**：仓库未装 pytest-timeout，传了 pytest exit=4
 - 守卫体系全部工作尚在本地未推送：推送前 CI 上 `--changed` 的默认基线
   （`origin/master`）会把全部改动当「本次改动」，workflow 按钮也推送后才出现
