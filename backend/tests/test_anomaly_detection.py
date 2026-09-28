@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from app.db import DbConnection
+from app.services.anomaly_detection import AnomalyDetectionService, AnomalyReport
 
 # 显式建库：此文件的用例直连 DB_PATH 但自身不 init_db()，过去依赖
 # conftest pytest_configure 的会话级兜底（主仓库 data/test.db 的历史残留
 # schema）侥幸通过；全新 checkout / CI runner 上单跑必红（no such table）。
 # 现改为模块内显式 autouse fixture 幂等建库，消除对兜底的隐式依赖。
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -18,9 +19,6 @@ def _ensure_db_schema():
     from app.db import init_db
 
     init_db()
-
-
-from app.services.anomaly_detection import AnomalyDetectionService, AnomalyReport
 
 
 def _create_test_db() -> DbConnection:
