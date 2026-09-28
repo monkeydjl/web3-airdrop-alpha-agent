@@ -22,6 +22,14 @@
         --probe-seed 7 --probe-count 8
     venv/Scripts/python.exe scripts/verify_test_db_isolation.py \
         --only tests/test_repository.py tests/api/test_feedback.py
+    venv/Scripts/python.exe scripts/verify_test_db_isolation.py --changed
+    venv/Scripts/python.exe scripts/verify_test_db_isolation.py --changed --base origin/master
+
+``--changed`` 只酸测「本次改动」涉及的测试文件，三路并集：已提交未推送
+（``git diff <base>``，基线默认 ``@{upstream}``，无 upstream 时须显式
+``--base``）+ 工作区/暂存区改动（``git diff HEAD``）+ 未跟踪新文件
+（``git ls-files --others``）。改动过的文件不问桶归属全部跑（守卫会拦
+的也会标出）；没改动就跳过。适合 dispatch 前快速定向复验。
 
 退出码：任一文件 pytest 非零退出 → 1；否则 0。纯标准库实现，无
 --timeout（仓库未装 pytest-timeout，传了会让 pytest exit=4）。Windows
@@ -140,6 +148,98 @@ def enumerate_probe_candidates() -> list[Path]:
     return probes
 
 
+def _classify(rel: str) -> str:
+    """单文件桶归属标注（--changed / --only 输出用；枚举函数的逐文件版）。
+
+    返回值之一：whitelist / indirect（静态看不见默认库） /
+    guard-would-flag（守卫规则二会拦的违规）/ gray（灰区）/ probe-bucket
+    （直连无表读，探针桶成员）。与 enumerate_* 的判定共用同一批守卫函数，
+    语义一致。
+    """
+    path = BACKEND_DIR / rel
+    if rel in WHITELIST:
+        return "whitelist"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:
+        return "syntax-error"
+    strings = _string_constants(tree)
+    if not _direct_db_signals(tree, strings):
+        return "indirect"
+    if check_residue_reads(path) is not None:
+        return "guard-would-flag"
+    if "SELECT" in _sql_statement_kinds(strings):
+        return "gray"
+    return "probe-bucket"
+
+
+_CLASSIFY_LABELS = {
+    "whitelist": "白名单豁免",
+    "indirect": "非直连",
+    "guard-would-flag": "守卫会拦",
+    "gray": "灰区",
+    "probe-bucket": "探针桶",
+    "syntax-error": "语法错误",
+}
+
+
+def _git(repo_root: Path, *args: str) -> str:
+    result = subprocess.run(
+        # S607：git 的安装路径因平台而异，必须交给 PATH 解析，不能硬编码。
+        ["git", *args],  # noqa: S607
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"git {args[0]} 失败")
+    return result.stdout
+
+
+def _resolve_base(repo_root: Path, explicit: str | None) -> str:
+    """--changed 的 diff 基线：显式 --base 优先，否则 @{upstream}。
+
+    无 upstream（本地分支从未 push）时不猜分支名——猜错会让「本次改动」
+    的口径完全不可信；直接报错并给出显式 --base 示例。
+    """
+    if explicit:
+        return explicit
+    try:
+        return _git(repo_root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}").strip()
+    except RuntimeError as exc:
+        print(
+            f"❌ 无法确定 --changed 的 diff 基线：{exc}\n"
+            "   本分支没有 upstream（或从未 push）时请显式指定，例如：\n"
+            "     --base origin/master     与远端 master 比\n"
+            "     --base HEAD~5            与最近 5 个提交前比\n"
+            "     --base <sha>             与指定提交比"
+        )
+        raise SystemExit(2) from exc
+
+
+def _changed_test_files(repo_root: Path, base: str) -> list[str]:
+    """收集「本次改动」的测试文件（backend 相对路径，排序去重）。
+
+    三路并集：vs 基线的已提交改动 + vs HEAD 的工作区/暂存改动 + 未跟踪
+    新文件。diff-filter 排除 D（删除）——文件已不存在没法跑。只留
+    backend/tests/ 下的 test_*.py。
+    """
+    changed: set[str] = set()
+    changed.update(_git(repo_root, "diff", "--name-only", "--diff-filter=ACMR", base).splitlines())
+    changed.update(_git(repo_root, "diff", "--name-only", "--diff-filter=ACMR", "HEAD").splitlines())
+    changed.update(_git(repo_root, "ls-files", "--others", "--exclude-standard").splitlines())
+    out: list[str] = []
+    for name in changed:
+        posix = Path(name).as_posix()
+        if not posix.startswith("backend/tests/"):
+            continue
+        if Path(posix).name.startswith("test_") and posix.endswith(".py"):
+            out.append(posix.removeprefix("backend/"))
+    return sorted(set(out))
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -147,6 +247,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="+",
         metavar="PATH",
         help="只跑指定测试文件（backend 相对路径，如 tests/test_repository.py）",
+    )
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="只跑本次改动涉及的测试文件（与 --only 互斥；见模块 docstring）",
+    )
+    parser.add_argument(
+        "--base",
+        metavar="REF",
+        default=None,
+        help="--changed 的 diff 基线（默认 @{upstream}，无 upstream 时必填）",
     )
     parser.add_argument(
         "--probe-count",
@@ -158,9 +269,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--probe-seed",
         type=int,
         default=20260928,
-        help="探针抽样随机种子（默认固定值，同树重跑结果稳定）",
+        help="探针抽样随机种子（默认固定值，同树重跑结果稳定；只影响默认全量模式）",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.only and args.changed:
+        parser.error("--only 与 --changed 互斥，选一个")
+    return args
 
 
 def _pick_probes(candidates: list[Path], count: int, seed: int) -> list[Path]:
@@ -197,6 +311,11 @@ def _run_one(pytest_path: str) -> tuple[bool, str]:
         errors="replace",
         env={**os.environ, "PYTHONUTF8": "1"},
     )
+    # pytest exit 5 = EXIT_NOTESTSCOLLECTED：文件里没有任何用例。空文件没有
+    # 行为可酸测，记 pass 而不是 FAIL（--changed 会抓到未跟踪的草稿文件，
+    # 不该因它没有 test 函数就红）。收集错误（exit 2）仍算 FAIL。
+    if result.returncode == 5:
+        return True, "no tests collected (pytest exit 5)"
     summary = "?"
     for line in (result.stdout + result.stderr).splitlines():
         if "passed" in line or "failed" in line or "error" in line.lower():
@@ -207,14 +326,24 @@ def _run_one(pytest_path: str) -> tuple[bool, str]:
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     args = _parse_args(argv)
+    tags: dict[str, str] = {}  # rel -> 桶归属标注（--only/--changed 模式填）
 
     if args.only:
-        targets = [(BACKEND_DIR / rel, rel) for rel in args.only]
-        buckets = {"指定文件": [rel for _, rel in targets]}
-        missing = [str(p) for p, _ in targets if not p.exists()]
+        missing = [rel for rel in args.only if not (BACKEND_DIR / rel).exists()]
         if missing:
             print(f"❌ --only 路径不存在: {', '.join(missing)}")
             return 2
+        tags = {rel: _CLASSIFY_LABELS.get(_classify(rel), "") for rel in args.only}
+        buckets = {"指定文件": list(args.only)}
+    elif args.changed:
+        repo_root = BACKEND_DIR.parent
+        base = _resolve_base(repo_root, args.base)
+        rels = _changed_test_files(repo_root, base)
+        if not rels:
+            print(f"✅ 基线 {base} 以来没有改动的测试文件，无需酸测")
+            return 0
+        tags = {rel: _CLASSIFY_LABELS.get(_classify(rel), "") for rel in rels}
+        buckets = {f"本次改动 (base={base})": rels}
     else:
         gray = enumerate_gray_files()
         probes = _pick_probes(enumerate_probe_candidates(), args.probe_count, args.probe_seed)
@@ -238,7 +367,8 @@ def main(argv: list[str] | None = None) -> int:
             done += 1
             ok, summary = _run_one(rel)
             tag = "pass" if ok else "FAIL"
-            print(f"[{done}/{total}] {tag}  {rel}  :: {summary}")
+            bucket = f" ({tags[rel]})" if tags.get(rel) else ""
+            print(f"[{done}/{total}] {tag}  {rel}{bucket}  :: {summary}")
             if not ok:
                 failures.append((rel, summary))
 

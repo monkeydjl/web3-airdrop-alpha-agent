@@ -653,7 +653,11 @@ def init_db(conn: sqlite3.Connection) -> None:
 AST 函数，零硬编码清单）+ 探针抽样，逐文件删仓库根 `data/test.db{,-wal,-shm}`
 后串行 pytest 单跑（全量约 4-5 分钟）。新增守卫规则 / 登记豁免后一键复验；
 红 = 登记理由不成立，修测试而不是改酸测。2026-09-28 首跑基线：34 灰区 +
-5 探针抽样共 39 文件全新空库全绿。
+5 探针抽样共 39 文件全新空库全绿。定向复验：`--only <文件>`（带桶归属
+标注）或 `--changed`（三路并集：vs `@{upstream}` 已提交未推送 + 工作区 +
+未跟踪；无 upstream 的分支须显式 `--base`）。CI 侧由手动触发的独立
+workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
+不在 PR 必过链（分支保护名单零改动）。
 
 ---
 

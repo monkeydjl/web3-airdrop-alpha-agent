@@ -38,7 +38,17 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "只跑指定测试文件（空格分隔的 backend 相对路径；留空 = 全量灰区 + 探针抽样）"
+        description: "只跑指定测试文件（空格分隔的 backend 相对路径；与 changed 互斥；留空看 changed）"
+        required: false
+        type: string
+        default: ""
+      changed:
+        description: "只酸测本次改动涉及的测试文件（三路并集：已提交未推送 + 工作区 + 未跟踪）"
+        required: false
+        type: boolean
+        default: false
+      base:
+        description: "--changed 的 diff 基线（默认 @{upstream}；无 upstream 的分支须显式填，如 origin/master）"
         required: false
         type: string
         default: ""
@@ -64,7 +74,12 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # fetch-depth: 0：--changed 要对 @{upstream} / origin/master 做 git diff，
+      # 浅克隆（depth=1）里这些基线 ref 不存在，枚举会直接报错。仓库体量小，
+      # 全量 clone 可接受；仅全量模式时这个开销略多，但换来输入口径统一。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -88,6 +103,8 @@ jobs:
           # 走 env 再经 shell 展开，而不是 ${{ inputs.* }} 直接内插进命令：
           # 输入值永不进入命令行解析层（workflow_dispatch 输入是人工键入的）
           ONLY: ${{ inputs.only }}
+          CHANGED: ${{ inputs.changed }}
+          BASE: ${{ inputs.base }}
           PROBE_COUNT: ${{ inputs.probe-count }}
           PROBE_SEED: ${{ inputs.probe-seed }}
         run: |
@@ -96,6 +113,11 @@ jobs:
           if [ -n "$ONLY" ]; then
             # --only 是 nargs="+"，空格分隔多文件一次传入
             ARGS="--only $ONLY"
+          elif [ "$CHANGED" = "true" ]; then
+            ARGS="--changed"
+            if [ -n "$BASE" ]; then
+              ARGS="$ARGS --base $BASE"
+            fi
           fi
           python scripts/verify_test_db_isolation.py $ARGS \
             --probe-count "$PROBE_COUNT" --probe-seed "$PROBE_SEED"
