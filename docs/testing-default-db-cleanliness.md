@@ -133,6 +133,107 @@ v1 失败后自然会想：把粒度降到用例——「本用例开始前库�
 4. **确定性重放体系里，diff 与断言等价且无归因负担。** 快照 +
    人工核查进基线，是共享介质上能诚实做出的最强承诺。
 
+## 后记（2026-09-29 下午）：diff 对象自己也得有「单一归属」——v3 快照在 xdist 下的两个实测缺陷
+
+复盘④说「快照 + 人工核查进基线是共享介质上能诚实做出的最强承诺」。
+当天下午的实证补充了一条必要前提：**diff 对象自己必须单一介质、单一
+归属，否则「diff 替代断言」只是把 v1 的误报从「用例红」降级成「基线
+静默漂移」——后者更危险。** v3 快照机制在 xdist 8 worker 全量
+（`3854 passed / 9 skipped, 88.32%, 4:03`，`/tmp/full_run_f1.txt`）上
+实测出两个缺陷：
+
+**缺陷 A：8 个 worker 共享写同一份基线（last-writer-wins）。**
+`_default_db_cleanliness_snapshot` 的快照路径是
+`db_file.parent / "test.db.cleanliness.json"` —— **文件名硬编码**，与
+`db_file` 的名字无关。worker 各有独立库（`test_gw0.db`…`test_gw7.db`，
+DB_PATH 推导见 conftest 头部），但 teardown 时 8 个进程全写
+`data/test.db.cleanliness.json` 这一个文件。全量跑完后的 JSON 与
+`test_gw3.db` 的足迹**逐表逐值一致**（`projects=7, project_history=5,
+gas_alert_rules=4, harvest_records=5, team_studio_*=1+1`，44 张表）——
+最后结束的 worker 把自己那份「子集足迹」盖成了「全量基线」。串行全量
+与 xdist 全量的合规足迹本来就不同（串行：`projects=9,
+project_history=30`；xdist：`logs=10, notify_log=5, collection_logs=4`
+等分散在多个 worker 库），模式混用时基线被两种介质轮流覆盖，diff 的
+参照系每轮都在漂。
+
+**缺陷 B：xdist 下 diff 警告通道整体失聪。** 探针实验：预埋
+`{"__sentinel__": 999}` 进基线 JSON 后——
+
+- 串行单文件 `-s`：警告正常出现（`清空: {'__sentinel__': 999}`）；
+- 同一文件 `-n 2 -s`：**零警告**，哨兵被静默覆盖。
+
+机制：worker 进程的 teardown print 默认被 pytest-xdist 捕获（`-s`
+不改变 worker 内的捕获行为），而 xdist 的实时日志由 controller 转发
+worker 事件产生——teardown print 不在其中。也就是说：**哪怕某轮出现
+真正的异常足迹，xdist 全量（本体系的主要验收形态）也不会把 diff 提示
+送到任何人眼前**；「确认无害后覆盖更新」这个动作照常执行，异常就这样
+无声地进入基线。v3 验证时「两轮 diff 零差异」的结论，其实是
+「diff 提示通道 + last-writer-wins 叠加后什么也看不见」，而非干净重放
+的证据本身。
+
+**对照组证据链**：
+
+- 跑前基线 = 串行足迹（`projects=9, project_history=30`，39 表）；
+- 跑后基线 = gw3 足迹（44 表），两者完全不同，中间无任何警告；
+- 8 个 worker 库的独立足迹各不相同且都合法（规则一/二自播种），
+  例如 gw0 `projects=77/project_history=242`，gw6 仅 `projects=6`
+  ——任何一个子集都不等于全量足迹，这是「worker 子集不相交」复盘②
+  在快照介质上的再次显形；
+- gw3 多出的 5 张表（`gas_alert_rules` / `harvest_records` /
+  `team_studio_operators` + `team_studio_tasks` / `faucet_claims`）
+  查明为 `ensure_*_table` 按需建表服务的合规自播种，非隔离泄漏。
+
+**教训（复盘④的补充条款）：** diff 机制要成立，先问三个问题——
+写基线的是谁（单一归属）、基线描述的是哪份介质（模式标注）、
+提示往哪走（在主要验收形态下可达）。三个问题里任何一个不成立，
+漂移追踪就退化成「漂移掩埋」。
+
+**修复（2026-09-29 下午，最小方案已实施并验证）**：不引入多文件
+分流，改为两条最小规则——
+
+1. **仅非 worker 进程写快照**：fixture 开头对
+   `PYTEST_XDIST_WORKER` 显式 `return`。controller 进程不跑用例、
+   fixture 不激活，天然不写；worker 是独立介质且提示不可达，写基线
+   的一切副作用（缺陷 A）就此归零。语义：**基线由串行验收轮
+   （全量/酸测）维护，xdist 全量验收不碰基线**。
+2. **快照内容带 `_mode` 标注**：读到异模式基线时，diff 提示里显式
+   注记模式差异——单侧归属明确后，参照系漂移从「静默」变为「可见」。
+
+哨兵探针验证（修改后）：① 串行单文件：警告正常 + 新格式写入；
+② `-n 2` 预埋哨兵基线：跑后逐字节不变（缺陷 A 消除）；
+③ 预埋 `_mode: "xdist"` 异模式基线跑串行：警告中出现「基线模式」
+注记。终验：xdist 8 worker 全量 `3854 passed / 9 skipped`，跑前跑后
+基线 hash 一致（`718bfe8a…`），`_mode` 保持 `serial`。
+新格式（多 `_mode` 键）对旧基线的兼容是天然的：旧格式文件在下一轮
+串行运行时被新格式覆盖，无需迁移脚本。
+
+**串行双轮重放验证（同日，修复后的确定性验收）**：串行全量
+`-s -q` 背靠背两轮，各 `3854 passed / 9 skipped`（18:16 / 18:11）。
+
+- R1 出现 **1 条 diff 警告，且是真信号**：跑前基线是修复前遗留的
+  部分运行足迹（`projects=9 / project_history=30`，酸测模式产物，
+  见下方已知边界），串行全量的真实足迹是
+  `projects=118 / project_history=307 / logs=31 / notify_log=18 /
+  opportunity_assessments=17` + 5 张 ensure-table 服务表
+  （`gas_alert_rules=4`、`harvest_records=5`、`team_studio_*=1+1`）。
+  机制正确地把参照系漂移暴露出来并更新进基线——「diff + 人工核查
+  进基线」的预期行为，而非回归。
+- R2 **零 diff 警告**，跑后基线与 R1 跑后**逐字节一致**
+  （hash `795d8e8e…`，39 张 schema 表 + 5 张服务表 + `_mode` 键，
+  逐表零差异）——串行重放确定性成立，漂移追踪在修复后首次拿到
+  「第二轮零差异」的诚实基线。
+- **基线分流（同日下午补充，消除交替运行时的预期内大 diff）**：
+  串行全量与串行酸测都是单进程、足迹却截然不同（全量
+  `projects=118` vs 酸测最后文件的残留 `projects=9`），共用一份基线
+  时每次交替都会出一条千行级「增长/清空」警告——预期差异不是污染
+  信号，不该以大 diff 形式出现。故 `_mode` 细分为两桶：
+  **`serial-full`**（直跑 pytest，默认）与 **`serial-acid`**（酸测脚本
+  给子进程注入 `CLEANLINESS_MODE=acid`）。同模式比对走完整逐表 diff；
+  异模式基线只出**单行模式注记**（数字不可比，逐表列举只会是噪声），
+  基线随本轮覆盖更新。两个桶各自重放确定：serial-full 已由双轮全量
+  验证（R2 零警告、hash `795d8e8e…` 一致）；serial-acid 由探针验证
+  （同两个灰区文件连跑两轮，第二轮零警告、基线逐字节一致）。
+
 ## 附：数据来源
 
 - v1 全量日志：xdist 8 worker，1 failed + 8 errors（2026-09-29，
@@ -141,5 +242,14 @@ v1 失败后自然会想：把粒度降到用例——「本用例开始前库�
   表分布统计脚本按 `ERROR at teardown of <nodeid>` + 洁净度消息
   解析（本文表格即其输出）
 - v3 双轮全量：3854 passed ×2，第二轮 diff 零差异
+- 后记实证（2026-09-29 下午）：xdist 8 worker 全量
+  `3854 passed / 9 skipped, 88.32%, 4:03`（`/tmp/full_run_f1.txt`）+ 两轮
+  哨兵探针（串行单文件 `-s` vs `-n 2 -s`，警告出现/失聪各一）；
+  逐库取证脚本遍历 `data/test.db` + 8 个 `test_gw*.db` 的表集合与非零计数
+- 后记修复验证：xdist 8 worker 全量 + 串行双轮重放
+  （`/tmp/serial_replay_r1.txt`、`/tmp/serial_replay_r2.txt`，
+  R1 警告 1 条真信号、R2 零警告，两轮跑后基线 hash 一致
+  `795d8e8e…`）；基线分流探针：异模式单行注记 + serial-acid
+  双轮重放零警告
 - 相关提交：`6ce2038`（conftest 快照 + 串行统一重建）、
   `9d18692`（整体回归）、CONVENTIONS §13.4

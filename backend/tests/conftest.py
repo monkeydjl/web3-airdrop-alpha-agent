@@ -200,13 +200,51 @@ def pytest_configure(config):
 #
 # 量级信息在快照顶部：非零表清单即当前体系的真实足迹（2026-09-28
 # 酸测审计确认的 39 个灰区/探针文件的播种产物）。
+#
+# xdist 下的两个实测缺陷（2026-09-29 后记实证，docs 同文）：
+# A. 快照路径是 db_file.parent / "test.db.cleanliness.json"（文件名硬编码，
+#    不随库名变），8 个 worker teardown 各写同一个文件 → last-writer-wins，
+#    实测基线被盖成 gw3 的 44 表子集足迹；串行/xdist 两种介质足迹本来就
+#    不同，模式混用时基线被轮流覆盖，diff 参照系每轮都在漂。
+# B. worker 的 teardown print 被 xdist 捕获（-s 也不改变 worker 内捕获），
+#    diff 提示在主要验收形态下不可达 → 哨兵探针实证：串行 -s 有警告，
+#    -n 2 -s 零警告。覆盖发生时无人看见。
+# 最小修复：只有非 worker 进程写快照（controller 不跑用例、fixture 不激活，
+# 天然不写）；快照内容带 _mode 标注，读到异模式基线时在 diff 提示里注明。
+# 语义：xdist 全量验收 = 不碰基线；基线由串行验收轮维护。
+# 基线分流（消除串行全量 ↔ 串行酸测交替时的预期内大 diff）：
+# 两者都是单进程、足迹却截然不同（全量 projects=118 vs 酸测残留 projects=9），
+# 共用一份基线时每次交替都会出一条千行级「增长/清空」警告——预期差异不是
+# 污染信号，不该以大 diff 形式出现。故 _mode 细分为：
+#   serial-full  直跑 pytest（默认，环境变量未设时）
+#   serial-acid  酸测脚本注入 CLEANLINESS_MODE=acid（verify_test_db_isolation）
+# 同模式比对走完整 diff；异模式基线只出**单行模式注记**（数字不可比，
+# 逐表列举只会是噪声），基线随本轮覆盖更新。
 _CLEANLINESS_WHITELISTED_TABLES = frozenset({"alembic_version"})
+# 快照里的保留键：记录写入时的运行模式。表名来自 sqlite_master（已排除
+# sqlite_%），不可能以下划线开头，与保留键无冲突风险。
+_CLEANLINESS_MODE_KEY = "_mode"
+# 酸测脚本（verify_test_db_isolation）会设 CLEANLINESS_MODE=acid；直跑
+# pytest（串行全量/单文件）落到默认 serial-full。
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _default_db_cleanliness_snapshot():
-    """会话结束时把默认库各业务表行数快照到 data/，与上轮 diff 报告。"""
+    """会话结束时把默认库各业务表行数快照到 data/，与上轮 diff 报告。
+
+    仅非 worker 进程写入：xdist worker 各自是独立介质（test_gwN.db），
+    子集足迹既不等于全量足迹，diff 提示也不可达（见上方缺陷 A/B）。
+    """
     yield
+
+    # xdist worker 显式跳过：缺陷 A（8 进程 last-writer-wins 覆盖基线）
+    # + 缺陷 B（teardown print 不可达，覆盖无人看见）。
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+
+    # 本次运行的模式标签（见上方分流说明）。
+    cleanliness_mode = "serial-acid" if os.environ.get("CLEANLINESS_MODE") == "acid" else "serial-full"
+
     import contextlib
     import json
     import sqlite3
@@ -237,24 +275,39 @@ def _default_db_cleanliness_snapshot():
         conn.close()
 
     snapshot_path = db_file.parent / "test.db.cleanliness.json"
-    prev: dict[str, int] | None = None
+    prev_raw = None
     if snapshot_path.exists():
         try:
-            prev = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            prev_raw = json.loads(snapshot_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            prev = None
+            prev_raw = None
+
+    # 取出基线里的模式标注，剩下的键才是表行数。
+    prev: dict[str, int] | None = None
+    prev_mode: str | None = None
+    if isinstance(prev_raw, dict):
+        prev_raw = dict(prev_raw)
+        prev_mode = prev_raw.pop(_CLEANLINESS_MODE_KEY, None)
+        prev = prev_raw
 
     if prev is not None and prev != snapshot:
-        added = {t: n for t, n in snapshot.items() if t not in prev and n}
-        grown = {t: (prev[t], n) for t, n in snapshot.items() if t in prev and n > prev[t]}
-        removed = {t: prev[t] for t in prev if t not in snapshot or not snapshot.get(t)}
-        parts = []
-        if added:
-            parts.append(f"新出现: {added}")
-        if grown:
-            parts.append(f"增长: {grown}")
-        if removed:
-            parts.append(f"清空: {removed}")
+        if prev_mode is not None and prev_mode != cleanliness_mode:
+            # 异模式基线：逐表列举只会是噪声（两模式足迹本来就不同），
+            # 单行注记说明切换即可，基线随本轮覆盖更新。
+            parts = [
+                f"基线模式: 上轮由 {prev_mode!r} 写入，本次 {cleanliness_mode!r}"
+                " —— 两模式足迹不可比，基线随本轮覆盖更新"
+            ]
+        else:
+            added = {t: n for t, n in snapshot.items() if t not in prev and n}
+            grown = {t: (prev[t], n) for t, n in snapshot.items() if t in prev and n > prev[t]}
+            removed = {t: prev[t] for t in prev if t not in snapshot or not snapshot.get(t)}
+            if added:
+                parts.append(f"新出现: {added}")
+            if grown:
+                parts.append(f"增长: {grown}")
+            if removed:
+                parts.append(f"清空: {removed}")
         print(
             "\n⚠ 默认库洁净度快照与上一轮不同（非阻断，供审阅）：\n  "
             + "; ".join(parts)
@@ -263,7 +316,9 @@ def _default_db_cleanliness_snapshot():
 
     with contextlib.suppress(OSError):
         # 只读环境下快照写不进去就跳过（diff 提示自然消失）
-        snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+        payload = dict(snapshot)
+        payload[_CLEANLINESS_MODE_KEY] = cleanliness_mode
+        snapshot_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 
 # ── fetcher 磁盘缓存必须每个测试前清空 ──────────────────────────

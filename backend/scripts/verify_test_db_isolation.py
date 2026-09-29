@@ -349,7 +349,10 @@ def _run_one(pytest_path: str) -> tuple[bool, str]:
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "PYTHONUTF8": "1"},
+        # CLEANLINESS_MODE=acid：conftest 洁净度快照把本次归入 serial-acid
+        # 桶，与直跑 pytest 的 serial-full 基线分流——两模式足迹本来就不同，
+        # 交替运行不该反复出千行级「预期差异」警告（后记已知边界）。
+        env={**os.environ, "PYTHONUTF8": "1", "CLEANLINESS_MODE": "acid"},
     )
     # pytest exit 5 = EXIT_NOTESTSCOLLECTED：文件里没有任何用例。空文件没有
     # 行为可酸测，记 pass 而不是 FAIL（--changed 会抓到未跟踪的草稿文件，

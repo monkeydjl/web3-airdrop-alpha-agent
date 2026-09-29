@@ -183,12 +183,20 @@ venv/Scripts/python.exe scripts/verify_test_db_isolation.py --only tests/xxx.py 
 守卫相关陷阱（重申 + 新增）：
 
 - 清库删**仓库根** `data/test.db{,-wal,-shm}`，不是 `backend/data/`（曾误删致假绿）
-- 串行与 xdist 均在会话开始删库重建（conftest pytest_configure）；会话结束把
-  默认库足迹快照到 `data/test.db.cleanliness.json` 与上轮 diff（非阻断，
-  意外新增表/暴增行 = 污染信号）。「任何行即红」的绝对洁净度断言实测
-  不可行（规则一/二合规模式本就写默认库自播种；xdist 归因不成立），
-  两版误报教训成文于 conftest 注释 + `docs/testing-default-db-cleanliness.md`
-  （含误报规模与表分布数据）——不要再试第三版
+- 串行与 xdist 均在会话开始删库重建（conftest pytest_configure）；会话结束时
+  **仅串行（非 worker）进程**把默认库足迹快照到
+  `data/test.db.cleanliness.json`（内容带 `_mode` 模式标注）与上轮 diff
+  （非阻断，意外新增表/暴增行 = 污染信号）。xdist 全量验收**不写基线**
+  （worker 各自是独立介质、teardown print 被 xdist 捕获不可达；末代修复前
+  的缺陷 A last-writer-wins / 缺陷 B 提示失聪已哨兵探针实证）。「任何行
+  即红」的绝对洁净度断言实测不可行（规则一/二合规模式本就写默认库
+  自播种；xdist 归因不成立），两版误报 + xdist 后记的教训成文于 conftest
+  注释 + `docs/testing-default-db-cleanliness.md`（含误报规模与表分布
+  数据）——不要再试第三版。串行双轮重放已验证（R2 零警告、跑后基线
+  逐字节一致）；基线已按模式分流：`_mode` 取 `serial-full`（直跑
+  pytest，默认）/ `serial-acid`（酸测脚本给子进程注入
+  `CLEANLINESS_MODE=acid`），同模式走完整 diff、异模式只出单行注记——
+  两模式足迹不同，交替运行不再出预期内大 diff 警告
 - 酸测**不要带 `--timeout`**：仓库未装 pytest-timeout，传了 pytest exit=4
 - 守卫体系全部工作尚在本地未推送：推送前 CI 上 `--changed` 的默认基线
   （`origin/master`）会把全部改动当「本次改动」，workflow 按钮也推送后才出现

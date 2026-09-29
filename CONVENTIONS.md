@@ -675,14 +675,24 @@ workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
 先跑 `backend/scripts/check_ci_parity.py`（CI lint job 同命令同顺序的
 一键自检 + 酸测枚举加码腿），配套 `tests/test_ci_parity.py` 把它钉进  全量套件——防止再犯「只验 ruff format 没验 ruff check」的提交事故
   （2026-09-29 整体回归抓出 11 个 E402/I001 的教训）。
-- **默认库洁净度快照**（conftest 会话结束钩子）：每轮全量跑完把默认库
-  各业务表行数快照到 `data/test.db.cleanliness.json`，与上一轮不同时
-  打印 diff（非阻断）。设计取舍：绝对口径「任何行即红」实测不可行——
-  规则一/二的合规模式本就允许写默认库自播种读回，且 xdist worker 子集
-  下会话级归因不成立（首版两次重设计，2693 误报的教训成文于 conftest
-  注释）。  快照把洁净度从二值断言降为**可审阅的漂移追踪**：意外的新表/
-  暴增行即污染信号，人工核查后才进入基线。v1/v2 的两次实证失败
-  数据与原理分析见 `docs/testing-default-db-cleanliness.md`。
+- **默认库洁净度快照**（conftest 会话结束钩子）：**仅串行（非 worker）
+  进程**把默认库各业务表行数快照到 `data/test.db.cleanliness.json`
+  （内容带 `_mode` 模式标注），与上一轮不同时打印 diff（非阻断）。
+  设计取舍：绝对口径「任何行即红」实测不可行——规则一/二的合规模式
+  本就允许写默认库自播种读回，且 xdist worker 子集下会话级归因不成立
+  （首版两次重设计，2693 误报的教训成文于 conftest 注释）。快照把
+  洁净度从二值断言降为**可审阅的漂移追踪**：意外的新表/暴增行即污染
+  信号，人工核查后才进入基线。**xdist 全量验收不写基线**——worker
+  各自是独立介质（test_gwN.db），子集足迹既不等于全量，teardown print
+  也被 xdist 捕获不可达（哨兵探针实证：8 worker 跑完基线逐字节不变；
+  缺陷 A last-writer-wins / 缺陷 B 提示失聪的后记实证见复盘短文）。
+  跨模式基线（上轮由异模式写入）在 diff 提示里显式注记「数字整体
+  不可比」。基线按模式分流：`_mode` 取 `serial-full`（直跑 pytest，
+  默认）/ `serial-acid`（酸测脚本注入 `CLEANLINESS_MODE=acid`），
+  同模式走完整逐表 diff、异模式只出单行注记——两模式足迹不同，
+  交替运行不再出预期内大 diff 警告。串行双轮重放已验证（第二轮
+  零警告、跑后基线逐字节一致）。v1/v2 两次实证失败 + xdist 后记的
+  完整数据与原理见 `docs/testing-default-db-cleanliness.md`。
 
 ---
 
