@@ -342,6 +342,29 @@ def _run_one(pytest_path: str) -> tuple[bool, str]:
         "no:cacheprovider",
         "--no-cov",
     ]
+    # 环境变量钉住（2026-09-30 继承面审计）：子进程会继承外层全部环境
+    # 变量，三个必须显式处理——
+    # 1. DB_PATH：本脚本删库固定删 `_default_db_files()` 指向的仓库根
+    #    data/test.db 三件套；若操作员 shell 导出了 DB_PATH，串行会话会
+    #    setdefault 尊重它 → 会话写的库与本脚本删的库分家，酸测写进
+    #    操作员指定的工作库。显式 pin 到删除目标的同一个文件——单一
+    #    真相源是 `_default_db_files()[0]`（回归钉子见
+    #    tests/test_cleanliness_snapshot.py::TestRunOneEnvPinning），
+    #    删/写永远同库。
+    # 2. CLEANLINESS_MODE=acid：洁净度快照把本次归入 serial-acid 桶，
+    #    与直跑 pytest 的 serial-full 基线分流（交替运行不出预期内
+    #    大 diff 警告）。
+    # 3. PYTEST_XDIST_WORKER 必须剥掉：目前无人从 pytest 会话内调本
+    #    脚本，但一旦发生，worker 身份会让内层 conftest 强制重定向
+    #    DB_PATH 到 test_gwN.db 并删库——与上面 DB_PATH 的 pin 冲突。
+    #    剥掉，堵死理论路径。
+    env = {
+        **os.environ,
+        "PYTHONUTF8": "1",
+        "CLEANLINESS_MODE": "acid",
+        "DB_PATH": str(_default_db_files()[0]),
+    }
+    env.pop("PYTEST_XDIST_WORKER", None)
     result = subprocess.run(
         cmd,
         cwd=BACKEND_DIR,
@@ -349,10 +372,7 @@ def _run_one(pytest_path: str) -> tuple[bool, str]:
         text=True,
         encoding="utf-8",
         errors="replace",
-        # CLEANLINESS_MODE=acid：conftest 洁净度快照把本次归入 serial-acid
-        # 桶，与直跑 pytest 的 serial-full 基线分流——两模式足迹本来就不同，
-        # 交替运行不该反复出千行级「预期差异」警告（后记已知边界）。
-        env={**os.environ, "PYTHONUTF8": "1", "CLEANLINESS_MODE": "acid"},
+        env=env,
     )
     # pytest exit 5 = EXIT_NOTESTSCOLLECTED：文件里没有任何用例。空文件没有
     # 行为可酸测，记 pass 而不是 FAIL（--changed 会抓到未跟踪的草稿文件，

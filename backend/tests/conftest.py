@@ -299,6 +299,7 @@ def _default_db_cleanliness_snapshot():
                 " —— 两模式足迹不可比，基线随本轮覆盖更新"
             ]
         else:
+            parts = []
             added = {t: n for t, n in snapshot.items() if t not in prev and n}
             grown = {t: (prev[t], n) for t, n in snapshot.items() if t in prev and n > prev[t]}
             removed = {t: prev[t] for t in prev if t not in snapshot or not snapshot.get(t)}
