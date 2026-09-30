@@ -665,7 +665,10 @@ def init_db(conn: sqlite3.Connection) -> None:
 默认库的文件静态不可见，依赖逐文件空库酸测覆盖——已固化为
 `backend/scripts/verify_test_db_isolation.py`：动态枚举灰区（复用守卫
 AST 函数，零硬编码清单）+ 探针抽样，逐文件删仓库根 `data/test.db{,-wal,-shm}`
-后串行 pytest 单跑（全量约 4-5 分钟）。新增守卫规则 / 登记豁免后一键复验；
+后串行 pytest 单跑（全量约 4-5 分钟）。`_run_one` 给子进程显式钉
+DB_PATH（= 删除目标，取 `_default_db_files()[0]` 单一真相源）+
+`CLEANLINESS_MODE=acid` + 剥 PYTEST_XDIST_WORKER（污染 shell 分家
+盲区的修复，钉子见 `TestRunOneEnvPinning`）。新增守卫规则 / 登记豁免后一键复验；
 红 = 登记理由不成立，修测试而不是改酸测。2026-09-28 首跑基线：34 灰区 +
 5 探针抽样共 39 文件全新空库全绿。定向复验：`--only <文件>`（带桶归属
 标注）或 `--changed`（三路并集：vs `@{upstream}` 已提交未推送 + 工作区 +
@@ -691,8 +694,19 @@ workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
   默认）/ `serial-acid`（酸测脚本注入 `CLEANLINESS_MODE=acid`），
   同模式走完整逐表 diff、异模式只出单行注记——两模式足迹不同，
   交替运行不再出预期内大 diff 警告。串行双轮重放已验证（第二轮
-  零警告、跑后基线逐字节一致）。v1/v2 两次实证失败 + xdist 后记的
-  完整数据与原理见 `docs/testing-default-db-cleanliness.md`。
+  零警告、跑后基线逐字节一致）。快照机制有回归钉子
+  `tests/test_cleanliness_snapshot.py`（四路径 + 模式注入契约，内层
+  子进程钉死 CLEANLINESS_MODE/PYTEST_XDIST_WORKER/DB_PATH 三个
+  环境变量、快照落私有 tmp 目录；嵌套 xdist 用例外层 skip）。
+  `_run_one` 的 env 钉住另有 `TestRunOneEnvPinning` 回归钉子：污染
+  shell 下进程内调真 `_run_one`（删除目标 monkeypatch 到
+  `backend/data/_probe/`），断言子进程 DB_PATH==删除目标（pin 来源
+  = `_default_db_files()[0]` 单一真相源）+ CLEANLINESS_MODE=acid +
+  无 worker 身份。探针不能放系统 TEMP：pytest 9 win32 收集匹配会对
+  兄弟节点 lstat 兑底，外层 xdist 并发删 per-test 目录会 TOCTOU
+  （复盘短文「探针选址教训」）。
+  v1/v2 两次实证失败 + xdist 后记的完整数据与原理见
+  `docs/testing-default-db-cleanliness.md`。
 
 ---
 

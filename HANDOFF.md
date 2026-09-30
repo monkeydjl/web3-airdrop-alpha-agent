@@ -196,7 +196,14 @@ venv/Scripts/python.exe scripts/verify_test_db_isolation.py --only tests/xxx.py 
   逐字节一致）；基线已按模式分流：`_mode` 取 `serial-full`（直跑
   pytest，默认）/ `serial-acid`（酸测脚本给子进程注入
   `CLEANLINESS_MODE=acid`），同模式走完整 diff、异模式只出单行注记——
-  两模式足迹不同，交替运行不再出预期内大 diff 警告
+  两模式足迹不同，交替运行不再出预期内大 diff 警告。回归钉子
+  `tests/test_cleanliness_snapshot.py` 已固化（四路径 + 注入契约；
+  内层子进程钉死 CLEANLINESS_MODE / PYTEST_XDIST_WORKER / DB_PATH，
+  快照落私有 tmp 目录；嵌套 xdist 用例外层 skip）。`_run_one` 的
+  env 钉住由 `TestRunOneEnvPinning` 钉死（污染 shell 下断言子进程
+  DB_PATH==删除目标 / acid / 无 worker 身份；探针落
+  `backend/data/_probe/`，不能放系统 TEMP——pytest 9 win32 收集
+  匹配 lstat 兑底 × 外层 xdist 并发删 tmp 目录会 TOCTOU）
 - 酸测**不要带 `--timeout`**：仓库未装 pytest-timeout，传了 pytest exit=4
 - 守卫体系全部工作尚在本地未推送：推送前 CI 上 `--changed` 的默认基线
   （`origin/master`）会把全部改动当「本次改动」，workflow 按钮也推送后才出现

@@ -405,4 +405,18 @@ make test-cov     # 生成 htmlcov/ 覆盖率报告
 
 ---
 
+## 13. 深度复盘（testing-*.md）
+
+测试基础设施的大型调查成文于 [`testing-default-db-cleanliness.md`](testing-default-db-cleanliness.md)
+与 [`testing-windows-scripts.md`](testing-windows-scripts.md)：前者记录默认库
+洁净度快照机制的 xdist 缺陷、五个继承污染盲区与酸测/快照钉子体系；后者记录
+Stop.bat 两个潜伏缺陷（BOM 毒化 `@echo off`、`chcp 65001` + UTF-8 中文注释
+让 cmd 解析静默中断）与编码门禁四型→五型的方向翻转。方法论沉淀：
+**静态门禁绿 ≠ 行为正确；harness 的保真度决定行为钉证词的可信度；
+探针自身的语境必须钉死，否则验证工具自己就成了新的共享介质。**
+新的同类调查（守卫体系缺陷、harness 假象）完成后应按此先例成文并
+登记进 `docs/00_index.md` 编号 11。
+
+---
+
 _文档版本：v1.0 · 2026-07-08_

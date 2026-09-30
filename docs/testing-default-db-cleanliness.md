@@ -234,6 +234,117 @@ worker 事件产生——teardown print 不在其中。也就是说：**哪怕�
   验证（R2 零警告、hash `795d8e8e…` 一致）；serial-acid 由探针验证
   （同两个灰区文件连跑两轮，第二轮零警告、基线逐字节一致）。
 
+  **分流实施后的终态验收顺带演示了酸测的价值**：全量酸测首轮
+  （39 文件）立刻抓住分流重构引入的回归——同模式 diff 分支漏了
+  `parts = []` 初始化，同模式足迹变化时 teardown 抛
+  UnboundLocalError，5 个文件报「N passed, 1 error」。此前所有探针
+  都没踩中它（探针走的是异模式分支或零差异路径），直到真实足迹
+  变化才引。
+  修复后重跑：**39/39 绿 ×2，跑后基线逐字节一致**
+  （`_mode=serial-acid` 全零足迹，hash `221580a9…`）；同模式 diff
+  路径另以哨兵探针直接验证（`清空: {'__sentinel__': 42}` 正常输出）。
+  终态验收全景：xdist 8 worker 全量 ×2（3854 passed，基线 hash
+  `cb502177…` 两轮逐字节不变）+ 全量酸测 ×2（39/39 绿，acid 桶
+  重放确定）。
+
+**探针固化为回归钉子（同日，`tests/test_cleanliness_snapshot.py`）**：
+四条快照路径（串行警告通道 / xdist 零写入 / 异模式单行注记 /
+同模式完整 diff）各一个用例，外加 `CLEANLINESS_MODE=acid` 注入契约。
+固化过程本身又实测出**三个继承污染盲区**——子进程会继承外层全部
+环境变量，而被测路径必须用 in-pytest 子进程重放「会话结束」时序：
+
+1. `CLEANLINESS_MODE`：acid 外层（酸测单跑本文件）会把 serial-full
+   路径用例静默变成 acid 会话，断言全部错位（实测 3 failed）；
+2. `PYTEST_XDIST_WORKER`：不剥掉，串行子进程被 conftest 误判成
+   worker，teardown 直接跳过快照——失效且无报错；
+3. `DB_PATH`：内层 `pytest_configure` 会删库重建，不钉住删的就是
+   外层正在用的库。解法：每用例私有 `tmp_path` 探针库，快照随
+   `db_file.parent` 规则落私有目录，与真实基线彻底解耦——外层
+   xdist 多 worker 并发跑本文件也不再共享任何介质（缺陷 A 的微型
+   重演，在固化过程中被复现并消灭）。
+
+用例在三种外层语境（直跑 / acid / xdist）下全部验证；嵌套 xdist
+用例在外层 xdist 下显式 skip（内层 worker 会被 conftest 强制重定向
+DB_PATH 到仓库 data/ 删库，外层全量下不安全）。教训与复盘②同源：
+**探针自身的语境必须钉死，否则验证工具自己就成了新的共享介质。**
+
+**xdist 提示可达性审计（同日，AST 全树扫描）**：确认缺陷 B 没有同类
+残留——tests 全树 114 个 fixture 中 42 个带 yield，全部 function
+scope 且 yield 后零 print；无 sessionfinish/unconfigure/terminal_summary
+钩子、无模块级 print、无插件注册、无其他 conftest。全仓唯一的会话级
+teardown print 就是洁净度快照（已修复）。设计指引：**今后需要 xdist
+下可见的会话级提示，用 `warnings.warn`（进 warnings summary，
+controller 会汇总 worker 记录）或 `pytest_terminal_summary` 钩子，
+不要用 print**——print 在 worker 内必被捕获，这是机制不是例外。
+
+**子进程环境变量继承审计（同日）**：tests 全树 7 个 subprocess 调用点
+（5 文件）逐个核查——唯一 spawn pytest 的只有洁净度钉子文件自身
+（已钉三个变量）；`test_alembic_migration._run` 已显式钉 DB_PATH 到
+tmp 库（spawn 的是 alembic/init_db，非 pytest 会话，模式变量无消费方）；
+test_ci_parity / gitignore / shell_scripts 的子进程（ruff、守卫脚本、
+git、bash -n）均不读 DB_PATH/CLEANLINESS_MODE/PYTEST_XDIST_WORKER。
+无残留盲区。
+
+**scripts 侧继承面审计（同日，延续同一方法）**：全仓 5 个 spawn 点
+（backend/scripts 2 文件 + 根 scripts 2 文件；check_ci_parity 唯一
+spawn 点是其 ruff/守卫腿）。判定同构：ruff / git / bash -n / 守卫
+AST 脚本不消费三个高危变量；消费 DB_PATH 的 bench/dual_run 脚本
+spawn 的是应用内线程非子进程。**唯一真实盲区在酸测脚本自身**：
+`_run_one` 只注入了 CLEANLINESS_MODE，未钉 DB_PATH 也未剥
+PYTEST_XDIST_WORKER——若操作员 shell 导出 DB_PATH，酸测会话写的
+库与本脚本 `_delete_default_db` 固定删的 `data/test.db` 分家，酸测
+数据写进操作员指定的工作库。已修复：env 显式 pin DB_PATH 到
+conftest 同款默认值（删/写永远同库）+ 剥 PYTEST_XDIST_WORKER
+（堵死嵌套调用时 worker 身份覆盖 pin 的理论路径）；
+`DB_PATH=…` 污染 shell 下单文件酸测 + 全量 39/39 复跑验证通过。
+教训与 tests 侧同源：**写介质的脚本必须 pin 介质路径，读环境的
+继承不能隐式信任操作员 shell。**
+
+**`_run_one` 环境钉住的回归钉子（2026-09-30）**：钉子文件新增
+`TestRunOneEnvPinning`，把上一段的修复钉死——进程内调真 `_run_one`
+（monkeypatch `_default_db_files` → 探针目录三件套，删除目标与
+DB_PATH pin 一起落到 `backend/data/_probe/`，脚本代码原样执行，外层
+介质零触碰），污染 shell（DB_PATH / PYTEST_XDIST_WORKER /
+CLEANLINESS_MODE 全部在场）下断言子进程三件事：DB_PATH == 删除目标
+（顺带钉住 pin 来源 = `_default_db_files()[0]` 单一真相源——脚本侧
+已从硬编码重构过来，任何一处再分叉探针必红）、CLEANLINESS_MODE 强制
+acid、无 worker 身份。三外层语境（直跑 / 酸测 --only / xdist
+8 worker）全绿；静态守卫兼容（探针在 data/ 下，tests/ 树外，守卫
+枚举不可见）。
+
+**探针选址教训（同日，xdist 下实测爆出）**：探针最初放在系统 TEMP
+（仓库 tmp_path fixture 的常规落点），xdist 外层 8 worker 下三个用例
+齐红——内层子进程 collection 阶段 `lstat` 了**别的用例的** tmp 目录
+并撞上 FileNotFound。根因：pytest 9 在 win32 的收集路径匹配会对
+不匹配的兄弟收集节点逐个 `samefile_nofollow`（lstat）兑底，探针在
+`$TEMP` 根下时内层会话收集链涵盖 `$TEMP`，而外层 worker 正在并发
+rmtree 彼此的 per-test 目录 → TOCTOU。单 worker 重跑永远绿（无并发
+删除），又一次「并发语境才爆」。落点改为仓库内运行时忽略区
+（`backend/data/_probe/`，收集链祖先的兄弟节点全程稳定）后消除。
+教训：**嵌套 spawn 的探针文件选址要考虑内层会话的收集链祖先——任何
+会被外层并发改动/删除的目录（系统 TEMP、仓库 tmp 落点）都不能放。**
+
+**「pin 来源与删除目标分叉」全 scripts 审计（2026-09-30，同款问题
+排查）**：`_run_one` 的分叉修复后，对根 scripts/ + backend/scripts/
+共 45 个脚本做同款排查（unlink/rmtree/Remove-Item/硬编码 db 文件名/
+data 目录构造五路扫描 + 逐个人工过）。判定标准：**删介质与写/指
+介质在脚本内成对出现且来源不同源**才算分叉。结论——零残留：
+
+- 有删行为的 3 处全部自洽：`_delete_default_db`（pin 已同源，见上）；
+  auto_backup.ps1 的 Remove-Item 全部作用于自建备份工作目录（自建
+  自删）；backup.sh 的 `rm -f` 只删容器内临时导出文件。
+- 写库脚本（seed/purge/rescore/calibrate/e2e/quarantine/backfill 等）
+  介质统一走 `settings.db_path`（尊重 DB_PATH env），单介质、无硬编
+  码删除目标与之配对；bench 三兄弟（bench_db/bench_event_loop/
+  dual_run_compare）pin 到自建 tmp 自洽；backfill_listed_subproducts
+  是单介质写 + docstring 显式 CWD 陷阱警告；migrate_sqlite_to_pg
+  两端介质都是显式 CLI 参数。
+- 读介质脚本无分叉风险：backup.sh/health-check.sh 的库源 = `.env`
+  DB_PATH（2026-08-24 已修过同款「查错文件」问题，有回退候选警告）；
+  backtest 数据集是只读输入；守卫脚本的 test.db/DB_PATH 字样全是
+  AST 模式签名非真实路径。verify_init_db_concurrency 是 PG-only
+  无文件介质。grep 假阳性（unlinked 业务词、shutil.which）逐一排除。
+
 ## 附：数据来源
 
 - v1 全量日志：xdist 8 worker，1 failed + 8 errors（2026-09-29，
@@ -251,5 +362,13 @@ worker 事件产生——teardown print 不在其中。也就是说：**哪怕�
   R1 警告 1 条真信号、R2 零警告，两轮跑后基线 hash 一致
   `795d8e8e…`）；基线分流探针：异模式单行注记 + serial-acid
   双轮重放零警告
+- 分流终态验收（同日）：xdist 8 worker 全量 ×2
+  （`/tmp/accept_xdist_r1/r2.txt`，基线 hash `cb502177…` 两轮不变）+
+  全量酸测 ×2（`/tmp/accept_acid_r1/r2.txt`，39/39 绿，acid 桶基线
+  `221580a9…` 逐字节一致；首轮曾抓出分流重构的 parts 未初始化
+  回归，修复后重跑）
+- `_run_one` 钉子验收（2026-09-30）：三外层语境全绿 + xdist 竞争
+  定位与修复重验（`/tmp/xdist_pin_debug*.txt`）；基线 JSON
+  serial-acid hash `66cb1eb6…` 验收后不变
 - 相关提交：`6ce2038`（conftest 快照 + 串行统一重建）、
   `9d18692`（整体回归）、CONVENTIONS §13.4

@@ -3,7 +3,7 @@
 > 本文档为 `docs/` 的编号化入口，对应 Project Bootstrap 第二部分"Documentation System"。
 > 每个编号对应一类文档主题；右侧指向项目内实际文档（避免重复内容，仅做索引 + 模板锚点）。
 >
-> 更新日期：2026-07-13
+> 更新日期：2026-09-30
 
 ---
 
@@ -22,7 +22,7 @@
 | 08 | AI / LLM | [`adr/ADR-001-llm-default-off.md`](adr/ADR-001-llm-default-off.md)、`prompts/README.md`、[`WEIGHT_CALIBRATION.md`](WEIGHT_CALIBRATION.md) | ✅ |
 | 09 | Deployment | [`DEPLOYMENT.md`](DEPLOYMENT.md)、`infra/README.md` | ✅ |
 | 10 | Security | [`SECURITY.md`](SECURITY.md) | ✅ |
-| 11 | Testing | [`TESTING_FRAMEWORK.md`](TESTING_FRAMEWORK.md)、`tests/`、[`GOLDEN_TEST_CASES.md`](GOLDEN_TEST_CASES.md) | ✅ |
+| 11 | Testing | [`TESTING_FRAMEWORK.md`](TESTING_FRAMEWORK.md)、`tests/`、[`GOLDEN_TEST_CASES.md`](GOLDEN_TEST_CASES.md)、[`testing-default-db-cleanliness.md`](testing-default-db-cleanliness.md)（洁净度快照复盘 + 五盲区审计）、[`testing-windows-scripts.md`](testing-windows-scripts.md)（Windows 脚本行为钉 + 编码五型翻转） | ✅ |
 | 12 | Operations | [`OPERATIONS.md`](OPERATIONS.md) | ✅ |
 | 13 | Monitoring | [`OBSERVABILITY.md`](OBSERVABILITY.md) | ✅ |
 | 14 | Decisions (ADR) | `docs/adr/`（ADR-001~013 + `TEMPLATE.md`） | ✅ |
