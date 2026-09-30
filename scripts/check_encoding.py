@@ -48,7 +48,7 @@
 连代码块都不用排除。它同样是合法 UTF-8，前两型的检查都看不见它。
 损失也最小（2 处 emoji，不影响任何语义），修复成本几乎为零。
 
-### 四型：含中文的 PowerShell / 批处理脚本没有 UTF-8 BOM
+### 四型：含中文的 PowerShell 脚本没有 UTF-8 BOM
 
 前三型是"文件内容已经坏了"。四型不一样：**文件内容完全正确、合法 UTF-8、
 一个坏字节都没有 —— 但 Windows PowerShell 5.1 读它的时候会把它读坏。**
@@ -78,9 +78,37 @@ GBK 是双字节编码，规则是：**任何 >= 0x80 的字节都无条件吃�
 明天在某行加一个字就炸，而炸法是静默跳过代码。
 所以判据不可能是"检查有没有某种危险组合"，只能是"必须有 BOM"。
 
-判据：`.ps1` / `.psm1` / `.bat` / `.cmd` 只要含任何非 ASCII 字节，
+判据：`.ps1` / `.psm1` 只要含任何非 ASCII 字节，
 就**必须**有 UTF-8 BOM（`EF BB BF`）。BOM 让 PowerShell 5.1 与 7.x
 都走 UTF-8，问题彻底消失。
+
+⚠️ **四型只管 PowerShell，不管批处理**（`.bat`/`.cmd` 归五型，方向相反）——
+2026-09-30 之前本文件曾把 `.bat`/`.cmd` 也列进 BOM 必需清单，
+那是在把中文批处理往地雷上引（见五型）。
+
+### 五型：批处理文件不是纯 ASCII（含非 ASCII 字节，或带 BOM）
+
+`.bat`/`.cmd` 的读法与 PowerShell 完全不同，规则方向**相反**：
+**必须纯 ASCII，BOM 反而是毒药。**
+
+1. **BOM 毒化第一行**：cmd 不识别 `\ufeff@echo off`，把它当陌生命令
+   跳过 —— 于是 `@echo off` 失效，整个脚本以回显模式逐行执行。
+   能跑，但行为已经变了（for 循环、括号块的解析路径都受回显影响）。
+2. **cmd 按字节偏移解析，没有代码页协商**：cmd 逐字节扫描批处理文件，
+   UTF-8 中文注释（3 字节/字）会让后续行的解析字节偏移错位 ——
+   实测（2026-09-30，`Stop.bat` 修复前）：注释里的 `——` 被当成命令执行
+   （stderr：`'——' is not recognized as an internal or external command`），
+   脚本**在第一个 taskkill 后静默中断**，第二个循环从未运行。
+3. **`chcp 65001` 救不了**：修复前的 Stop.bat 第 2 行就是 chcp 65001，
+   仍然炸了。chcp 只影响控制台输出的代码页，不影响解析器逐字节读
+   文件的方式。
+
+所以批处理唯一安全的编码是**纯 ASCII**（不含 BOM、不含任何 > 0x7F
+的字节）：ASCII 在任何代码页下解码一致，cmd 解析零歧义。中文注释
+该写进对应的 .md 文档，或用英文写在批处理里。
+
+判据：`.bat` / `.cmd` 出现 UTF-8 BOM 或任何 > 0x7F 的字节 → 报。
+PowerShell（四型）与批处理（五型）互为镜像：**前者必须 BOM，后者禁 BOM**。
 
 为什么不改成"脚本里不许写中文"：那是把成本转嫁给可读性，
 而且挡不住 —— 下一个人照样会写。BOM 是 3 个字节的事，一次解决。
@@ -268,14 +296,20 @@ _SHELL_PARAM_EXPANSION = re.compile(r"\$\{[^{}\n]*\}")
 # "用 errors='replace' 解码后又写回文件"。因此零误报风险。
 REPLACEMENT_CHAR = "\ufffd"
 
-# 四型：含非 ASCII 的 Windows 脚本必须带 UTF-8 BOM。
+# 四型：含非 ASCII 的 PowerShell 脚本必须带 UTF-8 BOM。
 # 没有 BOM 时 PowerShell 5.1 按 ANSI 代码页（简中机器 = GBK）解码。
 # GBK 中任何 >= 0x80 的字节都会无条件吃掉下一个字节 —— 而 UTF-8 中文字符
 # 是 3 字节（奇数），于是引号会不会被吃掉取决于前面中文的字节奇偶性。
 # 引号被吃 → 字符串不闭合 → 后续代码被静默吞进字面量，语法仍合法。
-# 详见模块 docstring。
-BOM_REQUIRED_SUFFIXES = {".ps1", ".psm1", ".bat", ".cmd"}
+# 详见模块 docstring。**只管 PowerShell**：批处理归五型，方向相反。
+BOM_REQUIRED_SUFFIXES = {".ps1", ".psm1"}
 UTF8_BOM = b"\xef\xbb\xbf"
+
+# 五型：批处理必须纯 ASCII（禁 BOM + 禁一切非 ASCII 字节）。
+# cmd 逐字节解析、无代码页协商：UTF-8 中文让解析偏移错位（注释被当命令
+# 执行、脚本静默中断），chcp 65001 救不了；BOM 则直接毒化 `@echo off`。
+# 与四型互为镜像：PowerShell 必须 BOM，批处理禁 BOM。
+ASCII_ONLY_SUFFIXES = {".bat", ".cmd"}
 
 
 def blank_code_blocks(text: str) -> str:
@@ -475,6 +509,7 @@ def main() -> int:
     repl_failures: list[tuple[str, int, str]] = []
     repl_known: list[tuple[str, int]] = []
     bom_failures: list[tuple[str, str]] = []
+    ascii_failures: list[tuple[str, str]] = []
 
     for path in files:
         if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
@@ -522,6 +557,25 @@ def main() -> int:
         if needs_utf8_bom(path, data) and not data.startswith(UTF8_BOM):
             bom_failures.append((rel, describe_bom_hazard(data)))
 
+        # 五型：批处理必须纯 ASCII。BOM 与一切 > 0x7F 的字节都是地雷
+        # （四型与五型方向相反，一个文件只会落在其中一型上）。
+        if path.suffix.lower() in ASCII_ONLY_SUFFIXES:
+            if data.startswith(UTF8_BOM):
+                ascii_failures.append(
+                    (rel, "带 UTF-8 BOM —— cmd 不识别 `\ufeff@echo off`，@echo off 失效，全脚本回显执行")
+                )
+            elif any(b > 0x7F for b in data):
+                first = next(i for i, b in enumerate(data) if b > 0x7F)
+                line = data[:first].count(b"\n") + 1
+                ctx = data[max(0, first - 20) : first + 10]
+                ascii_failures.append(
+                    (
+                        rel,
+                        f"第 {line} 行含非 ASCII 字节 {data[first : first + 4]!r} —— cmd 逐字节解析，"
+                        f"UTF-8 中文会让解析偏移错位（注释被当命令执行、脚本静默中断），chcp 65001 救不了；上下文 {ctx!r}",
+                    )
+                )
+
     for rel, n in known_hits:
         print(f"[known] {rel}：{n} 处非法 UTF-8（一型：丢第 3 字节，已登记待修复）")
     for rel, n in moji_known:
@@ -567,6 +621,23 @@ def main() -> int:
         print("修法（3 个字节，一次解决）：")
         print("  $t = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8)")
         print("  [System.IO.File]::WriteAllText($f, $t, (New-Object System.Text.UTF8Encoding $true))")
+        return 1
+
+    if ascii_failures:
+        print()
+        print(f"[FAIL] {len(ascii_failures)} 个批处理文件不是纯 ASCII（五型）：")
+        for rel, detail in ascii_failures:
+            print(f"  {rel}")
+            print(f"    {detail}")
+        print()
+        print("为什么这是硬错误：cmd 逐字节解析批处理文件、没有代码页协商。UTF-8 中文")
+        print("注释（3 字节/字）会让后续行的解析字节偏移错位 —— 实测（Stop.bat 修复前）")
+        print("注释里的破折号被当成命令执行，脚本在第一个 taskkill 后静默中断，")
+        print("第二个循环从未运行。chcp 65001 只影响控制台输出，救不了解析器。")
+        print("BOM 更直接：cmd 不识别 `\ufeff@echo off`，@echo off 失效、全脚本回显执行。")
+        print()
+        print("修法：把 .bat/.cmd 重写为纯 ASCII（英文注释），中文说明移到对应的 .md 文档。")
+        print("注意与四型方向相反：PowerShell 必须 BOM，批处理禁 BOM、且禁一切非 ASCII 字节。")
         return 1
 
     pending = len(known_hits) + len(moji_known) + len(repl_known)

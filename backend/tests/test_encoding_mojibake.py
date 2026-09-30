@@ -508,10 +508,74 @@ def test_needs_utf8_bom_only_targets_windows_scripts(checker, tmp_path):
         other.write_bytes(cn)
         assert checker.needs_utf8_bom(other, cn) is False, f"{suffix} 不该被四型门禁管"
 
-    for suffix in (".psm1", ".bat", ".cmd"):
+    psm1 = tmp_path / "d.psm1"
+    psm1.write_bytes(cn)
+    assert checker.needs_utf8_bom(psm1, cn) is True, ".psm1 同样由 PowerShell 按代码页读，必须管"
+
+    # .bat/.cmd 归五型（2026-09-30 方向翻转）：批处理必须纯 ASCII，BOM 反而是
+    # 毒药（毒化 @echo off）——绝不能留在 BOM_REQUIRED 清单里把中文批处理
+    # 往地雷上引。Stop.bat 修复时实锤：BOM + chcp 65001 + UTF-8 中文注释
+    # 三件套让脚本静默中断。
+    for suffix in (".bat", ".cmd"):
         script = tmp_path / f"d{suffix}"
         script.write_bytes(cn)
-        assert checker.needs_utf8_bom(script, cn) is True, f"{suffix} 同样由 cmd/PowerShell 按代码页读，必须管"
+        assert checker.needs_utf8_bom(script, cn) is False, f"{suffix} 不归四型管（五型：必须纯 ASCII、禁 BOM）"
+        assert suffix in checker.ASCII_ONLY_SUFFIXES, f"{suffix} 必须在五型 ASCII_ONLY 清单里"
+
+
+def test_main_enforces_ascii_only_for_batch(checker, monkeypatch, tmp_path):
+    """五型端到端：非 ASCII / 带 BOM 的批处理必须被 main() 拦住，纯 ASCII 放行。
+
+    与 `test_main_actually_enforces_the_bom_rule` 同一教训：判据没接进
+    主流程就等于不存在。方向与四型相反 —— 这里的「好样本」是**无 BOM**
+    的纯 ASCII。
+    """
+    cn = "@echo off\r\nREM 中文注释\r\n".encode()
+    nonascii = tmp_path / "cn.bat"
+    nonascii.write_bytes(cn)
+    assert _run_main(checker, monkeypatch, nonascii) == 1, "含非 ASCII 的批处理没被拦住 —— 五型没接进主流程"
+
+    with_bom = tmp_path / "bom.bat"
+    with_bom.write_bytes(checker.UTF8_BOM + b"@echo off\r\n")
+    assert _run_main(checker, monkeypatch, with_bom) == 1, "带 BOM 的批处理没被拦住"
+
+    pure = tmp_path / "pure.bat"
+    pure.write_bytes(b"@echo off\r\nrem english only\r\n")
+    assert _run_main(checker, monkeypatch, pure) == 0, "纯 ASCII 批处理被误判 —— 会逼着人把正确文件改坏"
+
+
+def test_batch_rule_is_the_mirror_of_the_ps_rule(checker, tmp_path):
+    """五型与四型互为镜像：同一份中文内容，两类脚本的判定必须相反。"""
+    cn = "REM 备份完成\n".encode()
+    ps1 = tmp_path / "mirror.ps1"
+    bat = tmp_path / "mirror.bat"
+    ps1.write_bytes(cn)
+    bat.write_bytes(cn)
+    assert checker.needs_utf8_bom(ps1, cn) is True, "PowerShell 侧：含中文必须 BOM（四型）"
+    assert not checker.needs_utf8_bom(bat, cn), "批处理侧：同样内容反而禁 BOM（五型纯 ASCII）"
+
+
+def test_repo_batch_scripts_are_pure_ascii(checker):
+    """全仓实测：所有 .bat/.cmd 必须纯 ASCII（五型零豁免）。
+
+    Stop.bat 修复前就是在这里该红而没红 —— 当时的门禁还在要求它
+    「加 BOM」，方向正好反了。
+    """
+    offenders: list[str] = []
+    checked = 0
+    for path in checker.iter_repo_files():
+        if path.suffix.lower() not in checker.ASCII_ONLY_SUFFIXES:
+            continue
+        data = path.read_bytes()
+        checked += 1
+        if data.startswith(checker.UTF8_BOM) or any(b > 0x7F for b in data):
+            try:
+                rel = path.resolve().relative_to(checker.REPO_ROOT).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            offenders.append(rel)
+    assert checked > 0, "全仓一个批处理文件都没扫到 —— 解析器已失效，本条门禁在空转"
+    assert not offenders, f"这些批处理不是纯 ASCII（BOM 或非 ASCII 字节，cmd 解析地雷）：{offenders}"
 
 
 def test_bom_hazard_description_points_at_the_real_line(checker):
@@ -688,6 +752,11 @@ def test_precommit_hook_covers_every_bom_required_suffix(checker):
         f"这些扩展名被四型判据管着，但 pre-commit 的 files 正则里没有：{missing}。"
         "判据写对了而触发条件漏了，等于这类文件的第一道门是空的。"
     )
+
+    # 五型（批处理纯 ASCII）同样要被钩子触发 —— 2026-09-30 方向翻转后，
+    # .bat/.cmd 的门禁依据从四型换成了五型，正则覆盖不能掉。
+    missing_ascii = [s for s in sorted(checker.ASCII_ONLY_SUFFIXES) if s.lstrip(".") not in section]
+    assert not missing_ascii, f"这些扩展名被五型判据管着，但 pre-commit 的 files 正则里没有：{missing_ascii}。"
 
 
 def test_four_modes_are_mutually_distinguishable(checker, tmp_path):
