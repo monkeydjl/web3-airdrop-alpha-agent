@@ -1122,7 +1122,52 @@ job 名 `airdrop-alpha`，送 Loki。
 | `API_KEY` | 生产自检要求 ≥32 字符 | 不合格直接拒绝启动 |
 | `DATABASE_URL` | **会反向改写 `DB_BACKEND`** | 设了 PG 连接串就一定走 PG，哪怕 `DB_BACKEND=sqlite` |
 | `POSTGRES_PASSWORD` | **已有 pgdata 卷时改了不生效** | 见下方专段（2026-09-30 专坑） |
+| **直接用脚本重写 .env** | **截断丢失文件前半部** | 见下方专段（2026-10-01 专坑，当日自伤当日恢复） |
 | 6 个 `OPPORTUNITY_ECONOMIC_*` | 启动直接报错 | 级联要求：`evidence_emit`⇒`snapshot`，`resolver`⇒`evidence_emit` |
+
+#### 用脚本重写 .env 丢失前半部（2026-10-01 专坑，当日自伤当日恢复）
+
+给 `POSTGRES_HOST` 上方插停用注释时，用了这样的 Python 代码：
+
+```python
+raw.split(anchor, 1)[1]  # 拿 anchor 之后的部分拼接新内容 —— anchor 之前全丢
+```
+
+**正确写法**：取的是 `raw.split(anchor, 1)[0] + new + anchor + raw.split(anchor, 1)[1]`
+（或干脆用 str_replace 工具）。后果链值得记录，因为每一环都在掩盖上一环：
+
+1. **丢了约 115 行**（文件头到 POSTGRES_HOST 之前），含 `API_KEY`、
+   `AUTH_TOKEN_SECRET`、`DB_BACKEND`、`DB_PATH`、CORS、限流等全部前段配置；
+2. **事后验证是空洞通过**：验证脚本 `sys.path.insert(0, 'backend')` 但
+   **cwd 在仓库根** —— pydantic-settings 按进程 cwd 找 .env 找不到，
+   实例化时全部落到**代码声明默认值**，打印出来恰好和真实值一样
+   （development / sqlite / data/airdrop.db）。**验证配置恢复必须用
+   服务进程同款 CWD**（`cd backend` 后再跑），这是本次最大的教训；
+3. 运行中的后端（uvicorn --reload 只监听 .py）**全程未受影响**，
+   一直拿着启动时读入的旧配置 —— 它同时是唯一完整真相源，
+   **事故期间绝对不要重启它**；
+4. 计划任务当晚 02:00 就会把问题放大成 exit 5 备份失败 ——
+   幸好当天为了验证备份路由**主动触发过一次计划任务**，问题在
+   小时级暴露而不是天级。
+
+**恢复路径（三源交叉验证，全部实测）**：
+
+| 恢复源 | 拿到什么 | 怎么验证 |
+|---|---|---|
+| `.env copy 2`（9-03） | 丢失区段的全部键（copy 2 是最全副本，458 行） | **HMAC oracle**：用 copy 2 的 `AUTH_TOKEN_SECRET` 按服务端同款格式（`b64url(payload).b64url(HMAC-SHA256(secret, payload))`）伪造匿名 token 打运行中进程 `/api/v1/projects`，**HTTP 200 = 秘密匹配**（9-30 的编辑没换过秘密）。401 则说明值变过，需换源 |
+| compose 契约 | `API_KEY` = `BACKEND_API_KEY`（幸存区） | 用它当 `X-API-Key` 调 admin 端点，事故前已验证 200 |
+| `backups/auto_backup.log` | `DB_BACKEND` / `DB_PATH` | 14:58 成功运行的日志行原文 |
+
+合并策略：copy 2 丢失区段中**幸存区没有的键**（连同其挂载注释）恢复，
+幸存区已有的键一律不碰（9-03 之后可能改过值）；`DB_BACKEND`/`DB_PATH`
+用日志实测值覆盖。恢复后用**正确 CWD** 的 settings 实例化 + 计划任务
+`Start-ScheduledTask` 真触发验证 LastTaskResult=0 才算完。
+
+**推广的纪律**：`.env` 是「工具对其只读或半只读」的文件（本仓库的
+str_replace 工具就拒绝直接编辑它，这是保护不是障碍）——任何绕过
+保护的操作都必须 (a) 先 `cp` 留底 (b) 改完立刻用服务同款 CWD 做语义
+验证 (c) 保持一个最近的完整副本（`.env copy 2` 这次就是救命的，
+但没有它的 oracle 验证，谁也不敢信一个 9-03 的副本）。
 
 #### `POSTGRES_PASSWORD` 与已有 pgdata 卷：改了不生效
 
