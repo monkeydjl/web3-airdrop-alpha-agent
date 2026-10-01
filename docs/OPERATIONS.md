@@ -1036,7 +1036,41 @@ job 名 `airdrop-alpha`，送 Loki。
 | `SEED_FALLBACK_ENABLED` | 采集失败时是否用种子数据兜底 | **当前 `True`，生产建议关**（§11） |
 | `API_KEY` | 生产自检要求 ≥32 字符 | 不合格直接拒绝启动 |
 | `DATABASE_URL` | **会反向改写 `DB_BACKEND`** | 设了 PG 连接串就一定走 PG，哪怕 `DB_BACKEND=sqlite` |
+| `POSTGRES_PASSWORD` | **已有 pgdata 卷时改了不生效** | 见下方专段（2026-09-30 专坑） |
 | 6 个 `OPPORTUNITY_ECONOMIC_*` | 启动直接报错 | 级联要求：`evidence_emit`⇒`snapshot`，`resolver`⇒`evidence_emit` |
+
+#### `POSTGRES_PASSWORD` 与已有 pgdata 卷：改了不生效
+
+`docker-compose.prod.yml` 的 `db` 服务把 `POSTGRES_PASSWORD` 传给
+postgres 镜像，但这个变量**只在数据目录首次初始化时生效**
+（PG 镜像只在 `pgdata` 卷为空时跑 initdb）。也就是说：
+
+- **全新卷**（首次 `up`）：密码就是 `.env` 里的值，直接生效。
+- **已有卷**（换过一次密码、或从旧部署继承的卷）：改 `.env` 里的
+  `POSTGRES_PASSWORD` **什么都不改** —— 容器照常启动（superuser
+  密码还是旧的），app 容器却拿新密码去连 → 认证失败，
+  `/health` 报 db 错误，且没有任何日志提示「密码不一致」。
+
+正确的换密码步骤（已有卷）：
+
+```bash
+# 1. 先在库内改密码（与 .env 的新值一致）
+docker exec -it airdrop-db psql -U airdrop -d airdrop \
+  -c "ALTER USER airdrop WITH PASSWORD '<新密码>';"
+
+# 2. 再改 .env 的 POSTGRES_PASSWORD（以及所有用旧密码组装的
+#    DATABASE_URL，包括宿主机上运维用的连接串）
+
+# 3. 重启 web 容器让 app 侧拿到新凭据（密码只在启动时读取）
+docker compose -f docker-compose.prod.yml up -d web
+```
+
+**换密码前先备份**（§6）：pg_dump 不依赖密码变更，先备份再动手。
+
+若已经踩进去（app 连不上但 pg 容器正常）：先确认是不是这个问题——
+用 `.env` 里的**旧**密码手工连一次库，能连上即为此坑。处置同上
+（ALTER USER 对齐两边）。禁用「删卷重建」来「修复」密码：那会清掉
+全部业务数据。
 
 ### 9.3 日志级别
 
