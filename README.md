@@ -519,6 +519,7 @@ docker exec airdrop-web alembic downgrade -1
 - [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) — 上线检查清单
 - [docs/GO_LIVE_REPORT.md](docs/GO_LIVE_REPORT.md) — 上线检查报告
 - [docs/OPERATIONS.md](docs/OPERATIONS.md) — 运维手册
+- [docs/WORKSPACE_LAYOUT.md](docs/WORKSPACE_LAYOUT.md) — 工作区文件布局与清理指南（活文件/再生区/灰区清单）
 - [docs/SECURITY.md](docs/SECURITY.md) — 安全规范
 
 ### API 与数据
