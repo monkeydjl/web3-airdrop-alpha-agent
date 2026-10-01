@@ -22,7 +22,39 @@
 |---|---|---|---|---|
 | **本地裸跑**（开发/单机） | `Start.bat` 或手动 uvicorn | `http://localhost:8002` | SQLite 文件 | ✅ 本机现在就是这个 |
 | **单容器 compose** | `docker compose up -d` | `http://localhost:8002` | SQLite（挂载 `./data`） | 配置存在，本机 Docker 未运行 |
-| **生产 compose** | `docker compose -f docker-compose.prod.yml up -d` | `http://localhost:18080`（经 nginx） | PostgreSQL 容器 `airdrop-db` | 配置存在，本机未跑起来 |
+| **生产 compose** | `docker compose -f docker-compose.prod.yml up -d` | `http://localhost:18080`（经 nginx） | PostgreSQL 容器 `airdrop-db` | ⚠️ **2026-10-01 已停用**（保留数据，见下方专段） |
+
+> ### 生产 compose 栈停用记录（2026-10-01）
+>
+> 排查「废弃容器」时发现 `airdrop-db` 不是废弃数据：它是一个**被遗忘的完整
+> 第二部署**（`docker-compose.prod.yml`，2026-09-28 起，四容器 nginx/frontend/web/db）。
+> 铁证三条：**近 24h nginx 零请求**（唯二访问源是 compose healthcheck 与浏览器
+> 直连 8002 的健康探针）；web 镜像 **2026-08-17 构建**（落后当前代码 6.5 周，
+> 8-25 新增的 `/api/v1/scheduler/jobs` 在它上面是 404）；PG **schema 停在迁移
+> 0003**（缺 0005-0012 的 8 张表，含用户认证系统）。
+>
+> 但它不是死数据：容器内 scheduler 每天 08:00 UTC 还在采集，PG 的
+> `raw_projects.max(discovered_at)` 停在停用当天早上 —— **停用前的每天
+> pg_dump 备的是这份还在写入的数据**。这也是昨天「auto_backup 备错库」
+> 的另一半真相：对主力 sqlite 工作流它是错的对象，对这第二个部署它
+> 恰恰是唯一在生效的备份 —— 两套部署共用一份脚本、一份 .env，
+> 而备份路由只能认一个后端。
+>
+> **已执行**：`docker compose -f docker-compose.prod.yml stop`（四容器 Exited，
+> 容器与 pgdata 卷保留，`docker start airdrop-db airdrop-web airdrop-frontend
+> airdrop-nginx` 可整栈恢复）；六个 6 周前就 Exited 的监控容器
+> （prometheus/grafana/loki/promtail/otel/alertmanager/jaeger）已 `docker rm`；
+> 停用前 PG 做了**最终归档 dump**：`backups/pg-final/airdrop_pg_final_20261001.dump`
+> （2.4 MB，`pg_restore --list` 验证 24 个 TABLE DATA 可读）。
+>
+> **重启该栈的注意项**：镜像是 8-17 的旧代码，先 `up -d --build` 重建；
+> `.env` 里没有 `GRAFANA_PASSWORD`（compose 插值阶段会拒绝启动，这是
+> 当时的启动闸门）；PG schema 落后 8 个迁移，起来后 web 容器内跑
+> `alembic upgrade head` 之前别依赖新端点；`.env` 的 `POSTGRES_*` 已加
+> 停用注释，仅供此栈的 db 服务使用。
+>
+> `ash-*` 那组 redis/postgres 容器属于另一个项目（paper-smoke 冒烟栈），
+> 与本仓库无关，未动。
 
 ### 1.1 端口（**实测**，容易记错）
 
@@ -165,6 +197,10 @@ docker compose down
 - nginx 也在 profile 里：`docker compose --profile production up -d`。
 
 ### 3.3 生产 compose
+
+> ⚠️ **本机这套已于 2026-10-01 停用**（零流量 + 旧镜像 + schema 落后，
+> 详见 §1 表格下方的停用记录；数据卷保留，恢复步骤也在那里）。
+> 以下命令仍然有效，供真正要部署的机器使用。
 
 ```powershell
 docker compose -f docker-compose.prod.yml up -d --build
