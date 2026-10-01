@@ -38,21 +38,30 @@
 
 ### 1.2 数据库文件到底在哪（**实测，最容易踩的坑**）
 
-`DB_PATH` 是**相对路径就相对进程工作目录解析**的。本机 `.env` 里配的是
-容器内路径 `/app/data/app.db`，在 Windows 上这个"绝对路径"被解析成 `D:\app\data\app.db`
-—— 也就是说**线上真正在用的库不在仓库目录里**：
+`DB_PATH` 是**相对路径就相对进程工作目录解析**的。
+
+**2026-10-01 实测现状**：`.env` 已改回相对路径 `DB_PATH=data/airdrop.db`，
+`Start.bat` 先 `cd` 到 `backend\` 再起 uvicorn，所以**活动库是
+`backend/data/airdrop.db`**（实测 1314 raw_projects / 31 MB / 43 表，每日被写入）。
+以下都是**过期副本**，别备它们也别恢复它们：
+
+| 文件 | 实测 | 真相 |
+|---|---|---|
+| `backend/data/airdrop.db` | 31 MB | ✅ **活动库**（相对路径 + backend CWD） |
+| `data/airdrop.db`（仓库根） | 311 KB | 过期副本，7 月的 94 项目时代 |
+| `D:\app\data\app.db` | 9.3 MB | 过期，旧容器路径时代（9 月 2 日后未再写入） |
 
 ```powershell
 # 实测：确认当前进程真正连的是哪个文件
 cd backend
 & ".\venv\Scripts\python.exe" -c "from app.db import get_connection; c=get_connection(); print([r[2] for r in c.execute('PRAGMA database_list')]); c.close()"
-# -> ['D:\\app\\data\\app.db']
+# -> ['...\\backend\\data\\airdrop.db']
 ```
 
-仓库里的 `data/airdrop.db`（94 个项目）和 `backend/data/airdrop.db` 都是**过期副本**，
-真库 `D:\app\data\app.db` 有 288 个项目、9.3 MB、27 张表。
-
-**这直接让备份脚本备错文件** —— 见 §12.5，属于上线前必须处理的问题。
+**备错文件的两种历史形态都发生过**：旧版 §1.2 时代是 `D:\app\data\app.db`
+（§12.5），2026-10-01 又发现每日自动备份在备**已废弃的 PostgreSQL 容器**
+（§12.5 附录）——同一个主题：脚本对「哪份才是真库」的判断一旦过时，
+它不会报错，只会每天给你一份看起来成功的、错的备份。
 
 ---
 
@@ -764,32 +773,55 @@ state=running  registered=7  expected=7  missing=[]
 
 ### 6.1 现在真正在跑的备份
 
-`scripts/auto_backup.ps1`，每日 02:00 执行，实测**确实在产出**：
+`scripts/auto_backup.ps1`，每日 02:00 执行（Windows 计划任务），
+**按 `.env` 的 `DB_BACKEND` 路由**（2026-10-01 起）：
+
+| `DB_BACKEND` | 备份对象 | 方式 | 产物（zip 内） |
+|---|---|---|---|
+| `sqlite`（缺省） | `DB_PATH` 指向的库文件（相对路径**先试 `backend\`**） | Python `sqlite3` 在线 backup API + `PRAGMA integrity_check`，活库不停机 | `airdrop_sqlite_<ts>.db` |
+| `postgres` | `airdrop-db` 容器 | `pg_dump` custom + SQL 双格式（原流程） | `airdrop_pg.dump` + `airdrop_pg.sql` |
+
+`.env` 没有 `DB_BACKEND` 键时按 sqlite 处理（与 app config 默认一致）——
+方向刻意如此：宁可备一个不存在的 sqlite 文件而报错，也不能静默滑回
+可能已废弃的 PG 容器（§12.5 附录就是方向反了的事故）。
+
+`DB_PATH` 两处都找不到 → exit 5，**不猜其它文件名**（与 `backup.sh`
+同一契约：猜中一个过期副本比找不到更坏）。SQLite 校验失败 → exit 6
+且清掉工作目录（半个库不是可用备份）。
+
+2026-10-01 真实运行记录：
 
 ```
-backups/auto/airdrop_auto_20260817_215745.zip   1920 KB
-backups/auto/airdrop_auto_20260818_020002.zip   2025 KB
-backups/auto/airdrop_auto_20260820_020002.zip   2572 KB
-backups/auto/airdrop_auto_20260821_020001.zip   2711 KB
-backups/auto/airdrop_auto_20260822_020001.zip   3073 KB
-backups/auto/airdrop_auto_20260823_020001.zip   3431 KB
+[2026-10-01 14:58:19] DB_BACKEND=sqlite
+[2026-10-01 14:58:19] 库文件（backend 相对路径）: ...\backend\data\airdrop.db
+[2026-10-01 14:58:21]   SQLITE_BACKUP_OK integrity=ok tables=43 size=31432704
+[2026-10-01 14:58:23] 备份成功! 文件: airdrop_auto_20261001_145819.zip
 ```
 
-保留 7 天，日志在 `backups/auto_backup.log`。
+保留 7 天，日志在 `backups/auto_backup.log`。行为面由
+`backend/tests/test_shell_scripts.py` 的 `TestAutoBackupDbBackendRouting`
+（路由）与 `TestAutoBackupBehavior`（PG 路径回归）沙箱真跑钉住。
 
-**它备份的是 PostgreSQL 容器 `airdrop-db`（`pg_dump` custom + SQL 双格式）。**
-Docker / `airdrop-db` 不在的时候它直接退出码 1 跳过，日志里能看到：
+### 6.2 恢复
 
+#### SQLite（zip 里是 `airdrop_sqlite_<ts>.db` 时）
+
+```powershell
+# 1. 解压
+Expand-Archive backups\auto\airdrop_auto_<ts>.zip -DestinationPath restore-tmp
+# 2. 校验备份完整性（不 ok 就换一份，别往活动库上倒）
+& ".\venv\Scripts\python.exe" -c "import sqlite3; c=sqlite3.connect(r'restore-tmp\airdrop_sqlite_<ts>.db'); print(c.execute('PRAGMA integrity_check').fetchone()[0])"
+# 3. 停应用
+.\Stop.bat
+# 4. 换库：把备份 .db 覆盖 backend\data\airdrop.db（同盘 WAL/SHM 文件一并删掉）
+Copy-Item restore-tmp\airdrop_sqlite_<ts>.db backend\data\airdrop.db -Force
+Remove-Item backend\data\airdrop.db-wal, backend\data\airdrop.db-shm -ErrorAction SilentlyContinue
+# 5. 起应用
+.\Start.bat
+# 6. 验证curl http://localhost:8002/health
 ```
-[2026-08-19 02:00:02] 备份开始: airdrop_auto_20260819_020002
-[2026-08-19 02:00:02] 错误: airdrop-db 容器未运行，跳过备份
-```
 
-⚠️ 那次失败**留下了一个空目录** `backups/auto/airdrop_auto_20260819_020002/`
-到现在还在——脚本先 `New-Item` 建目录、之后才检查容器，失败路径不清理。
-不致命，但会让"备份目录里有 7 个条目"这种粗略判断产生误导。
-
-### 6.2 恢复（PostgreSQL）
+#### PostgreSQL（zip 里是 `airdrop_pg.dump` 时）
 
 ```powershell
 # 1. 解压
@@ -880,6 +912,13 @@ curl http://localhost:18080/health
 归档表保留期：`RAW_ARCHIVE_RETENTION_DAYS=180`、`SIGNALS_ARCHIVE_RETENTION_DAYS=365`。
 
 #### 归档从未执行过 —— 但原因不是上一版说的那个
+
+> ✅ **2026-10-01 状态更新**：本节描述的「从未执行」已终结 —— 实测
+> `archive_runs` 19 行全 success（首次 2026-09-04，每日 UTC 03:00 稳定触发）。
+> 当前待归档 0 行是**真实**的「无事可做」：活动库里最早数据
+> `2026-09-03`（9 月初切回 SQLite 后重新积累），`raw_processed` 档
+> 按 30 天保留期预计 **2026-10-03 前后**首次真实归档到东西。
+> 以下分析保留，作为「两种『0 行』长得一模一样」的判别教程。
 
 `archive_runs` 表 **0 行**，`raw_projects_archive` / `project_signals_archive`
 都是 0 行，`summary.total_runs = 0`。
@@ -1311,7 +1350,7 @@ CI 跑 pytest 时加了：
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
 | **7 张死表**（不只 `metrics`） | ❌ `metrics`、`audit_logs`、`llm_eval_changelog`、`narratives`、`dedup_keys`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14 |
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
-| 归档任务真实执行 | ⚠️ 逻辑已实跑验证（线上库副本上 dry-run 命中 106/509/2261/20），但**调度从未触发过一次**（`archive_runs` 0 行，§7.3） |
+| 归档任务真实执行 | ✅ 已在跑（2026-10-01 实测：`archive_runs` 19 行全 success，首次 2026-09-04，每日 UTC 03:00 触发；当前待归档 0 行属真实「无事可做」，首次真实归档预计 2026-10-03 前后 —— §7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
 | `.env.example` 里的 `LLM_API_KEYS` / `LLM_BASE_URLS` | ❌ 已删除，全仓无人读取（真正生效的是编号变量，当前格式见 §9.5） |
 | `DUNE_API_KEY` | ❌ 已删除（2026-09-03）：配置字段、脱敏登记、模板行、DDL 种子行全部移除。此前是"配了也不生效"的装饰性键，会让人误以为需要去申请 Dune Key |
@@ -1472,6 +1511,29 @@ CI 跑 pytest 时加了：
 
 （当前每日跑的 `auto_backup.ps1` 走的是 PostgreSQL 容器路径，
 本来就不受这个问题影响。）
+
+#### 附录（2026-10-01）：同一形态在 `auto_backup.ps1` 上复活，当日修复
+
+上面那句括号注记就是本节最讽刺的墓志铭：`backup.sh` 修好的同一天，
+每日自动备份正在**另一种形态**上备错库。实测：`auto_backup.ps1`
+钉死在 PostgreSQL 容器（用途注释就写着「备份 PostgreSQL 生产数据库」），
+而系统早已切回 SQLite —— 每天日志打印「备份成功!」，zip 里装的是
+废弃容器的陈旧数据（raw_projects 924 行 vs 活动库 1314 行），
+**在用的库没有任何在生效的定时备份**。
+
+这比 §12.5 原案更隐蔽一层：PG 容器还在运行（Up 3 days, healthy），
+ping 通、有表、有行数 —— 所有「备份工作正常」的粗略判据它都满足。
+**备份有效性的唯一判据是「备的是不是当前 `PRAGMA database_list`
+指向的那个文件/那个库」，其余都不是。**
+
+**已修（当日）**：脚本改为按 `.env` 的 `DB_BACKEND` 路由（§6.1），
+sqlite 走在线 backup API + integrity_check，PG 流程原样保留。
+门禁：`TestAutoBackupDbBackendRouting`（沙箱真跑七场景：路由产物、
+backend\ 优先于项目根、缺 DB_PATH exit 5 不猜文件名、校验失败
+exit 6 清目录、无 .env 缺省不滑回 PG、PG 路由回归）+
+`TestAutoBackupRoutingStaticPins`（全平台静态钉，CI Linux 腿也能拦）。
+旧 `TestAutoBackupBehavior` 的沙箱显式钉 `DB_BACKEND=postgres`，
+防止 08-24 那组 PG 钉子被缺省路由劫走。
 
 ### 12.6 日志轮转（2026-08-24 已实现）
 

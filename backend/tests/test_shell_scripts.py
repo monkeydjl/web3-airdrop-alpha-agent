@@ -64,6 +64,32 @@ tr -d space` 每个环节都有语义（`tail -1` = 多行取最后一条；`f2-
   taskkill 后静默中断——前端循环从未运行过。已修复：纯 ASCII 重写
   （与 auto_backup.ps1 相反，PS 5.1 必须 BOM、批处理必须禁 BOM，
   见 `test_stop_bat_has_no_bom`）。
+
+## 2026-10-01：auto_backup.ps1 的 DB_BACKEND 路由钉
+
+auto_backup.ps1 曾钉死在 PostgreSQL：无条件 pg_dump airdrop-db 容器，
+而活动库已切回 SQLite —— 日志每天「备份成功!」，**在用的库没有任何
+生效的定时备份**（§12.5 备错文件事故的复活变体，这次是实时发现的：
+当天的 zip 里装的是陈旧 PG 的 dump，raw_projects 924 行 vs 活动库
+1314 行）。修复 = 读 .env 的 DB_BACKEND 路由，两层钉：
+
+- **行为钉**（`TestAutoBackupDbBackendRouting`，nt 才跑）：sqlite 路由
+  真备出 SQLite 库（zip 里是 .db 不是 pg dump，库内容可开可查）、
+  backend\\ 相对路径优先于项目根（两份同名文件钉死选中的那份——
+  项目根的 data\airdrop.db 是过期副本）、DB_PATH 缺失 / 文件不存在
+  → exit 5 零残留（不猜文件名契约）、校验失败注入 → exit 6 且工作
+  目录清掉（半个库不是可用备份，与 PG SQL-fail 保留目录方向相反）、
+  无 .env 缺省按 sqlite（不会静默滑回 PG 容器）、postgres 路由回归钉
+  （原 pg_dump 双格式产物不变）。python 用真 venv 解释器（shim 转发
+  到 sys.executable），SQLite 备份/校验跑的是生产同款代码路径。
+- **静态钉**（`TestAutoBackupRoutingStaticPins`，全平台）：.env 解析
+  契约（Last 1 / split 限 2 段）、backend\\ 优先于项目根的候选顺序、
+  DB_BACKEND / DB_PATH 两个键的读取调用，全部钉在非注释行上——
+  注释里写过的契约不算实现（本文件反复踩过的坑）。
+- 旧 `TestAutoBackupBehavior` 的沙箱现在**显式写 `.env`
+  DB_BACKEND=postgres**：它钉的 2026-08-24 三个修复全是 PG 路径的
+  行为，路由改造后不写就会被缺省 sqlite 路由劫走（无 DB_PATH 会
+  exit 5），钉子就地失真。
 """
 
 from __future__ import annotations
@@ -71,7 +97,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 from typing import ClassVar
 
@@ -505,6 +534,10 @@ class TestAutoBackupBehavior:
         )
 
     def _run_backup(self, tmp_path: Path, **flags: str) -> subprocess.CompletedProcess[str]:
+        # 路由改造（2026-10-01）后脚本读 .env 的 DB_BACKEND。这组钉子钉的
+        # 是 PG 路径的 2026-08-24 行为面，沙箱显式钉 postgres，防止被缺省
+        # sqlite 路由劫走（缺省路径下沙箱没有 DB_PATH，会直接 exit 5）。
+        (tmp_path / ".env").write_text("DB_BACKEND=postgres\n", encoding="utf-8")
         bin_dir = _write_shims(tmp_path, {"docker.cmd": _FAKE_DOCKER_PS1}, newline="\r\n")
         self._preflight(bin_dir)
         ps = shutil.which("powershell")
@@ -583,6 +616,236 @@ class TestAutoBackupBehavior:
         assert proc.returncode == 0, proc.stdout[-500:]
         assert not stale_empty.exists(), "遗留空目录必须被回收（修复 1 的清扫部分）。"
         assert stale_full.exists(), "非空目录里是可用备份，一律不碰。"
+
+
+def _write_sqlite_sandbox(tmp_path: Path, env_text: str) -> tuple[Path, Path]:
+    """SQLite 路由行为钉的沙箱底座：backend/data/ 里的活库 + 可选的根同名库。
+
+    返回（backend 库路径，根库路径——调用方按用例决定建不建）。库内容带一个
+    可辨识的 marker 表，行为钉用它在多份同名库之间分辨「备的到底是哪份」。
+    """
+    backend_data = tmp_path / "backend" / "data"
+    backend_data.mkdir(parents=True)
+    root_db = tmp_path / "data" / "airdrop.db"
+    root_db.parent.mkdir()
+    backend_db = backend_data / "airdrop.db"
+    for db in (backend_db, root_db):
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE marker (tag TEXT)")
+        conn.execute("INSERT INTO marker VALUES (?)", (str(db),))
+        conn.commit()
+        conn.close()
+    (tmp_path / ".env").write_text(env_text, encoding="utf-8")
+    return backend_db, root_db
+
+
+def _read_zip_member(zip_path: Path, fragment: str) -> bytes:
+    members = [n for n in zipfile.ZipFile(zip_path).namelist() if fragment in n]
+    assert len(members) == 1, f"zip 里应有恰好一个含 {fragment!r} 的成员：{members}"
+    with zipfile.ZipFile(zip_path).open(members[0]) as f:
+        return f.read()
+
+
+@pytest.mark.skipif(
+    os.name != "nt" or shutil.which("powershell") is None,
+    reason="PowerShell 行为钉只在 nt 上跑（CI Linux 跳过，与 bash 钉互为镜像）",
+)
+class TestAutoBackupDbBackendRouting:
+    """沙箱真跑 auto_backup.ps1，钉 2026-10-01 DB_BACKEND 路由的行为面。
+
+    当天事故：脚本钉死 PG，而活动库是 SQLite —— 每天备份成功，备的是
+    废弃容器的陈旧数据。sqlite 路由用真 venv python（shim 转发到
+    sys.executable），SQLite 备份/校验走的是生产同款代码路径；
+    docker shim 只用来证明 PG 分支在这些场景下**未被进入**。
+    """
+
+    @staticmethod
+    def _py_shim(tmp_path: Path) -> str:
+        """python shim：转发到真解释器（nt 上真 python 就是当前进程那个）。
+
+        必须叫 .cmd 不叫 .exe：PS 对 .exe 直接 CreateProcess（批处理内容
+        不是合法 PE → 启动异常 → 脚本 exit 7），.cmd 才走 PATHEXT 经
+        cmd 解释——与 docker shim 同款约定。
+        """
+        real = sys.executable.replace("\\", "/")
+        return _write_shims(
+            tmp_path,
+            {"python.cmd": f'@"{real}" %*\r\nexit /b %ERRORLEVEL%\r\n'},
+            newline="\r\n",
+        )
+
+    @staticmethod
+    def _run_backup(tmp_path: Path, bin_dir: str, **flags: str) -> subprocess.CompletedProcess[str]:
+        ps = shutil.which("powershell")
+        assert ps
+        return subprocess.run(
+            [
+                ps,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(REPO_ROOT / "scripts" / "auto_backup.ps1"),
+                "-ProjectRoot",
+                str(tmp_path),
+            ],
+            cwd=tmp_path,
+            env=_windows_env(bin_dir, **flags),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+
+    @staticmethod
+    def _zips(tmp_path: Path) -> list[Path]:
+        return list((tmp_path / "backups" / "auto").glob("airdrop_auto_*.zip"))
+
+    @staticmethod
+    def _work_dirs(tmp_path: Path) -> list[str]:
+        auto = tmp_path / "backups" / "auto"
+        if not auto.is_dir():
+            return []
+        return [p.name for p in auto.iterdir() if p.is_dir() and p.name.startswith("airdrop_auto_")]
+
+    def test_sqlite_route_backs_up_backend_db_online(self, tmp_path: Path) -> None:
+        """sqlite 路由：zip 里是活的 SQLite 库（不是 pg dump），内容可开、marker 可查。"""
+        backend_db, _ = _write_sqlite_sandbox(tmp_path, "DB_BACKEND=sqlite\nDB_PATH=data/airdrop.db\n")
+        proc = self._run_backup(tmp_path, self._py_shim(tmp_path))
+        assert proc.returncode == 0, proc.stdout[-500:]
+        zips = self._zips(tmp_path)
+        assert len(zips) == 1 and zips[0].stat().st_size > 0, f"应产出一个非空 zip：{zips}"
+        assert self._work_dirs(tmp_path) == [], "压缩成功后源目录必须删除。"
+        # 备份产物是 SQLite 库：后缀不同（.db vs .dump/.sql），且能被 sqlite3 打开。
+        payload = _read_zip_member(zips[0], "airdrop_sqlite_")
+        restored = tmp_path / "restored.db"
+        restored.write_bytes(payload)
+        conn = sqlite3.connect(restored)
+        try:
+            marker = conn.execute("SELECT tag FROM marker").fetchone()[0]
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            conn.close()
+        assert marker == str(backend_db), "备的必须是 backend\\ 下的活动库（marker 可溯源）。"
+        assert integrity == "ok", "在线备份产物必须过完整性校验。"
+        info = _read_zip_member(zips[0], "backup-info.txt").decode("utf-8", errors="replace")
+        assert "SQLite" in info and "PostgreSQL" not in info, f"info 应声明 SQLite 来源：{info}"
+
+    def test_sqlite_route_prefers_backend_over_root_copy(self, tmp_path: Path) -> None:
+        """backend\\ 与项目根同名并存时必须选中 backend\\ 那份——根副本是 2026-08-24 事故的过期副本。"""
+        backend_db, _root_db = _write_sqlite_sandbox(tmp_path, "DB_BACKEND=sqlite\nDB_PATH=data/airdrop.db\n")
+        proc = self._run_backup(tmp_path, self._py_shim(tmp_path))
+        assert proc.returncode == 0, proc.stdout[-500:]
+        zips = self._zips(tmp_path)
+        assert len(zips) == 1
+        restored = tmp_path / "restored.db"
+        restored.write_bytes(_read_zip_member(zips[0], "airdrop_sqlite_"))
+        conn = sqlite3.connect(restored)
+        try:
+            marker = conn.execute("SELECT tag FROM marker").fetchone()[0]
+        finally:
+            conn.close()
+        assert marker == str(backend_db), (
+            "两份同名库并存时备了项目根那份——相对路径候选顺序反了，这正是 §12.5 备错库事故的形态。"
+        )
+
+    def test_sqlite_route_missing_db_path_fails_without_guessing(self, tmp_path: Path) -> None:
+        """sqlite 路由没有 DB_PATH → exit 5 零残留。不猜文件名契约（与 backup.sh 同源）。"""
+        _write_sqlite_sandbox(tmp_path, "DB_BACKEND=sqlite\n")
+        # 把两份库删掉，模拟「DB_PATH 未设置且无处可猜」的最严格形态。
+        (tmp_path / "backend" / "data" / "airdrop.db").unlink()
+        (tmp_path / "data" / "airdrop.db").unlink()
+        proc = self._run_backup(tmp_path, self._py_shim(tmp_path))
+        assert proc.returncode == 5, proc.stdout[-500:]
+        assert self._zips(tmp_path) == [] and self._work_dirs(tmp_path) == []
+
+    def test_sqlite_route_integrity_failure_cleans_up_with_exit_6(self, tmp_path: Path) -> None:
+        """校验失败注入 → exit 6，工作目录**整目录删掉**：半个库不是可用备份。
+
+        与 PG 的 SQL-dump 失败（exit 3、目录里留着可用的 custom dump 所以
+        保留）方向相反——那边的目录非空是有价值的，这边的非空是毒药。
+        """
+        _write_sqlite_sandbox(tmp_path, "DB_BACKEND=sqlite\nDB_PATH=data/airdrop.db\n")
+        proc = self._run_backup(tmp_path, self._py_shim(tmp_path), BACKUP_FAIL_INTEGRITY="1")
+        assert proc.returncode == 6, proc.stdout[-500:]
+        assert self._work_dirs(tmp_path) == [], "校验失败的目录里只有废库，必须清掉。"
+        assert self._zips(tmp_path) == []
+
+    def test_default_without_env_is_sqlite_not_postgres(self, tmp_path: Path) -> None:
+        """无 .env → 缺省按 sqlite 处理（exit 5：沙箱无 DB_PATH）。
+
+        2026-10-01 事故的教训是方向反了：宁可备不存在的 sqlite 文件而报
+        错，也不能静默滑回可能已废弃的 PG 容器。docker shim 预检仍在
+        PATH 上——若脚本进了 PG 分支，假 docker 会放行并产出 pg zip，
+        用产物形态把「没走 PG」也钉住。
+        """
+        backend_db, _root_db = _write_sqlite_sandbox(tmp_path, "")
+        (tmp_path / "backend" / "data" / "airdrop.db").unlink()
+        (tmp_path / "data" / "airdrop.db").unlink()
+        bin_dir = self._py_shim(tmp_path)
+        docker_shim = _write_shims(tmp_path, {}, newline="\r\n")  # 占位：确保 bin 目录存在
+        del backend_db, docker_shim
+        proc = self._run_backup(tmp_path, bin_dir)
+        assert proc.returncode == 5, proc.stdout[-500:]
+        zips = self._zips(tmp_path)
+        for z in zips:
+            assert not any(n.endswith("airdrop_pg.dump") for n in zipfile.ZipFile(z).namelist()), (
+                "缺省路由绝不能产出 PG dump——那是对废弃容器数据的一次「成功备份」。"
+            )
+
+    def test_postgres_route_still_produces_pg_dumps(self, tmp_path: Path) -> None:
+        """postgres 路由回归钉：显式 DB_BACKEND=postgres 仍走 docker pg_dump 双格式。"""
+        _write_sqlite_sandbox(tmp_path, "DB_BACKEND=postgres\n")
+        bin_dir = _write_shims(
+            tmp_path,
+            {"docker.cmd": _FAKE_DOCKER_PS1, "python.cmd": "@echo shim-should-not-run\r\nexit /b 1\r\n"},
+            newline="\r\n",
+        )
+        proc = self._run_backup(tmp_path, bin_dir)
+        assert proc.returncode == 0, proc.stdout[-500:]
+        zips = self._zips(tmp_path)
+        assert len(zips) == 1
+        names = zipfile.ZipFile(zips[0]).namelist()
+        assert any(n.endswith("airdrop_pg.dump") for n in names) and any(n.endswith("airdrop_pg.sql") for n in names), (
+            f"PG 路由应产出双格式 dump：{names}"
+        )
+        assert not any("airdrop_sqlite_" in n for n in names), "PG 路由不应产出 SQLite 产物。"
+
+
+class TestAutoBackupRoutingStaticPins:
+    """路由契约的静态钉（全平台，含 CI Linux）。
+
+    行为钉只在 nt 上跑，CI 的 Linux 腿至少要能拦住路由逻辑被"顺手改短"：
+    .env 解析契约、backend\\ 优先于项目根的候选顺序、两个键的读取，
+    全部落在非注释行上——注释里写过的契约不算实现。
+    """
+
+    @staticmethod
+    def _code() -> str:
+        return "\n".join(_code_lines("scripts/auto_backup.ps1"))
+
+    def test_dotenv_parse_contract(self) -> None:
+        code = self._code()
+        assert "Select-Object -Last 1" in code, "多行取最后一条的契约丢了（对齐 backup.sh 的 tail -1）。"
+        assert '-split "=", 2' in code, "split 必须限 2 段——值里可以带 =（对齐 cut -d= -f2-）。"
+
+    def test_backend_first_candidate_order(self) -> None:
+        code = self._code()
+        backend_idx = code.find("$DbFileBackend")
+        root_idx = code.find("$DbFileRoot")
+        assert backend_idx != -1 and root_idx != -1
+        assert code.index("Test-Path $DbFileBackend") < code.index("Test-Path $DbFileRoot"), (
+            "相对路径必须先试 backend\\ 再试项目根——顺序反了会备到根目录的过期副本。"
+        )
+
+    def test_reads_both_routing_keys(self) -> None:
+        code = self._code()
+        assert 'Get-DotEnvValue "DB_BACKEND"' in code, "路由键 DB_BACKEND 的读取调用丢了。"
+        assert 'Get-DotEnvValue "DB_PATH"' in code, "sqlite 路径键 DB_PATH 的读取调用丢了。"
+        assert '"sqlite"' in code and '"postgres"' in code, "路由分支判据丢了。"
 
 
 class TestDbPathResolutionPins:
