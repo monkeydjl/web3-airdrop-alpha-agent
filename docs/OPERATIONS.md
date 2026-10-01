@@ -41,11 +41,21 @@
 > 而备份路由只能认一个后端。
 >
 > **已执行**：`docker compose -f docker-compose.prod.yml stop`（四容器 Exited，
-> 容器与 pgdata 卷保留，`docker start airdrop-db airdrop-web airdrop-frontend
-> airdrop-nginx` 可整栈恢复）；六个 6 周前就 Exited 的监控容器
+> 容器与 pgdata 卷保留）；六个 6 周前就 Exited 的监控容器
 > （prometheus/grafana/loki/promtail/otel/alertmanager/jaeger）已 `docker rm`；
 > 停用前 PG 做了**最终归档 dump**：`backups/pg-final/airdrop_pg_final_20261001.dump`
 > （2.4 MB，`pg_restore --list` 验证 24 个 TABLE DATA 可读）。
+>
+> **同日磁盘清理追加**：`airdrop-web` / `airdrop-frontend` 两个停用容器已
+> `docker rm`（它们占着 8-17 旧镜像的引用），12 个镜像（旧 web/frontend、
+> 三个 7 月的 test 标签、七个监控镜像）与悬空层、构建缓存一并清除，
+> 共释放约 **60 GB**（镜像 43.2→10.6GB，构建缓存 30.4→3.1GB）。保留：
+> `postgres:15-alpine` 与 `nginx:alpine`（db/nginx 停用容器仍引用着，
+> `docker start` 即回），pgdata / grafana-data / loki-data 三个数据卷，
+> 以及另一项目（ash-*）在用的全部镜像。**整栈恢复命令因此改为**
+> `docker compose -f docker-compose.prod.yml up -d --build`（web/frontend
+> 会重新构建，db/nginx 复用保留容器）——反正旧镜像的代码也已过时，
+> 恢复本来就该重建。
 >
 > **重启该栈的注意项**：镜像是 8-17 的旧代码，先 `up -d --build` 重建；
 > `.env` 里没有 `GRAFANA_PASSWORD`（compose 插值阶段会拒绝启动，这是
