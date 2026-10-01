@@ -24,6 +24,15 @@ os.environ["APP_ENV"] = "test"
 os.environ["API_KEY"] = ""
 os.environ["HOST"] = "127.0.0.1"
 
+# DB 后端也要钉在 sqlite：.env 改成 DB_BACKEND=postgres 后，settings 会读到
+# postgres_host=db（容器内网名），测试进程解析不了这个宿主名，首个碰库的
+# 用例直接 INTERNALERROR（psycopg getaddrinfo failed）——不是断言失败而是
+# import 崩溃，与上面 APP_ENV 的失效模式同型。测试体系全部按 SQLite 文件库
+# 设计（tmp_path / data/test.db 三件套），PostgreSQL 链路有自己的专项测试
+# （test_db_init / test_review_regressions 用 init kwargs 显式构造，优先级
+# 高于环境变量，不受这里影响）。
+os.environ["DB_BACKEND"] = "sqlite"
+
 # Override DB_PATH to a workspace-writable location for tests.
 # .env may set DB_PATH=/app/data/app.db (Docker path) which doesn't exist on
 # the host. Tests that don't use tmp_path will fall through to this default.
