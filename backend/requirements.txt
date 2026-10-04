@@ -60,7 +60,7 @@ alembic==1.19.1
 
 # ── 安全与认证 ──
 bcrypt==5.0.0
-pyjwt==2.14.0
+pyjwt==2.15.0
 
 # ── 指标 ──
 prometheus-client==0.26.0
