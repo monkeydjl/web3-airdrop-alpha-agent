@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -110,7 +109,7 @@ class RootDataCollector(DataCollector):
             "Content-Type": "application/json",
             "apikey": self.api_key,
         }
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code == 401 or resp.status_code == 403:
                 raise RuntimeError(f"RootData auth failed HTTP {resp.status_code}")

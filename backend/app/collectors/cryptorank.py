@@ -15,7 +15,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -108,7 +107,7 @@ class CryptoRankCollector(DataCollector):
 
         # 客户端在循环外创建以复用 TCP/TLS 连接；限流器必须在循环内逐次获取，
         # 否则整轮分页（最多 4 次请求）只消耗 1 个令牌，直接把上游打到 429。
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             while len(collected) < target:
                 params: dict[str, str | int | float | bool | None] = {
                     "api_key": self.api_key,
@@ -293,7 +292,7 @@ class CryptoRankCollector(DataCollector):
 
     async def health_check(self) -> dict[str, Any]:
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 response = await client.get(
                     f"{self.base_url}/currencies",
                     params={"api_key": self.api_key, "limit": 1, "offset": 0},

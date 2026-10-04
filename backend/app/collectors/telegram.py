@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -151,7 +150,7 @@ class TelegramChannelCollector(DataCollector):
         succeeded = 0
         last_error: Exception | None = None
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+        async with self.http_client(timeout=self.timeout, follow_redirects=True) as client:
             for channel in self.channels:
                 url = f"https://t.me/s/{channel}"
                 try:

@@ -124,3 +124,32 @@ class TestCollectorBaseUrlsConsistent:
         ):
             url = getattr(settings, attr)
             assert is_url_allowed(url), f"{attr}={url} 不在出站域名白名单里"
+
+
+class TestCollectorIntegration:
+    """采集器基类与统一客户端已接入域名白名单 —— 表外域名 fail-closed。"""
+
+    @pytest.mark.asyncio
+    async def test_safe_collector_client_rejects_unknown_domain(self) -> None:
+        from app.collectors.base import safe_collector_client
+
+        with pytest.raises(DomainNotAllowedError):
+            async with safe_collector_client() as client:
+                await client.get("https://unauthorized-domain.attacker.com/leak")
+
+    @pytest.mark.asyncio
+    async def test_collector_base_client_rejects_unknown_domain(self) -> None:
+        from app.collectors.base import CollectorResult, DataCollector
+
+        class DummyCollector(DataCollector):
+            @property
+            def source_type(self) -> str:
+                return "api"
+
+            async def collect(self) -> CollectorResult:
+                return CollectorResult(source_id=self.source_id)
+
+        collector = DummyCollector(source_id="dummy", source_name="Dummy")
+        with pytest.raises(DomainNotAllowedError):
+            async with collector.http_client() as client:
+                await client.get("https://evil.internal.attacker/steal")

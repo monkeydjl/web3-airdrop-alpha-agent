@@ -5,6 +5,8 @@ import type { ProjectsResponse } from './types';
 const PAGE_SIZE = 500;
 /** 防御性上限，避免异常大的数据集把浏览器拖垮 */
 const MAX_PROJECTS = 5000;
+/** 分页并发上限：兼顾加载速度与后端按 IP 限流 */
+const PAGE_CONCURRENCY = 3;
 
 export interface AllProjects {
   projects: ProjectsResponse['projects'];
@@ -38,18 +40,35 @@ export async function fetchAllProjects(
   const projects = [...(first.projects || [])];
 
   const cap = Math.min(total, MAX_PROJECTS);
-  let page = 2;
-  while (projects.length < cap) {
-    const next = await apiFetch<ProjectsResponse>(
-      `/projects?page=${page}&page_size=${PAGE_SIZE}${curatedQuery}${personaQuery}`,
-      {
-        signal,
-      },
-    );
-    const batch = next.projects || [];
-    if (batch.length === 0) break;
-    projects.push(...batch);
-    page += 1;
+  const totalPages = Math.ceil(cap / PAGE_SIZE);
+  if (totalPages > 1) {
+    const pageNumbers = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    // 按批并发（而非一次性 Promise.all 全发）：后端按 IP 限流（默认 100 次/60s），
+    // 一次打 9 页 + Dashboard 其它请求，多标签页/同 NAT 下很容易 429。
+    // 某页失败时停止并保留已取回的页（truncated 会如实标记），不让整个列表变空白。
+    let failed = false;
+    for (let i = 0; i < pageNumbers.length && !failed; i += PAGE_CONCURRENCY) {
+      const batch = pageNumbers.slice(i, i + PAGE_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batch.map((page) =>
+          apiFetch<ProjectsResponse>(
+            `/projects?page=${page}&page_size=${PAGE_SIZE}${curatedQuery}${personaQuery}`,
+            { signal },
+          ),
+        ),
+      );
+      // 按页序合并；遇到第一页失败即停，避免中间缺页造成顺序错乱
+      for (const r of settled) {
+        if (r.status === 'rejected') {
+          if (signal?.aborted) throw r.reason;
+          failed = true;
+          break;
+        }
+        if (r.value?.projects?.length) {
+          projects.push(...r.value.projects);
+        }
+      }
+    }
   }
 
   return { projects, total, truncated: projects.length < total };

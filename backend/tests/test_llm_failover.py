@@ -15,12 +15,14 @@
 """
 
 import asyncio
+import time
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from app.llm.client import (
+    CircuitState,
     LLMProvider,
     _build_combinations,
     _is_connection_error,
@@ -28,6 +30,7 @@ from app.llm.client import (
     _RawCompletion,
     _reset_round_robin_for_tests,
     _rotate,
+    get_circuit_breaker,
     llm_chat,
 )
 
@@ -1208,3 +1211,89 @@ class TestSecretLeakDiscard:
         assert result.ok is True
         assert result.text == "FARM：社区热度高，规则引擎可离线复现"
         assert result.leak_detected is False
+
+
+class TestCircuitBreaker:
+    """LLM Provider 熔断器行为测试。"""
+
+    @pytest.mark.asyncio
+    async def test_consecutive_failures_trip_circuit_breaker(self, monkeypatch):
+        _reset_round_robin_for_tests()
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "fragile-provider",
+                    "models": ["model-a"],
+                },
+                {
+                    "base_url": "https://api2.com/v1",
+                    "api_key": "key2",
+                    "name": "healthy-provider",
+                    "models": ["model-b"],
+                },
+            ]
+        )
+        monkeypatch.setattr("app.llm.client.settings", mock_settings)
+
+        # 模拟 fragile-provider 持续发生网络超时/连接失败
+        async def mock_try_single(provider, **kwargs):
+            if provider.name == "fragile-provider":
+                raise httpx.ConnectError("Failed to connect")
+            return _completion("Healthy fallback response")
+
+        monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
+
+        breaker = get_circuit_breaker("fragile-provider")
+        assert breaker.state == CircuitState.CLOSED
+
+        # 连续调用直到 fragile-provider 累计遭遇 3 次连接失败
+        while breaker.consecutive_failures < 3:
+            res = await llm_chat(messages=[{"role": "user", "content": "call"}])
+            assert res.ok is True
+            assert res.text == "Healthy fallback response"
+
+        # 3 次连续连接失败后，fragile-provider 熔断器必须为 OPEN
+        assert breaker.state == CircuitState.OPEN
+        assert breaker.consecutive_failures >= 3
+
+        # 此时 fragile-provider 处于 OPEN 状态，后续调用必须直接被熔断跳过（attempts 中不包含它）
+        res_after = await llm_chat(messages=[{"role": "user", "content": "call after open"}])
+        assert res_after.ok is True
+        assert all(a.provider != "fragile-provider" for a in res_after.attempts)
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_half_open_recovery(self, monkeypatch):
+        _reset_round_robin_for_tests()
+        breaker = get_circuit_breaker("recovering-provider")
+        breaker.state = CircuitState.OPEN
+        breaker.consecutive_failures = 3
+        # 模拟冷却时间已过（61秒前发生最后一次失败）
+        breaker.last_failure_time = time.monotonic() - 61.0
+
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "recovering-provider",
+                    "models": ["model-a"],
+                },
+            ]
+        )
+        monkeypatch.setattr("app.llm.client.settings", mock_settings)
+
+        # 探针请求成功
+        async def mock_try_single(**kwargs):
+            return _completion("Recovered!")
+
+        monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
+
+        res = await llm_chat(messages=[{"role": "user", "content": "probe"}])
+        assert res.ok is True
+        assert res.text == "Recovered!"
+
+        # 探针成功后，熔断器自动闭合 (CLOSED) 并清空失败计数
+        assert breaker.state == CircuitState.CLOSED
+        assert breaker.consecutive_failures == 0

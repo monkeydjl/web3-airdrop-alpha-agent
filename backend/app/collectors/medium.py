@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import defusedxml.ElementTree as ET  # noqa: N817 — defusedxml 防 XML 攻击（SECURITY 相关）
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -82,7 +81,7 @@ class MediumCollector(DataCollector):
         items: list[dict[str, Any]] = []
         succeeded = 0
         last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             for tag in self.tags:
                 url = f"https://medium.com/feed/tag/{tag}"
                 try:
@@ -174,7 +173,7 @@ class MediumCollector(DataCollector):
         if not self.is_enabled():
             return {"source_id": self.source_id, "status": "disabled"}
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 response = await client.get(f"https://medium.com/feed/tag/{self.tags[0]}")
                 response.raise_for_status()
             return {"source_id": self.source_id, "status": "healthy"}

@@ -114,43 +114,39 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
             "failed": runs_failed,
         }
 
-        # ── 今日新增项目（projects.created_at）──────────────────────
+        # ── 今日新增项目（projects.created_at）── 单次聚合同时获得全部与 FARM 项 ──
         cursor = conn.execute(
-            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ? AND (source != 'historical_backfill' OR source IS NULL)",
+            """
+            SELECT COUNT(*) AS n_total,
+                   SUM(CASE WHEN label = 'FARM' THEN 1 ELSE 0 END) AS n_farm
+            FROM projects
+            WHERE created_at >= ? AND (source != 'historical_backfill' OR source IS NULL)
+            """,
             (midnight.isoformat(sep=" "),),
         )
-        today_new = int(_row_value(cursor.fetchone(), "n", 0) or 0)
-        data["today"]["new_projects"] = today_new
+        proj_row = cursor.fetchone()
+        data["today"]["new_projects"] = int(_row_value(proj_row, "n_total", 0) or 0)
+        data["today"]["new_farm_projects"] = int(_row_value(proj_row, "n_farm", 0) or 0)
 
-        cursor = conn.execute(
-            "SELECT COUNT(*) AS n FROM projects WHERE created_at >= ? AND label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)",
-            (midnight.isoformat(sep=" "),),
-        )
-        today_farm = int(_row_value(cursor.fetchone(), "n", 0) or 0)
-        data["today"]["new_farm_projects"] = today_farm
-
-        # ── 发现队列（raw_projects）─────────────────────────────────
-        cursor = conn.execute("SELECT COUNT(*) AS n FROM raw_projects")
-        discovery_total = int(_row_value(cursor.fetchone(), "n", 0) or 0)
-        data["discovery"]["total"] = discovery_total
-
-        try:
-            cursor = conn.execute("SELECT COUNT(*) AS n FROM raw_projects WHERE processed = 0")
-            discovery_pending = int(_row_value(cursor.fetchone(), "n", 0) or 0)
-        except Exception:
-            discovery_pending = 0
-        data["discovery"]["pending_count"] = discovery_pending
-
-        # 今日新增发现（discovered_at）
+        # ── 发现队列（raw_projects）── 单次聚合汇总总数、待处理数与今日新增 ──
         try:
             cursor = conn.execute(
-                "SELECT COUNT(*) AS n FROM raw_projects WHERE discovered_at >= ?",
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN processed = 0 THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN discovered_at >= ? THEN 1 ELSE 0 END) AS today_new
+                FROM raw_projects
+                """,
                 (midnight.isoformat(sep=" "),),
             )
-            discovery_today = int(_row_value(cursor.fetchone(), "n", 0) or 0)
+            raw_summary = cursor.fetchone()
+            data["discovery"]["total"] = int(_row_value(raw_summary, "total", 0) or 0)
+            data["discovery"]["pending_count"] = int(_row_value(raw_summary, "pending", 0) or 0)
+            data["discovery"]["today_new"] = int(_row_value(raw_summary, "today_new", 0) or 0)
         except Exception:
-            discovery_today = 0
-        data["discovery"]["today_new"] = discovery_today
+            data["discovery"]["total"] = 0
+            data["discovery"]["pending_count"] = 0
+            data["discovery"]["today_new"] = 0
 
         # ── 影子引擎（opportunity_assessments）─────────────────────
         try:
@@ -190,21 +186,30 @@ def get_daily_flash() -> dict[str, Any]:
         now = datetime.now(UTC)
         date_str = now.strftime("%Y-%m-%d")
 
-        # 1. 统计当前活跃 FARM 数量
+        # 1. 统计当前活跃 FARM 数量（COUNT 查询）与 Top 3（LIMIT 3 查询，避免全表加载）
+        farm_count_cursor = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM projects
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+            """
+        )
+        active_farm_count = int(_row_value(farm_count_cursor.fetchone(), "c", 0) or 0)
+
         farm_cursor = conn.execute(
             """
             SELECT id, name, score, reason, sector, stage
             FROM projects
             WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
             ORDER BY score DESC
+            LIMIT 3
             """
         )
         farm_rows = [dict_from_row(r) for r in farm_cursor.fetchall()]
-        active_farm_count = len(farm_rows)
 
         # 2. Top 3 FARM picks
         top_picks = []
-        for r in farm_rows[:3]:
+        for r in farm_rows:
             top_picks.append(
                 {
                     "id": r["id"],

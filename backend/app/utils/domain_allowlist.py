@@ -13,16 +13,15 @@
   base_url 是运行时决定的（`LLM_BASEURL_{i}` / 自建代理 / 本地 ollama），
   无法静态穷举 —— 但任何**已配置**的 provider 域名都应该放行。
 
-**运行时强制范围（重要，别夸大）**：只有两条出站路径在发请求前调
-`assert_url_allowed()` —— 通用 fetcher（`utils/fetcher.py::fetch`，抓项目
-网页，URL 可能来自外部）与 LLM 客户端（`llm/client.py`，base_url 可配置）。
-这两条是真正「目标地址可能被外部影响」的出口，fail-closed 拦截有意义。
+**运行时强制范围（重要，别夸大）**：在发请求前调 `assert_url_allowed()` 的出口有
+通用 fetcher（`utils/fetcher.py`）、LLM 客户端（`llm/client.py`）与全部采集器
+（`collectors/base.py::safe_collector_client` 的 request hook，含重定向每一跳）。
+采集器的 host 另由 `test_domain_allowlist.py::TestKnownDomains` 与
+`test_security_doc_parity.py`（§10.2 表对账）钉住，新增 host 不登记会让 CI 变红。
 
-采集器**不**在 HTTP 调用点做运行时校验：它们的请求目标全是写死的常量，
-无法被外部输入改写，SSRF 面为零。它们的 host 靠**两重静态约束**兜底：
-① 登记在 `_KNOWN_DOMAINS`；② 由 `test_domain_allowlist.py::TestKnownDomains`
-与 `test_security_doc_parity.py`（§10.2 表对账）钉住，新增 host 不登记就会
-让 CI 变红。若将来某个采集器的 URL 变成可配置，必须记得补运行时校验。
+不走本白名单的：`services/vitals.py`（按解析 IP 拒绝非公网目标）；
+faucet_registry / public_rpc_verifier / defillama_raises / ops_tasks（目标为写死常量）。
+见 SECURITY §10.2。
 """
 
 from __future__ import annotations
@@ -55,6 +54,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "t.me",  # Telegram 公开频道 Web 预览（DATA_SOURCE_STRATEGY §2）
         "hub.pinata.cloud",  # Farcaster 公开 Hubble HTTP 节点（DATA_SOURCE_STRATEGY §2）
         "api.telegram.org",  # Telegram Bot API（决策推送 sendMessage，ACTION_LOOP_DESIGN §2）
+        "raw.githubusercontent.com",  # GitHub Curated lists (github_curated)
         "api.openai.com",  # LLM 单接口默认 endpoint
     }
 )

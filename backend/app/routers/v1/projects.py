@@ -18,9 +18,11 @@ import structlog
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.team import score_to_risk_level
 from app.auth import ROLE_ADMIN, get_current_user
 from app.openapi import ERROR_RESPONSE_EXAMPLES, PROJECTS_LIST_RESPONSE_EXAMPLE
 from app.repository import ProjectRepository
+from app.services.project_signals import funding_public_view, parse_meta, signals_of
 from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
@@ -106,8 +108,6 @@ def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
     if isinstance(team, dict) and "risk_level" not in team:
         team_score = team.get("team_score")
         if isinstance(team_score, (int, float)):
-            from app.agents.team import score_to_risk_level
-
             team = {**team, "risk_level": score_to_risk_level(float(team_score))}
 
     reason = _parse_json_field(project.get("reason"))
@@ -116,8 +116,6 @@ def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
 
     sub_scores = _parse_json_field(project.get("sub_scores"))
     weight_version = project.get("weight_version")
-
-    from app.services.project_signals import funding_public_view, parse_meta, signals_of
 
     meta = parse_meta(project.get("meta"))
     funding = funding_public_view(project.get("meta"))

@@ -14,7 +14,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -102,7 +101,7 @@ class Layer3Collector(DataCollector):
 
         params: dict[str, str | int | float | bool | None] = {"limit": limit, "status": "active"}
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()

@@ -117,6 +117,41 @@ class TestProbeSite:
         assert status == 200
 
 
+class TestSsrfGuard:
+    """探测 URL 来自外部采集数据，必须拒绝解析到非公网地址的目标（含重定向跳转）。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8002/health",
+            "http://localhost/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.5/",
+            "http://192.168.1.1/",
+            "http://[::1]/",
+        ],
+    )
+    async def test_non_public_target_rejected(self, url):
+        from app.services.vitals import BlockedTargetError, _reject_non_public_target
+
+        with pytest.raises(BlockedTargetError):
+            await _reject_non_public_target(httpx.Request("HEAD", url))
+
+    @pytest.mark.asyncio
+    async def test_public_target_allowed(self):
+        from app.services.vitals import _reject_non_public_target
+
+        await _reject_non_public_target(httpx.Request("HEAD", "http://8.8.8.8/"))
+
+    @pytest.mark.asyncio
+    async def test_blocked_target_is_unknown_not_dead(self):
+        """被拦截 ≠ 站点已死：verdict 必须是 unknown（不写库），且不发出真实请求。"""
+        verdict, status = await probe_site("http://127.0.0.1:1/")
+        assert verdict == "unknown"
+        assert status is None
+
+
 def _save_project(repo: ProjectRepository, pid: str, url: str | None) -> None:
     repo.save(
         PipelineState(

@@ -151,6 +151,19 @@ function DashboardContent() {
     curatedOnly,
   } = filters;
 
+  const [searchInput, setSearchInput] = useState(keyword);
+  useEffect(() => {
+    setSearchInput(keyword);
+  }, [keyword]);
+
+  useEffect(() => {
+    if (searchInput === keyword) return;
+    const timer = setTimeout(() => {
+      updateFilters({ keyword: searchInput });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchInput, keyword, updateFilters]);
+
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState('');
   const [showCharts, setShowCharts] = useState(false);
@@ -222,11 +235,15 @@ function DashboardContent() {
 
   // 「今日流水线」真实聚合数据（发现队列 / 影子引擎 / 采集运行）
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
-  useEffect(() => {
+  const fetchOverview = useCallback(() => {
     apiFetch<DashboardOverview>('/dashboard/overview')
       .then((res) => setOverview(res ?? null))
       .catch(() => setOverview(null));
-  }, [loading]);
+  }, []);
+
+  useEffect(() => {
+    fetchOverview();
+  }, [fetchOverview]);
 
   const overviewRuns = overview?.today?.collection_runs ?? {};
   const overviewFarm = overview?.shadow?.label_counts?.FARM ?? 0;
@@ -250,6 +267,7 @@ function DashboardContent() {
       const run = await apiFetch<{ scored_count?: number; top_score?: number }>('/run', { method: 'POST', body: '{}' });
       showToast(`完成 · 采集成功 ${ok}${fail ? ` / 失败 ${fail}` : ''} · 已评分 ${run.scored_count ?? 0} · 最高分 ${run.top_score ?? '—'}`, 'success');
       loadProjects();
+      fetchOverview();
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'Pipeline 失败', 'error');
     } finally { setRunning(false); setRunStatus(''); }
@@ -278,9 +296,10 @@ function DashboardContent() {
           veto: null,
         });
         loadProjects();
+        fetchOverview();
       }
     },
-    [showToast, handleProjectUpdate, loadProjects],
+    [showToast, handleProjectUpdate, loadProjects, fetchOverview],
   );
 
   const stats = useMemo(() => {
@@ -343,7 +362,17 @@ function DashboardContent() {
 
       <TopBar title="项目雷达" subtitle={`自动发现 · 六维评分 · 重点参与 / 观察 / 忽略 · 共 ${stats.total} 个项目`}>
         <GasTrackerWidget />
-        <button type="button" onClick={loadProjects} className="btn-secondary" disabled={loading || running}>刷新</button>
+        <button
+          type="button"
+          onClick={() => {
+            loadProjects();
+            fetchOverview();
+          }}
+          className="btn-secondary"
+          disabled={loading || running}
+        >
+          刷新
+        </button>
         <button type="button" onClick={runPipeline} className="btn-primary" disabled={running}>
           {running ? <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />运行中</> : <>▶ 采集并评分</>}
         </button>
@@ -585,13 +614,21 @@ function DashboardContent() {
               <input
                 className="input !h-9 !py-1.5 !text-xs font-mono"
                 placeholder="搜索项目名称…"
-                value={keyword}
-                onChange={(e) => updateFilters({ keyword: e.target.value })}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    updateFilters({ keyword: searchInput });
+                  }
+                }}
               />
-              {keyword && (
+              {searchInput && (
                 <button
                   type="button"
-                  onClick={() => updateFilters({ keyword: '' })}
+                  onClick={() => {
+                    setSearchInput('');
+                    updateFilters({ keyword: '' });
+                  }}
                   className="absolute right-2.5 top-2 text-xs text-ink-faint hover:text-ink"
                 >
                   ✕

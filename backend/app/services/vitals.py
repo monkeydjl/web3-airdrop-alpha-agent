@@ -37,7 +37,9 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
+import socket
 from datetime import UTC, datetime
 from typing import Any
 
@@ -79,10 +81,40 @@ def is_aggregator_url(url: str) -> bool:
     return host.lower() in _AGGREGATOR_HOSTS
 
 
+class BlockedTargetError(Exception):
+    """探测目标解析到非公网地址（回环/内网/链路本地/云元数据），按 SSRF 拒绝。"""
+
+
+async def _reject_non_public_target(request: httpx.Request) -> None:
+    """httpx request hook：每一跳（含 30x 重定向）发出前校验目标解析到公网地址。
+
+    vitals 探的是项目官网，URL 来自外部采集数据，无法套用静态域名白名单；
+    这里改为按**解析后的 IP**拦截，防止 `http://169.254.169.254/`、
+    `http://localhost:8002/` 或「公网地址 302 跳内网」这类 SSRF。
+    已知边界：解析与连接之间存在 DNS rebinding 窗口，本钩子不覆盖。
+    """
+    host = request.url.host
+    if not host:
+        raise BlockedTargetError("<empty host>")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except socket.gaierror:
+        return  # 解析失败交给 httpx 自己报 ConnectError → unknown
+    for info in infos:
+        addr = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        if not addr.is_global:
+            raise BlockedTargetError(host)
+
+
 async def probe_site(url: str) -> tuple[str, int | None]:
     """对一个 URL 探测一次。返回 (verdict, http_status)。"""
     timeout = httpx.Timeout(_TIMEOUT)
-    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=_UA) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=timeout,
+        headers=_UA,
+        event_hooks={"request": [_reject_non_public_target]},
+    ) as client:
         try:
             resp = await client.head(url)
             if resp.status_code == 405:
@@ -95,6 +127,10 @@ async def probe_site(url: str) -> tuple[str, int | None]:
             if code < 400:
                 return (_OK, code)
             return (_DEAD, code)
+        except BlockedTargetError as exc:
+            # 拒绝探测 ≠ 站点已死：归入 unknown，不写库
+            logger.warning("vitals.blocked_non_public_target", host=str(exc))
+            return (_UNKNOWN, None)
         except (httpx.TransportError, httpx.InvalidURL):
             return (_UNKNOWN, None)
 

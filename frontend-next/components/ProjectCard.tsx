@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { Star } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
@@ -24,7 +24,7 @@ import PointsEpochEstimatorModal from './PointsEpochEstimatorModal';
 import PlaybookStudioModal from './PlaybookStudioModal';
 import WhaleMirrorModal from './WhaleMirrorModal';
 
-export function ProjectCard({
+export const ProjectCard = memo(function ProjectCard({
   project,
   rank,
   onUpdate,
@@ -480,4 +480,4 @@ export function ProjectCard({
       )}
     </div>
   );
-}
+});
