@@ -664,8 +664,8 @@ def init_db(conn: sqlite3.Connection) -> None:
 全新空库验证行为，确认豁免理由成立。已知边界：经 service 层间接使用
 默认库的文件静态不可见，依赖逐文件空库酸测覆盖——已固化为
 `backend/scripts/verify_test_db_isolation.py`：动态枚举灰区（复用守卫
-AST 函数，零硬编码清单）+ 探针抽样，逐文件删仓库根 `data/test.db{,-wal,-shm}`
-后串行 pytest 单跑（全量约 4-5 分钟）。`_run_one` 给子进程显式钉
+AST 函数，零硬编码清单）+ 间接触库 + 探针抽样，逐文件删仓库根 `data/test.db{,-wal,-shm}`
+后串行 pytest 单跑（当前三桶全量约 8-10 分钟；单跑间接触库桶约 4-6 分钟）。`_run_one` 给子进程显式钉
 DB_PATH（= 删除目标，取 `_default_db_files()[0]` 单一真相源）+
 `CLEANLINESS_MODE=acid` + 剥 PYTEST_XDIST_WORKER（污染 shell 分家
 盲区的修复，钉子见 `TestRunOneEnvPinning`）。新增守卫规则 / 登记豁免后一键复验；
@@ -674,7 +674,7 @@ DB_PATH（= 删除目标，取 `_default_db_files()[0]` 单一真相源）+
 标注）或 `--changed`（三路并集：vs `@{upstream}` 已提交未推送 + 工作区 +
 未跟踪；无 upstream 的分支须显式 `--base`）。CI 侧由手动触发的独立
 workflow `.github/workflows/test-db-isolation.yml` 提供同名输入透传，
-不在 PR 必过链（分支保护名单零改动）。本地改守卫/测试基础设施后，
+其中「间接触库」桶已作为 `Test DB Isolation Gate`（`ci.yml`）接入 PR 必过链 —— 但**仅在关键路径改动上必跑**（`backend/{app,tests,scripts}/` 与该 workflow 文件），用「探测步骤无条件 + 重活带条件」保证 job 每次都报，避免 required check 永久 pending；全量三桶仍由该 workflow 手动触发。本地改守卫/测试基础设施后，
 先跑 `backend/scripts/check_ci_parity.py`（CI lint job 同命令同顺序的
 一键自检 + 酸测枚举加码腿），配套 `tests/test_ci_parity.py` 把它钉进  全量套件——防止再犯「只验 ruff format 没验 ruff check」的提交事故
   （2026-09-29 整体回归抓出 11 个 E402/I001 的教训）。

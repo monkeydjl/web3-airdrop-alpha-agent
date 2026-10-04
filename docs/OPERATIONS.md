@@ -1400,9 +1400,9 @@ CI 跑 pytest 时加了：
 
 ### 10.5 分支保护
 
-`master` 要求 5 个检查通过（服务端读回确认）：
+`master` 要求 6 个检查通过（服务端读回确认；`Test DB Isolation Gate` 须在 Settings → Branches 登记后生效）：
 `Full Backend Test Suite`、`Lint & Format Check`、`Type Check (mypy)`、
-`Frontend Lint & Build`、`Coverage Gate`。要求分支与 master 同步（`strict: true`）。
+`Frontend Lint & Build`、`Coverage Gate`、`Test DB Isolation Gate`。要求分支与 master 同步（`strict: true`）。
 
 ### 10.6 本文档的双向门禁
 

@@ -168,6 +168,105 @@ jobs:
           print("✅ 覆盖率门槛通过")
           PY
 
+  # ── Phase 2c: Test DB Isolation Gate ─────
+  #
+  # 背景：`check_test_db_bootstrap.py`（lint 阶段）是静态 AST 守卫，只认
+  # 「直连默认库」的信号；经 service 层间接用库的测试文件它完全看不见
+  # （CONVENTIONS §13.4 已知边界）。这类「间接触库」文件此前既无守卫、
+  # 也不在任何 PR 门禁里 —— tests/test_roi_simulator.py 于 2026-09-29
+  # conftest 改为每轮删库后变红，却一路溜到全量套件才暴露，就是这么发生的。
+  # 本 job 把「间接触库」桶接进 PR 门禁，作为这道共享盲区的第二道防线。
+  #
+  # 为什么是 ci.yml 的 job，而不是给 test-db-isolation.yml 加 paths: 触发器：
+  # 分支保护只认 job 名，而带 paths 过滤的 workflow 在不匹配的 PR 上根本
+  # 不会触发 → required check 永远停在 pending（`Coverage Gate` 名字不存在
+  # 那次卡了 dependabot PR #3 五天，就是同一类坑）。所以本 job 必须
+  # **每次都报**：先跑一步便宜的 git diff 判断改动是否落在关键路径，命中才
+  # 装依赖跑酸测，不命中就快速收盘。要登记到分支保护的 required check 名是
+  # `Test DB Isolation Gate`。
+  #
+  # 为什么只跑 indirect 桶：全量三桶约 104 文件 / 8-10 分钟（test_interactions
+  # 单文件 107s），不适合每个 PR。间接触库是共享盲区里风险最高的一桶 ——
+  # 零静态信号，唯一防线就是它。灰区桶（34 文件）保留了直连信号、静态守卫
+  # 至少能看见，继续由 test-db-isolation.yml 手动/定期全量跑。
+  test-db-isolation:
+    name: Test DB Isolation Gate
+    needs: lint
+    runs-on: ubuntu-latest
+    # 65 文件串行（本地约 4-6 分钟）；上限是给 CI 慢机器的余量，非预期耗时。
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      # fetch-depth: 0：关键路径判定要对 base 做三路 git diff，浅克隆里
+      # 没有 PR base 的历史，merge-base 求不出来。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 这一步**必须无条件运行**：它是「本 job 每次都报」的实现。给它加上
+      # if 条件，命中路径之外的分支上 job 会提前跳过，required check 就会
+      # 挂在 pending —— 正是上面记的那个坑。
+      - name: Detect DB-relevant changes
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --quiet origin "$BASE_REF"
+            range="origin/$BASE_REF...HEAD"
+          elif git rev-parse --verify -q HEAD~1 >/dev/null; then
+            # push 场景已知取舍：HEAD~1...HEAD 只看最后一个提交，一次推多个
+            # 提交时中间提交的关键路径改动可能漏判。方向是 fail-safe 的（漏跑
+            # 酸测而非误报），且 push 到受保护分支前必经 PR（三点 diff 覆盖
+            # 全部改动），故接受；直接推多提交到非保护分支时留意这一点。
+            range="HEAD~1...HEAD"
+          else
+            range="HEAD"
+          fi
+          changed=$(git diff --name-only --diff-filter=ACMR $range || true)
+          echo "本次改动文件："
+          printf '%s\n' "$changed"
+          # 关键路径：app/（模块依赖图变化会制造新的间接触库文件）、
+          # tests/（新增/修改测试）、scripts/（守卫与酸测脚本自身），
+          # 以及本 workflow 文件（改门禁本身也要能验证它）。
+          if printf '%s\n' "$changed" | grep -Eq '^(backend/(app|tests|scripts)/|\.github/workflows/ci\.yml)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.detect.outputs.relevant != 'true'
+        run: echo "✅ 改动不在关键路径（backend/{app,tests,scripts} + ci.yml 本身），跳过空库酸测"
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        if: steps.detect.outputs.relevant == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        if: steps.detect.outputs.relevant == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # 只跑间接触库桶：静态守卫看不见、自身也无直连信号，唯一防线。
+      # 红 = 某测试在全新空库上隐式依赖默认库残留数据；修测试，不是改酸测。
+      - name: Run indirect-bucket acid test
+        if: steps.detect.outputs.relevant == 'true'
+        run: python scripts/verify_test_db_isolation.py --bucket indirect
+        continue-on-error: false
+
   # ── Phase 3: Docker Build ────────────────
   docker-build:
     name: Docker Build Check

@@ -8,6 +8,37 @@
 
 ## [Unreleased]
 
+### Fixed — 卡片弹窗被祖先「包含块」关进卡片、位置错乱（2026-10-03）
+
+症状：工作台项目卡片的弹窗（脚本工坊、安全体检、投研研报、竞品 PK 等）位置
+不对 —— 有的太靠上、显示不全，有的直接渲染在项目小卡片里，鼠标一动又在整页里
+闪来闪去。
+
+- **根因**：弹窗遮罩是 `position: fixed`，却渲染在触发它的卡片/顶栏内部。任何带
+  `transform` / `backdrop-filter` / `filter` / `perspective` / `contain` 的祖先都会
+  成为 fixed 后代的**包含块**：项目卡片暗色下的
+  `.card-hover:hover { transform: translateY(-2px) }` 与顶栏
+  `.app-topbar { backdrop-filter: blur(12px) }` 都命中这条规则。于是遮罩被关进那张
+  卡片、被 `overflow-hidden` 裁掉；hover 一进一出，包含块时有时无，弹窗在卡片内与
+  全屏之间反复跳 —— 就是那个「闪烁」。
+- **修法**：新增 `components/ModalPortal.tsx`，用 `createPortal` 把 24 处
+  `fixed inset-0` 遮罩（21 个 `*Modal` 组件 + `AirdropPnlPanel`、
+  `WatchedWalletsPanel`）统一传送到 `document.body`，彻底脱离任何祖先的包含块、
+  `overflow` 裁剪与层叠上下文。
+- **守卫**：新增 `lib/modalPortal.test.ts`，静态扫描 `components/`、`app/`，任何
+  新增的就地渲染 `fixed inset-0` 遮罩都会直接让测试失败，避免同一组症状在没有任何
+  编译报错的情况下复发。
+
+### Added — 测试库隔离酸测接入 PR 门禁（间接触库桶，2026-10-03）
+
+`check_test_db_bootstrap.py` 是纯静态 AST 守卫，只认「直连默认库」的信号；经 service 层间接用库的测试文件它完全看不见（CONVENTIONS §13.4 已知边界）。`tests/test_roi_simulator.py` 于 2026-09-29 conftest 改为每轮删库后隐式依赖默认库残留行、单跑必红，却因为没有直连信号，既没被守卫拦住、也不在原全量酸测的默认选集里，一路溜到全量套件才暴露。
+
+- **新增 `Test DB Isolation Gate`**（`.github/workflows/ci.yml`）：把 `verify_test_db_isolation.py` 的「间接触库」桶接进 PR 门禁，改动落在关键路径（`backend/{app,tests,scripts}/` 与 ci.yml 本身）时必过。这是静态守卫盲区的第二道动态防线。
+- **为什么只跑间接触库桶**：全量三桶约 104 文件 / 8-10 分钟，不适合每个 PR；间接触库零静态信号、唯一防线就是它，先钉住这一桶。灰区/探针桶继续由 `.github/workflows/test-db-isolation.yml` 手动或定期全量跑。
+- **为什么是 job 而非给 workflow 加 `paths:` 过滤**：分支保护只认 job 名，带 paths 过滤的 workflow 在不匹配的 PR 上不触发 → required check 永久 pending（`Coverage Gate` 那次卡了 5 天）。本 job 用「探测步骤无条件 + 重活带条件」保证每次都报。
+- **接线回归**：新增 `tests/test_ci_test_db_isolation_gate.py` 钉住 job 名、无条件探测、关键路径覆盖与 `--bucket indirect`；本地自检 `scripts/check_ci_parity.py` 的枚举腿扩到三桶。
+- **待办**：需在 GitHub Settings → Branches → master 的 required status checks 里登记 `Test DB Isolation Gate`（代码侧已就绪，服务端配置不在本仓）。
+
 ### Added — 官网活性探测（vitals scanner，2026-09-08）
 
 用户看到的症状：库里躺着一堆 X 账号停更、官网打不开的「僵尸项目」（举例

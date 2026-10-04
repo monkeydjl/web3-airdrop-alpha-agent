@@ -347,6 +347,7 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 | `Full Backend Test Suite` | 完整 pytest，带 `-W error::DeprecationWarning` 等三个 `-W error` |
 | `Coverage Gate` | 行覆盖率 **≥80%** |
 | `Type Check (mypy)` | `mypy app` |
+| `Test DB Isolation Gate` | 间接触库空库酸测（仅关键路径改动时；`verify_test_db_isolation --bucket indirect`） |
 | `Frontend Lint & Build` | typecheck + 单测 + build + `npm audit` |
 | `Docker Build Check` | 构建镜像并跑健康检查冒烟 |
 
@@ -354,9 +355,9 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 `pip-audit (CVE Scan)`、`Dependency Review`、`Docker Image Trivy Scan`、
 `Check Markdown Links`。
 
-**master 分支保护**（服务端读取）要求 5 个上下文全绿才能合并：
+**master 分支保护**（服务端读取）要求 6 个上下文全绿才能合并（`Test DB Isolation Gate` 为 2026-10-03 新增，须在 Settings → Branches 登记后才会进入必过集合）：
 `Lint & Format Check`、`Full Backend Test Suite`、`Coverage Gate`、
-`Type Check (mypy)`、`Frontend Lint & Build`。`strict: true`（必须先与 master 同步）。
+`Type Check (mypy)`、`Frontend Lint & Build`、`Test DB Isolation Gate`。`strict: true`（必须先与 master 同步）。
 
 本地跑同一套：
 

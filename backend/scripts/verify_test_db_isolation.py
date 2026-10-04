@@ -40,9 +40,18 @@
 --timeout（仓库未装 pytest-timeout，传了会让 pytest exit=4）。Windows
 GBK 控制台沿用守卫同款 _force_utf8_stdio 防护。
 
-已知量级：约 34 灰区 + 5 探针 ≈ 39 文件全量 4-5 分钟（test_interactions
-单文件 107s）。新增守卫规则 / 登记豁免前先跑一遍：红 = 登记理由不成立，
-修测试而不是改酸测。
+默认选集三桶（2026-10-02 起）：
+
+- 灰区（直连 + 表读 + 规则二豁免）：全量。
+- **间接触库**（无直连信号，但 import 了传递性触库的 app 模块）：全量。
+  这是 2026-10-02 收口的共享盲区——见下方 `enumerate_indirect_db_files`。
+- 探针（直连无表读）：抽样。
+
+已知量级：约 34 灰区 + 65 间接触库 + 5 探针 ≈ 104 文件全量 8-10 分钟
+（test_interactions 单文件 107s）。新增守卫规则 / 登记豁免前先跑一遍：
+红 = 登记理由不成立，修测试而不是改酸测。
+
+``--bucket`` 可按桶定向复验（默认 all），调试/定位时不用付全量代价。
 """
 
 from __future__ import annotations
@@ -154,13 +163,165 @@ def enumerate_probe_candidates() -> list[Path]:
     return probes
 
 
+# ── 间接触库枚举（静态守卫与酸测默认枚举共享盲区的收口，2026-10-02）──
+# 背景：守卫规则一/二只认**直连信号**（DB_PATH / get_connection() /
+# connection_scope() / ProjectRepository / sqlite3 ...）。经 service 层间接
+# 使用默认库的测试文件既无直连信号，因此既不进守卫、也不进上面
+# enumerate_gray_files()——两类自动化共享同一盲区，没有第二道防线。
+#
+# 2026-10-02 审计实证：tests/test_roi_simulator.py 直接调
+# simulate_portfolio_allocation（内部走 connection_scope）却零直连信号，
+# 隐式依赖默认库残留行；conftest 改为每轮删库后变红，而全量酸测
+# **永远不会跑到它**（只有 --only 定向才抓得到）。本枚举把这类文件
+# 补进默认选集。
+#
+# 判定：静态解析 app/ 模块依赖图，从「直接引用库原语」的模块（种子）做
+# 可达性传播，得到传递性触库模块集合；测试文件若 import 了其中任一模块，
+# 即视为间接触库候选。app.main 也算（它把触库的 routers 全拉进来）。
+#
+# 已知边界：不识别经 conftest / helper 转手调 service 的路径（测试文件本身
+# 不 import app 模块）——那类由 conftest 的自播种承担；本枚举覆盖
+# 「测试文件直接 import 触库 app 模块」这一主力形态。
+_DB_PRIMITIVE_RE = re.compile(r"connection_scope|get_connection\b|init_db\b|ProjectRepository\b|sqlite3|app\.db\b")
+
+# (db_modules, known_modules) 缓存：--only/--changed 会逐文件调 _classify，
+# 避免每文件重解析全部 app 模块。
+_APP_DB_MODULES_CACHE: tuple[set[str], set[str]] | None = None
+
+
+def _app_module_name(path: Path, app_dir: Path) -> str:
+    """app_dir（名为 ``app`` 的包目录）内的文件 → 完整模块名（带 ``app.`` 前缀）。
+
+    必须带包前缀：测试里 import 的是 ``app.services.roi_simulator``，若
+    只返回 ``services.roi_simulator`` 则与 known 集合对不上，整批间接触库
+    文件会被漏掉。
+    """
+    pkg = app_dir.name
+    rel = path.relative_to(app_dir).with_suffix("").as_posix()
+    mod = rel.replace("/", ".")
+    if mod in ("", "__init__"):
+        return pkg
+    if mod.endswith(".__init__"):
+        mod = mod[: -len(".__init__")]
+    return f"{pkg}.{mod}"
+
+
+def _norm_app_module(name: str, known: set[str]) -> str | None:
+    """把导入名规范到已知的 app 模块（app.services 包 → app.services.__init__ 映射名）。"""
+    parts = name.split(".")
+    for i in range(len(parts), 0, -1):
+        cand = ".".join(parts[:i])
+        if cand in known:
+            return cand
+    return None
+
+
+def _app_imports(tree: ast.AST, known: set[str]) -> set[str]:
+    """测试/模块 AST 里 import 到的 app 模块集合（已规范）。"""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("app"):
+            norm = _norm_app_module(node.module, known)
+            if norm:
+                out.add(norm)
+            # `from app.llm import budget` 导入的是**子模块**而非包：只登记
+            # node.module（app.llm）会漏掉 app.llm.budget，函数内的惰性导入
+            # 尤其如此（app.llm.client → 函数内 from app.llm import budget）。
+            # 把 module.name 一并规范化，命中真实子模块时登记。
+            for alias in node.names:
+                sub = _norm_app_module(f"{node.module}.{alias.name}", known)
+                if sub:
+                    out.add(sub)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("app"):
+                    norm = _norm_app_module(alias.name, known)
+                    if norm:
+                        out.add(norm)
+    return out
+
+
+def _db_touching_app_modules(app_dir: Path | None = None) -> tuple[set[str], set[str]]:
+    """返回 (传递性触库的 app 模块集合, 全部 app 模块名集合)。
+
+    种子 = 源码含库原语（_DB_PRIMITIVE_RE）的模块；再做依赖可达性传播：
+    任何 import 到触库模块的模块也算触库。结果为模块名集合（如
+    ``app.services.roi_simulator``、``app.main``）。
+    """
+    global _APP_DB_MODULES_CACHE
+    if app_dir is None and _APP_DB_MODULES_CACHE is not None:
+        return _APP_DB_MODULES_CACHE
+
+    target = app_dir or (BACKEND_DIR / "app")
+    known: set[str] = set()
+    text_by_mod: dict[str, str] = {}
+    for path in target.rglob("*.py"):
+        mod = _app_module_name(path, target)
+        known.add(mod)
+        text_by_mod[mod] = path.read_text(encoding="utf-8", errors="replace")
+
+    deps: dict[str, set[str]] = {}
+    for path in target.rglob("*.py"):
+        mod = _app_module_name(path, target)
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), filename=str(path))
+        deps[mod] = _app_imports(tree, known) - {mod}
+
+    db_modules = {mod for mod, text in text_by_mod.items() if _DB_PRIMITIVE_RE.search(text)}
+    changed = True
+    while changed:
+        changed = False
+        for mod, targets in deps.items():
+            if mod not in db_modules and targets & db_modules:
+                db_modules.add(mod)
+                changed = True
+
+    if app_dir is None:
+        _APP_DB_MODULES_CACHE = (db_modules, known)
+    return db_modules, known
+
+
+def enumerate_indirect_db_files(
+    tests_dir: Path | None = None,
+    app_dir: Path | None = None,
+) -> list[Path]:
+    """枚举「无直连信号、但 import 了传递性触库 app 模块」的测试文件。
+
+    这类文件静态守卫看不见（无直连信号），此前的酸测默认枚举也跳过
+    （enumerate_gray_files 第一句就要求直连信号）——两类自动化共享同一
+    盲区。本函数把它们补进默认选集。
+
+    与灰区/探针桶互斥（后两者均要求直连信号）。tests_dir / app_dir 可
+    注入以便单测（默认取仓库真实目录）。
+    """
+    target_tests = tests_dir or TESTS_DIR
+    db_modules, known = _db_touching_app_modules(app_dir)
+
+    out: list[Path] = []
+    for path in sorted(target_tests.rglob("test_*.py")):
+        try:
+            rel = path.relative_to(BACKEND_DIR).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        if rel in WHITELIST:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            _enum_error(rel, exc)
+        if _direct_db_signals(tree, _string_constants(tree)):
+            continue  # 直连 → 归灰区/探针桶
+        if _app_imports(tree, known) & db_modules:
+            out.append(path)
+    return out
+
+
 def _classify(rel: str) -> str:
     """单文件桶归属标注（--changed / --only 输出用；枚举函数的逐文件版）。
 
-    返回值之一：whitelist / indirect（静态看不见默认库） /
-    guard-would-flag（守卫规则二会拦的违规）/ gray（灰区）/ probe-bucket
-    （直连无表读，探针桶成员）。与 enumerate_* 的判定共用同一批守卫函数，
-    语义一致。
+    返回值之一：whitelist / indirect（静态看不见默认库，也不 import 触库
+    模块）/ indirect-db（经 service/app 模块间接触库）/ guard-would-flag
+    （守卫规则二会拦的违规）/ gray（灰区）/ probe-bucket（直连无表读，
+    探针桶成员）。与 enumerate_* 的判定共用同一批守卫函数，语义一致。
     """
     path = BACKEND_DIR / rel
     if rel in WHITELIST:
@@ -171,6 +332,9 @@ def _classify(rel: str) -> str:
         return "syntax-error"
     strings = _string_constants(tree)
     if not _direct_db_signals(tree, strings):
+        db_modules, known = _db_touching_app_modules()
+        if _app_imports(tree, known) & db_modules:
+            return "indirect-db"
         return "indirect"
     if check_residue_reads(path) is not None:
         return "guard-would-flag"
@@ -182,6 +346,7 @@ def _classify(rel: str) -> str:
 _CLASSIFY_LABELS = {
     "whitelist": "白名单豁免",
     "indirect": "非直连",
+    "indirect-db": "间接触库",
     "guard-would-flag": "守卫会拦",
     "gray": "灰区",
     "probe-bucket": "探针桶",
@@ -311,6 +476,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=20260928,
         help="探针抽样随机种子（默认固定值，同树重跑结果稳定；只影响默认全量模式）",
     )
+    parser.add_argument(
+        "--bucket",
+        choices=["all", "gray", "indirect", "probe"],
+        default="all",
+        help="只跑指定桶（默认 all）：gray=灰区 / indirect=间接触库 / probe=探针抽样",
+    )
     args = parser.parse_args(argv)
     if args.only and args.changed:
         parser.error("--only 与 --changed 互斥，选一个")
@@ -410,8 +581,8 @@ def main(argv: list[str] | None = None) -> int:
             print("💡 本次改动涉及 app/ 的默认库行为信号（启发式 diff 扫描）：")
             for rel, sig in hinted:
                 print(f"   {rel}: {', '.join(sorted(sig))}")
-            print("   建议跑全量酸测（去掉 --changed）：经 service 层间接使用")
-            print("   默认库的测试静态不可见，定向选集不含它们。本提示不阻断。\n")
+            print("   建议跑全量酸测（去掉 --changed）：全量已覆盖灰区 + 间接触库 + 探针")
+            print("   三桶，定向选集不含经 service 层间接触库的文件。本提示不阻断。\n")
         rels = _changed_test_files(repo_root, base)
         if not rels:
             print(f"✅ 基线 {base} 以来没有改动的测试文件，无需酸测")
@@ -419,12 +590,18 @@ def main(argv: list[str] | None = None) -> int:
         tags = {rel: _CLASSIFY_LABELS.get(_classify(rel), "") for rel in rels}
         buckets = {f"本次改动 (base={base})": rels}
     else:
-        gray = enumerate_gray_files()
-        probes = _pick_probes(enumerate_probe_candidates(), args.probe_count, args.probe_seed)
-        buckets = {
-            "灰区（直连+表读+豁免路径）": [p.relative_to(BACKEND_DIR).as_posix() for p in gray],
-            f"探针抽样(seed={args.probe_seed})": [p.relative_to(BACKEND_DIR).as_posix() for p in probes],
-        }
+        buckets = {}
+        if args.bucket in ("all", "gray"):
+            gray = enumerate_gray_files()
+            buckets["灰区（直连+表读+豁免路径）"] = [p.relative_to(BACKEND_DIR).as_posix() for p in gray]
+        if args.bucket in ("all", "indirect"):
+            indirect = enumerate_indirect_db_files()
+            buckets["间接触库（经 service/app 模块，静态不可见）"] = [
+                p.relative_to(BACKEND_DIR).as_posix() for p in indirect
+            ]
+        if args.bucket in ("all", "probe"):
+            probes = _pick_probes(enumerate_probe_candidates(), args.probe_count, args.probe_seed)
+            buckets[f"探针抽样(seed={args.probe_seed})"] = [p.relative_to(BACKEND_DIR).as_posix() for p in probes]
 
     total = sum(len(v) for v in buckets.values())
     if total == 0:

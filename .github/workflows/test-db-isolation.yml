@@ -5,15 +5,19 @@
 # 内容: verify_test_db_isolation.py —— 守卫静态盲区的动态酸测
 # ──────────────────────────────────────────────
 #
-# 为什么是独立 workflow、且不进 PR 门：
+# 与 ci.yml 的 `Test DB Isolation Gate` 的分工（2026-10-03 起）：
 #
 # `check_test_db_bootstrap.py`（ci.yml lint 阶段）是纯静态 AST 守卫，经
 # service 层间接使用默认库的文件它看不见（CONVENTIONS §13.4 已知边界），
-# 这层靠逐文件空库酸测覆盖。但酸测是**串行逐文件删库单跑**，全量约
-# 4-5 分钟——放进每个 PR 的必过链会把 CI 拖慢一个量级，而它验证的东西
-# 并不随每个 commit 变化。所以做成手动触发的可选检查：
+# 这层靠逐文件空库酸测覆盖。但全量酸测是**串行逐文件删库单跑**，三桶共
+# 约 104 文件 / 8-10 分钟——塞进每个 PR 会把 CI 拖慢一个量级。所以拆两层：
 #
-#   - 不在 ci.yml 里 → branch protection 的必过检查名单零改动；
+#   - 本 workflow（手动/定期）：灰区 + 间接触库 + 探针三桶**全量**；
+#   - ci.yml `Test DB Isolation Gate`（每个 PR）：只跑「间接触库」桶
+#     （静态零信号的共享盲区，风险最高），且只在关键路径改动上真跑。
+#
+# 本 workflow 仍不进 PR 必过链（分支保护名单只需登记上面那一个 job 名）：
+#
 #   - 不进普通 PR run → 没有常驻 skipped job 的噪音；
 #   - 需要时在 Actions 页手动 dispatch，跑完红绿即结论。
 #

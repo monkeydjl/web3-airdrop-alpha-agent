@@ -12,8 +12,10 @@ CI lint job 必红，25 个提交之后才被整体回归发现。
   2. python -m ruff format --check .   （CI 同款）
   3. scripts/check_connection_hygiene.py（CI 同款，§13.3）
   4. scripts/check_test_db_bootstrap.py （CI 同款，§13.4）
-  5. 酸测枚举自检（加码）：verify_test_db_isolation 的灰区/探针桶枚举
-     可跑、清单非空——不跑 pytest，秒级确认酸测脚本本身没坏
+  5. 酸测枚举自检（加码）：verify_test_db_isolation 的灰区/间接触库/探针
+     三桶枚举可跑、清单非空——不跑 pytest，秒级确认酸测脚本本身没坏。
+     其中间接触库桶现在是 ci.yml `Test DB Isolation Gate` 的必跑内容，
+     枚举器坏掉会让那道门禁空转。
 
 用法（backend/ 下）::
 
@@ -76,10 +78,12 @@ def main() -> int:
         "sys.path.insert(0, 'scripts')\n"
         "import verify_test_db_isolation as v\n"
         "gray = v.enumerate_gray_files()\n"
+        "indirect = v.enumerate_indirect_db_files()\n"
         "probes = v.enumerate_probe_candidates()\n"
         "assert gray, '灰区清单为空——酸测脚本或守卫函数坏了'\n"
+        "assert indirect, '间接触库清单为空——枚举器或 app 模块图解析坏了'\n"
         "assert probes, '探针桶清单为空——酸测脚本或守卫函数坏了'\n"
-        "print(f'灰区 {len(gray)} + 探针桶 {len(probes)}')\n"
+        "print(f'灰区 {len(gray)} + 间接触库 {len(indirect)} + 探针桶 {len(probes)}')\n"
     )
     legs.append(("酸测枚举自检（加码）", [sys.executable, "-c", enum_check]))
 
