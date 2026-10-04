@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { apiFetch } from '@/lib/api';
 import { relativeTime } from '@/lib/format';
 import type { WatchedWallet, WatchedWalletsResponse } from '@/lib/types';
@@ -406,7 +408,7 @@ export function WatchedWalletsPanel({ className = '' }: { className?: string }) 
 
       {/* ── 添加钱包弹窗 ── */}
       {isAddOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+        <Modal onClose={() => setIsAddOpen(false)} title="登记监控钱包" backdropClassName="bg-black/60">
           <div className="w-full max-w-md rounded-xl border border-line bg-surface p-5 shadow-lift space-y-4">
             <div className="flex items-center justify-between border-b border-line pb-3">
               <h4 className="text-sm font-bold text-ink flex items-center gap-2">
@@ -494,12 +496,12 @@ export function WatchedWalletsPanel({ className = '' }: { className?: string }) 
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       ) : null}
 
       {/* ── 编辑钱包弹窗 ── */}
       {editingWallet ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+        <Modal onClose={() => setEditingWallet(null)} title="修改监控钱包" backdropClassName="bg-black/60">
           <div className="w-full max-w-md rounded-xl border border-line bg-surface p-5 shadow-lift space-y-4">
             <div className="flex items-center justify-between border-b border-line pb-3">
               <h4 className="text-sm font-bold text-ink flex items-center gap-2">
@@ -582,7 +584,7 @@ export function WatchedWalletsPanel({ className = '' }: { className?: string }) 
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       ) : null}
     </div>
   );

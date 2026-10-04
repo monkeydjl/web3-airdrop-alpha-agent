@@ -22,6 +22,8 @@ const FILES = [
   './lib/batch5.test.ts',
   './lib/batch6.test.ts',
   './lib/batch7.test.ts',
+  './lib/modalShell.test.ts',
+  './lib/modalFocus.test.ts',
 ];
 
 for (const f of FILES) {

@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useState } from 'react';
 import { apiFetch } from '@/lib/api';
 
@@ -61,7 +63,7 @@ export function SecuritySentinelModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="🛡️ 智能合约授权与防钓鱼安全风控雷达" backdropClassName="bg-black/75 backdrop-blur-sm">
       <div className="dash-card w-full max-w-2xl max-h-[90vh] flex flex-col p-6 shadow-2xl border-line bg-surface relative">
         <button
           type="button"
@@ -241,6 +243,6 @@ export function SecuritySentinelModal({
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

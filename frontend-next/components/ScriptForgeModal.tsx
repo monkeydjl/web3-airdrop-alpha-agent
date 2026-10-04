@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
@@ -75,7 +77,7 @@ export function ScriptForgeModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="⚡ 自动化交互 CLI 脚本与防女巫模板工坊" backdropClassName="bg-black/75 backdrop-blur-sm">
       <div className="dash-card w-full max-w-2xl max-h-[90vh] flex flex-col p-6 shadow-2xl border-line bg-surface relative">
         <button
           type="button"
@@ -208,6 +210,6 @@ export function ScriptForgeModal({
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

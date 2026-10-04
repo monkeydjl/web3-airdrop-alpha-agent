@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useState } from 'react';
 import { apiFetch } from '@/lib/api';
 
@@ -49,7 +51,7 @@ export function SybilDefenseModal({ initialAddress = '', onClose }: SybilDefense
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="🛡️ 链上女巫清洗自证报告与申诉存证导出器" backdropClassName="bg-black/70 backdrop-blur-sm">
       <div className="dash-card w-full max-w-2xl max-h-[90vh] flex flex-col p-6 shadow-2xl border-line bg-surface relative">
         <button
           type="button"
@@ -157,6 +159,6 @@ export function SybilDefenseModal({ initialAddress = '', onClose }: SybilDefense
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

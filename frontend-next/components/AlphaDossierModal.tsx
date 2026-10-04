@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useState } from 'react';
 import { X, Copy, Check, FileText, Sparkles } from 'lucide-react';
 import { LabelBadge } from './ui';
@@ -48,7 +50,7 @@ export function AlphaDossierModal({
   const { summary } = dossier;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="Alpha 深度投研研报" backdropClassName="bg-black/70 backdrop-blur-sm">
       <div className="relative flex flex-col w-full max-w-4xl max-h-[90vh] bg-surface-1 border border-line rounded-xl shadow-2xl overflow-hidden">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-line bg-surface-2/60">
@@ -147,6 +149,6 @@ export function AlphaDossierModal({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

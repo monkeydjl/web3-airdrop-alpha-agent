@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { StatCard } from './ui';
@@ -238,7 +240,11 @@ export function AirdropPnlPanel() {
 
       {/* 新增空投弹窗 */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+        <Modal
+          onClose={() => setShowAddModal(false)}
+          title="🎁 记录新到账空投代币"
+          backdropClassName="bg-black/70 backdrop-blur-sm"
+        >
           <div className="dash-card w-full max-w-md p-6 shadow-2xl border-line bg-surface relative">
             <button
               type="button"
@@ -331,7 +337,7 @@ export function AirdropPnlPanel() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* 空投止盈策略模拟器弹窗 */}

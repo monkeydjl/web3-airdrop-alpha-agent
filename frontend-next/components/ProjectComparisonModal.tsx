@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { X, Swords, Trophy, Sparkles, AlertCircle } from 'lucide-react';
@@ -175,7 +177,7 @@ export function ProjectComparisonModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="重点项目多维雷达对比与竞品 PK 矩阵 8 维深度对齐" backdropClassName="bg-black/75 backdrop-blur-sm">
       <div className="dash-card w-full max-w-4xl max-h-[90vh] flex flex-col p-6 shadow-2xl border-line bg-surface relative overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-line">
@@ -342,6 +344,6 @@ export function ProjectComparisonModal({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

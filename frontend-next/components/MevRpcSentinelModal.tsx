@@ -1,5 +1,7 @@
 'use client';
 
+import { Modal } from '@/components/Modal';
+
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 
@@ -94,7 +96,7 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in">
+    <Modal onClose={onClose} title="智能防夹 (MEV) 与私有 RPC 路由哨兵" backdropClassName="bg-black/60 backdrop-blur-sm">
       <div className="relative flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl border border-line bg-surface p-6 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-line pb-4">
@@ -262,6 +264,6 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
