@@ -373,5 +373,9 @@ jobs:
       - name: Run build
         run: npm run build
 
+      # 只拦生产依赖：运行时镜像用 Next standalone 输出（frontend-next/Dockerfile），
+      # devDependency（tailwind / eslint 链）不进镜像。2026-10-04 起 braces <=3.0.3
+      # 的 GHSA-vfj7-8cjw-p6xm 无补丁版本，只经 dev 链传入，全量 audit 会无解地红着。
+      # 上游出补丁后可改回不带 --omit=dev。
       - name: Run npm audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high

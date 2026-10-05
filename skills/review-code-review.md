@@ -58,7 +58,7 @@
   ./venv/Scripts/python.exe -m mypy app --config-file pyproject.toml
   ./venv/Scripts/python.exe -m pytest tests -q --no-cov -p no:cacheprovider
   ```
-- 操作（前端）：`cd frontend-next && npm run lint && npm run typecheck && npm run build && npm audit --audit-level=high`
+- 操作（前端）：`cd frontend-next && npm run lint && npm run typecheck && npm run build && npm audit --omit=dev --audit-level=high`
 - 验证：CI 的 pytest 还带三个 `-W error::`（`DeprecationWarning` / `ResourceWarning` / `PytestUnraisableExceptionWarning`），本地没带会在 CI 上才暴露
 - 说明：**别把 `.txt` 传给 ruff**，它只接受 `.py`；也别放宽 `-W error` 来绕过依赖警告 —— 2026-09-04 的 anyio 事故（32 个文件 collection error）正确修法是 pin 版本
 
@@ -93,7 +93,7 @@
 - [ ] DB 变更四处同落（sqlite DDL / pg DDL / alembic / DATABASE_DDL.md），级联删除显式写
 - [ ] ruff + mypy + pytest 全绿，覆盖率按 80% 判定（**不是 90%**）
 - [ ] 新增依赖 `==` pin 到 requirements，无 `.lock` 文件要更新
-- [ ] 前端 lint / typecheck / build / `npm audit --audit-level=high` 通过
+- [ ] 前端 lint / typecheck / build / `npm audit --omit=dev --audit-level=high` 通过
 - [ ] 涉及的 parity 测试已跑（术语、编码、API、可观测性、安全、运维、env、ADR 索引、前端一致性）
 - [ ] 若把某个「待实现」符号落地，同步 `test_security_doc_parity.py` 的反向断言
 
