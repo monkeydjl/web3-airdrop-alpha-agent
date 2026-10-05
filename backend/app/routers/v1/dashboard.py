@@ -143,7 +143,11 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
             data["discovery"]["total"] = int(_row_value(raw_summary, "total", 0) or 0)
             data["discovery"]["pending_count"] = int(_row_value(raw_summary, "pending", 0) or 0)
             data["discovery"]["today_new"] = int(_row_value(raw_summary, "today_new", 0) or 0)
-        except Exception:
+        except Exception as exc:
+            # raw_projects 是核心表，不像 opportunity_assessments 可能未建 —— 这里失败
+            # 就是真故障。保留 0 兜底让概览页其余块照常渲染，但必须记 warning，
+            # 否则面板恒显 0 而无从排查。
+            logger.warning("dashboard.discovery_block_failed", error=str(exc))
             data["discovery"]["total"] = 0
             data["discovery"]["pending_count"] = 0
             data["discovery"]["today_new"] = 0

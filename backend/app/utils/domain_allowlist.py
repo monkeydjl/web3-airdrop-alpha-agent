@@ -94,6 +94,22 @@ def is_url_allowed(url: str) -> bool:
     return host is not None and host in allowed_domains()
 
 
+def _redact_url(url: str) -> str:
+    """去掉 query / fragment / userinfo 后的 URL，供日志与异常信息使用。
+
+    采集器常把密钥放在 query 里（Etherscan `?apikey=`），被拒时原样记日志
+    会把密钥写进日志管道。
+    """
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return "<unparseable>"
+    netloc = parsed.hostname or ""
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return parsed._replace(netloc=netloc, query="", fragment="", params="").geturl()
+
+
 def assert_url_allowed(url: str) -> None:
     """发出请求前校验 URL 的域名在白名单内，否则抛 `DomainNotAllowedError`。
 
@@ -101,5 +117,8 @@ def assert_url_allowed(url: str) -> None:
     """
     host = _host_of(url)
     if host is None or host not in allowed_domains():
-        logger.error("security.domain_not_allowed", url=url, host=host)
-        raise DomainNotAllowedError(f"target domain not in outbound allowlist: {host or '<unparseable>'} (url={url})")
+        safe_url = _redact_url(url)
+        logger.error("security.domain_not_allowed", url=safe_url, host=host)
+        raise DomainNotAllowedError(
+            f"target domain not in outbound allowlist: {host or '<unparseable>'} (url={safe_url})"
+        )

@@ -24,6 +24,7 @@ import pytest
 from app.llm.client import (
     CircuitState,
     LLMProvider,
+    ProviderCircuitBreaker,
     _build_combinations,
     _is_connection_error,
     _is_model_error,
@@ -1297,3 +1298,93 @@ class TestCircuitBreaker:
         # 探针成功后，熔断器自动闭合 (CLOSED) 并清空失败计数
         assert breaker.state == CircuitState.CLOSED
         assert breaker.consecutive_failures == 0
+
+    def test_half_open_allows_single_probe(self):
+        """HALF_OPEN 同一时刻只放一个探针，其余请求继续快速跳过。"""
+        breaker = ProviderCircuitBreaker()
+        breaker.state = CircuitState.OPEN
+        breaker.consecutive_failures = 3
+        breaker.last_failure_time = time.monotonic() - 61.0
+
+        assert breaker.allow_request() is True
+        assert breaker.state == CircuitState.HALF_OPEN
+        assert breaker.allow_request() is False
+        assert breaker.allow_request() is False
+
+    def test_lost_probe_is_released_after_cooldown(self):
+        """探针没回报（如任务被取消）超过一个冷却期后，放下一个探针。"""
+        breaker = ProviderCircuitBreaker()
+        breaker.state = CircuitState.HALF_OPEN
+        breaker.probe_in_flight = True
+        breaker.probe_started_at = time.monotonic() - 61.0
+
+        assert breaker.allow_request() is True
+
+    def test_half_open_probe_connection_failure_reopens(self):
+        """探针遇到连接错误立即重新 OPEN，不用再攒满阈值。"""
+        breaker = ProviderCircuitBreaker()
+        breaker.state = CircuitState.OPEN
+        breaker.consecutive_failures = 3
+        breaker.last_failure_time = time.monotonic() - 61.0
+        assert breaker.allow_request() is True
+
+        breaker.record_failure(is_connection_error=True)
+
+        assert breaker.state == CircuitState.OPEN
+        assert breaker.probe_in_flight is False
+        assert breaker.allow_request() is False
+
+    def test_half_open_probe_non_connection_error_closes(self):
+        """探针遇到模型错误说明接口连得上，闭合而不是卡在 HALF_OPEN。"""
+        breaker = ProviderCircuitBreaker()
+        breaker.state = CircuitState.HALF_OPEN
+        breaker.probe_in_flight = True
+        breaker.probe_started_at = time.monotonic()
+
+        breaker.record_failure(is_connection_error=False)
+
+        assert breaker.state == CircuitState.CLOSED
+        assert breaker.probe_in_flight is False
+        assert breaker.consecutive_failures == 0
+
+    def test_non_connection_error_does_not_reset_closed_counter(self):
+        """CLOSED 下的模型错误不影响连接失败计数。"""
+        breaker = ProviderCircuitBreaker()
+        breaker.record_failure(is_connection_error=True)
+        breaker.record_failure(is_connection_error=False)
+
+        assert breaker.state == CircuitState.CLOSED
+        assert breaker.consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_half_open_probe_model_error_unsticks_breaker(self, monkeypatch):
+        """端到端：探针命中模型错误后熔断器闭合，同接口下一个模型照常被尝试。"""
+        breaker = get_circuit_breaker("half-open-provider")
+        breaker.state = CircuitState.OPEN
+        breaker.consecutive_failures = 3
+        breaker.last_failure_time = time.monotonic() - 61.0
+
+        mock_settings = _mock_settings(
+            [
+                {
+                    "base_url": "https://api1.com/v1",
+                    "api_key": "key1",
+                    "name": "half-open-provider",
+                    "models": ["bad-model", "good-model"],
+                },
+            ]
+        )
+        monkeypatch.setattr("app.llm.client.settings", mock_settings)
+
+        async def mock_try_single(model, **kwargs):
+            if model == "bad-model":
+                raise ValueError("model not found")
+            return _completion("ok")
+
+        monkeypatch.setattr("app.llm.client._try_single", mock_try_single)
+
+        res = await llm_chat(messages=[{"role": "user", "content": "probe"}])
+
+        assert res.ok is True
+        assert res.model_used == "good-model"
+        assert breaker.state == CircuitState.CLOSED

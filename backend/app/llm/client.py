@@ -89,7 +89,8 @@ class ProviderCircuitBreaker:
 
     当连续遭遇连接/超时/5xx/429错误达到阈值（默认 3 次）时，进入 OPEN 状态。
     在冷却期（默认 60s）内，直接在调用前快速跳过，避免每次请求白白付出连接超时的延迟。
-    冷却结束后进入 HALF_OPEN 试探放行一次，成功则自动闭合并恢复正常调用。
+    冷却结束后进入 HALF_OPEN，同一时刻只放行一个探针：探针成功（或遇到非连接错误，
+    说明接口连得上）则闭合；探针遇到连接错误则立即重新 OPEN。
     """
 
     failure_threshold: int = 3
@@ -98,29 +99,44 @@ class ProviderCircuitBreaker:
     consecutive_failures: int = 0
     last_failure_time: float = 0.0
     state: CircuitState = CircuitState.CLOSED
+    probe_in_flight: bool = False
+    probe_started_at: float = 0.0
 
     def allow_request(self) -> bool:
         """检查熔断器是否允许发起请求。"""
         now = time.monotonic()
+        if self.state == CircuitState.CLOSED:
+            return True
         if self.state == CircuitState.OPEN:
-            if now - self.last_failure_time >= self.cooldown_seconds:
-                self.state = CircuitState.HALF_OPEN
-                return True
+            if now - self.last_failure_time < self.cooldown_seconds:
+                return False
+            self.state = CircuitState.HALF_OPEN
+        # HALF_OPEN：只放一个探针，其余并发请求继续快速跳过。探针若因任务取消等
+        # 原因没回报结果，超过一个冷却期视为丢失、放下一个探针，避免永久卡在 HALF_OPEN。
+        if self.probe_in_flight and now - self.probe_started_at < self.cooldown_seconds:
             return False
+        self.probe_in_flight = True
+        self.probe_started_at = now
         return True
 
     def record_success(self) -> None:
         """调用成功：清空连续失败计数并恢复 CLOSED。"""
         self.consecutive_failures = 0
         self.state = CircuitState.CLOSED
+        self.probe_in_flight = False
 
     def record_failure(self, is_connection_error: bool) -> None:
-        """遇到连接/服务端严重错误时累计失败并按需触发熔断。"""
+        """记录一次失败。连接/超时/5xx/429 累计熔断；其它错误只影响 HALF_OPEN 探针。"""
         if not is_connection_error:
+            # 模型名错 / 4xx 等说明接口本身连得上。HALF_OPEN 探针遇到它若什么都不做，
+            # 熔断器会停在 HALF_OPEN、探针标记也不释放 —— 视为接口已恢复。
+            if self.state == CircuitState.HALF_OPEN:
+                self.record_success()
             return
         self.consecutive_failures += 1
         self.last_failure_time = time.monotonic()
-        if self.consecutive_failures >= self.failure_threshold:
+        self.probe_in_flight = False
+        if self.state == CircuitState.HALF_OPEN or self.consecutive_failures >= self.failure_threshold:
             self.state = CircuitState.OPEN
 
 
@@ -672,7 +688,9 @@ async def llm_chat(
                 failed_providers.add(provider.name)
                 continue
 
-            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续
+            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续。
+            # 仍要告知熔断器 —— HALF_OPEN 探针靠它释放（见 record_failure）。
+            breaker.record_failure(is_connection_error=False)
             continue
 
     logger.error(

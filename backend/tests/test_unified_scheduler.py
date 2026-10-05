@@ -476,6 +476,86 @@ def test_run_archive_swallows_errors(monkeypatch, tmp_path):
     sched._run_archive()  # 不应抛出
 
     assert "unified_scheduler.archive_failed" in events
+    # 归档失败不能挡住保留期清理
+    assert "unified_scheduler.retention_prune_completed" in events
+
+
+def test_run_archive_prunes_retention_tables(monkeypatch, tmp_path):
+    """定时归档必须顺带清理 audit_logs / opportunity_economic_snapshots 的过期行。"""
+    from app.db import get_connection, init_db
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "sched_prune.db"))
+    with get_connection() as conn:
+        init_db(conn)
+
+    calls: list[str] = []
+
+    def fake_audit(self, conn, retention_days=None):
+        calls.append("audit")
+        return 3
+
+    def fake_snapshots(self, conn, retention_days=None):
+        calls.append("snapshots")
+        return 5
+
+    monkeypatch.setattr("app.archive.RawDataArchiver.prune_audit_logs", fake_audit)
+    monkeypatch.setattr("app.archive.RawDataArchiver.prune_opportunity_economic_snapshots", fake_snapshots)
+
+    logged: dict[str, dict] = {}
+    sched = UnifiedScheduler(_make_fake_registry())
+    monkeypatch.setattr(
+        sched,
+        "_logger",
+        MagicMock(
+            info=lambda event, **kw: logged.__setitem__(event, kw),
+            warning=lambda event, **kw: logged.__setitem__(event, kw),
+            error=lambda event, **kw: logged.__setitem__(event, kw),
+        ),
+    )
+
+    sched._run_archive()
+
+    assert calls == ["audit", "snapshots"]
+    assert logged["unified_scheduler.retention_prune_completed"] == {
+        "audit_logs_pruned": 3,
+        "economic_snapshots_pruned": 5,
+    }
+
+
+def test_run_archive_swallows_prune_errors(monkeypatch, tmp_path):
+    """保留期清理失败只记日志，不外抛，也不影响已提交的归档记录。"""
+    from app.db import get_connection, init_db
+    from app.repositories.archive_runs import ArchiveRunRepository
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "sched_prune_fail.db"))
+    with get_connection() as conn:
+        init_db(conn)
+
+    def boom(self, conn, retention_days=None):
+        raise RuntimeError("prune exploded")
+
+    monkeypatch.setattr("app.archive.RawDataArchiver.prune_audit_logs", boom)
+
+    events: list[str] = []
+    sched = UnifiedScheduler(_make_fake_registry())
+    monkeypatch.setattr(
+        sched,
+        "_logger",
+        MagicMock(
+            info=lambda event, **kw: events.append(event),
+            warning=lambda event, **kw: events.append(event),
+            error=lambda event, **kw: events.append(event),
+        ),
+    )
+
+    sched._run_archive()  # 不应抛出
+
+    assert "unified_scheduler.archive_completed" in events
+    assert "unified_scheduler.retention_prune_failed" in events
+    with get_connection() as conn:
+        runs = ArchiveRunRepository(conn).list_recent()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "success"
 
 
 # ── vitals job（官网活性探测）───────────────────────────────────────────────
