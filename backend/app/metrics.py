@@ -365,6 +365,12 @@ LLM_SPEND_TODAY_USD = Gauge(
     "Estimated LLM spend for the current UTC day in USD.",
 )
 
+LLM_CIRCUIT_BREAKER_TRIPPED = Counter(
+    "airdrop_llm_circuit_breaker_tripped_total",
+    "LLM requests skipped before dispatch due to an open circuit breaker.",
+    ["provider"],
+)
+
 # 闭合词表：这两个标签的取值必须来自模块级常量，不允许运行时拼字符串。
 # `basis` 与 `reason` 的真值分别定义在 app/llm/pricing.py 与 app/llm/budget.py，
 # 由门禁比对两边一致。
@@ -410,6 +416,11 @@ def record_llm_spend_record_failure() -> None:
 def record_llm_leak_detected() -> None:
     """记录一次因输出含密钥而被丢弃的 LLM 结果（SECURITY §10.5）。"""
     LLM_LEAK_DETECTED.inc()
+
+
+def record_llm_circuit_breaker_trip(*, provider: str) -> None:
+    """记录一次因熔断器开启而跳过的 LLM 尝试。"""
+    LLM_CIRCUIT_BREAKER_TRIPPED.labels(provider=provider).inc()
 
 
 def set_llm_budget_state(*, budget_usd: float, spent_today_usd: float) -> None:

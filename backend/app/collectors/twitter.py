@@ -114,7 +114,7 @@ class TwitterCollector(DataCollector):
         if client is not None:
             yield client
         else:
-            async with httpx.AsyncClient(timeout=self.timeout) as owned:
+            async with self.http_client(timeout=self.timeout) as owned:
                 yield owned
 
     async def _search_recent(
@@ -422,7 +422,7 @@ class TwitterCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 Twitter API 可用性（调用 search/recent 配额检查）。"""
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 response = await client.get(
                     f"{self.base_url}/tweets/search/recent",
                     params={"query": "airdrop", "max_results": 10},
@@ -497,7 +497,7 @@ class TwitterKolCollector(TwitterCollector):
         # 但若所有批次都失败，说明是鉴权/限流等整体故障，向上抛出标记为 error。
         succeeded = 0
         last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             for i in range(0, len(self.accounts), batch_size):
                 batch = self.accounts[i : i + batch_size]
                 # from:handle OR from:handle ... -is:retweet
@@ -565,7 +565,7 @@ class TwitterKeywordCollector(TwitterCollector):
         # 单个关键词失败不影响其余；全部失败则向上抛出以标记整轮 error。
         succeeded = 0
         last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             for keyword in self.keywords:
                 query = f"{keyword} -is:retweet"
                 try:

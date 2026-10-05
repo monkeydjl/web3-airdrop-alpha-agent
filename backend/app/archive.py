@@ -505,3 +505,29 @@ class RawDataArchiver:
             self.signals_archive_retention_days,
             "archive.signals_archive",
         )
+
+    def prune_audit_logs(self, conn: DbConnection, retention_days: int | None = None) -> int:
+        """删除 audit_logs 中超过保留期的行（默认 365 天 / 1 年，见 DATABASE_DDL.md §6）。"""
+        days = 365 if retention_days is None else retention_days
+        cutoff = self._cutoff_db_default(days)
+        cursor = conn.execute("SELECT COUNT(*) FROM audit_logs WHERE created_at < ?", (cutoff,))
+        count = int(scalar(cursor.fetchone()) or 0)
+        if count == 0:
+            return 0
+        if not self.dry_run:
+            conn.execute("DELETE FROM audit_logs WHERE created_at < ?", (cutoff,))
+        return count
+
+    def prune_opportunity_economic_snapshots(self, conn: DbConnection, retention_days: int | None = None) -> int:
+        """删除 opportunity_economic_snapshots 中超过保留期的快照（默认 90 天，对齐 project_signals）。"""
+        days = 90 if retention_days is None else retention_days
+        # collected_at 由 db.py 的 sqlite3 datetime 适配器写入（isoformat(sep=" ")，空格分隔），
+        # 必须用空格分隔的 cutoff 比较，否则会提前一天删数据（见 _cutoff_db_default）。
+        cutoff = self._cutoff_db_default(days)
+        cursor = conn.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots WHERE collected_at < ?", (cutoff,))
+        count = int(scalar(cursor.fetchone()) or 0)
+        if count == 0:
+            return 0
+        if not self.dry_run:
+            conn.execute("DELETE FROM opportunity_economic_snapshots WHERE collected_at < ?", (cutoff,))
+        return count

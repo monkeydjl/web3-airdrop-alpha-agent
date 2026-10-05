@@ -15,7 +15,6 @@ import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -194,7 +193,7 @@ class GitHubCollector(DataCollector):
         if settings.github_token:
             headers["Authorization"] = f"Bearer {settings.github_token}"
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -468,7 +467,7 @@ class GitHubCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 GitHub API 可用性。"""
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 headers = {"Accept": "application/vnd.github+json"}
                 if settings.github_token:
                     headers["Authorization"] = f"Bearer {settings.github_token}"

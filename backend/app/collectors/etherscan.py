@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -136,7 +135,7 @@ class EtherscanCollector(DataCollector):
     async def _fetch_latest_block(self) -> int:
         """获取最新区块号。"""
         url = f"{self.base_url}?chainid=1&module=proxy&action=eth_blockNumber&apikey={self.api_key}"
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
@@ -154,7 +153,7 @@ class EtherscanCollector(DataCollector):
             f"&topic0={TRANSFER_TOPIC0}"
             f"&apikey={self.api_key}"
         )
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()

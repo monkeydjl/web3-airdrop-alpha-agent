@@ -348,7 +348,7 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 | `Coverage Gate` | 行覆盖率 **≥80%** |
 | `Type Check (mypy)` | `mypy app` |
 | `Test DB Isolation Gate` | 间接触库空库酸测（仅关键路径改动时；`verify_test_db_isolation --bucket indirect`） |
-| `Frontend Lint & Build` | typecheck + 单测 + build + `npm audit` |
+| `Frontend Lint & Build` | typecheck + 单测 + build + `npm audit --omit=dev`（仅生产依赖） |
 | `Docker Build Check` | 构建镜像并跑健康检查冒烟 |
 
 另有安全类工作流（`security.yml` / `docs.yml` / `release.yml`）：`Detect Secrets`、

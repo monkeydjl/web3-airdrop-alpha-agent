@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -81,7 +80,7 @@ class DiscordCollector(DataCollector):
 
     async def _fetch_messages(self) -> list[dict[str, Any]]:
         url = f"{DISCORD_API_BASE}/channels/{self.channel_id}/messages"
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(
                 url,
                 params={"limit": MESSAGE_LIMIT},
@@ -144,7 +143,7 @@ class DiscordCollector(DataCollector):
         if not self.is_enabled():
             return {"source_id": self.source_id, "status": "disabled"}
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 response = await client.get(
                     f"{DISCORD_API_BASE}/channels/{self.channel_id}/messages",
                     params={"limit": 1},

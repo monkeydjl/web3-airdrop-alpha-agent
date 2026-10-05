@@ -14,7 +14,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -82,7 +81,7 @@ class DefiLlamaCollector(DataCollector):
             )
 
             # 针对头部候选协议抽取 DefiLlama 免费融资数据 (raises)
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self.http_client(timeout=self.timeout) as client:
                 for protocol in candidates[:15]:
                     slug = protocol.get("slug")
                     if slug:
@@ -111,7 +110,7 @@ class DefiLlamaCollector(DataCollector):
         """拉取 DefiLlama /protocols 全量协议列表。"""
         url = f"{self.base_url}/protocols"
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
@@ -442,7 +441,7 @@ class DefiLlamaCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 DefiLlama API 可用性。"""
         try:
-            async with self.rate_limiter, httpx.AsyncClient(timeout=10) as client:
+            async with self.rate_limiter, self.http_client(timeout=10) as client:
                 response = await client.get(f"{self.base_url}/protocols")
                 response.raise_for_status()
                 return {

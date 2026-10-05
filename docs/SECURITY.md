@@ -306,6 +306,7 @@
 | `oauth.reddit.com` | Reddit OAuth 搜索 | P2 | ✅ `collectors/reddit.py` |
 | `medium.com` | Medium RSS tag feed | P2 | ✅ `collectors/medium.py` |
 | `arweave.net` | Mirror（经 Arweave GraphQL 公开读） | P2 | ✅ `collectors/mirror.py` |
+| `raw.githubusercontent.com` | GitHub Curated 测试网清单 | V2 | ✅ `collectors/github_curated.py` |
 | `api.telegram.org` | Telegram Bot API（决策推送 sendMessage） | F1 | ✅ `notify/senders.py`（经 `fetcher.post` 出站校验） |
 | `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
 | `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
@@ -339,18 +340,21 @@
   装饰性配置 —— 这正是本仓库反复反对的假实现（见 §11.2 那类教训）。
   留作 V2 引入 LLM function calling 时再实现（届时白名单才有东西可拦；
   `base.py` 至今没有 `allowed_tools`、也没有 `PermissionError`，见 §11）。
-- ✅ **已实现（2026-08-29，2026-08-30 复核口径）**：`app/utils/domain_allowlist.py`
+- ✅ **已实现（2026-08-29 实现，2026-10 全量加固）**：`app/utils/domain_allowlist.py`
   提供集中白名单（静态 `_KNOWN_DOMAINS` + LLM provider 域名动态放行）。
   `assert_url_allowed()` 在出站前 fail-closed 校验（表外抛 `DomainNotAllowedError`）。
-  **运行时强制范围只有两条路径**：`utils/fetcher.py::fetch`（抓项目网页，URL 可能
-  来自外部）与 `llm/client.py`（base_url 可配置）——这两条才是「目标地址可能被外部
-  影响」的出口。**各采集器不在调用点做运行时校验**：它们的请求目标全部是代码里写死
-  的常量，无法被外部输入改写，SSRF 面为零；其 host 靠「登记进 `_KNOWN_DOMAINS` +
-  `test_domain_allowlist.py` / §10.2 表对账门禁」两重静态约束兜底（新增 host 不登记
-  即 CI 变红）。若将来某个采集器的 URL 变成可配置，必须补运行时校验，别让这句诚实
-  描述偷偷过期。
-  （上一版这里指向一个 `app/` 下的 `http_client` 模块，**那个文件不存在**
-  —— 完整记录见 §11。）
+  **运行时强制范围已全线覆盖**：
+  1. `utils/fetcher.py::fetch` 与 `fetcher.post`（抓取外部网页与发送通知）
+  2. `llm/client.py`（LLM 请求）
+  3. 全部 10+ 采集源（通过 `DataCollector.http_client` 与 `safe_collector_client` 的 httpx request hook 在发出请求与 30x 重定向时强制拦截校验）。
+  4. `services/vitals.py`（官网活性探测）：URL 来自外部采集数据、无法套静态白名单，
+     改为 request hook 按**解析后 IP** 拒绝非公网目标（回环/内网/链路本地/云元数据，含重定向每一跳）。
+     已知边界：不覆盖 DNS rebinding。
+
+  **未接白名单的出站路径（目标均为代码内写死的常量，外部输入无法改写）**：
+  `services/faucet_registry.py`（水龙头 URL 常量）、`services/public_rpc_verifier.py`
+  （`SUPPORTED_CHAINS` RPC 常量）、`services/defillama_raises.py` 与 `services/ops_tasks.py`
+  （`api.llama.fi`）。若其中任何 URL 变为可配置或来自外部数据，必须补运行时校验。
 - ✅ **已实现**：采集场景的速率限制由 `backend/app/collectors/rate_limiter.py` 的
   令牌桶（`TokenBucketRateLimiter`）控制，逐源默认值见
   `DATA_SOURCE_STRATEGY.md §8.4`。超限抛 `RateLimitExceededError`。
@@ -363,8 +367,8 @@
 | 隔离层 | 措施 | 阶段 | 实测状态 |
 | --- | --- | --- | --- |
 | **进程级** | Agent 在独立子进程或 asyncio task 中执行，异常不传播到主进程 | MVP（asyncio task） | ✅ asyncio task |
-| **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制，超限熔断 | MVP | ✅ 并发限制（`agents/base.py:161`）+ 日预算真实拦截（`llm/budget.py`，2026-08-24 实现），见 §10.4 |
-| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ⚠️ **部分实现**（2026-08-29 实现、08-30 复核）：`fetcher` + `llm/client` 两条路径运行时 fail-closed；各采集器靠写死 URL + 静态白名单 + CI 门禁兜底，不在调用点强制（详情见 §10.2 实现注） |
+| **资源级** | LLM 调用受 `LLM_SEMAPHORE_SIZE` 并发限制 + `LLM_DAILY_BUDGET_USD` 预算限制 + 熔断器跨请求快速失败（`ProviderCircuitBreaker`），超限熔断 | MVP | ✅ 并发限制（`agents/base.py:161`）+ 日预算真实拦截（`llm/budget.py`）+ 熔断器（`llm/client.py`），见 §10.4 |
+| **网络级** | 外部 HTTP 仅允许采集源白名单域名（见 §10.2 表） | MVP（v2.0，ADR-012） | ✅ **已实现**：fetcher + llm/client + 全部采集器（`DataCollector.http_client`）运行时 fail-closed；vitals 按解析 IP 拒绝非公网目标。⚠️ faucet / public_rpc / defillama_raises / ops_tasks 仅访问写死常量，未接运行时校验（见 §10.2） |
 | **文件级** | Agent 仅能读写 `data/` 与 `logs/`，禁止访问 `.env`、`configs/`、`prompts/` | MVP | ⚠️ 是**约定**不是强制：没有 `PermissionError` 校验，靠 code review 与 `AGENTS.md` 把关 |
 | **容器级** | 生产环境 Docker 容器以 `appuser`（非 root）运行，挂载只读卷（代码/配置）+ 读写卷（data/logs） | V2 | ✅ 见 `docker/Dockerfile` |
 

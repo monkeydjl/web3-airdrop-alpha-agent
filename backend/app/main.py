@@ -378,6 +378,11 @@ def create_app(
         )
         return response
 
+    # GZip 压缩中间件：响应体大于 1KB 时自动进行 gzip 压缩，减少网络传输延时
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+
     # 通配 origin 时禁用 credentials：CORS 规范禁止 "*" 与凭据同用，
     # Starlette 在该组合下会回显任意 Origin，形成凭据跨站读取风险。
     cors_origins = settings.cors_origins_list

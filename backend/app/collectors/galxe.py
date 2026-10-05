@@ -14,7 +14,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -125,7 +124,7 @@ class GalxeCollector(DataCollector):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.post(
                 GALXE_GRAPHQL_URL,
                 json=query,

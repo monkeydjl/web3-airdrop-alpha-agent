@@ -682,47 +682,37 @@ class ProjectRepository:
                 conditions.append("veto = ?")
                 params.append(veto)
 
-            # 查询总数（scalar 兼容 sqlite Row 与 Postgres dict_row）
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            if curated or zero_cost_only:
+                # 优化：采用轻量级投影仅提取过滤必需字段，避免反复拉取庞大的 JSON 宽列（如 narrative_json, team_json 等）
+                filter_query = (
+                    f"SELECT projects.id, projects.score, projects.confidence, projects.veto, "
+                    f"projects.label, projects.stage, projects.reason, projects.meta "
+                    f"FROM projects {where_clause}"
+                )
+                rows = conn.execute(filter_query, params).fetchall()
+                filtered_ids: list[str] = []
+                for row in rows:
+                    record = dict_from_row(row)
+                    if curated and curation_reasons(record):
+                        continue
+                    if zero_cost_only and not is_zero_cost_opportunity(record):
+                        continue
+                    filtered_ids.append(str(record["id"]))
+
+                if filtered_ids:
+                    placeholders = ",".join("?" for _ in filtered_ids)
+                    conditions.append(f"projects.id IN ({placeholders})")
+                    params.extend(filtered_ids)
+                else:
+                    conditions.append("1 = 0")
+                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            # 查询总数（单次聚合计算，scalar 兼容 sqlite Row 与 Postgres dict_row）
             count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
             cursor = conn.execute(count_query, params)
             total = int(scalar(cursor.fetchone()) or 0)
-
-            if curated:
-                rows = conn.execute(f"SELECT projects.* FROM projects {where_clause}", params).fetchall()
-                kept_ids: list[str] = []
-                for row in rows:
-                    record = dict_from_row(row)
-                    if not curation_reasons(record):
-                        kept_ids.append(str(record["id"]))
-                if kept_ids:
-                    placeholders = ",".join("?" for _ in kept_ids)
-                    conditions.append(f"projects.id IN ({placeholders})")
-                    params.extend(kept_ids)
-                else:
-                    conditions.append("1 = 0")
-                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-                count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
-                cursor = conn.execute(count_query, params)
-                total = int(scalar(cursor.fetchone()) or 0)
-
-            if zero_cost_only:
-                rows = conn.execute(f"SELECT projects.* FROM projects {where_clause}", params).fetchall()
-                zero_cost_ids: list[str] = []
-                for row in rows:
-                    record = dict_from_row(row)
-                    if is_zero_cost_opportunity(record):
-                        zero_cost_ids.append(str(record["id"]))
-                if zero_cost_ids:
-                    placeholders = ",".join("?" for _ in zero_cost_ids)
-                    conditions.append(f"projects.id IN ({placeholders})")
-                    params.extend(zero_cost_ids)
-                else:
-                    conditions.append("1 = 0")
-                where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-                count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
-                cursor = conn.execute(count_query, params)
-                total = int(scalar(cursor.fetchone()) or 0)
 
             # 构建排序
             sort_column = {

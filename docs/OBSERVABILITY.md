@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **425 个不同事件名**、
-**86 个命名空间**（2026-09-25 随扩展功能批次更新）；
-段数分布：2 段 319 个、3 段 80 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **430 个不同事件名**、
+**86 个命名空间**（2026-10-04 随 vitals SSRF 拦截、dashboard 发现队列故障与保留期清理事件更新）；
+段数分布：2 段 323 个、3 段 80 个、4 段 5 个、1 段 1 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -81,9 +81,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 | --- | --- | --- |
 | `unified_scheduler` | 28 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
+| `llm` | 21 | `llm.budget.exceeded` |
 | `collector` | 20 | `collector.noise_quarantined` |
 | `orchestrator` | 20 | `orchestrator.pipeline_start` |
-| `llm` | 20 | `llm.budget.exceeded` |
 | `pipeline` | 13 | `pipeline.completed` |
 | `collection_scheduler` | 12 | `collection_scheduler.metrics_alert_failed` |
 | `archive` | 10 | `archive.raw_projects.archived` |
@@ -249,7 +249,7 @@ LLM 多接口轮询（ADR-016）落三个事件：
   `airdrop-web:8002`（compose 内网名）。
 - 命名空间为 `airdrop`，Opportunity 经济栈另用 `opportunity_economic` 前缀。
 
-### 3.2 完整指标目录（51 个，实测全量）
+### 3.2 完整指标目录（52 个，实测全量）
 
 下表由 `backend/app/metrics.py` 的注册表直接导出。
 **Counter 在 `/metrics` 输出里带 `_total` 后缀**（`prometheus_client` 自动追加），
@@ -326,7 +326,7 @@ LLM 多接口轮询（ADR-016）落三个事件：
 `source` 闭合为 `defillama` / `coingecko` / `cryptorank`；
 各 `result` 词表见 `metrics.py` 的 `OPPORTUNITY_ECONOMIC_*_RESULTS` 常量。
 
-#### LLM（10）
+#### LLM（11）
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
@@ -337,6 +337,7 @@ LLM 多接口轮询（ADR-016）落三个事件：
 | `airdrop_llm_tokens_total` | counter | `model`, `direction` | token 用量，`direction` = `prompt` / `completion` |
 | `airdrop_llm_budget_blocked_total` | counter | `reason` | 调用前被预算拒绝的次数。`reason` 见下 |
 | `airdrop_llm_spend_record_failures_total` | counter | — | 钱花了但账没记上的次数（见下方警告） |
+| `airdrop_llm_circuit_breaker_tripped_total` | counter | `provider` | 因熔断器 OPEN（或 HALF_OPEN 探针占用中）而在发请求前被跳过的尝试次数。**按跳过次数计，不是熔断触发次数**：一次熔断在冷却期内会累加多次 |
 | `airdrop_llm_budget_usd` | gauge | — | 当前配置的日预算（0 = 不限额） |
 | `airdrop_llm_spend_today_usd` | gauge | — | 当日（UTC）累计估算花费 |
 | `airdrop_llm_secret_leak_detected_total` | counter | — | LLM 输出因含密钥被丢弃的次数（SECURITY §10.5） |

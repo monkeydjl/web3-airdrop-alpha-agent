@@ -372,15 +372,32 @@ class UnifiedScheduler:
         from app.db import connection_scope
         from app.repositories.archive_runs import TRIGGER_SCHEDULER
 
+        archiver = RawDataArchiver()
         with connection_scope() as conn:
             try:
-                result = RawDataArchiver().run_and_record(conn, trigger=TRIGGER_SCHEDULER)
+                result = archiver.run_and_record(conn, trigger=TRIGGER_SCHEDULER)
                 self._logger.info(
                     "unified_scheduler.archive_completed",
                     **result.to_dict(),
                 )
             except Exception as e:
                 self._logger.error("unified_scheduler.archive_failed", error=str(e), exc_info=True)
+
+            # audit_logs / opportunity_economic_snapshots 的保留期清理。此前这两个
+            # prune 方法只有测试在调，两张表只进不出。单独一个事务：它们失败不该
+            # 回滚上面已提交的归档，反之归档失败也不该挡住这里。
+            try:
+                audit_pruned = archiver.prune_audit_logs(conn)
+                snapshots_pruned = archiver.prune_opportunity_economic_snapshots(conn)
+                conn.commit()
+                self._logger.info(
+                    "unified_scheduler.retention_prune_completed",
+                    audit_logs_pruned=audit_pruned,
+                    economic_snapshots_pruned=snapshots_pruned,
+                )
+            except Exception as e:
+                conn.rollback()
+                self._logger.error("unified_scheduler.retention_prune_failed", error=str(e), exc_info=True)
 
     # ── 官网活性探测 job（vitals，2026-09-08）──────
     #

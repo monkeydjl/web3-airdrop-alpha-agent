@@ -633,3 +633,92 @@ class TestRunRecording:
 
         # 反向：这条记录必须真的能被运维那个入口数到
         assert ArchiveRunRepository(db_conn).counts()["total"] == expected_runs
+
+
+class TestColdDataPruning:
+    """测试 audit_logs 与 opportunity_economic_snapshots 冷数据修剪。"""
+
+    def test_prune_audit_logs(self, db_conn):
+        old_time = (datetime.now(UTC) - timedelta(days=400)).strftime("%Y-%m-%d %H:%M:%S")
+        new_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+        db_conn.execute(
+            'INSERT INTO audit_logs (action, "user", detail, ip, created_at) VALUES (?, ?, ?, ?, ?)',
+            ("test_old", "user1", "detail", "127.0.0.1", old_time),
+        )
+        db_conn.execute(
+            'INSERT INTO audit_logs (action, "user", detail, ip, created_at) VALUES (?, ?, ?, ?, ?)',
+            ("test_new", "user2", "detail", "127.0.0.1", new_time),
+        )
+        db_conn.commit()
+
+        # dry run 仅统计不删除
+        archiver_dry = RawDataArchiver(dry_run=True)
+        count_dry = archiver_dry.prune_audit_logs(db_conn, retention_days=365)
+        assert count_dry == 1
+        assert db_conn.execute("SELECT COUNT(*) FROM audit_logs").fetchone()[0] == 2
+
+        # 实际执行删除
+        archiver_live = RawDataArchiver(dry_run=False)
+        count_live = archiver_live.prune_audit_logs(db_conn, retention_days=365)
+        assert count_live == 1
+        remaining = db_conn.execute("SELECT action FROM audit_logs").fetchall()
+        assert len(remaining) == 1
+        assert remaining[0]["action"] == "test_new"
+
+    def test_prune_opportunity_economic_snapshots(self, db_conn):
+        old_time = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        new_time = datetime.now(UTC).isoformat()
+
+        db_conn.execute(
+            """
+            INSERT INTO opportunity_economic_snapshots (
+                snapshot_id, schema_version, run_id, source_id, dedup_key,
+                provider_entity_id, payload_sha256, payload_json, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("snap-1", "v1", "run-1", "defillama", "k1", "e1", "hash1", "{}", "http://x", old_time),
+        )
+        db_conn.execute(
+            """
+            INSERT INTO opportunity_economic_snapshots (
+                snapshot_id, schema_version, run_id, source_id, dedup_key,
+                provider_entity_id, payload_sha256, payload_json, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("snap-2", "v1", "run-2", "defillama", "k2", "e2", "hash2", "{}", "http://x", new_time),
+        )
+        db_conn.commit()
+
+        # dry run
+        archiver_dry = RawDataArchiver(dry_run=True)
+        count_dry = archiver_dry.prune_opportunity_economic_snapshots(db_conn, retention_days=90)
+        assert count_dry == 1
+        assert db_conn.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] == 2
+
+        # live run
+        archiver_live = RawDataArchiver(dry_run=False)
+        count_live = archiver_live.prune_opportunity_economic_snapshots(db_conn, retention_days=90)
+        assert count_live == 1
+        remaining = db_conn.execute("SELECT snapshot_id FROM opportunity_economic_snapshots").fetchall()
+        assert len(remaining) == 1
+        assert remaining[0]["snapshot_id"] == "snap-2"
+
+    def test_prune_economic_snapshots_keeps_cutoff_day_rows(self, db_conn):
+        """collected_at 经 sqlite3 datetime 适配器写成空格分隔；cutoff 若用 `T` 分隔，
+        截止当天、仍在保留期内的行会被字符串比较判成过期（提前一天删）。"""
+        inside_retention = datetime.now(UTC) - timedelta(days=90) + timedelta(hours=1)
+        db_conn.execute(
+            """
+            INSERT INTO opportunity_economic_snapshots (
+                snapshot_id, schema_version, run_id, source_id, dedup_key,
+                provider_entity_id, payload_sha256, payload_json, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("snap-edge", "v1", "run-e", "defillama", "ke", "ee", "hashe", "{}", "http://x", inside_retention),
+        )
+        db_conn.commit()
+
+        archiver = RawDataArchiver(dry_run=False)
+        assert archiver.prune_opportunity_economic_snapshots(db_conn, retention_days=90) == 0
+        assert db_conn.execute("SELECT COUNT(*) FROM opportunity_economic_snapshots").fetchone()[0] == 1

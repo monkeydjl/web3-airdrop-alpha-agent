@@ -14,7 +14,6 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -276,7 +275,7 @@ class GitHubCuratedCollector(DataCollector):
             "Accept": "text/plain",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             for url in DEFAULT_REMOTE_CURATED_URLS:
                 try:
                     resp = await client.get(url, headers=headers)

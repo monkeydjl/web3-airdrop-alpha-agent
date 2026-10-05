@@ -54,6 +54,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -72,6 +73,86 @@ logger = structlog.get_logger(__name__)
 _DEFAULT_TIMEOUT = 45.0
 # 连接超时（秒）— 连不上就快速切换到下一个接口
 _CONNECT_TIMEOUT = 10.0
+
+
+class CircuitState(StrEnum):
+    """LLM Provider 熔断器状态。"""
+
+    CLOSED = "closed"  # 正常放行
+    OPEN = "open"  # 熔断冷却中，快速失败跳过
+    HALF_OPEN = "half_open"  # 冷却期后探针试探放行
+
+
+@dataclass
+class ProviderCircuitBreaker:
+    """单个 LLM Provider 的跨请求连续失败熔断器。
+
+    当连续遭遇连接/超时/5xx/429错误达到阈值（默认 3 次）时，进入 OPEN 状态。
+    在冷却期（默认 60s）内，直接在调用前快速跳过，避免每次请求白白付出连接超时的延迟。
+    冷却结束后进入 HALF_OPEN，同一时刻只放行一个探针：探针成功（或遇到非连接错误，
+    说明接口连得上）则闭合；探针遇到连接错误则立即重新 OPEN。
+    """
+
+    failure_threshold: int = 3
+    cooldown_seconds: float = 60.0
+
+    consecutive_failures: int = 0
+    last_failure_time: float = 0.0
+    state: CircuitState = CircuitState.CLOSED
+    probe_in_flight: bool = False
+    probe_started_at: float = 0.0
+
+    def allow_request(self) -> bool:
+        """检查熔断器是否允许发起请求。"""
+        now = time.monotonic()
+        if self.state == CircuitState.CLOSED:
+            return True
+        if self.state == CircuitState.OPEN:
+            if now - self.last_failure_time < self.cooldown_seconds:
+                return False
+            self.state = CircuitState.HALF_OPEN
+        # HALF_OPEN：只放一个探针，其余并发请求继续快速跳过。探针若因任务取消等
+        # 原因没回报结果，超过一个冷却期视为丢失、放下一个探针，避免永久卡在 HALF_OPEN。
+        if self.probe_in_flight and now - self.probe_started_at < self.cooldown_seconds:
+            return False
+        self.probe_in_flight = True
+        self.probe_started_at = now
+        return True
+
+    def record_success(self) -> None:
+        """调用成功：清空连续失败计数并恢复 CLOSED。"""
+        self.consecutive_failures = 0
+        self.state = CircuitState.CLOSED
+        self.probe_in_flight = False
+
+    def record_failure(self, is_connection_error: bool) -> None:
+        """记录一次失败。连接/超时/5xx/429 累计熔断；其它错误只影响 HALF_OPEN 探针。"""
+        if not is_connection_error:
+            # 模型名错 / 4xx 等说明接口本身连得上。HALF_OPEN 探针遇到它若什么都不做，
+            # 熔断器会停在 HALF_OPEN、探针标记也不释放 —— 视为接口已恢复。
+            if self.state == CircuitState.HALF_OPEN:
+                self.record_success()
+            return
+        self.consecutive_failures += 1
+        self.last_failure_time = time.monotonic()
+        self.probe_in_flight = False
+        if self.state == CircuitState.HALF_OPEN or self.consecutive_failures >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+
+
+_provider_circuit_breakers: dict[str, ProviderCircuitBreaker] = {}
+
+
+def get_circuit_breaker(provider_name: str) -> ProviderCircuitBreaker:
+    """获取指定 Provider 的熔断器实例。"""
+    if provider_name not in _provider_circuit_breakers:
+        _provider_circuit_breakers[provider_name] = ProviderCircuitBreaker()
+    return _provider_circuit_breakers[provider_name]
+
+
+def _reset_circuit_breakers_for_tests() -> None:
+    """复位所有熔断器状态（测试专用）。"""
+    _provider_circuit_breakers.clear()
 
 
 @dataclass
@@ -250,14 +331,15 @@ def _rotate(
 
 
 def _reset_round_robin_for_tests() -> None:
-    """把指针复位到 0。**仅供测试使用。**
+    """把指针复位到 0，并清空所有 provider 的熔断器状态。**仅供测试使用。**
 
-    轮询是跨调用的进程内状态，用例之间不隔离的话，「第 1 次调用应该命中
+    轮询与熔断器是跨调用的进程内状态，用例之间不隔离的话，「第 1 次调用应该命中
     provider-1」这类断言会取决于同文件里前面跑了几个用例 —— 一个结论
     取决于执行顺序的断言不是断言。
     """
     global _rr_counter
     _rr_counter = 0
+    _reset_circuit_breakers_for_tests()
 
 
 @dataclass
@@ -340,9 +422,12 @@ async def _try_single(
         "messages": messages,
     }
 
+    total_timeout = timeout or _DEFAULT_TIMEOUT
     timeout_cfg = httpx.Timeout(
-        timeout or _DEFAULT_TIMEOUT,
+        total_timeout,
         connect=_CONNECT_TIMEOUT,
+        read=total_timeout,
+        write=15.0,
     )
 
     async with httpx.AsyncClient(timeout=timeout_cfg) as client:
@@ -461,6 +546,21 @@ async def llm_chat(
         if provider.name in failed_providers:
             continue
 
+        breaker = get_circuit_breaker(provider.name)
+        if not breaker.allow_request():
+            metrics.record_llm_circuit_breaker_trip(provider=provider.name)
+            logger.warning(
+                "llm.circuit_breaker_open_skipped",
+                provider=provider.name,
+                model=model,
+                state=str(breaker.state),
+                cooldown_remaining=round(
+                    max(0.0, breaker.cooldown_seconds - (time.monotonic() - breaker.last_failure_time)),
+                    1,
+                ),
+            )
+            continue
+
         attempt = LLMAttempt(
             provider=provider.name,
             model=model,
@@ -478,6 +578,7 @@ async def llm_chat(
                 timeout=timeout,
             )
             attempt.success = True
+            breaker.record_success()
             attempt.elapsed_ms = (time.monotonic() - start) * 1000
             attempts.append(attempt)
             metrics.record_llm_attempt(model=model, ok=True, duration_seconds=attempt.elapsed_ms / 1000)
@@ -581,12 +682,15 @@ async def llm_chat(
             )
 
             # 连接错误（timeout / connect / 5xx / 429）：整个接口不可用，
-            # 跳过它的剩余模型，直接进下一个 provider。
+            # 记录熔断器失败、跳过它的剩余模型，直接进下一个 provider。
             if is_conn:
+                breaker.record_failure(is_connection_error=True)
                 failed_providers.add(provider.name)
                 continue
 
-            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续
+            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续。
+            # 仍要告知熔断器 —— HALF_OPEN 探针靠它释放（见 record_failure）。
+            breaker.record_failure(is_connection_error=False)
             continue
 
     logger.error(

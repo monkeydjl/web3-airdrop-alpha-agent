@@ -63,6 +63,21 @@ class TestKnownDomains:
         # 不抛异常即通过
         assert_url_allowed("https://api.github.com/repos/x/y")
 
+    def test_rejected_url_query_not_leaked(self) -> None:
+        # 被拒 URL 的 query / userinfo 里可能带密钥（Etherscan ?apikey=），
+        # 日志与异常信息都不能原样带出
+        from structlog.testing import capture_logs
+
+        url = "https://user:pw@evil.example.com:8443/api?module=x&apikey=SECRET123#frag"
+        with capture_logs() as logs, pytest.raises(DomainNotAllowedError) as exc_info:
+            assert_url_allowed(url)
+        msg = str(exc_info.value)
+        assert "SECRET123" not in msg and "pw@" not in msg
+        assert "evil.example.com:8443/api" in msg
+        event = next(e for e in logs if e["event"] == "security.domain_not_allowed")
+        assert "SECRET123" not in event["url"] and "pw@" not in event["url"]
+        assert event["host"] == "evil.example.com"
+
 
 class TestDynamicLLMDomains:
     def test_llm_provider_domains_are_included(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,3 +139,32 @@ class TestCollectorBaseUrlsConsistent:
         ):
             url = getattr(settings, attr)
             assert is_url_allowed(url), f"{attr}={url} 不在出站域名白名单里"
+
+
+class TestCollectorIntegration:
+    """采集器基类与统一客户端已接入域名白名单 —— 表外域名 fail-closed。"""
+
+    @pytest.mark.asyncio
+    async def test_safe_collector_client_rejects_unknown_domain(self) -> None:
+        from app.collectors.base import safe_collector_client
+
+        with pytest.raises(DomainNotAllowedError):
+            async with safe_collector_client() as client:
+                await client.get("https://unauthorized-domain.attacker.com/leak")
+
+    @pytest.mark.asyncio
+    async def test_collector_base_client_rejects_unknown_domain(self) -> None:
+        from app.collectors.base import CollectorResult, DataCollector
+
+        class DummyCollector(DataCollector):
+            @property
+            def source_type(self) -> str:
+                return "api"
+
+            async def collect(self) -> CollectorResult:
+                return CollectorResult(source_id=self.source_id)
+
+        collector = DummyCollector(source_id="dummy", source_name="Dummy")
+        with pytest.raises(DomainNotAllowedError):
+            async with collector.http_client() as client:
+                await client.get("https://evil.internal.attacker/steal")

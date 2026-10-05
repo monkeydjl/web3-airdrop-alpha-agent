@@ -11,16 +11,49 @@ v2.0 方向：从手动输入项目反转为系统自动扫描全网项目。
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import httpx
 import structlog
 
+from app.utils.domain_allowlist import assert_url_allowed
 from app.utils.normalize import create_dedup_key, generate_deterministic_id
 
 logger = structlog.get_logger(__name__)
+
+
+async def _enforce_collector_domain_allowlist_hook(request: httpx.Request) -> None:
+    """在真正发出网络请求前校验域名是否在白名单中，否则抛出 DomainNotAllowedError。"""
+    assert_url_allowed(str(request.url))
+
+
+@contextlib.asynccontextmanager
+async def safe_collector_client(
+    *,
+    timeout: float | httpx.Timeout | None = 10.0,
+    follow_redirects: bool = False,
+    **kwargs: Any,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """供采集器或辅助函数调用的受出站白名单防护的 HTTP 客户端上下文管理器。"""
+    hooks = kwargs.pop("event_hooks", None) or {}
+    req_hooks = list(hooks.get("request", []))
+    if _enforce_collector_domain_allowlist_hook not in req_hooks:
+        req_hooks.append(_enforce_collector_domain_allowlist_hook)
+    hooks["request"] = req_hooks
+
+    effective_timeout = 10.0 if timeout is None else timeout
+    async with httpx.AsyncClient(
+        timeout=effective_timeout,
+        follow_redirects=follow_redirects,
+        event_hooks=hooks,
+        **kwargs,
+    ) as client:
+        yield client
 
 
 @dataclass
@@ -124,6 +157,23 @@ class DataCollector(ABC):
     def is_enabled(self) -> bool:
         """该源是否在当前配置下启用。子类可覆盖。"""
         return True
+
+    @contextlib.asynccontextmanager
+    async def http_client(
+        self,
+        *,
+        timeout: float | httpx.Timeout | None = None,
+        follow_redirects: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[httpx.AsyncClient]:
+        """统一出站 HTTP 客户端，强制校验域名白名单并隔离外部访问。"""
+        effective_timeout = timeout if timeout is not None else getattr(self, "timeout", 10.0)
+        async with safe_collector_client(
+            timeout=effective_timeout,
+            follow_redirects=follow_redirects,
+            **kwargs,
+        ) as client:
+            yield client
 
     async def health_check(self) -> dict[str, Any]:
         """可选：源健康检查。默认返回未知。"""

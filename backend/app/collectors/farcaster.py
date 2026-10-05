@@ -14,7 +14,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -98,7 +97,7 @@ class FarcasterCollector(DataCollector):
         succeeded = 0
         last_error: Exception | None = None
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+        async with self.http_client(timeout=self.timeout, follow_redirects=True) as client:
             for channel in self.channels:
                 parent_url = f"https://farcaster.xyz/~/channel/{channel}"
                 query_url = f"{self.hub_url}/v1/castsByParent?url={parent_url}&pageSize=25&reverse=1"

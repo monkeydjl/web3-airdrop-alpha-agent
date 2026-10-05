@@ -12,7 +12,6 @@ import base64
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -89,7 +88,7 @@ class RedditCollector(DataCollector):
         return result
 
     async def _fetch_access_token(self) -> str:
-        async with self.rate_limiter, httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.post(
                 OAUTH_ENDPOINT,
                 headers=self._auth_header(),
@@ -109,7 +108,7 @@ class RedditCollector(DataCollector):
         succeeded = 0
         last_error: Exception | None = None
         headers = {"Authorization": f"Bearer {access_token}", "User-Agent": self.user_agent}
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with self.http_client(timeout=self.timeout) as client:
             for term in SEARCH_TERMS:
                 try:
                     async with self.rate_limiter:
