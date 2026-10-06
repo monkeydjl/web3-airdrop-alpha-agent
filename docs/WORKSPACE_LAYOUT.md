@@ -96,6 +96,36 @@
 **Docker 侧**（约 60GB，详见 OPERATIONS §1 停用记录）：已停用生产栈的
 旧镜像 ×12 + 悬空层 + 构建缓存；数据卷全部保留。
 
+**2026-10-05 例行清理**（按 §5 SOP，PR #38 合并后）：
+
+| 项 | 体积 | 处理 / 依据 |
+|---|---|---|
+| `backend/htmlcov`、`backend/.coverage`、`backend/.mypy_cache`、`.ruff_cache`、全部 `__pycache__/` | ~63MB | 删；§2 再生区 |
+| `data/test*.db`、`data/pytest_tmp/`、`backend/data/_probe/`（空） | ~3MB | 删；冒烟 16 passed，conftest 已自重建 |
+| `frontend-next/.next/` | 921MB | 删；先停掉 `next dev --port 3002`（开着删会把 dev server 弄挂），下次 `npm run dev` / Start.bat 重建 |
+| `backend/.pytest_cache/`、`backend/.pytest_tmp/` | — | Permission denied，同 §3 句柄占用，留着无害 |
+| git worktree `opportunity-economic-data-acquisition` | — | `git worktree prune`：记录指向的 `E:/…/.worktrees/` 已不存在 |
+| 已并入 master 的本地分支 ×21 | — | `git branch -d`（仅已合并才删得掉）；tip 均是 master 祖先，`git branch <名> <SHA>` 可恢复（SHA 同下表远端） |
+| 本地 `fix/mypy-strict`（`934571d`） | — | `git branch -D`：唯一 commit 经 `git cherry` 判定已以别的 SHA 进 master |
+| 本地 `backup/lint-recovery-pre-rewrite`（`38230f7`） | — | **留**：opportunity-economic 重写前副本，10 个 patch 与 master 不等价，需人工确认是否有遗漏 |
+| `origin` 上已合并分支 ×25 | — | `git push origin --delete`；tip 均在 master 历史里，恢复用 `git push origin <SHA>:refs/heads/<名>` |
+
+远端分支删除前的 tip（恢复依据）：`chore/root-pyproject-mypy-alignment` 97af329、
+`chore/security-scan-no-cache-docs` c149ca1、`docs/record-verified-green` e1ce298、
+`docs/session-wrap-0828` c7833ae、`docs/truthful-data-source-strategy` 187aa7d、
+`feat/action-loop-m2` 734f0a7、`feat/llm-budget-enforcement` 43fab41、
+`feat/scheduler-jobs-endpoint` c4f57a0、`fix/admin-only-write-endpoints` fea429c、
+`fix/agent-budget-refusal-distinct` 6628991、`fix/encoding-mode3-and-collection-readiness` 81b3bf7、
+`fix/encoding-type4-bom` 4bd4739、`fix/expose-label-thresholds` 013a590、
+`fix/frontend-truthful-config` 392c399、`fix/label-vocabulary-gate` b80aac0、
+`fix/mypy-strict` 375a890、`fix/production-config-hardening` 8e997d3、
+`fix/risk-level-vocabulary` b9b6d8f、`fix/security-doc-parity` 03b35f3、
+`fix/security-scan-permissions` f61787c、`fix/truthful-api-spec-and-ui-fidelity` d3e35d6、
+`fix/truthful-env-example` c6c8925、`fix/truthful-observability-and-log-level` b8655b7、
+`fix/truthful-operations-runbook` 8585202、`release/v2-consolidation` 0f3e606。
+仅本地存在过的已删分支：`docs/action-loop-design` cfa6350、`feat/action-loop-m1` 760582b、
+`feature/opportunity-economic-data-acquisition` d9794fe、`fix/p1-audit-hardening` cbbfea4。
+
 ---
 
 ## 5. 清理 SOP（下次照做）
