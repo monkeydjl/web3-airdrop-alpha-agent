@@ -256,10 +256,33 @@
 `is_listed_token_no_airdrop_signals` / `is_noise_project` /
 `is_noise_protocol` / `is_noise_raw_project`。
 
-其中 `is_listed_token_no_airdrop_signals` 只对
-`coingecko` / `cryptorank` / `etherscan` / `alchemy_webhook` 生效 ——
-这四个源会带回大量已上所代币，而已上所且没有任何空投信号的项目
-对本系统没有价值。
+`is_listed_token_no_airdrop_signals` 是**入库门**：已发币且没有后续空投路径
+（points / quest portal / 明确空投措辞）的 raw 行在 `collect_from_repository`
+里直接隔离（`quarantine_reason = listed_token_no_airdrop:*`），不写进 `projects`。
+`coingecko` / `cryptorank` / `etherscan` / `alchemy_webhook` 这四个**信号补充源**
+豁免 —— 它们的职责是给别的源发现的项目提供「已上市」佐证，过滤掉会破坏跨源合并。
+
+> 2026-10-06 修正两处口径：
+> - 上一版写成「只对这四个源生效」，实际正好相反（这四个源豁免，其余全部生效）。
+> - **testnet 不再算已发币项目的后续路径**，与 ADR-015 `already_launched` 否决
+>   同一口径。此前「已发币 + 只有测试网」能过入库门，再被评分层打成 IGNORE，
+>   已发币项目照样留在库里。
+>
+> 2026-10-08 再修正：「已发币」改为**确认已发币**（`token_launch_confirmed`，
+> ADR-015 补充）。`no_token_yet=False` 只说明没确认未发币；RootData 缺 token
+> 字段的行算状态未知，不隔离（此前误删约 30 个项目）。库内存量由每日
+> `launch_review` 隐藏而非删除，出现后续路径自动恢复。
+
+`is_tooling_repo`（仅 `github` 源）：撸毛脚本 / bot / 水龙头 / 教程仓库不是项目。
+名字分词（`Pharos-Auto-Bot` → bot）、topics（`bot` / `airdrop-farming` / `*-bot`）、
+描述措辞（automated bot、multiple private keys、auto swap）任一命中即排除。
+采集器源头过滤，`collect_from_repository` 再兜一次存量（`quarantine_reason =
+tooling_repo:*`）。GitHub 仓库文本也不再推断 `no_token_yet` / `has_points_program`
+—— 仓库给不出发币证据，唯一反证是 `KNOWN_LISTED_BRANDS`。
+
+`github_curated` 的内置清单已清空：原 9 条全部写死 `no_token_yet=True`，
+核实后 8 个已 TGE、Soneium 无代币计划。新增条目必须核实**当前**仍未发币，
+显式写 `no_token_yet`（缺省按已发币处理），并注明核实日期。
 
 ### 5.4 `discovery_score`：**没有统一公式**（上一版最大的失真）
 

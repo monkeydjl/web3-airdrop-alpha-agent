@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
+from app.collectors.noise import is_listed_brand_subproduct
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.utils.normalize import normalize_sector
@@ -29,144 +30,17 @@ DEFAULT_REMOTE_CURATED_URLS = [
     "https://raw.githubusercontent.com/arddluma/awesome-list-testnet-faucets/main/README.md",
 ]
 
-# 内置权威零成本测试网与早期 Alpha 知识库（当远程受阻或离线时作为高置信度基底）
-CORE_CURATED_TESTNETS: list[dict[str, Any]] = [
-    {
-        "name": "Monad",
-        "sector": "L1",
-        "url": "https://monad.xyz",
-        "faucet_url": "https://testnet.monad.xyz",
-        "description": "High-performance EVM-compatible Layer 1 blockchain with 10,000 TPS. Testnet environment active with zero capital requirement.",
-        "stage": "testnet",
-        "funding_total_usd": 244_000_000,
-        "funding_tier": "Tier 1",
-        "has_testnet": True,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.68,
-    },
-    {
-        "name": "Berachain",
-        "sector": "DeFi",
-        "url": "https://berachain.com",
-        "faucet_url": "https://artio.faucet.berachain.com",
-        "description": "EVM-identical L1 powered by Proof-of-Liquidity consensus. Multiple public testnet dApps (BEX, Honey, BEND, BERPS) active.",
-        "stage": "testnet",
-        "funding_total_usd": 142_000_000,
-        "funding_tier": "Tier 1",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.65,
-    },
-    {
-        "name": "Story Protocol",
-        "sector": "Infrastructure",
-        "url": "https://story.foundation",
-        "faucet_url": "https://docs.story.foundation/docs/faucet",
-        "description": "The World's IP Blockchain making intellectual property programmable and liquid. Public Iliad testnet available.",
-        "stage": "testnet",
-        "funding_total_usd": 140_000_000,
-        "funding_tier": "Tier 1",
-        "has_testnet": True,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.64,
-    },
-    {
-        "name": "Babylon",
-        "sector": "Restaking",
-        "url": "https://babylonlabs.io",
-        "faucet_url": "https://btcstaking.babylonlabs.io",
-        "description": "Bitcoin Staking protocol unlocking 1 trillion dollar BTC security for Proof-of-Stake networks.",
-        "stage": "testnet",
-        "funding_total_usd": 70_000_000,
-        "funding_tier": "Tier 1",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.62,
-    },
-    {
-        "name": "Movement",
-        "sector": "L2",
-        "url": "https://movementlabs.xyz",
-        "faucet_url": "https://faucet.movementlabs.xyz",
-        "description": "Modular network of Move-based blockchains on Ethereum. Porto / Olympus testnet active.",
-        "stage": "testnet",
-        "funding_total_usd": 38_000_000,
-        "funding_tier": "Tier 1",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.58,
-    },
-    {
-        "name": "Initia",
-        "sector": "L1",
-        "url": "https://initia.xyz",
-        "faucet_url": "https://faucet.testnet.initia.xyz",
-        "description": "A network for interwoven rollups connecting modular cosmos and EVM ecosystems. Public Incentivized Testnet.",
-        "stage": "testnet",
-        "funding_total_usd": 22_500_000,
-        "funding_tier": "Tier 2",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.56,
-    },
-    {
-        "name": "Soneium",
-        "sector": "L2",
-        "url": "https://soneium.org",
-        "faucet_url": "https://bridge.soneium.org",
-        "description": "Ethereum Layer 2 blockchain developed by Sony Block Solutions Labs. Minato public testnet active.",
-        "stage": "testnet",
-        "funding_total_usd": 0,
-        "funding_tier": "Enterprise",
-        "has_testnet": True,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": False,
-        "discovery_score": 0.55,
-    },
-    {
-        "name": "MegaETH",
-        "sector": "L2",
-        "url": "https://megaeth.systems",
-        "faucet_url": "https://megaeth.systems",
-        "description": "Real-time Ethereum Layer 2 capable of streaming 100,000 transactions per second.",
-        "stage": "testnet",
-        "funding_total_usd": 20_000_000,
-        "funding_tier": "Tier 2",
-        "has_testnet": True,
-        "has_points_program": False,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.54,
-    },
-    {
-        "name": "Nesa",
-        "sector": "AI",
-        "url": "https://nesa.ai",
-        "faucet_url": "https://faucet.nesa.ai",
-        "description": "Layer-1 blockchain for decentralized, verifiable on-chain AI inference. Testnet faucet & nodes active.",
-        "stage": "testnet",
-        "funding_total_usd": 8_000_000,
-        "funding_tier": "Tier 2",
-        "has_testnet": True,
-        "has_points_program": True,
-        "no_token_yet": True,
-        "recent_funding": True,
-        "discovery_score": 0.52,
-    },
-]
+# 内置精选测试网清单（当远程受阻或离线时作为高置信度基底）。
+#
+# 2026-10-06 清空：原先 9 条（Monad / Berachain / Story / Babylon / Movement /
+# Initia / Soneium / MegaETH / Nesa）全部写死 no_token_yet=True，但逐个核实后
+# 8 个早已 TGE（最早 Movement 2024-12，最晚 Nesa 2026-06），Soneium 官方表示
+# 无原生代币计划、主网 2025-01 已上线。静态清单不会自己过期，留着就是每天
+# 往库里灌「已发币项目伪装成测试网机会」。
+#
+# 新增条目的门槛：必须核实**当前**仍未发币，并显式写 no_token_yet（缺省按
+# 已发币处理），注释里注明核实日期与依据。
+CORE_CURATED_TESTNETS: list[dict[str, Any]] = []
 
 
 class GitHubCuratedCollector(DataCollector):
@@ -232,7 +106,8 @@ class GitHubCuratedCollector(DataCollector):
             "description": entry.get("description", ""),
             "has_testnet": bool(entry.get("has_testnet", True)),
             "has_points_program": bool(entry.get("has_points_program", False)),
-            "no_token_yet": bool(entry.get("no_token_yet", True)),
+            # 缺省按已发币处理：未写明的条目不能被假定为 pre-TGE
+            "no_token_yet": bool(entry.get("no_token_yet", False)),
             "recent_funding": bool(entry.get("recent_funding", False)),
             "funding_total_usd": entry.get("funding_total_usd"),
             "funding_tier": entry.get("funding_tier"),
@@ -341,7 +216,9 @@ class GitHubCuratedCollector(DataCollector):
                 "description": f"Community-curated testnet faucet entry for {name}.",
                 "has_testnet": True,
                 "has_points_program": False,
-                "no_token_yet": True,
+                # 水龙头清单只说明「有测试网」，说明不了「没发币」。能给出的唯一
+                # 反证是已发币品牌名单（Plume Network → plume）。
+                "no_token_yet": not is_listed_brand_subproduct(name=name),
                 "recent_funding": False,
                 "source": self.source_id,
             }

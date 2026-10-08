@@ -17,6 +17,23 @@
 - **WATCH**：50 ≤ score < 65，有机会但不确定，持续观察
 - **IGNORE**：score < 50，无价值或风险过高，不参与
 
+### 确认已发币（token_launch_confirmed）
+代币状态三态之一（2026-10-08，ADR-015 补充）：**确认未发币**（`no_token_yet=True`）/
+**确认已发币**（有正面证据：ticker、gecko_id、上市源、已发币品牌）/ **未知**（来源给不出证据，
+如 RootData 缺 token 字段）。`no_token_yet=False` 只表示「没确认未发币」，不等于已发币。
+入库门、`already_launched` 否决与默认列表隐藏只对「确认已发币」生效。
+
+### 严格积分证据（explicit_points_program）
+已发币项目「后续空投路径」里的积分条件（2026-10-08，ADR-015 补充）：只认明确措辞
+（points program / points system / points + airdrop·rewards）或可信源显式字段。
+与宽松的 `has_points_program` 区分：后者把 restaking、incentive、vaults 也算进去，
+只用于 `airdrop_signal` 子分，不再豁免 `already_launched` 否决、入库门与默认列表隐藏。
+
+### 隐藏（hidden_reason）
+项目仍在库、但不出现在默认列表 / 看板 / 推送的状态，由每日已发币复查写入
+（`already_launched_no_path`：确认已发币且无积分 / 任务入口 / 明确空投措辞）。
+与删除不同，出现后续空投路径时自动恢复；API 传 `include_hidden=true` 可查到。
+
 ### airdrop_signal（空投信号子分）
 评分 6 子项之一，权重 0.20。基于 `raw_signals.has_points` 与 `airdrop_hint` 两项证据量化空投可能性（双真→100，仅其一→60，均否→20；见 DATA_SCORING_DICT §5.1）。
 

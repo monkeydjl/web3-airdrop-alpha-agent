@@ -627,6 +627,7 @@ class ProjectRepository:
         zero_cost_only: bool = False,
         include_historical: bool = False,
         persona: str | None = None,
+        include_hidden: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """分页查询项目列表。
 
@@ -645,6 +646,8 @@ class ProjectRepository:
             curated: 仅精选项目
             zero_cost_only: 仅零资金成本/纯测试网项目（保本优先）
             include_historical: 是否包含历史回测样本（默认 False，排除历史回测）
+            include_hidden: 是否包含被 launch_review 隐藏的项目（默认 False；
+                确认已发币且无后续空投路径，见 ADR-015 补充 2026-10-08）
 
         Returns:
             (项目列表, 总数量)
@@ -657,6 +660,9 @@ class ProjectRepository:
 
             if not include_historical:
                 conditions.append("(source != 'historical_backfill' OR source IS NULL)")
+
+            if not include_hidden:
+                conditions.append("projects.hidden_reason IS NULL")
 
             if label:
                 conditions.append("label = ?")

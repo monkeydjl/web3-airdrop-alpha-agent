@@ -146,6 +146,57 @@ def test_github_filters_noise_repos(github_collector: GitHubCollector) -> None:
     )
 
 
+def test_github_filters_tooling_repos(github_collector: GitHubCollector) -> None:
+    """撸毛脚本 / bot / 水龙头仓库不是项目（2026-10-06，生产库 15 条 github 源全是这类）。"""
+    for repo in (
+        {
+            "name": "Pharos-Auto-Bot",
+            "full_name": "vikitoshi/Pharos-Auto-Bot",
+            "description": "An automated bot for interacting with the Pharos Testnet",
+            "language": "JavaScript",
+            "topics": ["airdrop", "pharos-testnet-bot"],
+        },
+        {
+            "name": "particle-testnet-bot",
+            "full_name": "dante4rt/particle-testnet-bot",
+            "description": "automating transactions on the Ethereum testnet using multiple private keys",
+            "language": "JavaScript",
+        },
+        {
+            "name": "solana-devnet-faucet",
+            "full_name": "solana-developers/solana-devnet-faucet",
+            "description": "Public web faucet for Solana devnet/testnet airdrops",
+            "language": "TypeScript",
+        },
+    ):
+        assert not github_collector._is_relevant_repo({**repo, "fork": False}), repo["name"]
+
+
+def test_github_raw_data_does_not_assert_token_or_points(github_collector: GitHubCollector) -> None:
+    """仓库文本给不出发币/积分证据：raw_data 不再显式写 no_token_yet / has_points_program。
+
+    显式字段在 _infer_airdrop_flags 里优先级最高，此前 "airdrop" 一词就让仓库
+    变成「有积分、未发币」，下游无从纠正。
+    """
+    disc = github_collector._build_discovery(
+        {
+            "id": 1,
+            "name": "AirdropAlpha",
+            "full_name": "org/AirdropAlpha",
+            "html_url": "https://github.com/org/AirdropAlpha",
+            "description": "A testnet points protocol for airdrops",
+            "language": "Solidity",
+            "stargazers_count": 250,
+            "forks_count": 40,
+            "created_at": "2026-01-15T00:00:00Z",
+            "updated_at": "2026-09-08T00:00:00Z",
+        }
+    )
+    assert disc is not None
+    assert "no_token_yet" not in disc.raw_data
+    assert "has_points_program" not in disc.raw_data
+
+
 def test_github_discovery_score(github_collector: GitHubCollector) -> None:
     """discovery_score 计算在合理范围。"""
     score = github_collector._calculate_discovery_score(

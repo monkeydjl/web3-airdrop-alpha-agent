@@ -384,6 +384,12 @@ class Settings(BaseSettings):
     vitals_scheduler_enabled: bool = True
     vitals_cron: str = "30 4 * * *"
 
+    # 已发币复查（2026-10-08，ADR-015 补充）：确认已发币且无后续空投路径的项目
+    # 从默认列表隐藏（不删除），出现积分 / 任务入口后自动恢复。排在采集
+    # （08:00–10:30）之后，用的是当天最新的原始行。
+    launch_review_scheduler_enabled: bool = True
+    launch_review_cron: str = "0 12 * * *"
+
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
     weight_narrative_timing: float = 0.15

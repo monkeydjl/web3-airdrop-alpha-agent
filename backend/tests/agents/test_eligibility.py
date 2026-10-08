@@ -202,3 +202,60 @@ def test_scorer_applies_explicit_no_airdrop_veto() -> None:
     scored = asyncio.run(scorer.run(state))
     assert scored.label == "IGNORE"
     assert scored.veto == VETO_EXPLICIT_NO_AIRDROP
+
+
+def test_unconfirmed_launch_does_not_trigger_the_veto() -> None:
+    """三态（2026-10-08）：no_token_yet=False 但没有发币证据 = 未知，不否决。
+
+    RootData 免费档不给 token 字段，曾把约 30 个未发币项目判成已发币。
+    """
+    unknown = _strong_project(
+        no_token_yet=False,
+        token_launch_confirmed=False,
+        has_points_program=False,
+        has_task_portal=False,
+        explicit_airdrop_mention=False,
+    )
+    confirmed = _strong_project(
+        no_token_yet=False,
+        token_launch_confirmed=True,
+        has_points_program=False,
+        has_task_portal=False,
+        explicit_airdrop_mention=False,
+    )
+
+    assert is_already_launched_without_airdrop_path(unknown) is False
+    assert is_already_launched_without_airdrop_path(confirmed) is True
+    assert apply_eligibility_gate(unknown, "FARM").veto != VETO_ALREADY_LAUNCHED
+    assert apply_eligibility_gate(confirmed, "FARM").veto == VETO_ALREADY_LAUNCHED
+    scored = asyncio.run(ScorerAgent(sector_counts={"L2": 1}).run(_state(unknown)))
+    assert scored.veto != VETO_ALREADY_LAUNCHED
+
+
+def test_legacy_project_without_tri_state_keeps_old_semantics() -> None:
+    """旧调用方不传 token_launch_confirmed（None）时，按 not no_token_yet 兼容。"""
+    legacy = _strong_project(no_token_yet=False, has_points_program=False, has_task_portal=False)
+    assert legacy.token_launch_confirmed is None
+    assert is_already_launched_without_airdrop_path(legacy) is True
+
+
+def test_loose_points_do_not_exempt_a_confirmed_launch() -> None:
+    """宽松 has_points_program（restaking / incentive 推出）不再豁免否决（2026-10-08）。"""
+    loose = _strong_project(
+        no_token_yet=False,
+        token_launch_confirmed=True,
+        has_points_program=True,
+        explicit_points_program=False,
+        has_task_portal=False,
+        explicit_airdrop_mention=False,
+    )
+    strict = _strong_project(
+        no_token_yet=False,
+        token_launch_confirmed=True,
+        has_points_program=True,
+        explicit_points_program=True,
+        has_task_portal=False,
+        explicit_airdrop_mention=False,
+    )
+    assert is_already_launched_without_airdrop_path(loose) is True
+    assert is_already_launched_without_airdrop_path(strict) is False

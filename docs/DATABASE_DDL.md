@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS projects (
     confidence      REAL DEFAULT 0.0,           -- 数据完整度 0-1（v1.5 新增）
     weight_version  TEXT DEFAULT 'v1',          -- 评分权重版本（ADR-006）
     veto            TEXT,                       -- ADR-015 资格否决原因；仅影响 label，不改 score
+    hidden_reason   TEXT,                       -- 默认列表隐藏原因（already_launched_no_path）；NULL=显示
+    hidden_at       TIMESTAMP,                  -- 隐藏写入时间（launch_review，2026-10-08）
     
     reason          TEXT,                       -- 决策理由 JSON 数组
     narrative_json  TEXT,                       -- NarrativeResult JSON
@@ -553,6 +555,8 @@ ALTER TABLE projects ADD COLUMN auto_discovered INTEGER DEFAULT 0;          -- 0
 ALTER TABLE projects ADD COLUMN signal_count INTEGER DEFAULT 0;             -- 关联信号数
 ALTER TABLE projects ADD COLUMN sub_scores TEXT;                            -- 子分快照（离线重加权）
 ALTER TABLE projects ADD COLUMN veto TEXT;                                  -- ADR-015 资格否决原因
+ALTER TABLE projects ADD COLUMN hidden_reason TEXT;                         -- 已发币复查隐藏原因（不删除）
+ALTER TABLE projects ADD COLUMN hidden_at TIMESTAMP;                        -- 隐藏时间（PG 为 TIMESTAMPTZ）
 
 CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
 CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);

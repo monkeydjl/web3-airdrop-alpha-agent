@@ -30,17 +30,34 @@ class EligibilityDecision:
 
 
 def has_post_launch_airdrop_path(project: RawProject) -> bool:
-    """Whether a launched token still has explicit evidence of a campaign path."""
+    """Whether a launched token still has explicit evidence of a campaign path.
+
+    积分只认严格证据 ``explicit_points_program``（2026-10-08）：restaking / incentive
+    之类通用词不构成已发币项目的后续路径。旧调用方不传（None）时回退宽松字段。
+    """
+    strict_points = getattr(project, "explicit_points_program", None)
+    points = project.has_points_program if strict_points is None else strict_points
     return bool(
-        project.has_points_program
-        or getattr(project, "explicit_airdrop_mention", False)
-        or getattr(project, "has_task_portal", False)
+        points or getattr(project, "explicit_airdrop_mention", False) or getattr(project, "has_task_portal", False)
     )
+
+
+def is_token_launch_confirmed(project: RawProject) -> bool:
+    """Whether there is positive evidence that the token has launched.
+
+    `no_token_yet=False` alone only means "not confirmed pre-TGE": RootData free-tier
+    rows without a token field land there too.  `token_launch_confirmed=None` keeps the
+    legacy reading for callers that never set it (seed / manual / tests).
+    """
+    if project.no_token_yet:
+        return False
+    confirmed = getattr(project, "token_launch_confirmed", None)
+    return True if confirmed is None else bool(confirmed)
 
 
 def is_already_launched_without_airdrop_path(project: RawProject) -> bool:
     """Match the airdrop-signal listed-token cap condition exactly."""
-    return not bool(project.no_token_yet) and not has_post_launch_airdrop_path(project)
+    return is_token_launch_confirmed(project) and not has_post_launch_airdrop_path(project)
 
 
 def has_participation_path(project: RawProject) -> bool:

@@ -148,7 +148,7 @@ def simulate_portfolio_allocation(
             """
             SELECT id, name, score, stage, sector, meta
             FROM projects
-            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             ORDER BY score DESC
             LIMIT 25
             """
@@ -162,7 +162,7 @@ def simulate_portfolio_allocation(
                 """
                 SELECT id, name, score, stage, sector, meta
                 FROM projects
-                WHERE (source != 'historical_backfill' OR source IS NULL)
+                WHERE (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
                 ORDER BY score DESC
                 LIMIT 15
                 """

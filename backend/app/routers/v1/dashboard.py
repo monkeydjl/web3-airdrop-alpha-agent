@@ -120,7 +120,7 @@ def get_dashboard_overview() -> DashboardOverviewResponse:
             SELECT COUNT(*) AS n_total,
                    SUM(CASE WHEN label = 'FARM' THEN 1 ELSE 0 END) AS n_farm
             FROM projects
-            WHERE created_at >= ? AND (source != 'historical_backfill' OR source IS NULL)
+            WHERE created_at >= ? AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             """,
             (midnight.isoformat(sep=" "),),
         )
@@ -195,7 +195,7 @@ def get_daily_flash() -> dict[str, Any]:
             """
             SELECT COUNT(*) AS c
             FROM projects
-            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             """
         )
         active_farm_count = int(_row_value(farm_count_cursor.fetchone(), "c", 0) or 0)
@@ -204,7 +204,7 @@ def get_daily_flash() -> dict[str, Any]:
             """
             SELECT id, name, score, reason, sector, stage
             FROM projects
-            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+            WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             ORDER BY score DESC
             LIMIT 3
             """
@@ -229,7 +229,7 @@ def get_daily_flash() -> dict[str, Any]:
             """
             SELECT COUNT(*) AS c FROM projects
             WHERE (source = 'github_curated' OR source = 'github' OR stage = 'testnet')
-              AND (source != 'historical_backfill' OR source IS NULL)
+              AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             """
         )
         testnet_count = int(testnet_cursor.fetchone()["c"] or 0)

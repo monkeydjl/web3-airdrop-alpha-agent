@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from app.agents.base import AgentError, BaseAgent, PipelineState, RawProject
-from app.collectors.noise import is_listed_token_no_airdrop_signals, is_noise_raw_project
+from app.collectors.noise import (
+    is_listed_brand_subproduct,
+    is_listed_token_no_airdrop_signals,
+    is_noise_raw_project,
+    is_tooling_repo,
+)
 from app.utils.normalize import (
     create_dedup_key,
     generate_deterministic_id,
@@ -132,6 +137,64 @@ _EXPLICIT_NO_AIRDROP_RE = re.compile(
 )
 
 
+# 能对「已发币」给出正面证据的来源：上市行情源本身即证据；defillama 的
+# no_token_yet=False 来自真实 ticker / gecko_id；manual/api/seed 是刻意断言。
+# 严格积分证据（2026-10-08）：has_points_program 的宽松推断把 restaking / incentive /
+# vaults / liquidity mining 都算作积分计划，20 个确认已发币的项目全靠这类通用词
+# 躲过了 already_launched 否决与默认列表隐藏。已发币项目的「后续空投路径」只认
+# 明确的积分措辞；宽松版保留给 airdrop_signal 子分，不改评分口径。
+_POINTS_PHRASE_RE = re.compile(r"\bpoints?\s+(?:program|programme|system|campaign|season)s?\b")
+_POINTS_WORD_RE = re.compile(r"\bpoints\b")
+_POINTS_CONTEXT_RE = re.compile(r"\b(?:airdrops?|loyalty|rewards?|portals?)\b")
+# defillama 采集器自己用宽松关键词（staking / vault / rewards…）写 has_points_program，
+# 它的显式值不能当严格证据。
+_LOOSE_POINTS_SOURCES = frozenset({"defillama"})
+
+
+def _infer_explicit_points_program(source_id: str, raw_data: dict[str, Any], text: str, *, completed: bool) -> bool:
+    """明确的积分计划证据：显式字段，或「points program / points + airdrop·rewards」措辞。"""
+    if raw_data.get("explicit_points_program") is not None:
+        return bool(raw_data["explicit_points_program"])
+    if source_id not in _LOOSE_POINTS_SOURCES and raw_data.get("has_points_program") is not None:
+        return bool(raw_data["has_points_program"])
+    if completed:
+        return False
+    return bool(_POINTS_PHRASE_RE.search(text) or (_POINTS_WORD_RE.search(text) and _POINTS_CONTEXT_RE.search(text)))
+
+
+_LAUNCH_EVIDENCE_SOURCES = frozenset({"manual", "api", "seed", "defillama", "coingecko", "cryptorank", "etherscan"})
+_SYMBOL_PLACEHOLDERS = frozenset({"", "-", "--", "n/a", "none", "null"})
+_ROOTDATA_LAUNCHED_STATUS = frozenset({"listed", "issued", "launched", "tge", "trading", "yes"})
+
+
+def _infer_token_launch_confirmed(source_id: str, raw_data: dict[str, Any], *, no_token: bool) -> bool:
+    """是否有**正面证据**表明代币已发行（2026-10-08，ADR-015 补充）。
+
+    no_token_yet=False 只说明「没确认未发币」：RootData 只在明确写了未发币时
+    才置 True，token 字段为空也落到 False。把这当成已发币，会把 token_symbol
+    为空的早期项目（Bloctopus / Pier Two / Project Eleven……）打成已发币。
+    显式字段优先；其余按来源取证据。
+    """
+    if "token_launch_confirmed" in raw_data and raw_data["token_launch_confirmed"] is not None:
+        return bool(raw_data["token_launch_confirmed"]) and not no_token
+    if no_token:
+        return False
+    name = str(raw_data.get("name") or raw_data.get("full_name") or "")
+    if is_listed_brand_subproduct(name=name, slug=str(raw_data.get("slug") or "")):
+        return True
+    if source_id in _LAUNCH_EVIDENCE_SOURCES:
+        return True
+    if source_id == "rootdata":
+        symbol = str(raw_data.get("token_symbol") or raw_data.get("symbol") or "").strip().lower()
+        status = str(raw_data.get("token_status") or "").strip().lower()
+        tge = raw_data.get("tge")
+        return (
+            symbol not in _SYMBOL_PLACEHOLDERS or status in _ROOTDATA_LAUNCHED_STATUS or tge in (True, "true", 1, "1")
+        )
+    # github / 文本类来源 / 任务门户：给不出发币证据，状态未知
+    return False
+
+
 class CollectorAgent(BaseAgent):
     """Collector Agent - MVP implementation.
 
@@ -161,7 +224,9 @@ class CollectorAgent(BaseAgent):
             "source": raw.get("source", "seed"),
             "has_testnet": bool(raw.get("has_testnet", ext.get("has_testnet", False))),
             "has_points_program": bool(raw.get("has_points_program", ext.get("has_points_program", False))),
+            "explicit_points_program": ext.get("explicit_points_program"),
             "no_token_yet": bool(raw.get("no_token_yet", ext.get("no_token_yet", False))),
+            "token_launch_confirmed": ext.get("token_launch_confirmed"),
             "recent_funding": bool(raw.get("recent_funding", ext.get("recent_funding", False))),
             "has_docs": bool(ext.get("has_docs", False)),
             "has_whitepaper": bool(ext.get("has_whitepaper", False)),
@@ -253,7 +318,11 @@ class CollectorAgent(BaseAgent):
             elif source_id in ("coingecko", "cryptorank"):
                 no_token = False
             elif source_id == "github":
-                no_token = "airdrop" in text or "no token" in text
+                # 仓库文本给不出发币证据：此前 "airdrop" 一词就推出 no_token_yet，
+                # 撸毛脚本因此全被当成 pre-TGE。现在只认已发币品牌名单这一条
+                # 反证，其余保持中性（github 不参与 merge 的 token 状态投票）。
+                repo_name = str(raw_data.get("name") or raw_data.get("full_name") or "")
+                no_token = not is_listed_brand_subproduct(name=repo_name)
             else:
                 no_token = False
 
@@ -497,7 +566,11 @@ class CollectorAgent(BaseAgent):
         return {
             "has_testnet": bool(has_testnet),
             "has_points_program": bool(has_points),
+            "explicit_points_program": _infer_explicit_points_program(
+                source_id, raw_data, text, completed=completed_airdrop
+            ),
             "no_token_yet": bool(no_token),
+            "token_launch_confirmed": _infer_token_launch_confirmed(source_id, raw_data, no_token=bool(no_token)),
             "recent_funding": bool(recent_funding),
             "stage": stage or raw_data.get("stage"),
             "has_docs": bool(has_docs),
@@ -583,7 +656,15 @@ class CollectorAgent(BaseAgent):
                     source=merged.get("source", "unknown"),
                     has_testnet=bool(merged.get("has_testnet", False)),
                     has_points_program=bool(merged.get("has_points_program", False)),
+                    explicit_points_program=(
+                        None
+                        if merged.get("explicit_points_program") is None
+                        else bool(merged["explicit_points_program"])
+                    ),
                     no_token_yet=bool(merged.get("no_token_yet", False)),
+                    token_launch_confirmed=(
+                        None if merged.get("token_launch_confirmed") is None else bool(merged["token_launch_confirmed"])
+                    ),
                     recent_funding=bool(merged.get("recent_funding", False)),
                     has_docs=bool(merged.get("has_docs", False)),
                     has_whitepaper=bool(merged.get("has_whitepaper", False)),
@@ -806,15 +887,24 @@ class CollectorAgent(BaseAgent):
             source_id = row["source_id"]
             name = raw_data.get("name", "") or ""
             sector = raw_data.get("sector")
-            if is_noise_raw_project(name, sector, raw_data):
+            # 撸毛脚本 / bot / 水龙头仓库不是项目（2026-10-06）。采集器已在源头
+            # 过滤，这里兜住过滤上线前就进了队列的存量 github 行。
+            is_tooling = source_id == "github" and is_tooling_repo(
+                name=name,
+                description=str(raw_data.get("description") or ""),
+                topics=raw_data.get("topics"),
+            )
+            if is_tooling or is_noise_raw_project(name, sector, raw_data):
                 noise_skipped += 1
-                err = self._quarantine_row(repo, row, f"denylist:{source_id}:{name[:80]}")
+                reason_kind = "tooling_repo" if is_tooling else "denylist"
+                err = self._quarantine_row(repo, row, f"{reason_kind}:{source_id}:{name[:80]}")
                 if err is None:
                     logger.info(
                         "collector.noise_quarantined",
                         name=name,
                         source_id=source_id,
                         raw_id=row.get("raw_id"),
+                        reason=reason_kind,
                     )
                 else:
                     logger.warning(
@@ -826,16 +916,17 @@ class CollectorAgent(BaseAgent):
 
             flags = self._infer_airdrop_flags(source_id, raw_data)
 
-            # Quality filter: skip projects that already have a listed token
-            # and zero airdrop-related signals (no testnet, no points, no quest,
-            # no airdrop mention). These have no airdrop alpha value.
+            # 入库门：已发币且没有后续空投路径（points / quest portal / 明确空投
+            # 措辞）的项目不进 projects。testnet 不算后续路径 —— 与 ADR-015
+            # already_launched 否决同一口径（2026-10-06）。
             if is_listed_token_no_airdrop_signals(
                 no_token_yet=flags["no_token_yet"],
-                has_testnet=flags["has_testnet"],
                 has_points_program=flags["has_points_program"],
+                explicit_points_program=flags["explicit_points_program"],
                 has_task_portal=flags.get("has_task_portal", False),
                 explicit_airdrop_mention=flags.get("explicit_airdrop_mention", False),
                 source_id=source_id,
+                token_launch_confirmed=flags["token_launch_confirmed"],
             ):
                 noise_skipped += 1
                 # Quarantine same as noise
@@ -892,7 +983,9 @@ class CollectorAgent(BaseAgent):
                     "source": source_id,
                     "has_testnet": flags["has_testnet"],
                     "has_points_program": flags["has_points_program"],
+                    "explicit_points_program": flags["explicit_points_program"],
                     "no_token_yet": flags["no_token_yet"],
+                    "token_launch_confirmed": flags["token_launch_confirmed"],
                     "recent_funding": flags["recent_funding"],
                     "has_docs": flags.get("has_docs", False),
                     "has_whitepaper": flags.get("has_whitepaper", False),
