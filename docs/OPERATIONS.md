@@ -422,7 +422,8 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 
 **运维影响**：生产库若混入已发币的成熟项目，Dashboard 可能把它们显示成 FARM。
 现有缓解手段是 `collectors/noise.py` 的共享 denylist（采集阶段挡掉蓝筹）
-\+ `scripts/purge_noise_projects.py` 清理存量。回测这个结论说明
+\+ `scripts/purge_noise_projects.py` 清理存量（RootData 人物 / 社媒条目用
+`scripts/hide_rootdata_non_projects.py` 隐藏，不删除）。回测这个结论说明
 **不能只依赖评分兜底，denylist 仍是必需的第一道防线**。
 
 **回测样本不解锁校准门禁**：导出的样本 `source='backtest'`，

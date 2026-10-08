@@ -122,6 +122,7 @@ describe('reasonZh & viabilityTierZh & capitalFrictionTierZh', () => {
 describe('hiddenReasonZh', () => {
   it('映射已知隐藏原因', () => {
     assert.equal(hiddenReasonZh('already_launched_no_path'), '已发币·无参与路径');
+    assert.equal(hiddenReasonZh('not_a_project'), '非项目条目');
   });
 
   it('未知原因原样透出、空值返回空串（不吞掉后端新增原因）', () => {

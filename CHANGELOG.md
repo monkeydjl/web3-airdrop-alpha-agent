@@ -21,6 +21,19 @@
 - 数据：旧逻辑误隔离的 RootData 原始行在核实上线后放行重跑；已发币且无路径的会被入库门
   重新隔离。
 
+### Fixed — RootData 人物 / 社媒条目被当成项目入库（2026-10-08）
+
+RootData `/open/ser_inv` 是项目 / 机构 / 人物混合搜索，条目带 `type`（1=项目、2=机构、
+3=人物、5=社媒 / 列表），此前不看这个字段：Deirdre Connolly、airdropkorea、
+「✨📋 Complete Web3 Testnets for Airdrops 🚀」都以项目身份入了库。
+
+- 采集器在拉详情前丢掉 `type≠1` 的条目（顺带省两次 API 调用）；缺 `type` 照常放行。
+- 入库门兜住存量 raw 行：隔离原因 `non_project:rootdata:…`。
+- `backend/scripts/hide_rootdata_non_projects.py`：只由这类行撑起的存量项目写
+  `hidden_reason="not_a_project"`（隐藏不删除，有任何真实来源佐证的不动）。
+- 按结构化字段判定而不是名字黑名单：黑名单追不上新的人名。名字本身像项目、但只是
+  空投聚合站的 type=1 条目（Airdrops.io 等）不在此列，仍照常评分（IGNORE）。
+
 ### Fixed — 「没确认未发币」被当成「已发币」，存量清理误删约 30 个项目（2026-10-08）
 
 症状：按下方 10-06 口径清理存量已发币项目时删了 35 个，其中约 30 个（Cubist、

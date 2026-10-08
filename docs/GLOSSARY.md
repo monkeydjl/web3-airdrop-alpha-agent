@@ -39,6 +39,8 @@ symbol 也要一致；无 symbol 时归一名称至少 8 个字符。只补确�
 （`already_launched_no_path`：确认已发币且无积分 / 任务入口 / 明确空投措辞）。
 与删除不同，出现后续空投路径时自动恢复；API 传 `include_hidden=true` 可查到。
 用户在界面上「恢复显示」后写 `unhidden_by_user_at`，复查从此不再自动隐藏该项目。
+另一个原因 `not_a_project`：RootData 混合搜索里的人物 / 机构 / 社媒条目（`type≠1`）被当成
+项目入了库，由一次性脚本 `backend/scripts/hide_rootdata_non_projects.py` 写入；复查不会撤销它。
 
 ### airdrop_signal（空投信号子分）
 评分 6 子项之一，权重 0.20。基于 `raw_signals.has_points` 与 `airdrop_hint` 两项证据量化空投可能性（双真→100，仅其一→60，均否→20；见 DATA_SCORING_DICT §5.1）。

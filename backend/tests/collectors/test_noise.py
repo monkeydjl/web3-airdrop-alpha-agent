@@ -6,6 +6,7 @@ from app.collectors.noise import (
     is_noise_project,
     is_noise_protocol,
     is_noise_raw_project,
+    is_rootdata_non_project,
     is_tooling_repo,
 )
 
@@ -265,3 +266,25 @@ class TestToolingRepo:
         """整词匹配：'robot' / 'botanica' 里的 bot 不算工具。"""
         assert not is_tooling_repo(name="Robotics-Chain", description="robotics L1")
         assert not is_tooling_repo(name="botanica", description="onchain garden protocol")
+
+
+class TestRootDataNonProject:
+    """RootData 混合搜索里的人物 / 机构 / 社媒条目（2026-10-08）。"""
+
+    def test_people_and_social_entries_detected(self):
+        # 生产库泄漏样例：type=3 人物、type=5 社媒列表；type 在 raw_data 里可能是 int 或 str
+        assert is_rootdata_non_project({"name": "Deirdre Connolly", "type": 3})
+        assert is_rootdata_non_project({"name": "airdropkorea", "type": "3"})
+        assert is_rootdata_non_project({"name": "Complete Web3 Testnets for Airdrops", "type": 5})
+        assert is_rootdata_non_project({"name": "Some VC", "type": 2})
+
+    def test_project_entries_pass(self):
+        assert not is_rootdata_non_project({"name": "Metis", "type": 1})
+        assert not is_rootdata_non_project({"name": "Metis", "type": "1"})
+
+    def test_missing_or_garbage_type_passes(self):
+        """缺证据不等于不是项目：老数据 / 详情合并后的条目未必带 type。"""
+        assert not is_rootdata_non_project({"name": "Old Row"})
+        assert not is_rootdata_non_project({"name": "Odd", "type": None})
+        assert not is_rootdata_non_project({"name": "Odd", "type": "project"})
+        assert not is_rootdata_non_project({"name": "Odd", "type": True})

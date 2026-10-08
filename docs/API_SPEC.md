@@ -472,6 +472,8 @@ curl -X POST http://localhost:8002/api/v1/run \
 明确空投措辞的项目写上 `hidden_reason = "already_launched_no_path"`，默认列表、
 看板、日报、推送都不再出现它们，但**不删除**。传 `include_hidden=true` 时列表项
 带 `hidden_reason` 字段（未隐藏为 `null`）。之后出现后续空投路径，下一轮复查自动恢复。
+另有 `hidden_reason = "not_a_project"`：RootData 人物 / 机构 / 社媒条目被误当成项目入库，
+由存量追溯脚本写入，复查不会撤销，只能人工恢复。
 「确认已发币」要有正面证据（ticker / gecko_id / 上市源 / 已发币品牌，或 CoinGecko
 全量币表严格命中），RootData 没给 token 字段且币表也对不上的项目算状态未知，不隐藏。
 

@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS projects (
     confidence      REAL DEFAULT 0.0,           -- 数据完整度 0-1（v1.5 新增）
     weight_version  TEXT DEFAULT 'v1',          -- 评分权重版本（ADR-006）
     veto            TEXT,                       -- ADR-015 资格否决原因；仅影响 label，不改 score
-    hidden_reason   TEXT,                       -- 默认列表隐藏原因（already_launched_no_path）；NULL=显示
+    hidden_reason   TEXT,                       -- 默认列表隐藏原因（already_launched_no_path / not_a_project）；NULL=显示
     hidden_at       TIMESTAMP,                  -- 隐藏写入时间（launch_review，2026-10-08）
     unhidden_by_user_at TIMESTAMP,              -- 人工恢复显示时间；非空则复查不再自动隐藏
     

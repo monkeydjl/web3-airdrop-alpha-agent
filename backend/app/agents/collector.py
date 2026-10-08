@@ -22,6 +22,7 @@ from app.collectors.noise import (
     is_listed_brand_subproduct,
     is_listed_token_no_airdrop_signals,
     is_noise_raw_project,
+    is_rootdata_non_project,
     is_tooling_repo,
 )
 from app.services.token_registry import RegistryIndex, registry_confirms_launch
@@ -897,9 +898,12 @@ class CollectorAgent(BaseAgent):
                 description=str(raw_data.get("description") or ""),
                 topics=raw_data.get("topics"),
             )
-            if is_tooling or is_noise_raw_project(name, sector, raw_data):
+            # RootData 人物 / 机构 / 社媒条目（2026-10-08）：采集器已在源头过滤，
+            # 这里兜住存量行。
+            is_non_project = source_id == "rootdata" and is_rootdata_non_project(raw_data)
+            if is_tooling or is_non_project or is_noise_raw_project(name, sector, raw_data):
                 noise_skipped += 1
-                reason_kind = "tooling_repo" if is_tooling else "denylist"
+                reason_kind = "tooling_repo" if is_tooling else "non_project" if is_non_project else "denylist"
                 err = self._quarantine_row(repo, row, f"{reason_kind}:{source_id}:{name[:80]}")
                 if err is None:
                     logger.info(

@@ -350,6 +350,7 @@ export function reasonZh(r: string): string {
  */
 const HIDDEN_REASON_ZH: Record<string, string> = {
   already_launched_no_path: '已发币·无参与路径',
+  not_a_project: '非项目条目',
 };
 
 export function hiddenReasonZh(reason?: string | null): string {
