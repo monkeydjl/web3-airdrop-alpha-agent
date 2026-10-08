@@ -22,8 +22,10 @@ from app.collectors.noise import (
     is_listed_brand_subproduct,
     is_listed_token_no_airdrop_signals,
     is_noise_raw_project,
+    is_rootdata_non_project,
     is_tooling_repo,
 )
+from app.services.token_registry import RegistryIndex, registry_confirms_launch
 from app.utils.normalize import (
     create_dedup_key,
     generate_deterministic_id,
@@ -853,6 +855,8 @@ class CollectorAgent(BaseAgent):
 
         records: list[dict[str, Any]] = []
         noise_skipped = 0
+        # 发币核实用的 CoinGecko 币表（2026-10-08）。表为空时核实不生效。
+        registry = repo.load_token_registry() if rows else RegistryIndex()
         # limit 约束的是**项目数**而非原始行数。此前按 records 长度截断，而
         # `_corroborating_rows` 追加的低分佐证记录排在列表末尾，于是只要过线的
         # 主记录本身就有 limit 条，佐证记录一条都到不了——跨源合并依旧不发生。
@@ -894,9 +898,12 @@ class CollectorAgent(BaseAgent):
                 description=str(raw_data.get("description") or ""),
                 topics=raw_data.get("topics"),
             )
-            if is_tooling or is_noise_raw_project(name, sector, raw_data):
+            # RootData 人物 / 机构 / 社媒条目（2026-10-08）：采集器已在源头过滤，
+            # 这里兜住存量行。
+            is_non_project = source_id == "rootdata" and is_rootdata_non_project(raw_data)
+            if is_tooling or is_non_project or is_noise_raw_project(name, sector, raw_data):
                 noise_skipped += 1
-                reason_kind = "tooling_repo" if is_tooling else "denylist"
+                reason_kind = "tooling_repo" if is_tooling else "non_project" if is_non_project else "denylist"
                 err = self._quarantine_row(repo, row, f"{reason_kind}:{source_id}:{name[:80]}")
                 if err is None:
                     logger.info(
@@ -915,6 +922,14 @@ class CollectorAgent(BaseAgent):
                 continue
 
             flags = self._infer_airdrop_flags(source_id, raw_data)
+            if registry_confirms_launch(
+                registry,
+                name=name,
+                symbol=raw_data.get("token_symbol") or raw_data.get("symbol"),
+                no_token_yet=flags["no_token_yet"],
+                token_launch_confirmed=flags["token_launch_confirmed"],
+            ):
+                flags["token_launch_confirmed"] = True
 
             # 入库门：已发币且没有后续空投路径（points / quest portal / 明确空投
             # 措辞）的项目不进 projects。testnet 不算后续路径 —— 与 ADR-015

@@ -9,6 +9,7 @@ import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
 import {
   formatPct,
   hasExplicitAirdropSignal,
+  hiddenReasonZh,
   reasonTone,
   reasonZh,
   sourceZh,
@@ -49,6 +50,11 @@ export const ProjectCard = memo(function ProjectCard({
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [showPlaybookModal, setShowPlaybookModal] = useState(false);
   const [showWhaleModal, setShowWhaleModal] = useState(false);
+  // 隐藏状态本地持有：恢复成功后卡片原地改为「已恢复」，不必整页重拉
+  const [hiddenReason, setHiddenReason] = useState(project.hidden_reason ?? null);
+  const [unhiding, setUnhiding] = useState(false);
+  const [unhideErr, setUnhideErr] = useState('');
+  const [unhidden, setUnhidden] = useState(false);
 
   useEffect(() => {
     setCurrentLabel(project.label);
@@ -56,6 +62,27 @@ export const ProjectCard = memo(function ProjectCard({
     setCurrentReason(project.reason);
     setIsWatchlisted(Boolean(project.watchlisted));
   }, [project.label, project.veto, project.reason, project.watchlisted]);
+
+  useEffect(() => {
+    setHiddenReason(project.hidden_reason ?? null);
+  }, [project.hidden_reason]);
+
+  // 恢复显示是管理员动作（后端 ADMIN_ONLY_METHOD_RULES）：proxy 不代签，
+  // 没有管理员凭据时后端回 401/403，这里把错误原样展示而不是静默失败
+  const unhide = useCallback(async () => {
+    if (unhiding) return;
+    setUnhiding(true);
+    setUnhideErr('');
+    try {
+      await apiFetch(`/projects/${encodeURIComponent(project.id)}/unhide`, { method: 'POST', body: '{}' });
+      setHiddenReason(null);
+      setUnhidden(true);
+    } catch (e) {
+      setUnhideErr(e instanceof Error ? e.message : '恢复失败');
+    } finally {
+      setUnhiding(false);
+    }
+  }, [project.id, unhiding]);
 
   const toggleWatchlist = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -257,6 +284,14 @@ export const ProjectCard = memo(function ProjectCard({
                   🔗 双源印证
                 </span>
               ) : null}
+              {hiddenReason ? (
+                <span
+                  className="badge bg-surface-3 text-ink-faint border border-dashed border-line text-[10px]"
+                  title={`每日上线复核已隐藏（不删除）：${hiddenReasonZh(hiddenReason)}。工作台默认不列出，下方可恢复显示`}
+                >
+                  已隐藏 · {hiddenReasonZh(hiddenReason)}
+                </span>
+              ) : null}
               {project.skipped ? (
                 <span
                   className="badge bg-surface-3 text-ink-faint line-through border border-line text-[10px]"
@@ -396,6 +431,35 @@ export const ProjectCard = memo(function ProjectCard({
           </button>
         </div>
       </div>
+
+      {hiddenReason || unhidden ? (
+        <div className="mt-2.5 border-t border-line/70 pt-2.5">
+          {unhidden ? (
+            <p className="text-xs font-mono font-medium text-farm flex items-center gap-1" role="status">
+              <span>✓</span>
+              <span>已恢复显示 · 每日复核不会再自动隐藏它</span>
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-mono text-ink-faint">系统已隐藏：</span>
+              <button
+                type="button"
+                disabled={unhiding}
+                onClick={() => void unhide()}
+                className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-surface-2 hover:bg-surface-3 text-ink border border-line transition"
+                title="撤销隐藏并记下人工决定 —— 之后每日上线复核不再自动隐藏该项目（需管理员凭据）"
+              >
+                {unhiding ? '恢复中…' : '恢复显示'}
+              </button>
+              {unhideErr ? (
+                <span className="text-[11px] text-red-400" role="alert">
+                  {unhideErr}
+                </span>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {needsVerify || verdict ? (
         <div className="mt-2.5 border-t border-line/70 pt-2.5">

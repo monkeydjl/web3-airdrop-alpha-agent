@@ -3,7 +3,7 @@ import type { Label } from './types';
 /**
  * 工作台筛选状态与 URL 的双向序列化。
  *
- * 为什么独立成模块：筛选键有 16 个，解析校验与「只写非默认值」的序列化规则
+ * 为什么独立成模块：筛选键有 17 个，解析校验与「只写非默认值」的序列化规则
  * 都是纯逻辑，放组件里没法进 node:test（本仓库前端测试跑在 node:test 上，
  * 不渲染 React）。抽出来后 parse/serialize 的往返一致性、非法值回退默认
  * 都有测试钉住。
@@ -34,6 +34,8 @@ export interface DashboardFilters {
   hideIgnore: boolean;
   hideHighRisk: boolean;
   showSkipped: boolean;
+  /** 拉取 launch_review 隐藏的项目（include_hidden=true）—— 走后端，不是前端过滤 */
+  showHidden: boolean;
   hasFundingOnly: boolean;
   zeroCostOnly: boolean;
   explicitAirdropOnly: boolean;
@@ -52,6 +54,7 @@ export const DASHBOARD_FILTER_KEYS = [
   'view',
   'hideignore',
   'showskipped',
+  'showhidden',
   'hidehighrisk',
   'funding',
   'zerocost',
@@ -74,6 +77,7 @@ export function defaultDashboardFilters(): DashboardFilters {
     hideIgnore: true,
     hideHighRisk: true,
     showSkipped: false,
+    showHidden: false,
     hasFundingOnly: false,
     zeroCostOnly: false,
     explicitAirdropOnly: false,
@@ -99,6 +103,7 @@ export function parseDashboardFilters(get: (key: string) => string | null): Dash
     hideIgnore: get('hideignore') !== '0',
     hideHighRisk: get('hidehighrisk') !== '0',
     showSkipped: get('showskipped') === '1',
+    showHidden: get('showhidden') === '1',
     hasFundingOnly: get('funding') === '1',
     zeroCostOnly: get('zerocost') === '1',
     explicitAirdropOnly: get('airdrop') === '1',
@@ -124,6 +129,7 @@ export function dashboardFilterSearchParams(f: DashboardFilters): [string, strin
   put('hideignore', f.hideIgnore ? '1' : '0', '1');
   put('hidehighrisk', f.hideHighRisk ? '1' : '0', '1');
   put('showskipped', f.showSkipped ? '1' : '0', '0');
+  put('showhidden', f.showHidden ? '1' : '0', '0');
   put('funding', f.hasFundingOnly ? '1' : '0', '0');
   put('zerocost', f.zeroCostOnly ? '1' : '0', '0');
   put('airdrop', f.explicitAirdropOnly ? '1' : '0', '0');

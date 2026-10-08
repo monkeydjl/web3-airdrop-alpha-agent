@@ -131,6 +131,11 @@ ADMIN_ONLY_METHOD_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
         frozenset({"POST", "PATCH", "PUT", "DELETE"}),
         re.compile(r"^/api/v1/projects/[^/]+/funding(?:/|$)"),
     ),
+    # 恢复显示改的是**全局**默认列表（所有用户都受影响），并让每日复查从此跳过该项目。
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/projects/[^/]+/unhide(?:/|$)"),
+    ),
 )
 
 

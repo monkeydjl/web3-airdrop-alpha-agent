@@ -224,6 +224,30 @@ def is_listed_token_no_airdrop_signals(
     return not has_post_launch_path
 
 
+# ── RootData 非项目实体（2026-10-08）────────────────────────────────────────
+# RootData `/open/ser_inv` 是「项目 / 机构 / 人物」混合搜索，条目带 `type`：
+# 1=项目、2=机构（VC）、3=人物、5=社媒账号 / 列表。只有 1 是项目。生产库泄漏
+# 样例：Deirdre Connolly、airdropkorea、AIRDROP_ATM（type=3），
+# "✨📋 Complete Web3 Testnets for Airdrops 🚀"（type=5）—— 全部以项目身份入库。
+# 按 type 结构化判定，而不是按名字拉黑名单：名字黑名单永远追不上新的人名。
+ROOTDATA_PROJECT_TYPE = 1
+
+
+def is_rootdata_non_project(item: dict[str, Any]) -> bool:
+    """RootData 搜索条目是人物 / 机构 / 社媒等非项目实体。
+
+    缺 `type` 或值无法解析时返回 False（放行）：老数据与详情接口合并后的条目
+    未必带这个字段，缺证据不等于不是项目。
+    """
+    raw = item.get("type")
+    if raw is None or isinstance(raw, bool):
+        return False
+    try:
+        return int(raw) != ROOTDATA_PROJECT_TYPE
+    except (TypeError, ValueError):
+        return False
+
+
 # ── 工具类仓库（2026-10-06）────────────────────────────────────────────────
 # GitHub 搜 "airdrop testnet" 返回的大多是撸毛脚本：Pharos-Auto-Bot、
 # units-network-bot、solana-devnet-faucet……它们说明某个项目**正被很多人撸**，

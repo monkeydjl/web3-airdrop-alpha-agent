@@ -19,6 +19,7 @@ from typing import Any, cast
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
+from app.collectors.noise import is_rootdata_non_project
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.services.funding import extract_funding_from_raw
@@ -71,6 +72,9 @@ class RootDataCollector(DataCollector):
             seen: set[str] = set()
             unique: list[dict[str, Any]] = []
             for it in items:
+                # 人物 / 机构 / 社媒条目不是项目，在拉详情前就丢掉（还省两次 API 调用）
+                if is_rootdata_non_project(it):
+                    continue
                 key = str(it.get("project_id") or it.get("id") or it.get("name") or "")
                 if not key or key in seen:
                     continue

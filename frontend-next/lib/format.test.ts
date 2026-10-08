@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   labelZh,
+  hiddenReasonZh,
   stageZh,
   lifecycleStageZh,
   timingZh,
@@ -115,6 +116,20 @@ describe('reasonZh & viabilityTierZh & capitalFrictionTierZh', () => {
     assert.equal(blockerCodeZh('RULE_BLOCK'), '规则限制阻断');
     assert.equal(severityZh('critical'), '严重');
     assert.equal(severityZh('high'), '高');
+  });
+});
+
+describe('hiddenReasonZh', () => {
+  it('映射已知隐藏原因', () => {
+    assert.equal(hiddenReasonZh('already_launched_no_path'), '已发币·无参与路径');
+    assert.equal(hiddenReasonZh('not_a_project'), '非项目条目');
+  });
+
+  it('未知原因原样透出、空值返回空串（不吞掉后端新增原因）', () => {
+    assert.equal(hiddenReasonZh('some_future_reason'), 'some_future_reason');
+    assert.equal(hiddenReasonZh(null), '');
+    assert.equal(hiddenReasonZh(undefined), '');
+    assert.equal(hiddenReasonZh(''), '');
   });
 });
 

@@ -35,6 +35,7 @@ describe('parseDashboardFilters', () => {
         ['hideignore', '0'],
         ['hidehighrisk', '0'],
         ['showskipped', '1'],
+        ['showhidden', '1'],
         ['funding', '1'],
         ['zerocost', '1'],
         ['airdrop', '1'],
@@ -54,6 +55,7 @@ describe('parseDashboardFilters', () => {
     assert.equal(f.hideIgnore, false);
     assert.equal(f.hideHighRisk, false);
     assert.equal(f.showSkipped, true);
+    assert.equal(f.showHidden, true);
     assert.equal(f.hasFundingOnly, true);
     assert.equal(f.zeroCostOnly, true);
     assert.equal(f.explicitAirdropOnly, true);
@@ -69,6 +71,7 @@ describe('parseDashboardFilters', () => {
         ['sort', 'foo-bar'],
         ['view', 'mobile'],
         ['showskipped', 'yes'],
+        ['showhidden', 'true'],
         ['hideignore', 'off'],
       ]),
     );
@@ -77,6 +80,7 @@ describe('parseDashboardFilters', () => {
     assert.equal(f.sortOrder, 'desc');
     assert.equal(f.view, 'grid');
     assert.equal(f.showSkipped, false);
+    assert.equal(f.showHidden, false);
     // hideignore 非 '0' 即视为开启（宽松读取，与 URLSearchParams 容错一致）
     assert.equal(f.hideIgnore, true);
   });
@@ -114,6 +118,7 @@ describe('dashboardFilterSearchParams', () => {
       view: 'table',
       sortBy: 'name',
       sortOrder: 'asc',
+      showHidden: true,
     };
     const pairs = dashboardFilterSearchParams(f);
     assert.deepEqual(parseDashboardFilters(getter(pairs)), f);
@@ -122,7 +127,7 @@ describe('dashboardFilterSearchParams', () => {
 
 describe('DASHBOARD_FILTER_KEYS', () => {
   it('覆盖序列化器产出的全部键（整组重写不漏键）', () => {
-    const f = { ...defaultDashboardFilters(), keyword: 'k', label: 'FARM' as const, sector: 's', stage: 't', minScore: '1', sortBy: 'name' as const, sortOrder: 'asc' as const, view: 'table' as const, hideIgnore: false, showSkipped: true, hideHighRisk: false, hasFundingOnly: true, zeroCostOnly: true, explicitAirdropOnly: true, highRiskSignalsOnly: true, needsVerifyOnly: true, curatedOnly: true };
+    const f = { ...defaultDashboardFilters(), keyword: 'k', label: 'FARM' as const, sector: 's', stage: 't', minScore: '1', sortBy: 'name' as const, sortOrder: 'asc' as const, view: 'table' as const, hideIgnore: false, showSkipped: true, showHidden: true, hideHighRisk: false, hasFundingOnly: true, zeroCostOnly: true, explicitAirdropOnly: true, highRiskSignalsOnly: true, needsVerifyOnly: true, curatedOnly: true };
     const keys = dashboardFilterSearchParams(f).map(([k]) => k);
     for (const k of keys) {
       assert.ok(

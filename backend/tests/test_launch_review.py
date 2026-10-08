@@ -20,6 +20,7 @@ from app.agents.base import AgentContext, PipelineState, RawProject
 from app.db import init_db
 from app.repository import ProjectRepository
 from app.services.launch_review import HIDDEN_REASON_ALREADY_LAUNCHED, assess_project, run_launch_review
+from app.services.token_registry import replace_registry
 
 
 @pytest.fixture
@@ -185,7 +186,82 @@ class TestRunLaunchReview:
         assert stats["kept_hidden"] == 1
 
 
+class TestRegistryAndManualUnhide:
+    """CoinGecko 币表补证 + 人工恢复显示（2026-10-08）。"""
+
+    def _registry(self, conn, *names: str) -> None:
+        coins = [{"id": f"coin-{i}", "symbol": f"s{i}", "name": n} for i, n in enumerate(names)]
+        replace_registry(coins, conn=conn)
+
+    def test_registry_hit_hides_unknown_status(self, conn):
+        _save(conn, "arbitrum")
+        _raw(conn, "arbitrum", "rootdata", {"no_token_yet": False})
+        self._registry(conn, "P-arbitrum")
+
+        stats = run_launch_review(conn)
+
+        assert stats["registry_confirmed"] == 1
+        assert _hidden(conn, "arbitrum") == HIDDEN_REASON_ALREADY_LAUNCHED
+
+    def test_registry_hit_without_raw_rows(self, conn):
+        _save(conn, "oldchain", signals={"no_token_yet": False})
+        self._registry(conn, "P-oldchain")
+
+        assert run_launch_review(conn)["hidden"] == 1
+
+    def test_registry_never_overrides_explicit_pre_tge(self, conn):
+        _save(conn, "pretoken", signals={"no_token_yet": True})
+        _raw(conn, "pretoken", "rootdata", {"no_token_yet": True})
+        self._registry(conn, "P-pretoken")
+
+        stats = run_launch_review(conn)
+
+        assert stats["registry_confirmed"] == 0
+        assert _hidden(conn, "pretoken") is None
+
+    def test_registry_hit_with_path_stays_visible(self, conn):
+        _save(conn, "pointsfi", signals={"explicit_points_program": True})
+        _raw(conn, "pointsfi", "rootdata", {"no_token_yet": False})
+        self._registry(conn, "P-pointsfi")
+
+        assert run_launch_review(conn)["hidden"] == 0
+
+    def test_manual_unhide_is_respected(self, conn):
+        _save(conn, "keep")
+        _raw(conn, "keep", "coingecko", {"no_token_yet": False})
+        run_launch_review(conn)
+        assert _hidden(conn, "keep") == HIDDEN_REASON_ALREADY_LAUNCHED
+
+        assert ProjectRepository(conn).unhide("keep") is True
+        assert _hidden(conn, "keep") is None
+        stats = run_launch_review(conn)
+
+        assert stats["protected_user_unhidden"] == 1
+        assert stats["hidden"] == 0
+        assert _hidden(conn, "keep") is None
+
+    def test_unhide_missing_project(self, conn):
+        assert ProjectRepository(conn).unhide("nope") is False
+
+    def test_unhide_does_not_touch_updated_at(self, conn):
+        _save(conn, "ts2")
+        before = conn.execute("SELECT updated_at FROM projects WHERE id = 'ts2'").fetchone()[0]
+
+        ProjectRepository(conn).unhide("ts2")
+
+        row = conn.execute("SELECT updated_at, unhidden_by_user_at FROM projects WHERE id = 'ts2'").fetchone()
+        assert row["updated_at"] == before
+        assert row["unhidden_by_user_at"] is not None
+
+
 class TestAssessProject:
+    def test_registry_hit_fills_unknown(self):
+        assert assess_project({"no_token_yet": False}, [], registry_hit=True) == (True, False)
+
+    def test_registry_hit_loses_to_raw_pre_tge(self):
+        raw = [{"name": "X", "source": "defillama", "no_token_yet": True, "token_launch_confirmed": False}]
+        assert assess_project({}, raw, registry_hit=True) == (False, False)
+
     def test_meta_pre_tge_overrides_raw_confirmation(self):
         """库内信号明确说未发币（人工修正 / 更新的评分）时证据冲突，按未知不藏。"""
         raw = [{"name": "X", "source": "coingecko", "no_token_yet": False, "token_launch_confirmed": True}]

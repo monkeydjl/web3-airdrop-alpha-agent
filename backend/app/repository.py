@@ -878,6 +878,26 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
+    def unhide(self, project_id: str) -> bool:
+        """人工恢复显示：清隐藏标记并记下 unhidden_by_user_at（launch_review 从此跳过）。
+
+        不改 updated_at，与 launch_review 隐藏时同一约束：展示开关不是内容变化。
+
+        Returns:
+            项目是否存在
+        """
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE projects SET hidden_reason = NULL, hidden_at = NULL, unhidden_by_user_at = ? WHERE id = ?",
+                (datetime.now(UTC), project_id),
+            )
+            conn.commit()
+            return bool(cursor.rowcount > 0)
+        finally:
+            if self._should_close():
+                conn.close()
+
 
 class LogRepository:
     """运行日志仓库。

@@ -19,9 +19,14 @@
 
 ### 确认已发币（token_launch_confirmed）
 代币状态三态之一（2026-10-08，ADR-015 补充）：**确认未发币**（`no_token_yet=True`）/
-**确认已发币**（有正面证据：ticker、gecko_id、上市源、已发币品牌）/ **未知**（来源给不出证据，
-如 RootData 缺 token 字段）。`no_token_yet=False` 只表示「没确认未发币」，不等于已发币。
+**确认已发币**（有正面证据：ticker、gecko_id、上市源、已发币品牌，或[币表核实](#币表核实token_registry)命中）/
+**未知**（来源给不出证据，如 RootData 缺 token 字段）。`no_token_yet=False` 只表示「没确认未发币」，不等于已发币。
 入库门、`already_launched` 否决与默认列表隐藏只对「确认已发币」生效。
+
+### 币表核实（token_registry）
+用 CoinGecko 全量币表（`/coins/list`，本地缓存，7 天刷新）给「未知」状态补「确认已发币」证据
+（2026-10-08）。**严格匹配**：名称归一（小写、去非字母数字）后唯一命中一个币；有 symbol 时
+symbol 也要一致；无 symbol 时归一名称至少 8 个字符。只补确认，不改写「确认未发币」。
 
 ### 严格积分证据（explicit_points_program）
 已发币项目「后续空投路径」里的积分条件（2026-10-08，ADR-015 补充）：只认明确措辞
@@ -33,6 +38,9 @@
 项目仍在库、但不出现在默认列表 / 看板 / 推送的状态，由每日已发币复查写入
 （`already_launched_no_path`：确认已发币且无积分 / 任务入口 / 明确空投措辞）。
 与删除不同，出现后续空投路径时自动恢复；API 传 `include_hidden=true` 可查到。
+用户在界面上「恢复显示」后写 `unhidden_by_user_at`，复查从此不再自动隐藏该项目。
+另一个原因 `not_a_project`：RootData 混合搜索里的人物 / 机构 / 社媒条目（`type≠1`）被当成
+项目入了库，由一次性脚本 `backend/scripts/hide_rootdata_non_projects.py` 写入；复查不会撤销它。
 
 ### airdrop_signal（空投信号子分）
 评分 6 子项之一，权重 0.20。基于 `raw_signals.has_points` 与 `airdrop_hint` 两项证据量化空投可能性（双真→100，仅其一→60，均否→20；见 DATA_SCORING_DICT §5.1）。

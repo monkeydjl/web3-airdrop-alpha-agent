@@ -64,6 +64,11 @@ const ADMIN_METHOD_RULES: { methods: string[]; test: (p: string) => boolean }[] 
     // /api/v1/projects/{id}/funding —— 通配段在路径中间
     test: (p) => /^\/api\/v1\/projects\/[^/]+\/funding(\/|$)/.test(p),
   },
+  {
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    // /api/v1/projects/{id}/unhide —— 撤销 launch_review 隐藏，管理员动作
+    test: (p) => /^\/api\/v1\/projects\/[^/]+\/unhide(\/|$)/.test(p),
+  },
 ];
 
 function requiresAdmin(method: string, path: string): boolean {

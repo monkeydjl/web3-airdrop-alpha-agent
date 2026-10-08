@@ -276,7 +276,7 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **13 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **14 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
@@ -286,7 +286,8 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   `0010_project_skips`（2026-09-08，用户「不参与」标记）、
   `0011_user_auth_tables`（2026-09-19，V3 用户认证系统表）、
   `0012_api_keys_table`（2026-09-19，V3 可撤销 API Key 表）、
-  `0013_project_hidden_reason`（2026-10-08，已发币复查的隐藏标记列）。
+  `0013_project_hidden_reason`（2026-10-08，已发币复查的隐藏标记列）、
+  `0014_token_registry_unhide`（2026-10-08，CoinGecko 币表缓存 + 人工恢复显示标记）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -421,7 +422,8 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 
 **运维影响**：生产库若混入已发币的成熟项目，Dashboard 可能把它们显示成 FARM。
 现有缓解手段是 `collectors/noise.py` 的共享 denylist（采集阶段挡掉蓝筹）
-\+ `scripts/purge_noise_projects.py` 清理存量。回测这个结论说明
+\+ `scripts/purge_noise_projects.py` 清理存量（RootData 人物 / 社媒条目用
+`scripts/hide_rootdata_non_projects.py` 隐藏，不删除）。回测这个结论说明
 **不能只依赖评分兜底，denylist 仍是必需的第一道防线**。
 
 **回测样本不解锁校准门禁**：导出的样本 `source='backtest'`，
@@ -726,13 +728,14 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 > 只锁写在这里没意义。
 
 另有一层**按方法**的规则（`ADMIN_ONLY_METHOD_RULES`），用于"同一路径读开放、
-写受限"的两处 —— 前缀匹配表达不了它们：
+写受限"的几处 —— 前缀匹配表达不了它们：
 
 <!-- admin-method-rules:begin -->
 | 路径 | 受限方法 | 开放方法 | 为什么 |
 | --- | --- | --- | --- |
 | `/api/v1/collections/*` | POST / PATCH / PUT / DELETE | GET / HEAD | trigger 会**真的跑采集**并消耗第三方 API 配额；PATCH 能改采集源开关与 cron。但 `/collections/sources` 是只读就绪状态，首页和 `/discoveries` 页在用，整前缀锁会让匿名角色页面直接空掉。 |
 | `/api/v1/projects/{project_id}/funding` | POST / PATCH / PUT / DELETE | GET / HEAD | PATCH 改融资数据并触发重算。通配段在路径**中间**，前缀匹配写不出来；同一路径的 GET 是普通只读明细。 |
+| `/api/v1/projects/{project_id}/unhide` | POST / PATCH / PUT / DELETE | GET / HEAD | 恢复显示改的是**全局**默认列表，并让每日已发币复查从此跳过该项目（2026-10-08）。 |
 <!-- admin-method-rules:end -->
 
 `/collections/` 用的是**方法白名单取反**（GET/HEAD 之外全锁），

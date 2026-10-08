@@ -149,6 +149,27 @@ class TestIngestionCriteria:
         assert row["quarantined"] == 1
         assert row["quarantine_reason"].startswith("tooling_repo:github:")
 
+    def test_existing_rootdata_person_row_is_quarantined(self, repo_conn):
+        """RootData 人物 / 社媒条目（type!=1）在分析入口被隔离，type=1 照常入库。"""
+        _insert_raw(repo_conn, "r-person", "rootdata", {"name": "Deirdre Connolly", "sector": "DeFi", "type": 3})
+        _insert_raw(repo_conn, "r-list", "rootdata", {"name": "Web3 Testnets List", "sector": "DeFi", "type": 5})
+        _insert_raw(repo_conn, "r-proj", "rootdata", {"name": "Nova Rollup", "sector": "L2", "type": 1})
+        projects = CollectorAgent().collect_from_repository(CollectionRepository(repo_conn), limit=10)
+
+        assert {p.name for p in projects} == {"Nova Rollup"}
+        rows = {
+            r["raw_id"]: r["quarantine_reason"]
+            for r in repo_conn.execute("SELECT raw_id, quarantine_reason FROM raw_projects WHERE quarantined = 1")
+        }
+        assert set(rows) == {"r-person", "r-list"}
+        assert all(v.startswith("non_project:rootdata:") for v in rows.values())
+
+    def test_type_field_only_gates_rootdata(self, repo_conn):
+        """别的源的 type 字段语义不同，不按 RootData 口径拦。"""
+        _insert_raw(repo_conn, "r-other", "defillama", {"name": "Nova Vault", "sector": "Yield", "type": 3})
+        projects = CollectorAgent().collect_from_repository(CollectionRepository(repo_conn), limit=10)
+        assert {p.name for p in projects} == {"Nova Vault"}
+
     def test_listed_token_with_only_testnet_is_quarantined(self, repo_conn):
         """已发币 + 只有测试网：与 ADR-015 already_launched 同口径，停在隔离区。"""
         _insert_raw(

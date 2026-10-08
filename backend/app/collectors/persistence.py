@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from app.collectors.base import CollectorResult, RawDiscovery
 from app.db import DbConnection, dict_from_row, get_connection
 from app.utils.redact import redact
+
+if TYPE_CHECKING:
+    from app.services.token_registry import RegistryIndex
 
 logger = structlog.get_logger(__name__)
 
@@ -175,6 +178,17 @@ class CollectionRepository:
                     ),
                 )
             conn.commit()
+        finally:
+            if self._should_close():
+                conn.close()
+
+    def load_token_registry(self) -> RegistryIndex:
+        """读发币核实用的 CoinGecko 币表（与队列同一连接，测试注入的库也一致）。"""
+        from app.services.token_registry import load_index
+
+        conn = self._get_conn()
+        try:
+            return load_index(conn)
         finally:
             if self._should_close():
                 conn.close()
