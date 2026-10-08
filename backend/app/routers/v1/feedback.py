@@ -509,7 +509,7 @@ def get_pending_review(
                 SELECT id, name, sector, stage, score, label, confidence, url, updated_at
                 FROM projects
                 WHERE label IN ('FARM', 'WATCH')
-                  AND (source != 'historical_backfill' OR source IS NULL)
+                  AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
                 ORDER BY score DESC
                 LIMIT 400
                 """

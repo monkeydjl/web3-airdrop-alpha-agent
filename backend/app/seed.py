@@ -282,7 +282,6 @@ def get_seed_raw_projects() -> list[RawProject]:
         for p in projects
         if not is_listed_token_no_airdrop_signals(
             no_token_yet=p.no_token_yet,
-            has_testnet=p.has_testnet,
             has_points_program=p.has_points_program,
             has_task_portal=p.has_task_portal,
             explicit_airdrop_mention=p.explicit_airdrop_mention,

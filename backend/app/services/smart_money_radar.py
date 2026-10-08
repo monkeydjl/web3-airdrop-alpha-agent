@@ -53,7 +53,7 @@ def get_smart_money_and_social_feed() -> dict[str, Any]:
             """
             SELECT id, name, sector, score, label, stage, narrative_json
             FROM projects
-            WHERE (source != 'historical_backfill' OR source IS NULL)
+            WHERE (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             ORDER BY score DESC LIMIT 8
             """
         ).fetchall()

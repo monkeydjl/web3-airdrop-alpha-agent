@@ -18,6 +18,7 @@ from typing import Any, cast
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
+from app.collectors.noise import is_tooling_repo
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.utils.normalize import normalize_sector
@@ -209,6 +210,13 @@ class GitHubCollector(DataCollector):
             return False
         if repo.get("archived") is True:
             return False
+        # 撸毛脚本 / bot / 水龙头 / 教程仓库不是项目（2026-10-06）。
+        if is_tooling_repo(
+            name=str(repo.get("name") or ""),
+            description=str(repo.get("description") or ""),
+            topics=repo.get("topics"),
+        ):
+            return False
 
         name = (repo.get("name") or "").lower()
         full_name = (repo.get("full_name") or "").lower()
@@ -295,7 +303,11 @@ class GitHubCollector(DataCollector):
 
         blob = f"{name} {description} {topics_text}".lower()
         has_testnet = "testnet" in blob or "faucet" in blob or "devnet" in blob
-        has_points = "points" in blob or "airdrop" in blob or "incentivized" in blob
+        # points / airdrop 字样只作 discovery 打分的线索，不再写成信号（2026-10-06）：
+        # 此前 raw_data 显式写 has_points_program / no_token_yet，"airdrop" 一词
+        # 就让仓库变成「有积分、未发币」，而显式字段在 _infer_airdrop_flags 里
+        # 优先级最高，下游无从纠正。现在两者交给 _infer_airdrop_flags 推断。
+        has_points_hint = "points" in blob or "airdrop" in blob or "incentivized" in blob
         raw_data = {
             "name": name,
             "url": url,
@@ -319,8 +331,6 @@ class GitHubCollector(DataCollector):
             "relevance": rel,
             "topics": topics,
             "has_testnet": has_testnet,
-            "has_points_program": has_points,
-            "no_token_yet": "airdrop" in blob or has_testnet,
             "recent_funding": False,
         }
 
@@ -342,7 +352,7 @@ class GitHubCollector(DataCollector):
 
         discovery_score = self._calculate_discovery_score(stars, forks, open_issues, updated_at, created_at, language)
         discovery_score = round(min(self.MAX_DISCOVERY_SCORE, discovery_score * rel), 4)
-        if rel >= 0.55 and (has_testnet or has_points):
+        if rel >= 0.55 and (has_testnet or has_points_hint):
             discovery_score = max(discovery_score, 0.35)
         # Weak relevance → keep as signal-only (below analysis threshold 0.3)
         if rel < 0.55:

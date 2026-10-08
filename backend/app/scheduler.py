@@ -82,6 +82,7 @@ class UnifiedScheduler:
             and not settings.archive_scheduler_enabled
             and not settings.notify_enabled
             and not settings.vitals_scheduler_enabled
+            and not settings.launch_review_scheduler_enabled
         ):
             self._logger.info("unified_scheduler.disabled")
             return
@@ -91,6 +92,7 @@ class UnifiedScheduler:
         self._register_archive_job()
         self._register_notify_job()
         self._register_vitals_job()
+        self._register_launch_review_job()
         self._register_alpha_digest_job()
         self.scheduler.start()
         self._logger.info("unified_scheduler.started")
@@ -440,6 +442,43 @@ class UnifiedScheduler:
             log("unified_scheduler.vitals_completed", **stats)
         except Exception as e:
             self._logger.error("unified_scheduler.vitals_failed", error=str(e), exc_info=True)
+
+    # ── 已发币复查 job（2026-10-08，ADR-015 补充）──────
+    #
+    #    入库门只拦新原始行，库里已入库的已发币项目不会自己消失。这里每天
+    #    复查一遍：确认已发币且无后续空投路径 → 隐藏；路径出现 → 恢复。
+
+    def _register_launch_review_job(self) -> None:
+        """注册已发币复查 job（采集之后跑，用当天最新原始行）。"""
+        if not settings.launch_review_scheduler_enabled:
+            self._logger.info("unified_scheduler.launch_review_disabled")
+            return
+
+        self.scheduler.add_job(
+            self._run_launch_review,
+            trigger=CronTrigger.from_crontab(settings.launch_review_cron, timezone=settings.timezone),
+            id="launch_review",
+            name="Hide launched projects without airdrop path",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+            max_instances=1,
+        )
+        self._logger.info(
+            "unified_scheduler.launch_review_job_added",
+            cron=settings.launch_review_cron,
+            timezone=settings.timezone,
+        )
+
+    async def _run_launch_review(self) -> None:
+        """执行一轮复查（同步 DB 读写，放线程池不阻塞事件循环）。"""
+        from app.services.launch_review import run_launch_review
+
+        try:
+            stats = await asyncio.to_thread(run_launch_review)
+            self._logger.info("unified_scheduler.launch_review_completed", **stats)
+        except Exception as e:
+            self._logger.error("unified_scheduler.launch_review_failed", error=str(e), exc_info=True)
 
     # ── 推送 job 注册（ACTION_LOOP_DESIGN §2）──────
 

@@ -266,6 +266,10 @@ def list_projects(
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
     include_historical: bool = Query(False, description="是否包含历史回测样本（默认 False，排除历史回测）"),
     persona: str | None = Query(None, description="猎人角色偏好 (balanced/zero_cost/whale_restaking/high_beta)"),
+    include_hidden: bool = Query(
+        False,
+        description="是否包含被自动隐藏的项目（默认 False；确认已发币且无后续空投路径）",
+    ),
 ) -> ProjectsResponse:
     """查询项目列表（分页 + 筛选 + 排序，数据来自 projects 表）.
 
@@ -327,6 +331,7 @@ def list_projects(
             zero_cost_only=zero_cost_only,
             include_historical=include_historical,
             persona=persona,
+            include_hidden=include_hidden,
         )
 
         # Convert to response format — include discovery metadata for Dashboard
@@ -350,6 +355,7 @@ def list_projects(
                     "discovered_at": str(p["discovered_at"]) if p.get("discovered_at") else None,
                     "auto_discovered": bool(p.get("auto_discovered", False)),
                     "veto": p.get("veto"),
+                    "hidden_reason": p.get("hidden_reason"),
                     "skipped": bool(p.get("skipped", False)),
                     "signal_consensus": p.get("signal_consensus"),
                     "persona_applied": p.get("persona_applied") or (persona or "balanced"),

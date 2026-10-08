@@ -432,6 +432,31 @@ class TestMergeRawRecords:
         assert merged["discovered_at"] == t1
 
 
+class TestTokenLaunchConfirmedMerge:
+    """token_launch_confirmed：任一源有发币证据即确认，但合并判未发币时不可能确认。"""
+
+    def test_any_source_confirms(self):
+        records = [
+            {"name": "X", "source": "rootdata", "no_token_yet": False, "token_launch_confirmed": False},
+            {"name": "X", "source": "coingecko", "no_token_yet": False, "token_launch_confirmed": True},
+        ]
+        assert merge_raw_records(records)["token_launch_confirmed"] is True
+
+    def test_no_evidence_stays_unconfirmed(self):
+        records = [{"name": "X", "source": "rootdata", "no_token_yet": False, "token_launch_confirmed": False}]
+        assert merge_raw_records(records)["token_launch_confirmed"] is False
+
+    def test_manual_pre_tge_cancels_confirmation(self):
+        records = [
+            {"name": "X", "source": "coingecko", "no_token_yet": False, "token_launch_confirmed": True},
+            {"name": "X", "source": "manual", "no_token_yet": True},
+        ]
+        assert merge_raw_records(records)["token_launch_confirmed"] is False
+
+    def test_legacy_records_leave_key_absent(self):
+        assert "token_launch_confirmed" not in merge_raw_records([{"name": "X", "source": "defillama"}])
+
+
 class TestNoTokenYetMergeSemantics:
     """no_token_yet 按 AND 合并：任一 token 状态源看到代币即判已发币（2026-09 修复）。
 

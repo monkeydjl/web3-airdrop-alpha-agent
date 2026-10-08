@@ -1570,6 +1570,12 @@ def init_db(conn: Any = None) -> None:
         # 漏登记这行会让所有已存在的开发/生产库在 save 时报
         # "table projects has no column named veto"（评分成功但落库失败 → run 变 failed）。
         _add_column_if_not_exists(db, "projects", "veto", "TEXT")
+        # 默认列表隐藏（2026-10-08，launch_review）：非空 = 系统判定不该出现在
+        # 默认列表里的原因。只隐藏不删除 —— 历史、反馈、参与计划都还挂在这一行上；
+        # 判定条件消失（出现积分 / 任务入口）时由同一 job 清回 NULL。save() 的
+        # UPSERT 不列这两列，重新评分不会顺手清掉。
+        _add_column_if_not_exists(db, "projects", "hidden_reason", "TEXT")
+        _add_column_if_not_exists(db, "projects", "hidden_at", "TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP")
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
 

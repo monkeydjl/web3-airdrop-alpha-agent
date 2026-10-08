@@ -23,7 +23,7 @@ def get_calendar_events() -> list[dict[str, Any]]:
             """
             SELECT id, name, sector, stage, score, label, meta
             FROM projects
-            WHERE (source != 'historical_backfill' OR source IS NULL)
+            WHERE (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
             """
         ).fetchall()
 

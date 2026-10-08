@@ -175,17 +175,28 @@ def is_noise_raw_project(name: str, sector: str | None = None, raw_data: dict[st
 def is_listed_token_no_airdrop_signals(
     *,
     no_token_yet: bool,
-    has_testnet: bool = False,
     has_points_program: bool = False,
     has_task_portal: bool = False,
     explicit_airdrop_mention: bool = False,
     source_id: str = "",
+    token_launch_confirmed: bool | None = None,
+    explicit_points_program: bool | None = None,
 ) -> bool:
-    """Return True if the project already has a listed token and zero airdrop signals.
+    """Return True if the project already has a listed token and no follow-on airdrop path.
 
     These projects have no airdrop alpha value — the token is already trading and
-    there are no testnet, points, quest, or airdrop mentions to suggest an upcoming
-    distribution.
+    there is no points program, quest portal, or explicit airdrop mention to suggest
+    a further distribution.
+
+    口径与 ADR-015 的 `has_post_launch_airdrop_path()` 完全一致（2026-10-06）：
+    **testnet 不算**已发币项目的后续路径。此前这里把 has_testnet 也算进去，
+    于是「已发币 + 只有测试网」的项目能过入库门、写进 projects，再被评分层
+    的 already_launched 否决打成 IGNORE —— 已发币项目照样出现在库里。
+    两道门用同一口径后，这类项目停在 raw_projects 的隔离区。
+
+    只拦**确认已发币**的行：`token_launch_confirmed=False`（无发币证据、状态未知）
+    一律放行 —— 2026-10-08 清理时按旧口径误删了约 30 个 RootData 项目，它们的
+    `token_symbol` 为空，并无发币证据。
 
     Signal supplement sources (coingecko, cryptorank, etherscan) are exempt:
     their job is to provide token-listed corroboration for projects discovered by
@@ -198,11 +209,93 @@ def is_listed_token_no_airdrop_signals(
     # If token not yet listed, it's potential alpha — keep it
     if no_token_yet:
         return False
+    # 「没确认未发币」≠「确认已发币」（2026-10-08）：来源给不出发币证据时
+    # （RootData 免费档缺 token 字段、文本类来源），照常入库评分，不隔离。
+    # None = 旧调用方未提供，按 not no_token_yet 兼容。
+    if token_launch_confirmed is False:
+        return False
 
-    # Token is listed. Check for any airdrop-related signals
-    has_any_airdrop_signal = has_testnet or has_points_program or has_task_portal or explicit_airdrop_mention
+    # Token is listed. Keep only with a post-launch airdrop path.
+    # 积分只认严格证据（2026-10-08，与 has_post_launch_airdrop_path 同口径）；
+    # None = 旧调用方未提供，回退宽松的 has_points_program。
+    points = has_points_program if explicit_points_program is None else explicit_points_program
+    has_post_launch_path = points or has_task_portal or explicit_airdrop_mention
 
-    return not has_any_airdrop_signal
+    return not has_post_launch_path
+
+
+# ── 工具类仓库（2026-10-06）────────────────────────────────────────────────
+# GitHub 搜 "airdrop testnet" 返回的大多是撸毛脚本：Pharos-Auto-Bot、
+# units-network-bot、solana-devnet-faucet……它们说明某个项目**正被很多人撸**，
+# 本身不是项目。生产库实测：github 源 15 条全是这类仓库，13 条被判 FARM。
+# 只对 github 源使用 —— 描述里的 "bot for" 在别的源可能是真项目（交易 bot 协议）。
+_TOOLING_NAME_TOKENS = frozenset(
+    {
+        "bot",
+        "bots",
+        "autobot",
+        "autobots",
+        "automation",
+        "automator",
+        "script",
+        "scripts",
+        "farmer",
+        "farming",
+        "claimer",
+        "sniper",
+        "faucet",
+        "faucets",
+        "guide",
+        "guides",
+        "tutorial",
+        "tutorials",
+    }
+)
+
+_TOOLING_TOPICS = frozenset(
+    {
+        "bot",
+        "bots",
+        "automation",
+        "airdrop-farming",
+        "web3-farming",
+    }
+)
+
+_TOOLING_DESC_RE = re.compile(
+    r"""(?<![a-z0-9])(?:
+        auto(?:mated|mation)?[\s-]?bot
+        | bot\s+for
+        | multi[\s-]?wallets?
+        | multi[\s-]?accounts?
+        | multiple\s+(?:wallets|accounts|private\s+keys)
+        | airdrop\s+farming
+        | script\s+collection
+        | auto[\s-]?(?:swaps?|claims?|mint(?:ing)?|bridg(?:e|ing)|faucets?|transactions?|tasks?|referrals?)
+        | stars?\s+to\s+unlock
+    )(?![a-z0-9])""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_tooling_repo(*, name: str, description: str = "", topics: Any = None) -> bool:
+    """GitHub 仓库是撸毛脚本 / 机器人 / 水龙头 / 教程这类工具，而非项目本身。
+
+    三路任一命中即判定：名字分词（Pharos-Auto-Bot → bot）、topics
+    （bot / airdrop-farming / *-bot）、描述措辞（automated bot、multiple
+    private keys、auto swap）。
+    """
+    tokens = re.split(r"[\s\-_./]+", (name or "").strip().lower())
+    if any(tok in _TOOLING_NAME_TOKENS for tok in tokens):
+        return True
+
+    topic_list = topics if isinstance(topics, (list, tuple)) else ()
+    for topic in topic_list:
+        t = str(topic).strip().lower()
+        if t in _TOOLING_TOPICS or t.endswith("-bot") or t.endswith("-bots"):
+            return True
+
+    return bool(_TOOLING_DESC_RE.search(description or ""))
 
 
 # 已发币品牌的静态兜底名单 —— 只收有公开 TGE 证据的品牌，宁缺勿滥。
@@ -220,6 +313,14 @@ KNOWN_LISTED_BRANDS = frozenset(
         "layerzero",  # ZRO TGE 2024-06
         "eigenlayer",  # EIGEN TGE 2024-10
         "hyperliquid",  # HYPE TGE 2024-11
+        # 2026-10-06 补充：github_curated 内置清单里长期以「未发币测试网」身份
+        # 入库的品牌，逐个核实已 TGE。Story / Movement 首词是通用词，不收，
+        # 避免误伤同名新项目（它们已从内置清单移除，不依赖本名单拦截）。
+        "monad",  # MON TGE 2025-11-24
+        "megaeth",  # MEGA TGE 2026-04-30
+        "babylon",  # BABY TGE 2025-04-10
+        "initia",  # INIT TGE 2025-04-24
+        "nesa",  # NES 上线 2026-06-24
     }
 )
 

@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **430 个不同事件名**、
-**86 个命名空间**（2026-10-04 随 vitals SSRF 拦截、dashboard 发现队列故障与保留期清理事件更新）；
-段数分布：2 段 323 个、3 段 80 个、4 段 5 个、1 段 1 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **437 个不同事件名**、
+**87 个命名空间**（2026-10-08 随已发币复查 `launch_review.*` 与其调度 job 事件更新）；
+段数分布：2 段 348 个、3 段 82 个、4 段 5 个、1 段 2 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -79,7 +79,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 | 命名空间 | 事件数 | 例 |
 | --- | --- | --- |
-| `unified_scheduler` | 28 | `unified_scheduler.started` |
+| `unified_scheduler` | 40 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
 | `llm` | 21 | `llm.budget.exceeded` |
 | `collector` | 20 | `collector.noise_quarantined` |
@@ -146,6 +146,18 @@ LLM 多接口轮询（ADR-016）落三个事件：
 资格门（ADR-015）落一个事件：`scorer.veto_applied`，字段 `veto` /
 `original_label` / `final_label`。查它能回答「这条 IGNORE 是分数低还是被否决」——
 分数本身不因否决改变，只看 `score` 无法区分两者。
+
+已发币复查（2026-10-08，ADR-015 补充）落三个 `launch_review.*` 事件：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| `launch_review.project_hidden` | INFO | 确认已发币且无后续空投路径，写 `hidden_reason`，字段 `project_id` / `name` |
+| `launch_review.project_unhidden` | INFO | 出现积分 / 任务入口 / 明确空投措辞（或不再确认已发币），清除隐藏 |
+| `launch_review.completed` | INFO | 一轮统计：`reviewed` / `hidden` / `unhidden` / `kept_hidden` / `protected_active_plan` |
+
+调度侧另有 `unified_scheduler.launch_review_job_added` / `launch_review_disabled` /
+`launch_review_completed` / `launch_review_failed`（ERROR）。查「这个项目为什么
+不在列表里」先搜 `launch_review.project_hidden` + `project_id`。
 
 `narrative.sector_profile_missing`（WARNING，字段 `sector` / `known_sectors` /
 `impact`）：项目的 sector 没命中 `SECTOR_PROFILE`，`narrative_timing` 退化为

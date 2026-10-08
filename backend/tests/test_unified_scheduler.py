@@ -192,6 +192,7 @@ async def test_start_disabled_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
     monkeypatch.setattr(settings, "notify_enabled", False)
     monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
 
     sched = UnifiedScheduler(registry)
     sched.start()
@@ -397,6 +398,7 @@ async def test_archive_alone_still_starts_scheduler(monkeypatch):
     monkeypatch.setattr(settings, "archive_scheduler_enabled", True)
     # vitals 是第五个独立开关，不符合这条测试的假设（无关维度应该关掉）
     monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
 
     sched = UnifiedScheduler(_make_fake_registry())
     sched.start()
@@ -601,6 +603,7 @@ async def test_vitals_alone_still_starts_scheduler(monkeypatch):
     monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
     monkeypatch.setattr(settings, "notify_enabled", False)
     monkeypatch.setattr(settings, "vitals_scheduler_enabled", True)
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
 
     sched = UnifiedScheduler(_make_fake_registry())
     sched.start()
@@ -611,3 +614,61 @@ async def test_vitals_alone_still_starts_scheduler(monkeypatch):
         assert {j["id"] for j in sched.get_jobs()} == {"vitals_probe", "daily_alpha_digest"}
     finally:
         sched.shutdown(wait=False)
+
+
+# ── launch_review job（已发币复查，2026-10-08）──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_launch_review_job_is_registered(monkeypatch):
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "launch_review" in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_launch_review_job_absent_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert "launch_review" not in [j["id"] for j in sched.get_jobs()]
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_launch_review_alone_still_starts_scheduler(monkeypatch):
+    """同 vitals：别的开关全关时复查仍要跑，否则会被「全关不起调度器」吞掉。"""
+    monkeypatch.setattr(settings, "scheduler_enabled", False)
+    monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "notify_enabled", False)
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(_make_fake_registry())
+    sched.start()
+    try:
+        assert sched.scheduler.running
+        assert {j["id"] for j in sched.get_jobs()} == {"launch_review", "daily_alpha_digest"}
+    finally:
+        sched.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_run_launch_review_swallows_errors(monkeypatch):
+    """复查失败只记日志，不能把调度器带崩。"""
+
+    def boom(*_a, **_k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.services.launch_review.run_launch_review", boom)
+    sched = UnifiedScheduler(_make_fake_registry())
+    await sched._run_launch_review()

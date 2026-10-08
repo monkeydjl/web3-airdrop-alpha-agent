@@ -285,6 +285,7 @@ _AUTHORITATIVE_SOURCES = ("manual", "api")
 _MERGE_BOOL_OR = (
     "has_testnet",
     "has_points_program",
+    "explicit_points_program",
     "recent_funding",
     "has_docs",
     "has_whitepaper",
@@ -532,6 +533,17 @@ def merge_raw_records(
         ]
         if status_votes:
             merged["no_token_yet"] = all(bool(r.get("no_token_yet")) for r in status_votes)
+
+    # token_launch_confirmed：任一源给出发币证据即确认（2026-10-08）。与
+    # no_token_yet 互斥：合并结果判未发币时不可能「确认已发币」。全部记录都
+    # 没带这个键（旧调用方）时保持缺省，交给 eligibility 的兼容口径。
+    if any("token_launch_confirmed" in r for r in sorted_records):
+        override = _authoritative_value(sorted_records, "token_launch_confirmed", source_key)
+        if override is not _NO_VALUE:
+            confirmed = bool(override)
+        else:
+            confirmed = any(bool(r.get("token_launch_confirmed")) for r in sorted_records)
+        merged["token_launch_confirmed"] = confirmed and not bool(merged.get("no_token_yet"))
 
     # 数值证据：取最大 / 取最小
     for field in _MERGE_NUMERIC_MAX:

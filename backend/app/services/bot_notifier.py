@@ -42,7 +42,7 @@ def handle_bot_command(command: str) -> dict[str, Any]:
                 """
                 SELECT id, name, sector, score, label, stage
                 FROM projects
-                WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL)
+                WHERE label = 'FARM' AND (source != 'historical_backfill' OR source IS NULL) AND hidden_reason IS NULL
                 ORDER BY score DESC LIMIT 5
                 """
             ).fetchall()

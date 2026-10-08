@@ -390,6 +390,76 @@ owner 拍板放宽。`has_participation_path()` 增加
 50 条后需复核 —— 若出现「官方提过空投但最终没发」的样本，该信号的区分度会
 下降，届时应考虑要求它与其他证据联合成立而非单独放行。
 
+### 补充（2026-10-06）：入库门与 `already_launched` 同口径
+
+生产库实测：已发币项目（Scroll zkEVM、Pharos、Monad 等）照样出现在列表里。
+根因是**两道门口径不一致**：
+
+- 入库门 `is_listed_token_no_airdrop_signals()`（`collectors/noise.py`）把
+  `has_testnet` 也算作「有空投信号」，已发币 + 只有测试网的项目能写进 `projects`；
+- 评分层 `already_launched` 否决（本 ADR §2）**不**认 testnet，于是这类项目
+  入库后被打成 IGNORE —— 不推荐，但仍在库、仍可见。
+
+修正：入库门去掉 `has_testnet`，只认 `has_post_launch_airdrop_path()` 的三条
+后续路径（points / task portal / `explicit_airdrop_mention`）。已发币且无后续
+路径的行停在 `raw_projects` 隔离区（`quarantine_reason=listed_token_no_airdrop:*`），
+不再写入 `projects`。评分层否决保留，作为手动提交（`POST /run`）路径的兜底。
+
+同批修正的上游误判（均让已发币项目伪装成 `no_token_yet=True`）：
+
+- `github` 采集器不再在 `raw_data` 里显式写 `no_token_yet` / `has_points_program`
+  —— 仓库文本给不出发币证据，"airdrop" 一词就推出「未发币、有积分」；
+- 撸毛脚本 / bot / 水龙头仓库（`is_tooling_repo()`）在采集源头与分析队列两处排除，
+  它们说明某项目正被撸，本身不是项目；
+- `github_curated` 内置清单 9 条逐个核实已 TGE 或无代币计划，清空；缺省
+  `no_token_yet` 改为 False；
+- `KNOWN_LISTED_BRANDS` 补 monad / megaeth / babylon / initia / nesa。
+
+### 补充（2026-10-08）：代币状态三态，只有「确认已发币」才否决 / 拦截 / 隐藏
+
+**事故**：按 2026-10-06 补充清理存量时，把 RootData 的 `no_token_yet=False`
+当成「已发币」删掉了 35 个项目，其中约 30 个并没有任何发币证据（Cubist、
+Blockscout、Gas.zip 等）。RootData 免费档基本不返回 token 字段，采集器只在
+明确写着未发币时置 `no_token_yet=True`，**缺字段一律落 False** —— 它的真实
+含义是「没确认未发币」，不是「确认已发币」。数据已从备份恢复。
+
+**修正**：`RawProject` 新增 `token_launch_confirmed`，与 `no_token_yet` 一起构成三态
+（见 [GLOSSARY §1 确认已发币](../GLOSSARY.md)）：
+
+| 状态 | 条件 |
+| --- | --- |
+| 确认未发币 | `no_token_yet=True` |
+| 确认已发币 | `token_launch_confirmed=True`：上市 / 代币状态源（defillama 的 symbol·gecko_id 规则、coingecko、cryptorank、etherscan、manual/api/seed）、RootData 带非空 ticker 或 `token_status` 为 listed/issued/tge 等、或命中 `KNOWN_LISTED_BRANDS` |
+| 未知 | 其余（RootData 缺 token 字段、文本类来源） |
+
+- 入库门 `is_listed_token_no_airdrop_signals()`、本 ADR §2 的 `already_launched`
+  否决与 `airdrop_signal` 35 分封顶，**只对确认已发币生效**；未知状态照常评分。
+- 跨源合并：任一源确认即确认，但合并结果判 `no_token_yet=True` 时不可能确认；
+  manual/api 显式取值仍最高优先。
+- 兼容：旧调用方不传该字段（`None`）时按 `not no_token_yet` 处理，单测与手动
+  提交路径语义不变。
+- 本条**取代** 2026-10-06 补充里「RootData `no_token_yet=False` 即已发币」的隐含口径。
+
+**存量处理改为隐藏而非删除**：入库门只拦新原始行。新增每日复查
+`app/services/launch_review.py`（`LAUNCH_REVIEW_CRON`，默认 12:00，排在采集之后）：
+
+- 确认已发币且无后续路径 → 写 `projects.hidden_reason="already_launched_no_path"`
+  与 `hidden_at`，默认列表 / 看板 / 日报 / 推送不再出现；`include_hidden=true` 可查；
+- 后续出现 points / task portal / `explicit_airdrop_mention`，或证据不再支持
+  「确认已发币」→ 下一轮自动清除；只清本复查写的原因；
+- 有 active 参与计划的项目不隐藏；`historical_backfill` 不参与；不改 `updated_at`；
+- 库内信号明确 `no_token_yet=True` 与原始行证据冲突时按未知处理，宁可多留。
+
+**积分证据收紧**：首轮复查 374 个项目，20 个确认已发币，**一个没藏** ——
+`has_points_program` 的宽松推断把 restaking / incentive / vaults / liquidity mining
+都算成积分计划（Pharos、Bonk、Persistence 全靠这类词豁免）。新增严格字段
+`explicit_points_program`（见 [GLOSSARY §1](../GLOSSARY.md)）：只认 `points program /
+system / season` 或 `points` 与 airdrop·loyalty·rewards·portal 同现（词边界匹配，
+`endpoints` 不算；已结束空投措辞不算），或可信源的显式字段（defillama 采集器自己用
+宽松关键词写该字段，不采信）。§2 的后续路径、入库门与复查只看严格字段；宽松字段
+继续喂 `airdrop_signal` 子分，**评分口径不变**。旧调用方不传（None）时回退宽松字段。
+收紧后首轮隐藏 15 个，保留 5 个（LAB、Hana、Halo、NX Finance、MPAA 有明确积分措辞）。
+
 ### 迁移成本
 - **历史数据不重算**。`projects.veto` 对既有行为 NULL，语义是「未经资格门评估」。
   重算需显式跑 `POST /run`，与「权重变更不追溯历史分数」（ADR-006 §3）口径一致。

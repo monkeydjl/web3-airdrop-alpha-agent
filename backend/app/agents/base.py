@@ -64,6 +64,16 @@ class RawProject:
     has_points_program: bool = False
     no_token_yet: bool = False
     recent_funding: bool = False
+    # 代币状态三态（2026-10-08，ADR-015 补充）：no_token_yet=False 只说明「没确认未发币」。
+    # True = 有发币证据（ticker / gecko_id / 上市源 / 已发币品牌）；False = 来源给不出证据，
+    # 状态未知；None = 旧调用方未提供，按 not no_token_yet 兼容。只有确认已发币才触发
+    # already_launched 否决、入库门隔离与默认列表隐藏。
+    token_launch_confirmed: bool | None = None
+    # 严格积分证据（2026-10-08）：只认「points program / points + airdrop·rewards」
+    # 这类明确措辞或可信源显式字段。has_points_program 的宽松推断（restaking /
+    # incentive / vaults 也算）仍用于 airdrop_signal 子分；已发币项目的后续空投
+    # 路径只看这个字段。None = 旧调用方未提供，回退 has_points_program。
+    explicit_points_program: bool | None = None
 
     # v1.2 extended signals (docs / social / repo health / airdrop clarity)
     has_docs: bool = False  # docs site / whitepaper / litepaper
@@ -132,6 +142,8 @@ class RawProject:
             "has_testnet": self.has_testnet,
             "has_points_program": self.has_points_program,
             "no_token_yet": self.no_token_yet,
+            "token_launch_confirmed": self.token_launch_confirmed,
+            "explicit_points_program": self.explicit_points_program,
             "recent_funding": self.recent_funding,
             "has_docs": self.has_docs,
             "has_whitepaper": self.has_whitepaper,

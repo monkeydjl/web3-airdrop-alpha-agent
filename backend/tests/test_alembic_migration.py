@@ -84,8 +84,24 @@ _REVISION_TABLES: dict[str, set[str]] = {
     # V3 用户认证（0011）与动态 API Key（0012），734f0a7 引入
     "0011": {"users", "sessions", "blacklisted_jti"},
     "0012": {"api_keys"},
+    # 0013 只给 projects 加了两列（hidden_reason / hidden_at），不引入新表
+    "0013": set(),
 }
-_REVISION_ORDER = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"]
+_REVISION_ORDER = [
+    "0001",
+    "0002",
+    "0003",
+    "0004",
+    "0005",
+    "0006",
+    "0007",
+    "0008",
+    "0009",
+    "0010",
+    "0011",
+    "0012",
+    "0013",
+]
 
 
 def _tables_removed_after(revision: str) -> set[str]:

@@ -8,6 +8,46 @@
 
 ## [Unreleased]
 
+### Fixed — 「没确认未发币」被当成「已发币」，存量清理误删约 30 个项目（2026-10-08）
+
+症状：按下方 10-06 口径清理存量已发币项目时删了 35 个，其中约 30 个（Cubist、
+Blockscout、Gas.zip 等）没有任何发币证据。RootData 免费档基本不返回 token 字段，
+缺字段落 `no_token_yet=False`，它的意思是「状态未知」。
+
+- **代币状态三态**：`RawProject.token_launch_confirmed`。只有正面证据（ticker /
+  gecko_id / 上市源 / 已发币品牌）才算确认已发币；入库门、ADR-015 `already_launched`
+  否决与封顶只对确认已发币生效。跨源任一确认即确认，与 `no_token_yet=True` 互斥。
+- **隐藏而非删除**：新增每日已发币复查 `launch_review`（`LAUNCH_REVIEW_CRON`，默认
+  12:00）。确认已发币且无积分 / 任务入口 / 明确空投措辞 → 写 `projects.hidden_reason`，
+  默认列表、看板、日报、推送过滤；路径出现后自动恢复。有 active 参与计划的不藏。
+  `GET /projects?include_hidden=true` 可查。迁移 0013 加 `hidden_reason` / `hidden_at`。
+- **积分证据收紧**：宽松 `has_points_program` 把 restaking / incentive / vaults 也算积分
+  计划，首轮复查 20 个确认已发币项目一个没藏。新增严格字段 `explicit_points_program`，
+  否决 / 入库门 / 复查只认明确积分措辞；宽松字段仍用于 `airdrop_signal` 子分，评分不变。
+- 数据：误删项目已从备份恢复并重新排队评分；首轮复查隐藏 15 个已发币项目。
+- 文档：ADR-015 补三态与复查，GLOSSARY 立「确认已发币」「隐藏」词条，API_SPEC /
+  DATABASE_DDL / OBSERVABILITY 同步。
+
+### Fixed — 入库标准：撸毛 bot 仓库与已发币项目混进扫描结果（2026-10-06）
+
+症状：项目列表里出现 `Pharos-Auto-Bot` 这类撸毛脚本仓库（被判 FARM），以及
+Scroll zkEVM、Monad、Babylon 等早已 TGE 的项目。
+
+- **bot 仓库**：GitHub 采集器搜 `airdrop testnet`，返回的大多是撸毛脚本；相关性
+  过滤只看 Web3 关键词，再由 "airdrop" / "testnet" 字样推出 `has_points_program` /
+  `no_token_yet` 并**显式**写进 raw_data（下游无从纠正）。生产库 github 源 15 条
+  全是工具，13 条 FARM。修法：`noise.is_tooling_repo()`（名字分词 / topics / 描述
+  措辞三路）在采集源头与分析队列两处拦截，存量行隔离为 `tooling_repo:*`；
+  raw_data 不再写这两个字段，`no_token_yet` 只认已发币品牌名单这条反证。
+- **已发币项目**：入库门 `is_listed_token_no_airdrop_signals` 把 testnet 算作已发币
+  项目的后续路径，与评分层 ADR-015 `already_launched` 口径不一致 —— 「已发币 + 只有
+  测试网」能进 projects，再被打成 IGNORE，照样出现在库里。两道门改为同一口径，
+  这类项目停在 raw_projects 隔离区。
+- **github_curated 内置清单**：9 条写死 `no_token_yet=True` 的「测试网」逐个核实，
+  8 个已 TGE、Soneium 官方无发币计划，清单清空；未写明的条目缺省按已发币处理。
+  `KNOWN_LISTED_BRANDS` 补 monad / megaeth / babylon / initia / nesa。
+- 文档：ADR-015 补入库门口径说明，DATA_SOURCE_STRATEGY §5.3 更正过滤范围。
+
 ### Fixed — 卡片弹窗被祖先「包含块」关进卡片、位置错乱（2026-10-03）
 
 症状：工作台项目卡片的弹窗（脚本工坊、安全体检、投研研报、竞品 PK 等）位置

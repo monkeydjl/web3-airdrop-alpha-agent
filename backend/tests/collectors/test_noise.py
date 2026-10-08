@@ -6,6 +6,7 @@ from app.collectors.noise import (
     is_noise_project,
     is_noise_protocol,
     is_noise_raw_project,
+    is_tooling_repo,
 )
 
 
@@ -109,7 +110,6 @@ class TestListedTokenNoAirdropSignals:
         assert (
             is_listed_token_no_airdrop_signals(
                 no_token_yet=False,
-                has_testnet=False,
                 has_points_program=False,
                 has_task_portal=False,
                 explicit_airdrop_mention=False,
@@ -123,7 +123,6 @@ class TestListedTokenNoAirdropSignals:
         assert (
             is_listed_token_no_airdrop_signals(
                 no_token_yet=True,
-                has_testnet=False,
                 has_points_program=False,
                 has_task_portal=False,
                 explicit_airdrop_mention=False,
@@ -132,15 +131,19 @@ class TestListedTokenNoAirdropSignals:
             is False
         )
 
-    def test_listed_token_with_testnet_kept(self):
-        """Listed token but has testnet = potential airdrop, keep it."""
+    def test_listed_token_with_only_testnet_filtered(self):
+        """已发币 + 只有测试网 → 过滤（2026-10-06）。
+
+        testnet 不算已发币项目的后续空投路径，与 ADR-015 already_launched
+        否决同一口径。此前这里放行，已发币项目进库后再被评分层打成 IGNORE，
+        照样出现在列表里（Scroll / Pharos 一类）。
+        """
         assert (
             is_listed_token_no_airdrop_signals(
                 no_token_yet=False,
-                has_testnet=True,
                 source_id="defillama",
             )
-            is False
+            is True
         )
 
     def test_listed_token_with_points_kept(self):
@@ -171,7 +174,6 @@ class TestListedTokenNoAirdropSignals:
             assert (
                 is_listed_token_no_airdrop_signals(
                     no_token_yet=False,
-                    has_testnet=False,
                     has_points_program=False,
                     has_task_portal=False,
                     explicit_airdrop_mention=False,
@@ -227,3 +229,39 @@ class TestListedBrandSubproduct:
         共用同一份 KNOWN_LISTED_BRANDS。"""
         for brand_name in ("Plume Vaults", "ZKsync Staking", "Berachain Bridge"):
             assert is_listed_brand_subproduct(name=brand_name) is True, brand_name
+
+
+class TestToolingRepo:
+    """撸毛脚本 / bot / 水龙头仓库不是项目（2026-10-06）。
+
+    样例取自生产库 github 源的真实 15 条：全部是工具，13 条曾被判 FARM。
+    """
+
+    def test_production_bot_repos_detected(self):
+        cases = [
+            ("Pharos-Auto-Bot", "An automated bot for interacting with the Pharos Testnet", ["pharos-bot"]),
+            ("Pharos-Automation-Bot", "An automated multi-wallet bot", ["airdrop-farming"]),
+            ("units-network-bot", "automating transactions using multiple private keys", ["bot"]),
+            ("solana-devnet-faucet", "Public web faucet for Solana devnet/testnet airdrops", ["faucet"]),
+            ("Ramanode-Guides", "A shell script collection about shortcuts to run nodes", ["automation"]),
+            ("OG-Labs", "Auto swap, faucet. [100 STARS TO UNLOCK]", ["og-labs"]),
+            ("TradeGPT-Auto-Bot", "performing swaps, and earning points", []),
+        ]
+        for name, desc, topics in cases:
+            assert is_tooling_repo(name=name, description=desc, topics=topics), name
+
+    def test_description_alone_is_enough(self):
+        assert is_tooling_repo(name="og-labs", description="Auto swap and auto claim for 0G testnet")
+
+    def test_real_protocol_repo_not_tooling(self):
+        assert not is_tooling_repo(
+            name="AirdropAlpha",
+            description="A testnet points protocol for airdrops",
+            topics=["defi", "solidity"],
+        )
+        assert not is_tooling_repo(name="optimism", description="Optimism is Ethereum, scaled.", topics=["rollup"])
+
+    def test_substring_does_not_trigger(self):
+        """整词匹配：'robot' / 'botanica' 里的 bot 不算工具。"""
+        assert not is_tooling_repo(name="Robotics-Chain", description="robotics L1")
+        assert not is_tooling_repo(name="botanica", description="onchain garden protocol")

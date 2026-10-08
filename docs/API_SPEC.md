@@ -463,6 +463,15 @@ curl -X POST http://localhost:8002/api/v1/run \
 | `sort_by` | string | `score` | 排序字段 |
 | `sort_order` | enum | `desc` | `asc`/`desc`（非法值 **422**） |
 | `auto_discovered` | bool | - | 只看自动发现 / 只看手工录入 |
+| `include_hidden` | bool | `false` | 是否包含被已发币复查隐藏的项目（2026-10-08，见下） |
+
+**`include_hidden`（2026-10-08，ADR-015 补充）**：每日已发币复查
+（`app/services/launch_review.py`）把**确认已发币**且没有积分计划 / 任务入口 /
+明确空投措辞的项目写上 `hidden_reason = "already_launched_no_path"`，默认列表、
+看板、日报、推送都不再出现它们，但**不删除**。传 `include_hidden=true` 时列表项
+带 `hidden_reason` 字段（未隐藏为 `null`）。之后出现后续空投路径，下一轮复查自动恢复。
+「确认已发币」要有正面证据（ticker / gecko_id / 上市源 / 已发币品牌），RootData
+没给 token 字段的项目算状态未知，不隐藏。
 
 **没有 `search` 参数**：首页的关键词搜索是**前端在已取回的列表上过滤**的，
 不是服务端搜索。这意味着搜索范围受当前分页限制 —— 这是现状，不是 bug，

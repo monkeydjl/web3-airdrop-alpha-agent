@@ -19,6 +19,8 @@ SIGNAL_KEYS = (
     "has_testnet",
     "has_points_program",
     "no_token_yet",
+    "token_launch_confirmed",
+    "explicit_points_program",
     "recent_funding",
     "has_docs",
     "has_whitepaper",
