@@ -143,6 +143,11 @@ def _serialize_project_payload(project: dict[str, Any]) -> dict[str, Any]:
         "sub_scores": sub_scores if isinstance(sub_scores, dict) else {},
         "weight_version": weight_version or "v1.2",
         "veto": project.get("veto"),
+        "hidden_reason": project.get("hidden_reason"),
+        "hidden_at": str(project["hidden_at"]) if project.get("hidden_at") is not None else None,
+        "unhidden_by_user_at": (
+            str(project["unhidden_by_user_at"]) if project.get("unhidden_by_user_at") is not None else None
+        ),
         "skipped": bool(project.get("skipped", False)),
         "watchlisted": bool(project.get("watchlisted", False)),
         "signal_consensus": project.get("signal_consensus"),
@@ -523,6 +528,48 @@ def get_project(
         )
         raise HTTPException(
             status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to retrieve project"}
+        ) from e
+
+
+@router.post(
+    "/projects/{project_id}/unhide",
+    response_model=ProjectsResponse,
+    responses={
+        404: {
+            "description": "项目未找到",
+            "content": {"application/json": {"examples": {"not_found": ERROR_RESPONSE_EXAMPLES["not_found"]}}},
+        }
+    },
+    summary="恢复显示被隐藏的项目",
+    description=(
+        "清除 hidden_reason / hidden_at，并记录 unhidden_by_user_at。之后每日已发币复查"
+        "（launch_review）不会再自动隐藏该项目。仅管理员可调用（ADMIN_ONLY_METHOD_RULES）。"
+        "对未隐藏的项目调用同样成功，并同样记录人工决定。"
+    ),
+)
+def unhide_project(
+    project_id: str = Path(..., description="项目 ID"),
+) -> dict[str, Any]:
+    """人工恢复显示：清掉隐藏标记并让复查从此跳过这个项目."""
+    try:
+        repo = ProjectRepository()
+        if not repo.unhide(project_id):
+            raise HTTPException(
+                status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+            )
+        project = repo.get_by_id(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=404, detail={"code": "NOT_FOUND", "message": f"Project {project_id} not found"}
+            )
+        logger.info("api.projects.unhidden", project_id=project_id)
+        return {"ok": True, "data": {"project": _serialize_project_payload(project)}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("api.projects.unhide_failed", project_id=project_id, error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to unhide project"}
         ) from e
 
 

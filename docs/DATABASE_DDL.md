@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS projects (
     veto            TEXT,                       -- ADR-015 资格否决原因；仅影响 label，不改 score
     hidden_reason   TEXT,                       -- 默认列表隐藏原因（already_launched_no_path）；NULL=显示
     hidden_at       TIMESTAMP,                  -- 隐藏写入时间（launch_review，2026-10-08）
+    unhidden_by_user_at TIMESTAMP,              -- 人工恢复显示时间；非空则复查不再自动隐藏
     
     reason          TEXT,                       -- 决策理由 JSON 数组
     narrative_json  TEXT,                       -- NarrativeResult JSON
@@ -386,6 +387,23 @@ CREATE INDEX IF NOT EXISTS idx_watched_wallets_active ON watched_wallets(active,
 
 
 -- ============================================
+-- 2.9f token_registry 表（CoinGecko 全量币表缓存，迁移 0014，2026-10-08）
+-- ============================================
+-- 给「发币状态未知」的项目补「确认已发币」证据（app/services/token_registry.py）。
+-- 整表由 refresh 覆盖重建（7 天一次，挂在 launch_review job 前），不存历史；
+-- 表为空时核实不生效。name_key = 名称小写去掉非字母数字。
+CREATE TABLE IF NOT EXISTS token_registry (
+    coin_id    TEXT PRIMARY KEY,                  -- CoinGecko coin id（如 arbitrum）
+    symbol     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL,                     -- 归一名称，严格匹配用
+    fetched_at TIMESTAMP NOT NULL                 -- PG: TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_registry_name_key ON token_registry(name_key);
+
+
+-- ============================================
 -- 2.9 llm_eval_changelog 表（LLM 评估记录，V2 起）
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_eval_changelog (
@@ -557,6 +575,7 @@ ALTER TABLE projects ADD COLUMN sub_scores TEXT;                            -- �
 ALTER TABLE projects ADD COLUMN veto TEXT;                                  -- ADR-015 资格否决原因
 ALTER TABLE projects ADD COLUMN hidden_reason TEXT;                         -- 已发币复查隐藏原因（不删除）
 ALTER TABLE projects ADD COLUMN hidden_at TIMESTAMP;                        -- 隐藏时间（PG 为 TIMESTAMPTZ）
+ALTER TABLE projects ADD COLUMN unhidden_by_user_at TIMESTAMP;              -- 人工恢复显示（PG 为 TIMESTAMPTZ）
 
 CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
 CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);

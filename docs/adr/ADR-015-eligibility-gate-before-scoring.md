@@ -460,6 +460,17 @@ system / season` 或 `points` 与 airdrop·loyalty·rewards·portal 同现（词
 继续喂 `airdrop_signal` 子分，**评分口径不变**。旧调用方不传（None）时回退宽松字段。
 收紧后首轮隐藏 15 个，保留 5 个（LAB、Hana、Halo、NX Finance、MPAA 有明确积分措辞）。
 
+**币表核实**（同日）：三态把「没给证据」判成未知后，Arbitrum / Biconomy / AltLayer 这类
+早已上市、但 RootData 免费档不给 token 字段的项目也落进了未知，入库门和复查都放过。
+新增 CoinGecko `/coins/list` 本地缓存（`token_registry` 表，迁移 0014，挂在复查 job 前
+7 天刷新一次），给未知状态补正面证据，**严格匹配**（见 [GLOSSARY §1](../GLOSSARY.md)）：
+归一名称唯一命中、有 symbol 时 symbol 一致、无 symbol 时归一名称 ≥ 8 字符。只补「确认」，
+不改写「确认未发币」。实测 340 个未知候选里严格命中 56 个，短名 / 通用词 / 多币重名
+（Halo、Tower、commons、Spark……）全部不命中。入库门与复查同口径。
+
+**人工恢复优先**：`POST /projects/{id}/unhide`（管理员）写 `unhidden_by_user_at`，复查从此
+跳过该项目 —— 规则误判时用户有最终决定权，不会被每天的复查再藏回去。
+
 ### 迁移成本
 - **历史数据不重算**。`projects.veto` 对既有行为 NULL，语义是「未经资格门评估」。
   重算需显式跑 `POST /run`，与「权重变更不追溯历史分数」（ADR-006 §3）口径一致。

@@ -669,6 +669,31 @@ async def test_run_launch_review_swallows_errors(monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("db down")
 
+    async def no_refresh(**_k):
+        return {"status": "fresh"}
+
+    monkeypatch.setattr("app.services.token_registry.refresh_registry", no_refresh)
     monkeypatch.setattr("app.services.launch_review.run_launch_review", boom)
     sched = UnifiedScheduler(_make_fake_registry())
     await sched._run_launch_review()
+
+
+@pytest.mark.asyncio
+async def test_run_launch_review_refreshes_registry_first(monkeypatch):
+    """复查前先按需刷新 CoinGecko 币表，刷新与复查的先后顺序不能反。"""
+    calls: list[str] = []
+
+    async def fake_refresh(**_k):
+        calls.append("refresh")
+        return {"status": "refreshed", "coins": 1}
+
+    def fake_review(*_a, **_k):
+        calls.append("review")
+        return {"reviewed": 0}
+
+    monkeypatch.setattr("app.services.token_registry.refresh_registry", fake_refresh)
+    monkeypatch.setattr("app.services.launch_review.run_launch_review", fake_review)
+    sched = UnifiedScheduler(_make_fake_registry())
+    await sched._run_launch_review()
+
+    assert calls == ["refresh", "review"]

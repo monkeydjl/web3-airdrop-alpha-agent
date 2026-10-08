@@ -342,6 +342,21 @@ export function reasonZh(r: string): string {
   return trimmed;
 }
 
+/**
+ * launch_review 隐藏原因（projects.hidden_reason）→ 中文角标文案。
+ *
+ * 隐藏 ≠ 删除：被隐藏的项目仍在库里，工作台勾「显示已隐藏」可见、可恢复。
+ * 未知原因原样显示而不是吞掉 —— 后端加了新原因前端没跟上时，至少看得出来。
+ */
+const HIDDEN_REASON_ZH: Record<string, string> = {
+  already_launched_no_path: '已发币·无参与路径',
+};
+
+export function hiddenReasonZh(reason?: string | null): string {
+  if (!reason) return '';
+  return HIDDEN_REASON_ZH[reason] || reason;
+}
+
 const BLOCKER_CODE_ZH: Record<string, string> = {
   SAFETY_BLOCK: '安全阻断',
   INTEGRITY_BLOCK: '数据完整性阻断',

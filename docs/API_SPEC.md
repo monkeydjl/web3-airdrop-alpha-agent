@@ -67,14 +67,14 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-09-25 随扩展功能批次更新）
+### 2.1 写操作的鉴权分布（实测，2026-10-08 随恢复显示端点更新）
 
-全仓共 **84 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **85 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 13 |
+| 管理员专用 | 14 |
 | 无鉴权（公开） | 5 |
 | 匿名 token 可调 | 66 |
 <!-- write-auth-split:end -->
@@ -86,7 +86,8 @@
 `PATCH /projects/{project_id}/funding`，
 以及 2026-09-02 领取监控的三个写端点 ——
 `POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
-`DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41）。
+`DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41），
+以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表）。
 
 公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
 `POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
@@ -187,6 +188,7 @@
 | GET | `/api/v1/projects/{project_id}/multi-wallet-strategy` | v1 | V3（已实现） | 多钱包防女巫与资金分配建议（US-019 / W12-01，详见 §45） |
 | GET | `/api/v1/projects/{project_id}/timeline` | v1 | V3（已实现） | 项目跨 run 演化时间序列与画像指标（Roadmap §24.3 / W12-02，详见 §46） |
 | GET / PATCH | `/api/v1/projects/{project_id}/funding` | v1 | V2（已实现） | 融资信息 / 人工修正 |
+| POST | `/api/v1/projects/{project_id}/unhide` | v1 | V2（已实现，2026-10-08） | 人工恢复显示被已发币复查隐藏的项目（管理员专用，详见 §5） |
 | GET / POST | `/api/v1/projects/{project_id}/ai-brief` | v1 | V2（已实现） | AI 简报（**GET 只读缓存，永不花钱**；POST 生成，`{"force": true}` 强制重新生成，2026-09-06 起带 meta 缓存） |
 | POST | `/api/v1/projects/{project_id}/ai-chat` | v1 | V2（已实现） | 项目追问对话（多轮问答，历史由前端持有；纯 LLM，无规则回退） |
 | GET | `/api/v1/projects/{project_id}/opportunity` | v1 | V2（已实现） | 旁路机会引擎最新快照 |
@@ -470,8 +472,13 @@ curl -X POST http://localhost:8002/api/v1/run \
 明确空投措辞的项目写上 `hidden_reason = "already_launched_no_path"`，默认列表、
 看板、日报、推送都不再出现它们，但**不删除**。传 `include_hidden=true` 时列表项
 带 `hidden_reason` 字段（未隐藏为 `null`）。之后出现后续空投路径，下一轮复查自动恢复。
-「确认已发币」要有正面证据（ticker / gecko_id / 上市源 / 已发币品牌），RootData
-没给 token 字段的项目算状态未知，不隐藏。
+「确认已发币」要有正面证据（ticker / gecko_id / 上市源 / 已发币品牌，或 CoinGecko
+全量币表严格命中），RootData 没给 token 字段且币表也对不上的项目算状态未知，不隐藏。
+
+**`POST /api/v1/projects/{project_id}/unhide`（2026-10-08，管理员专用）**：人工恢复显示。
+清掉 `hidden_reason` / `hidden_at` 并写 `unhidden_by_user_at`，之后每日复查不再自动
+隐藏该项目。对未隐藏的项目调用同样返回 200（同样记下人工决定）；项目不存在返回 404。
+响应体同 `GET /api/v1/projects/{id}`。详情接口也带这三个字段。
 
 **没有 `search` 参数**：首页的关键词搜索是**前端在已取回的列表上过滤**的，
 不是服务端搜索。这意味着搜索范围受当前分页限制 —— 这是现状，不是 bug，

@@ -261,6 +261,8 @@ class TestMethodLevelRulesAreCorrectlyScoped:
         ("HEAD", "/api/v1/collections/sources", False),
         ("PATCH", "/api/v1/projects/abc/funding", True),
         ("GET", "/api/v1/projects/abc/funding", False),
+        ("POST", "/api/v1/projects/abc/unhide", True),
+        ("GET", "/api/v1/projects/abc", False),
         ("GET", "/api/v1/projects", False),
         ("POST", "/api/v1/feedback", False),
         ("POST", "/api/v1/run", True),

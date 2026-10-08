@@ -8,6 +8,19 @@
 
 ## [Unreleased]
 
+### Added — CoinGecko 币表核实发币 + 隐藏项目的查看与恢复（2026-10-08）
+
+- **币表核实**：RootData 不给 token 字段的已上市项目（Arbitrum、Biconomy、AltLayer……）
+  此前一律落「未知」。新增 `token_registry`（CoinGecko `/coins/list` 本地缓存，迁移 0014），
+  每日复查前按需刷新（7 天一次，失败不挡复查）。严格匹配：归一名称唯一命中，有 symbol 时
+  symbol 一致，无 symbol 时名称 ≥ 8 字符。只把未知补成确认，入库门与复查同口径。
+- **恢复显示**：`POST /api/v1/projects/{id}/unhide`（管理员专用）清隐藏标记并写
+  `projects.unhidden_by_user_at`，复查不再自动隐藏该项目。详情接口返回 `hidden_reason` /
+  `hidden_at` / `unhidden_by_user_at`。
+- **前端**：项目列表「显示已隐藏」开关、隐藏原因徽标与「恢复显示」按钮。
+- 数据：旧逻辑误隔离的 RootData 原始行在核实上线后放行重跑；已发币且无路径的会被入库门
+  重新隔离。
+
 ### Fixed — 「没确认未发币」被当成「已发币」，存量清理误删约 30 个项目（2026-10-08）
 
 症状：按下方 10-06 口径清理存量已发币项目时删了 35 个，其中约 30 个（Cubist、
