@@ -11,6 +11,9 @@
 - **自动恢复**：之后出现积分计划 / 任务入口 / 明确空投措辞，或证据不再支持
   「确认已发币」，下一轮复查即清掉隐藏标记。只清本模块写的原因，不碰别的。
 - **用户在做的项目不隐藏**：有 active 参与计划的项目始终保留在列表里。
+- **人工恢复优先**：``unhidden_by_user_at`` 非空（界面上点过「恢复显示」）的项目不再自动隐藏。
+- **币表补证**：来源给不出发币证据时，CoinGecko 币表严格命中也算确认已发币
+  （``app/services/token_registry.py``）。
 
 隐藏不改 ``updated_at``：这是展示层的开关，不是项目内容变化（同 vitals 的约束，
 避免冲掉 AI 简报缓存的新鲜度判定）。
@@ -27,6 +30,7 @@ import structlog
 from app.agents.collector import CollectorAgent
 from app.db import connection_scope, dict_from_row
 from app.services.project_signals import parse_meta, signals_of
+from app.services.token_registry import load_index as load_registry_index
 from app.utils.normalize import merge_raw_records
 
 logger = structlog.get_logger(__name__)
@@ -74,7 +78,12 @@ def _latest_raw_flags_by_project(conn: Any) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def assess_project(signals: dict[str, Any], raw_records: list[dict[str, Any]]) -> tuple[bool, bool]:
+def assess_project(
+    signals: dict[str, Any],
+    raw_records: list[dict[str, Any]],
+    *,
+    registry_hit: bool = False,
+) -> tuple[bool, bool]:
     """返回 (确认已发币, 有后续空投路径)。
 
     - 有原始行：按采集口径跨源合并（任一源有发币证据即确认，no_token_yet AND 合并）。
@@ -85,22 +94,34 @@ def assess_project(signals: dict[str, Any], raw_records: list[dict[str, Any]]) -
     - 后续路径：原始行与库内信号任一处看到即算（富化器写进 meta 的证据也作数）。
       积分只看 ``explicit_points_program``；库内信号里的宽松 ``has_points_program``
       不作数 —— 它正是被通用词污染的那个字段。
+    - ``registry_hit``：CoinGecko 币表严格命中（``token_registry``）。只把「未知」
+      补成「确认」；任何一处明确写着未发币时不作数。
     """
     has_path = any(bool(signals.get(k)) for k in _PATH_FLAGS)
+    explicit_not_launched = signals.get("no_token_yet") is True
     if raw_records:
         merged = merge_raw_records(raw_records, source_key="source")
         has_path = has_path or any(bool(merged.get(k)) for k in _PATH_FLAGS)
-        confirmed = bool(merged.get("token_launch_confirmed")) and not merged.get("no_token_yet")
-        if signals.get("no_token_yet") is True:
-            confirmed = False
+        explicit_not_launched = explicit_not_launched or bool(merged.get("no_token_yet"))
+        confirmed = bool(merged.get("token_launch_confirmed"))
     else:
-        confirmed = signals.get("token_launch_confirmed") is True and signals.get("no_token_yet") is not True
-    return confirmed, has_path
+        confirmed = signals.get("token_launch_confirmed") is True
+    if explicit_not_launched:
+        return False, has_path
+    return confirmed or registry_hit, has_path
 
 
 def run_launch_review(conn: Any = None) -> dict[str, int]:
     """跑一轮复查，返回统计。``conn`` 注入时为借用连接，不在此关闭。"""
-    stats = {"reviewed": 0, "hidden": 0, "unhidden": 0, "kept_hidden": 0, "protected_active_plan": 0}
+    stats = {
+        "reviewed": 0,
+        "hidden": 0,
+        "unhidden": 0,
+        "kept_hidden": 0,
+        "protected_active_plan": 0,
+        "protected_user_unhidden": 0,
+        "registry_confirmed": 0,
+    }
     with connection_scope(conn) as db:
         _review(db, stats)
     logger.info("launch_review.completed", **stats)
@@ -116,9 +137,10 @@ def _review(db: Any, stats: dict[str, int]) -> None:
                 "SELECT DISTINCT project_id FROM participation_plans WHERE status = 'active'"
             ).fetchall()
         }
+        registry = load_registry_index(db)
         rows = db.execute(
             """
-            SELECT id, name, meta, hidden_reason
+            SELECT id, name, meta, hidden_reason, unhidden_by_user_at
             FROM projects
             WHERE source != 'historical_backfill' OR source IS NULL
             """
@@ -131,10 +153,21 @@ def _review(db: Any, stats: dict[str, int]) -> None:
             d = dict_from_row(row)
             pid = str(d["id"])
             stats["reviewed"] += 1
-            confirmed, has_path = assess_project(signals_of(parse_meta(d.get("meta"))), raw_by_project.get(pid, []))
+            signals = signals_of(parse_meta(d.get("meta")))
+            raw_records = raw_by_project.get(pid, [])
+            confirmed, has_path = assess_project(signals, raw_records)
+            if not confirmed:
+                registry_hit = bool(registry) and registry.match(str(d.get("name") or "")) is not None
+                confirmed, _ = assess_project(signals, raw_records, registry_hit=registry_hit)
+                if confirmed:
+                    stats["registry_confirmed"] += 1
             should_hide = confirmed and not has_path
             if should_hide and pid in active_plans:
                 stats["protected_active_plan"] += 1
+                should_hide = False
+            if should_hide and d.get("unhidden_by_user_at") is not None:
+                # 用户在界面上点过「恢复显示」：尊重人工决定，不再自动隐藏
+                stats["protected_user_unhidden"] += 1
                 should_hide = False
             current = d.get("hidden_reason")
             if should_hide and current is None:

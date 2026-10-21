@@ -27,6 +27,12 @@ export interface Project {
   skipped?: boolean;
   /** 用户自主「收藏关注」标记（来自 watchlist）。 */
   watchlisted?: boolean;
+  /** launch_review 隐藏原因（如 already_launched_no_path）；null = 未隐藏。
+      只有请求带 include_hidden=true 时列表里才会出现非空值。 */
+  hidden_reason?: string | null;
+  hidden_at?: string | null;
+  /** 人工点过「恢复显示」的时间；有值时 launch_review 不再自动隐藏该项目。 */
+  unhidden_by_user_at?: string | null;
   url?: string | null;
   source?: string | null;
   reason?: string[];

@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **437 个不同事件名**、
-**87 个命名空间**（2026-10-08 随已发币复查 `launch_review.*` 与其调度 job 事件更新）；
-段数分布：2 段 348 个、3 段 82 个、4 段 5 个、1 段 2 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **442 个不同事件名**、
+**88 个命名空间**（2026-10-08 随币表核实 `token_registry.*` 与人工恢复显示事件更新）；
+段数分布：2 段 351 个、3 段 84 个、4 段 5 个、1 段 2 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -153,11 +153,23 @@ LLM 多接口轮询（ADR-016）落三个事件：
 | --- | --- | --- |
 | `launch_review.project_hidden` | INFO | 确认已发币且无后续空投路径，写 `hidden_reason`，字段 `project_id` / `name` |
 | `launch_review.project_unhidden` | INFO | 出现积分 / 任务入口 / 明确空投措辞（或不再确认已发币），清除隐藏 |
-| `launch_review.completed` | INFO | 一轮统计：`reviewed` / `hidden` / `unhidden` / `kept_hidden` / `protected_active_plan` |
+| `launch_review.completed` | INFO | 一轮统计：`reviewed` / `hidden` / `unhidden` / `kept_hidden` / `protected_active_plan` / `protected_user_unhidden` / `registry_confirmed` |
 
 调度侧另有 `unified_scheduler.launch_review_job_added` / `launch_review_disabled` /
 `launch_review_completed` / `launch_review_failed`（ERROR）。查「这个项目为什么
 不在列表里」先搜 `launch_review.project_hidden` + `project_id`。
+
+复查前按需刷新 CoinGecko 币表（发币核实，`app/services/token_registry.py`）：
+
+| 事件 | 级别 | 含义 |
+| --- | --- | --- |
+| `token_registry.refreshed` | INFO | 整表重建完成，字段 `coins`。超过 7 天才会真的出网 |
+| `token_registry.refresh_failed` | WARNING | 拉取失败或响应不足 1000 个币（截断 / 限流页）；旧表原样保留，复查照跑 |
+| `token_registry.load_failed` | WARNING | 读表失败（旧库未迁移等），本轮核实不生效 |
+
+人工恢复显示：`api.projects.unhidden`（INFO，字段 `project_id`）/
+`api.projects.unhide_failed`（ERROR）。被恢复的项目带 `unhidden_by_user_at`，复查统计里记作
+`protected_user_unhidden`。
 
 `narrative.sector_profile_missing`（WARNING，字段 `sector` / `known_sectors` /
 `impact`）：项目的 sector 没命中 `SECTOR_PROFILE`，`narrative_timing` 退化为

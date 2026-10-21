@@ -524,3 +524,46 @@ class TestMultiWalletStrategyEndpoint:
         data = resp.json()["data"]
         assert data["status"] == "ineligible"
         assert data["recommended_wallets_optimal"] == 0
+
+
+class TestUnhideEndpoint:
+    """POST /api/v1/projects/{id}/unhide：人工恢复显示（2026-10-08）。"""
+
+    def _seed(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "db_path", str(tmp_path / "unhide.db"))
+        init_db()
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO projects (id, name, score, confidence, label, hidden_reason, hidden_at)"
+                " VALUES ('gone', 'Gone', 40, 0.5, 'IGNORE', 'already_launched_no_path', CURRENT_TIMESTAMP)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_unhide_restores_default_listing(self, client, monkeypatch, tmp_path):
+        self._seed(monkeypatch, tmp_path)
+        assert client.get("/api/v1/projects").json()["data"]["total"] == 0
+        hidden = client.get("/api/v1/projects?include_hidden=true").json()["data"]["projects"]
+        assert hidden[0]["hidden_reason"] == "already_launched_no_path"
+
+        response = client.post("/api/v1/projects/gone/unhide")
+
+        assert response.status_code == 200
+        project = response.json()["data"]["project"]
+        assert project["hidden_reason"] is None
+        assert project["hidden_at"] is None
+        assert project["unhidden_by_user_at"] is not None
+        assert client.get("/api/v1/projects").json()["data"]["total"] == 1
+
+    def test_detail_exposes_hidden_fields(self, client, monkeypatch, tmp_path):
+        self._seed(monkeypatch, tmp_path)
+        project = client.get("/api/v1/projects/gone").json()["data"]["project"]
+        assert project["hidden_reason"] == "already_launched_no_path"
+        assert project["hidden_at"] is not None
+        assert project["unhidden_by_user_at"] is None
+
+    def test_unhide_unknown_project_is_404(self, client, monkeypatch, tmp_path):
+        self._seed(monkeypatch, tmp_path)
+        assert client.post("/api/v1/projects/nope/unhide").status_code == 404

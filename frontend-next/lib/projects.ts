@@ -25,10 +25,12 @@ export interface AllProjects {
  */
 export async function fetchAllProjects(
   signal?: AbortSignal,
-  options?: { curated?: boolean; persona?: string },
+  options?: { curated?: boolean; persona?: string; includeHidden?: boolean },
 ): Promise<AllProjects> {
   const curated = options?.curated ?? false;
-  const curatedQuery = curated ? '&curated=true' : '';
+  // include_hidden 拼进 curatedQuery 一起带到每一页：分页时漏掉它会让第 2 页起
+  // 的 total 口径和第 1 页不一致
+  const curatedQuery = (curated ? '&curated=true' : '') + (options?.includeHidden ? '&include_hidden=true' : '');
   const personaQuery = options?.persona && options.persona !== 'balanced' ? `&persona=${encodeURIComponent(options.persona)}` : '';
   const first = await apiFetch<ProjectsResponse>(
     `/projects?page=1&page_size=${PAGE_SIZE}${curatedQuery}${personaQuery}`,

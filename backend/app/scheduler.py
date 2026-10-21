@@ -471,10 +471,16 @@ class UnifiedScheduler:
         )
 
     async def _run_launch_review(self) -> None:
-        """执行一轮复查（同步 DB 读写，放线程池不阻塞事件循环）。"""
+        """执行一轮复查（同步 DB 读写，放线程池不阻塞事件循环）。
+
+        先按需刷新 CoinGecko 币表（超过 7 天才真的出网）。刷新失败不挡复查：
+        旧缓存照用，从没刷成功过就是空表、核实不生效。
+        """
         from app.services.launch_review import run_launch_review
+        from app.services.token_registry import refresh_registry
 
         try:
+            await refresh_registry()
             stats = await asyncio.to_thread(run_launch_review)
             self._logger.info("unified_scheduler.launch_review_completed", **stats)
         except Exception as e:

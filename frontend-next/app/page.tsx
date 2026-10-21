@@ -143,6 +143,7 @@ function DashboardContent() {
     hideIgnore,
     hideHighRisk,
     showSkipped,
+    showHidden,
     hasFundingOnly,
     zeroCostOnly,
     explicitAirdropOnly,
@@ -217,13 +218,13 @@ function DashboardContent() {
 
   const loader = useCallback(
     async (signal: AbortSignal) => {
-      const all = await fetchAllProjects(signal, { curated: curatedOnly, persona });
+      const all = await fetchAllProjects(signal, { curated: curatedOnly, persona, includeHidden: showHidden });
       return { ...all, projects: sortProjects(all.projects, 'score', 'desc') };
     },
-    [curatedOnly, persona],
+    [curatedOnly, persona, showHidden],
   );
 
-  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly, persona]);
+  const { data, error, loading, reload: loadProjects } = useAsyncData(loader, [curatedOnly, persona, showHidden]);
   const [projectOverrides, setProjectOverrides] = useState<Record<string, Partial<Project>>>({});
 
   const projects: Project[] = useMemo(() => {
@@ -334,7 +335,9 @@ function DashboardContent() {
 
   const filtered = useMemo(() => {
     const list = projects.filter((p) => {
-      if (hideIgnore && !labelFilter && p.label === 'IGNORE') return false;
+      // 被 launch_review 隐藏的项目几乎都是 IGNORE：勾了「显示已隐藏」却被
+      // 「隐藏忽略」再滤一遍，开关就成了摆设 —— 已隐藏项在此放行
+      if (hideIgnore && !labelFilter && p.label === 'IGNORE' && !(showHidden && p.hidden_reason)) return false;
       if (!showSkipped && p.skipped) return false;
       if (labelFilter && p.label !== labelFilter) return false;
       if (sectorFilter && p.sector !== sectorFilter) return false;
@@ -354,7 +357,7 @@ function DashboardContent() {
       return true;
     });
     return sortProjects(list, sortBy, sortOrder);
-  }, [projects, hideIgnore, showSkipped, hideHighRisk, labelFilter, sectorFilter, stageFilter, minScore, keyword, explicitAirdropOnly, highRiskSignalsOnly, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
+  }, [projects, hideIgnore, showSkipped, showHidden, hideHighRisk, labelFilter, sectorFilter, stageFilter, minScore, keyword, explicitAirdropOnly, highRiskSignalsOnly, hasFundingOnly, zeroCostOnly, needsVerifyOnly, sortBy, sortOrder]);
 
   return (
     <>
@@ -760,6 +763,19 @@ function DashboardContent() {
                 onChange={(e) => updateFilters({ showSkipped: e.target.checked })}
               />
               显示不参与
+            </label>
+
+            <label
+              className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition"
+              title="每日上线复核会把「已发币且无参与路径」的项目隐藏（不删除）。勾选后一并列出，卡片上可点「恢复显示」"
+            >
+              <input
+                type="checkbox"
+                className="rounded border-line text-ink-muted focus:ring-ink-muted/30"
+                checked={showHidden}
+                onChange={(e) => updateFilters({ showHidden: e.target.checked })}
+              />
+              显示已隐藏
             </label>
           </div>
 

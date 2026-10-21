@@ -658,6 +658,20 @@ def _sqlite_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
                 ON watched_wallets(active, address);
 
+            -- CoinGecko 全量币表本地缓存（2026-10-08，发币核实）
+            -- 给「发币状态未知」的项目补正面证据：名称归一后唯一命中一个币才算。
+            -- name_key = 名称小写去掉非字母数字，与 app/services/token_registry.py 同一口径。
+            -- 整表由 refresh 覆盖重建，不存历史；没刷过时表为空，核实不生效。
+            CREATE TABLE IF NOT EXISTS token_registry (
+                coin_id    TEXT PRIMARY KEY,
+                symbol     TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                name_key   TEXT NOT NULL,
+                fetched_at TIMESTAMP NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_token_registry_name_key
+                ON token_registry(name_key);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1274,6 +1288,17 @@ def _postgres_ddl() -> str:
             CREATE INDEX IF NOT EXISTS idx_watched_wallets_active
                 ON watched_wallets(active, address);
 
+            -- CoinGecko 全量币表本地缓存（2026-10-08，发币核实）。同 SQLite 侧。
+            CREATE TABLE IF NOT EXISTS token_registry (
+                coin_id    TEXT PRIMARY KEY,
+                symbol     TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                name_key   TEXT NOT NULL,
+                fetched_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_token_registry_name_key
+                ON token_registry(name_key);
+
             -- 权重校准变更日志（WEIGHT_CALIBRATION.md §7）
             CREATE TABLE IF NOT EXISTS weight_changelog (
                 id              SERIAL PRIMARY KEY,
@@ -1576,6 +1601,10 @@ def init_db(conn: Any = None) -> None:
         # UPSERT 不列这两列，重新评分不会顺手清掉。
         _add_column_if_not_exists(db, "projects", "hidden_reason", "TEXT")
         _add_column_if_not_exists(db, "projects", "hidden_at", "TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP")
+        # 用户手动恢复显示的时间：非空即「用户说要看」，launch_review 不再自动隐藏它。
+        _add_column_if_not_exists(
+            db, "projects", "unhidden_by_user_at", "TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP"
+        )
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
 

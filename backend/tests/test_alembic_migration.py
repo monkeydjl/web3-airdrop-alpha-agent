@@ -68,6 +68,8 @@ _EXPECTED_TABLES = {
     "api_keys",
     # HA leader 选举（734f0a7 起在 init_db 建表；alembic 链外，upgrade head 后同样存在）
     "leader_election",
+    # CoinGecko 全量币表缓存（迁移 0014，发币核实）
+    "token_registry",
 }
 
 # 每个迁移引入的表 —— 可回滚性测试按「回滚到 N ⇒ 移除 N 之后全部表」推导，
@@ -86,6 +88,7 @@ _REVISION_TABLES: dict[str, set[str]] = {
     "0012": {"api_keys"},
     # 0013 只给 projects 加了两列（hidden_reason / hidden_at），不引入新表
     "0013": set(),
+    "0014": {"token_registry"},
 }
 _REVISION_ORDER = [
     "0001",
@@ -101,6 +104,7 @@ _REVISION_ORDER = [
     "0011",
     "0012",
     "0013",
+    "0014",
 ]
 
 
