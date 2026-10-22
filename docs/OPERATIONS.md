@@ -795,6 +795,11 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 方向错了比漏报更坏：**一栏天天亮红灯的告警等于没有这一栏** ——
 人会先学会忽略它，然后在真出事那天照样忽略。
 
+`vitals_probe`（`VITALS_SCHEDULER_ENABLED`）与 `launch_review`
+（`LAUNCH_REVIEW_SCHEDULER_ENABLED`）各有独立开关、默认开，2026-10-08 起计入
+"应当注册"，两个开关的值也出现在 `switches` 里。此前它们没注册上也不会报缺失。
+`daily_alpha_digest` 随调度器无条件注册、没有独立开关，仍不计入。
+
 #### 本机实测（2026-08-25，开发配置）
 
 ```

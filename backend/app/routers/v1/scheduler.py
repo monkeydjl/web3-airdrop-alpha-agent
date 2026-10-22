@@ -111,6 +111,13 @@ def _expected_jobs(request: Request) -> dict[str, str]:
         expected["archive_cleanup"] = "ARCHIVE_SCHEDULER_ENABLED"
     if settings.notify_enabled:
         expected["notify_digest"] = "NOTIFY_ENABLED"
+    # vitals / launch_review 各有独立开关、默认开（2026-10-08 补进来）：此前只在
+    # _JOB_OWNER 里登记、不在「应当」里，于是没注册上也不会出现在 missing_jobs ——
+    # 正是归档那次事故的形态。
+    if settings.vitals_scheduler_enabled:
+        expected["vitals_probe"] = "VITALS_SCHEDULER_ENABLED"
+    if settings.launch_review_scheduler_enabled:
+        expected["launch_review"] = "LAUNCH_REVIEW_SCHEDULER_ENABLED"
 
     if settings.collection_scheduler_enabled:
         registry = getattr(request.app.state, "collector_registry", None)
@@ -147,6 +154,8 @@ def get_scheduler_jobs(request: Request) -> SchedulerJobsResponse:
         "ARCHIVE_SCHEDULER_ENABLED": settings.archive_scheduler_enabled,
         "COLLECTION_AUTO_RUN_ENABLED": settings.collection_auto_run_enabled,
         "NOTIFY_ENABLED": settings.notify_enabled,
+        "VITALS_SCHEDULER_ENABLED": settings.vitals_scheduler_enabled,
+        "LAUNCH_REVIEW_SCHEDULER_ENABLED": settings.launch_review_scheduler_enabled,
     }
     expected = _expected_jobs(request)
 
