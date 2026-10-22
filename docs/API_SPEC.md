@@ -2013,7 +2013,10 @@ Alchemy webhook 回调端点（接收链上事件推送）。
       "SCHEDULER_ENABLED": true,
       "COLLECTION_SCHEDULER_ENABLED": true,
       "ARCHIVE_SCHEDULER_ENABLED": true,
-      "COLLECTION_AUTO_RUN_ENABLED": false
+      "COLLECTION_AUTO_RUN_ENABLED": false,
+      "NOTIFY_ENABLED": false,
+      "VITALS_SCHEDULER_ENABLED": true,
+      "LAUNCH_REVIEW_SCHEDULER_ENABLED": true
     },
     "read_error": null,
     "note": null

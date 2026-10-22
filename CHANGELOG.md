@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+### Fixed — 运维卫生：调度缺失检测补漏 + 前端依赖告警（2026-10-08）
+
+- `GET /api/v1/scheduler/jobs`：`vitals_probe` 与 `launch_review` 各有独立开关、默认开，
+  此前不在「应当注册」里 —— 没注册上也不会出现在 `missing_jobs`。现已计入，两个开关
+  也进了 `switches`。
+- 前端：`postcss-selector-parser` 经 npm `overrides` 钉到 7.1.6（GHSA-rj75-hqrm-r3gf，
+  中危，CPU 耗尽）。Dependabot 的方案是升 tailwindcss 3→4（#40，构建失败），这里只换
+  传递依赖；实测 Tailwind 3 产出的 CSS 与升级前逐字节相同。
+- 本地 `logs/backend.log` 停在 10-01 不是故障：`LOG_FILE` 默认空（只写 stdout），
+  需要文件日志时在本地 `.env` 设 `LOG_FILE=logs/backend.log`（轮转已就绪，见 OPERATIONS §12.6）。
+
 ### Added — CoinGecko 币表核实发币 + 隐藏项目的查看与恢复（2026-10-08）
 
 - **币表核实**：RootData 不给 token 字段的已上市项目（Arbitrum、Biconomy、AltLayer……）

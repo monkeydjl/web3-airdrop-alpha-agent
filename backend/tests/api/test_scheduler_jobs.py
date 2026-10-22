@@ -52,6 +52,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "sched_jobs.db"))
     monkeypatch.setattr(settings, "api_key", "")
     monkeypatch.setattr(settings, "app_env", "testing")
+    # 两个默认开的独立开关在这里统一关掉：下面各用例只显式摆弄自己关心的开关，
+    # 不该被它们凭空多出两条「应当注册」。需要它们的用例自己打开。
+    monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
     init_db()
     app = create_app(db_override=lambda: None)
     return TestClient(app)
@@ -216,6 +220,8 @@ class TestJobsArePresentedUsefully:
         monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
         monkeypatch.setattr(settings, "collection_auto_run_enabled", True)
         monkeypatch.setattr(settings, "notify_enabled", False)
+        monkeypatch.setattr(settings, "vitals_scheduler_enabled", True)
+        monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
 
         data = _data(client.get(ENDPOINT))
         assert data["switches"] == {
@@ -224,6 +230,8 @@ class TestJobsArePresentedUsefully:
             "ARCHIVE_SCHEDULER_ENABLED": False,
             "COLLECTION_AUTO_RUN_ENABLED": True,
             "NOTIFY_ENABLED": False,
+            "VITALS_SCHEDULER_ENABLED": True,
+            "LAUNCH_REVIEW_SCHEDULER_ENABLED": False,
         }
 
     def test_timezone_is_reported(self, client):
@@ -274,6 +282,36 @@ class TestMissingJobsDetection:
         data = _data(client.get(ENDPOINT))
         assert data["missing_jobs"] == []
         assert data["expected_job_count"] == 0
+
+
+class TestIndependentSwitchJobs:
+    """vitals / launch_review 各有独立开关、默认开：此前不在「应当」里，没注册上也不报缺失（2026-10-08）。"""
+
+    def _only_independent_switches(self, monkeypatch):
+        monkeypatch.setattr(settings, "scheduler_enabled", False)
+        monkeypatch.setattr(settings, "archive_scheduler_enabled", False)
+        monkeypatch.setattr(settings, "collection_scheduler_enabled", False)
+        monkeypatch.setattr(settings, "vitals_scheduler_enabled", True)
+        monkeypatch.setattr(settings, "launch_review_scheduler_enabled", True)
+
+    def test_missing_is_reported(self, client, monkeypatch):
+        self._only_independent_switches(monkeypatch)
+        _install(monkeypatch, client, _fake_scheduler([], running=True))
+
+        data = _data(client.get(ENDPOINT))
+        assert sorted(data["missing_jobs"]) == ["launch_review", "vitals_probe"]
+        assert data["expected_job_count"] == 2
+
+    def test_registered_means_not_missing(self, client, monkeypatch):
+        self._only_independent_switches(monkeypatch)
+        jobs = [
+            {"id": "vitals_probe", "name": "v", "next_run_time": None},
+            {"id": "launch_review", "name": "l", "next_run_time": None},
+        ]
+        _install(monkeypatch, client, _fake_scheduler(jobs))
+
+        data = _data(client.get(ENDPOINT))
+        assert data["missing_jobs"] == []
 
 
 class TestJobIdsMatchTheScheduler:
