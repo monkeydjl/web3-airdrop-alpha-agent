@@ -81,12 +81,12 @@ jobs:
       # fetch-depth: 0：--changed 要对 @{upstream} / origin/master 做 git diff，
       # 浅克隆（depth=1）里这些基线 ref 不存在，枚举会直接报错。仓库体量小，
       # 全量 clone 可接受；仅全量模式时这个开销略多，但换来输入口径统一。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
