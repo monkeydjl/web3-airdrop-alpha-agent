@@ -8,6 +8,16 @@
 
 ## [Unreleased]
 
+### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
+
+每次 CI 都报「Node.js 20 is deprecated … forced to run on Node.js 24」。各 action 升到
+**首个**以 `node24` 运行的大版本（取最小跨度，跳过的大版本只有 node24 升级与已不用的
+输入项移除）：checkout v5、setup-node v5、setup-python v6、upload-artifact v6、
+download-artifact v7（与 upload 同一套 v4+ 后端，跨版本互通）、dependency-review v5、
+build-push v7、setup-buildx v4、login v4、metadata v6。`anchore/sbom-action@v0` 已是 node24；
+trivy-action / markdown-link-check 是 composite / docker action，不在此列。docs 里的示例
+workflow 同步。
+
 ### Security — next 升到 16.4.2（2026-10-08）
 
 `next` 16.0.0–16.4.0 新公布三条通告：GHSA-2464-fhr4-w9xw（critical，SVG 走 Image
