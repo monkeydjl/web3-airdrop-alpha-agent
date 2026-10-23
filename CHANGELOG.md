@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Security — next 升到 16.4.2（2026-10-08）
+
+`next` 16.0.0–16.4.0 新公布三条通告：GHSA-2464-fhr4-w9xw（critical，SVG 走 Image
+Optimization API 的未鉴权 RCE）、GHSA-673q-mjm6-r5xr（critical，`use cache` 返回
+typed array 的未鉴权 RCE）、GHSA-p3m5-59mp-jv5r（high，Server Actions DoS）。首个
+修复版本 16.4.1，这里取 16.4.2；CI 的 `npm audit --omit=dev --audit-level=high` 因此转红。
+
 ### Fixed — 约 30 个前端面板读错响应信封，永远显示空 / 失败（2026-10-08）
 
 症状：空投收益、聪明钱、抛售模拟、钱包体检、授权扫描、钓鱼检测、女巫申诉、工作室看板、
