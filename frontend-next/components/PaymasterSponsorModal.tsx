@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface PaymasterCampaign {
   campaign_id: string;
@@ -36,7 +36,7 @@ export default function PaymasterSponsorModal({ isOpen, onClose }: PaymasterSpon
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetch<{ data: { sponsorships: PaymasterCampaign[] } }>('/paymaster/active-sponsorships')
+    apiFetchEnvelope<{ data: { sponsorships: PaymasterCampaign[] } }>('/paymaster/active-sponsorships')
       .then((res) => {
         if (res?.data?.sponsorships) {
           setCampaigns(res.data.sponsorships);
@@ -48,7 +48,7 @@ export default function PaymasterSponsorModal({ isOpen, onClose }: PaymasterSpon
 
   const testEligibility = async (campaignId: string) => {
     try {
-      const res = await apiFetch<{ data: { is_sponsored: boolean; verdict_notes: string } }>(
+      const res = await apiFetchEnvelope<{ data: { is_sponsored: boolean; verdict_notes: string } }>(
         '/paymaster/simulate-gasless-tx',
         {
           method: 'POST',

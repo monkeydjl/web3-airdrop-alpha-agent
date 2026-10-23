@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface PassportStamp {
   id: string;
@@ -54,11 +54,11 @@ export default function IdentityPassportModal({
     setLoading(true);
     try {
       const [resEval, resGuide] = await Promise.all([
-        apiFetch<{ data: IdentityEvaluation }>('/identity/evaluate', {
+        apiFetchEnvelope<{ data: IdentityEvaluation }>('/identity/evaluate', {
           method: 'POST',
           body: JSON.stringify({ wallet_address: addr }),
         }),
-        apiFetch<{ data: { guide: PassportStamp[] } }>('/identity/stamping-guide'),
+        apiFetchEnvelope<{ data: { guide: PassportStamp[] } }>('/identity/stamping-guide'),
       ]);
       if (resEval?.data) setData(resEval.data);
       if (resGuide?.data?.guide) setGuide(resGuide.data.guide);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { ArrowRight, ArrowRightLeft, ExternalLink, ShieldCheck, Sparkles } from 'lucide-react';
 
@@ -55,7 +55,7 @@ export function BridgeOptimizerPanel() {
 
   const fetchChains = useCallback(async () => {
     try {
-      const res = await apiFetch<{ ok: boolean; chains: BridgeChain[] }>('/bridge/supported-chains');
+      const res = await apiFetchEnvelope<{ ok: boolean; chains: BridgeChain[] }>('/bridge/supported-chains');
       if (res?.chains) {
         setChains(res.chains);
       }
@@ -67,7 +67,7 @@ export function BridgeOptimizerPanel() {
   const calculateRoute = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<{ ok: boolean; data: BridgeRouteResult }>('/bridge/route', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: BridgeRouteResult }>('/bridge/route', {
         method: 'POST',
         body: JSON.stringify({
           source_chain: sourceChain,

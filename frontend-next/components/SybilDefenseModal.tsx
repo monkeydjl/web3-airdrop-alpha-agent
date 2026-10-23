@@ -3,7 +3,19 @@
 import { Modal } from '@/components/Modal';
 
 import { useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
+
+/** `POST /sybil/generate-dossier` 的 `data`（`app/routers/v1/sybil_dossier.py`）。 */
+interface SybilDossier {
+  wallet_address: string;
+  project_name: string;
+  independence_score: number;
+  verdict: string;
+  total_txs: number;
+  active_chains_count: number;
+  generated_at: string;
+  markdown_dossier: string;
+}
 
 interface SybilDefenseModalProps {
   initialAddress?: string;
@@ -16,7 +28,7 @@ export function SybilDefenseModal({ initialAddress = '', onClose }: SybilDefense
   const [reason, setReason] = useState('误判女巫清洗名单，申请人工复核 (False-positive sybil flag)');
   const [customNotes, setCustomNotes] = useState('长期真实个人交互，多链分布与独立设备环境');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any | null>(null);
+  const [result, setResult] = useState<SybilDossier | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleGenerate = async () => {
@@ -24,7 +36,7 @@ export function SybilDefenseModal({ initialAddress = '', onClose }: SybilDefense
     setLoading(true);
     setResult(null);
     try {
-      const res = await apiFetch<{ ok: boolean; data: any }>('/sybil/generate-dossier', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: SybilDossier }>('/sybil/generate-dossier', {
         method: 'POST',
         body: JSON.stringify({
           wallet_address: address.trim(),

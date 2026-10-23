@@ -8,6 +8,31 @@
 
 ## [Unreleased]
 
+### Security — next 升到 16.4.2（2026-10-08）
+
+`next` 16.0.0–16.4.0 新公布三条通告：GHSA-2464-fhr4-w9xw（critical，SVG 走 Image
+Optimization API 的未鉴权 RCE）、GHSA-673q-mjm6-r5xr（critical，`use cache` 返回
+typed array 的未鉴权 RCE）、GHSA-p3m5-59mp-jv5r（high，Server Actions DoS）。首个
+修复版本 16.4.1，这里取 16.4.2；CI 的 `npm audit --omit=dev --audit-level=high` 因此转红。
+
+### Fixed — 约 30 个前端面板读错响应信封，永远显示空 / 失败（2026-10-08）
+
+症状：空投收益、聪明钱、抛售模拟、钱包体检、授权扫描、钓鱼检测、女巫申诉、工作室看板、
+Gas 告警、解锁日程、日历、桥接、MEV、Paymaster、剧本工坊、身份护照、无常损失、组合 ROI、
+项目对比、Alpha 研报、每日快讯滚动条等面板一直是空的；Bot「测试发送」恒报失败。
+
+原因：`apiFetch` 返回响应体的 `data` 字段，但 48 处调用把返回值当成完整信封去读
+（`res?.ok`、`res.data`、`res.data_quality`）—— 顶层平铺的端点拿到 `undefined`，
+包了 `data` 的端点被多拆一层。类型参数是 `any` 或手写的信封形状，编译器发现不了。
+
+- 新增 `apiFetchEnvelope`（同一套请求 / 鉴权 / 报错逻辑，返回完整响应体），48 处调用改用它。
+- `lib/apiEnvelope.test.ts`：钉住两个函数的返回口径，并静态拦截以信封形状
+  （`{ ok` / `{ data` 开头）的类型参数调 `apiFetch` —— 那正是这个 bug 的指纹。
+- 顺带修正：发现队列页「运行分析」读的是不存在的 `total_scored`（后端是 `scored_count`），
+  完成提示恒为 0；聪明钱热度榜链接指向不存在的 `/projects/{id}`（路由是 `/project/{id}`）。
+- 前端 47 条 `no-explicit-any` 警告清零：响应体按后端实际返回补了类型，`catch` 改为
+  `unknown`（行为不变：非 Error 或空消息仍回退到原兜底文案）。
+
 ### Fixed — 运维卫生：调度缺失检测补漏 + 前端依赖告警（2026-10-08）
 
 - `GET /api/v1/scheduler/jobs`：`vitals_probe` 与 `launch_review` 各有独立开关、默认开，

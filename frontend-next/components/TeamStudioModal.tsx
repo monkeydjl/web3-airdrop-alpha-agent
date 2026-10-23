@@ -3,8 +3,8 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
-import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface StudioOperator {
   operator_id: string;
@@ -63,11 +63,11 @@ export default function TeamStudioModal({ isOpen, onClose }: TeamStudioModalProp
   const [taskWallets, setTaskWallets] = useState(15);
   const [submitting, setSubmitting] = useState(false);
 
-  const [dataQuality, setDataQuality] = useState<any>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
 
   const fetchDashboard = () => {
     setLoading(true);
-    apiFetch<{ data: StudioDashboardData; data_quality?: any }>('/team-studio/dashboard')
+    apiFetchEnvelope<{ data: StudioDashboardData; data_quality?: DataQualityMeta | null }>('/team-studio/dashboard')
       .then((res) => {
         if (res?.data) {
           setData(res.data);

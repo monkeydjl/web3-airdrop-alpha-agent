@@ -970,9 +970,14 @@ curl -X POST http://localhost:8002/api/v1/run \
 }
 ```
 
-> **这是全仓唯一不走 `{ok, data}` 包络的端点** —— 它直接返回顶层 token 对象，
-> 因为要贴合 OAuth2 惯例。前端的 `apiFetch` 会自动解包 `data`，所以这个端点
-> 必须单独处理，不能套用统一封装。
+> 它不走 `{ok, data}` 包络 —— 直接返回顶层 token 对象，因为要贴合 OAuth2 惯例。
+> 前端的 `apiFetch` 会自动解包 `data`，所以这个端点必须单独处理，不能套用统一封装。
+>
+> ⚠️ 2026-10-08 更正：它**不是**唯一不包 `data` 的端点。`/pnl/summary`、`/smart-money/feed`、
+> `/sell-off/simulate`、`/diagnostic/wallet`、`/daily-briefing/today`、`/gas/summary`、
+> `/bot/*`、`/scripts/generate`、`/projects/compare` 等扩展端点把字段平铺在顶层；
+> 另有不少端点把 `data_quality` / `count` 放在信封上。前端读这些要用 `apiFetchEnvelope`
+> （返回完整响应体），用 `apiFetch` 会拿到 `undefined`。
 >
 > 字段名是 `access_token`（不是原文的 `token`），有效期是
 > `expires_in` **秒数**（实测 259200 = **3 天**，不是原文说的「30 天」），

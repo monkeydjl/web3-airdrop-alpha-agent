@@ -15,7 +15,7 @@ import { ProjectTimelinePanel } from '@/components/ProjectTimelinePanel';
 import { TopBar } from '@/components/TopBar';
 import { AlphaDossierModal, type AlphaDossierData } from '@/components/AlphaDossierModal';
 import { LabelBadge, ProgressBar, Toast } from '@/components/ui';
-import { apiFetch, isAbortError } from '@/lib/api';
+import { apiFetch, isAbortError, apiFetchEnvelope } from '@/lib/api';
 import { ArrowLeft, FileText, Plus, RefreshCw, Star } from 'lucide-react';
 import {
   formatPct,
@@ -242,7 +242,7 @@ export default function ProjectPage() {
     if (!project || rescoring) return;
     setRescoring(true);
     try {
-      const res = await apiFetch<{
+      const res = await apiFetchEnvelope<{
         ok: boolean;
         data?: { project?: Project };
       }>(`/projects/${project.id}/evaluate`, {
@@ -269,7 +269,7 @@ export default function ProjectPage() {
     if (!project || generatingDossier) return;
     setGeneratingDossier(true);
     try {
-      const res = await apiFetch<{
+      const res = await apiFetchEnvelope<{
         ok: boolean;
         data?: AlphaDossierData;
       }>(`/projects/${project.id}/dossier`);

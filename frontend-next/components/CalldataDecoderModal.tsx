@@ -3,12 +3,13 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
 
 interface DecodedParam {
   name: string;
   type: string;
-  value: any;
+  /** 参数解码后是字符串（uint 转十进制 / 地址 / MAX_UINT256 标注）；value_eth 是数字 */
+  value: string | number;
 }
 
 interface CalldataResult {
@@ -58,7 +59,7 @@ export default function CalldataDecoderModal({
     setLoading(true);
     setError(null);
     try {
-      const json = await apiFetch<CalldataResult>("/calldata/decode", {
+      const json = await apiFetchEnvelope<CalldataResult>("/calldata/decode", {
         method: "POST",
         body: JSON.stringify({
           contract_address: targetAddr,
@@ -69,8 +70,8 @@ export default function CalldataDecoderModal({
       if (json?.ok) {
         setResult(json);
       }
-    } catch (e: any) {
-      setError(e.message || "解码失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "解码失败");
     } finally {
       setLoading(false);
     }

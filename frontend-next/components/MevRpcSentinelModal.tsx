@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface MevRpcNode {
   id: string;
@@ -56,7 +56,7 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetch<{ data: { nodes: MevRpcNode[] } }>('/mev-rpc/nodes')
+    apiFetchEnvelope<{ data: { nodes: MevRpcNode[] } }>('/mev-rpc/nodes')
       .then((res) => {
         if (res?.data?.nodes) {
           setNodes(res.data.nodes);
@@ -73,7 +73,7 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
     setSelectedNode(node);
     setBenchmarking(true);
     try {
-      const res = await apiFetch<{ data: BenchmarkResult }>('/mev-rpc/benchmark', {
+      const res = await apiFetchEnvelope<{ data: BenchmarkResult }>('/mev-rpc/benchmark', {
         method: 'POST',
         body: JSON.stringify({ node_id: node.id }),
       });

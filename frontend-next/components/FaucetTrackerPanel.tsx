@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { safeExternalUrl } from '@/lib/format';
 import { CheckCircle2, Clock, ExternalLink, RefreshCw, Sparkles, Activity, Zap } from 'lucide-react';
 
@@ -54,7 +54,7 @@ export function FaucetTrackerPanel() {
   const loadProbes = useCallback(async (force = false) => {
     setProbeLoading(true);
     try {
-      const res = await apiFetch<{ ok: boolean; data: { probes: Array<{ faucet_id: string; latency_ms: number; status: string }> } }>(
+      const res = await apiFetchEnvelope<{ ok: boolean; data: { probes: Array<{ faucet_id: string; latency_ms: number; status: string }> } }>(
         `/faucets/probe${force ? '?force_refresh=true' : ''}`
       );
       if (res?.data?.probes) {

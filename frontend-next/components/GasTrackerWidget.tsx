@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import GasAlertRuleModal from '@/components/GasAlertRuleModal';
 
 interface ChainGas {
@@ -37,7 +37,7 @@ export function GasTrackerWidget() {
   const fetchGas = async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<GasSummaryResponse>('/gas/summary');
+      const res = await apiFetchEnvelope<GasSummaryResponse>('/gas/summary');
       if (res && res.ok) {
         setData(res);
       }

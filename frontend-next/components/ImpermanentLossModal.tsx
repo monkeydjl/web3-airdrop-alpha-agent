@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface IlResult {
   initial_deposit_usd: number;
@@ -55,7 +55,7 @@ export default function ImpermanentLossModal({ isOpen, onClose }: ImpermanentLos
 
   const calcIl = async () => {
     try {
-      const res = await apiFetch<{ data: IlResult }>('/il-sentinel/calculate-il', {
+      const res = await apiFetchEnvelope<{ data: IlResult }>('/il-sentinel/calculate-il', {
         method: 'POST',
         body: JSON.stringify({
           initial_deposit_usd: depositUsd,
@@ -73,7 +73,7 @@ export default function ImpermanentLossModal({ isOpen, onClose }: ImpermanentLos
 
   const calcLending = async () => {
     try {
-      const res = await apiFetch<{ data: LendingResult }>('/il-sentinel/check-lending-health', {
+      const res = await apiFetchEnvelope<{ data: LendingResult }>('/il-sentinel/check-lending-health', {
         method: 'POST',
         body: JSON.stringify({
           collateral_asset: 'ETH',

@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
 
 interface TopProject {
   id: string;
@@ -65,12 +65,12 @@ export default function DailyBriefingModal({ isOpen, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const json = await apiFetch<BriefingData>("/daily-briefing/today");
+      const json = await apiFetchEnvelope<BriefingData>("/daily-briefing/today");
       if (json?.ok) {
         setData(json);
       }
-    } catch (e: any) {
-      setError(e.message || "获取晚报失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "获取晚报失败");
     } finally {
       setLoading(false);
     }

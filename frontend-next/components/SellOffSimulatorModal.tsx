@@ -3,7 +3,9 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
+
+type SellOffPersona = "conservative" | "balanced" | "aggressive" | "farmer_whale";
 
 interface StrategyItem {
   strategy_id: string;
@@ -50,7 +52,7 @@ export default function SellOffSimulatorModal({
   const [tokenAmount, setTokenAmount] = useState(defaultTokenAmount.toString());
   const [priceUsd, setPriceUsd] = useState(defaultPriceUsd.toString());
   const [sector, setSector] = useState(defaultSector);
-  const [persona, setPersona] = useState<"conservative" | "balanced" | "aggressive" | "farmer_whale">("balanced");
+  const [persona, setPersona] = useState<SellOffPersona>("balanced");
 
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -65,7 +67,7 @@ export default function SellOffSimulatorModal({
       if (isNaN(amt) || amt <= 0) throw new Error("请输入有效的代币数量");
       if (isNaN(prc) || prc <= 0) throw new Error("请输入有效的代币预估单价");
 
-      const json = await apiFetch<any>('/sell-off/simulate', {
+      const json = await apiFetchEnvelope<SimulationResult>('/sell-off/simulate', {
         method: "POST",
         body: JSON.stringify({
           token_amount: amt,
@@ -77,8 +79,8 @@ export default function SellOffSimulatorModal({
       if (json?.ok) {
         setResult(json);
       }
-    } catch (e: any) {
-      setError(e.message || "模拟计算失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "模拟计算失败");
     } finally {
       setLoading(false);
     }
@@ -158,7 +160,7 @@ export default function SellOffSimulatorModal({
             <label className="text-[11px] text-slate-400 block mb-1">猎人操作风格</label>
             <select
               value={persona}
-              onChange={(e) => setPersona(e.target.value as any)}
+              onChange={(e) => setPersona(e.target.value as SellOffPersona)}
               className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
             >
               <option value="balanced">均衡研投型 (Balanced)</option>

@@ -3,8 +3,10 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
+
+type ScriptTab = 'foundry_cast' | 'web3_py' | 'viem_ts';
 
 interface ScriptForgeModalProps {
   initialProjectName?: string;
@@ -22,7 +24,7 @@ export function ScriptForgeModal({
   const [jitterMax, setJitterMax] = useState(60);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'foundry_cast' | 'web3_py' | 'viem_ts'>('web3_py');
+  const [activeTab, setActiveTab] = useState<ScriptTab>('web3_py');
   const [scripts, setScripts] = useState<Record<string, string> | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -41,7 +43,7 @@ export function ScriptForgeModal({
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch<{ ok: boolean; scripts?: Record<string, string>; error?: { message: string } }>('/scripts/generate', {
+      const res = await apiFetchEnvelope<{ ok: boolean; scripts?: Record<string, string>; error?: { message: string } }>('/scripts/generate', {
         method: 'POST',
         body: JSON.stringify({
           project_name: projectName,
@@ -57,8 +59,8 @@ export function ScriptForgeModal({
         setError(res.error.message);
         setScripts(null);
       }
-    } catch (e: any) {
-      setError(e?.message || '生成失败');
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || '生成失败');
       setScripts(null);
     } finally {
       setLoading(false);
@@ -156,14 +158,14 @@ export function ScriptForgeModal({
           <div className="flex justify-between items-center pt-1">
             <div className="flex items-center gap-1.5">
               {[
-                { id: 'web3_py', label: '🐍 Python (Web3.py)' },
-                { id: 'foundry_cast', label: '🔨 Foundry Cast' },
-                { id: 'viem_ts', label: '🔷 TypeScript (Viem)' },
+                { id: 'web3_py' as ScriptTab, label: '🐍 Python (Web3.py)' },
+                { id: 'foundry_cast' as ScriptTab, label: '🔨 Foundry Cast' },
+                { id: 'viem_ts' as ScriptTab, label: '🔷 TypeScript (Viem)' },
               ].map((t) => (
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setActiveTab(t.id as any)}
+                  onClick={() => setActiveTab(t.id)}
                   className={`px-3 py-1 rounded-xl text-xs font-semibold transition ${
                     activeTab === t.id
                       ? 'bg-brand-500 text-white shadow-sm'

@@ -2,17 +2,51 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { apiFetch } from '@/lib/api';
-import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
+import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
+
+/**
+ * 巨鲸动态（`smart_money_radar.py`）：无真实链上数据源前**恒为空列表**，
+ * 形态保留供接入后填充 —— 字段按渲染所用列出。
+ */
+interface SmartMoneyActivity {
+  id: string;
+  whale_label: string;
+  time_ago: string;
+  target_project: string;
+  est_value_usd: number;
+  action: string;
+  insight: string;
+}
+
+interface SocialSpike {
+  project_id: string;
+  project_name: string;
+  sector: string;
+  score: number | null;
+  label: string | null;
+  social_velocity_growth_pct: number | null;
+  velocity_rank_basis: string;
+  primary_narrative: string | null;
+}
+
+interface SmartMoneyFeed {
+  ok: boolean;
+  smart_money_activities: SmartMoneyActivity[];
+  tracked_whales: { address: string; label: string; tier: string }[];
+  social_velocity_spikes: SocialSpike[];
+  tracked_whales_count: number;
+  data_quality?: DataQualityMeta | null;
+}
 
 export function SmartMoneyRadarPanel() {
-  const [data, setData] = useState<any | null>(null);
+  const [data, setData] = useState<SmartMoneyFeed | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchFeed = async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<any>('/smart-money/feed');
+      const res = await apiFetchEnvelope<SmartMoneyFeed>('/smart-money/feed');
       if (res?.ok) {
         setData(res);
       }
@@ -69,7 +103,7 @@ export function SmartMoneyRadarPanel() {
                 🐋 巨鲸链上动态暂无真实数据源——接入链上监控后开放，不再展示编造动态。
               </div>
             )}
-            {data?.smart_money_activities?.map((act: any) => (
+            {data?.smart_money_activities?.map((act) => (
               <div
                 key={act.id}
                 className="p-3.5 rounded-xl border border-line bg-surface-2/70 hover:bg-surface-2 transition space-y-1.5"
@@ -110,13 +144,13 @@ export function SmartMoneyRadarPanel() {
             </span>
 
           <div className="rounded-xl border border-line bg-surface-2 divide-y divide-line/60 overflow-hidden text-xs">
-            {data?.social_velocity_spikes?.map((sp: any, idx: number) => (
+            {data?.social_velocity_spikes?.map((sp, idx) => (
               <div key={sp.project_id} className="p-3 flex items-center justify-between hover:bg-surface-3/50 transition">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5 font-bold text-ink">
                     <span className="text-ink-faint font-mono text-[11px]">{idx + 1}.</span>
                     <Link
-                      href={`/projects/${sp.project_id}`}
+                      href={`/project/${sp.project_id}`}
                       className="hover:text-brand-400 hover:underline transition"
                     >
                       {sp.project_name}

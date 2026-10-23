@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import { X, Swords, Trophy, Sparkles, AlertCircle } from 'lucide-react';
 import { LabelBadge } from './ui';
 
@@ -69,7 +69,7 @@ export function ProjectComparisonModal({
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch<ComparisonData>(
+      const res = await apiFetchEnvelope<ComparisonData>(
         `/projects/compare?ids=${encodeURIComponent(initialProjectIds.join(','))}`
       );
       if (res?.ok) {

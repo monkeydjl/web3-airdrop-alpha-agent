@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { exportProjectsCsv } from '@/lib/export';
 import { LABEL_ORDER, hasExplicitAirdropSignal, hasHighRiskStructuredSignal, sortProjects, stageZh } from '@/lib/format';
 import {
@@ -174,7 +174,7 @@ function DashboardContent() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   useEffect(() => {
-    apiFetch<{ data: { ticker_text: string } }>('/dashboard/daily-flash')
+    apiFetchEnvelope<{ data: { ticker_text: string } }>('/dashboard/daily-flash')
       .then((res) => {
         if (res?.data?.ticker_text) {
           setDailyFlash(res.data);

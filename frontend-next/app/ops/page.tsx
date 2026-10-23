@@ -3,7 +3,7 @@
 import { EmptyState, Switch, Toast } from '@/components/ui';
 import { AnomalyDetectionPanel } from '@/components/AnomalyDetectionPanel';
 import { TopBar } from '@/components/TopBar';
-import { apiFetch, fetchHealth } from '@/lib/api';
+import { apiFetch, fetchHealth, apiFetchEnvelope } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData } from '@/lib/types';
@@ -80,6 +80,26 @@ interface SchedulerJobsPayload {
   switches: Record<string, boolean>;
   read_error: string | null;
   note: string | null;
+}
+
+/**
+ * `POST /ops/sync-funding` 与 `/ops/audit-viability` 的 `data`（`app/services/ops_tasks.py`）。
+ * 两个任务共用一个结果面板，按 `tier_counts` 是否存在区分渲染 —— 所以字段都是可选的。
+ */
+interface OpsTaskResult {
+  ok?: boolean;
+  applied?: boolean;
+  total_scanned?: number;
+  // sync-funding
+  matched_protocols?: number;
+  enriched_funding_count?: number;
+  viability_upgraded_count?: number;
+  details?: Record<string, unknown>[];
+  // audit-viability
+  tier_counts?: { viable: number; borderline: number; unviable: number };
+  reason_counts?: Record<string, number>;
+  downgraded_count?: number;
+  downgraded_projects?: Record<string, unknown>[];
 }
 
 /**
@@ -253,7 +273,7 @@ export default function OpsPage() {
 
   const [opsBusy, setOpsBusy] = useState<string | null>(null);
   const [opsDryRun, setOpsDryRun] = useState<boolean>(true);
-  const [opsSummary, setOpsSummary] = useState<{ title: string; data: any } | null>(null);
+  const [opsSummary, setOpsSummary] = useState<{ title: string; data: OpsTaskResult } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
@@ -263,7 +283,7 @@ export default function OpsPage() {
   const runSyncFunding = async () => {
     setOpsBusy('sync-funding');
     try {
-      const res = await apiFetch<{ ok: boolean; data: any }>('/ops/sync-funding', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: OpsTaskResult }>('/ops/sync-funding', {
         method: 'POST',
         body: JSON.stringify({ apply_changes: !opsDryRun, limit: 0 }),
       });
@@ -279,8 +299,8 @@ export default function OpsPage() {
           data: res.data,
         });
       }
-    } catch (e: any) {
-      showToast(e.message || 'DefiLlama 融资同步失败', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error && e.message) || 'DefiLlama 融资同步失败', 'error');
     } finally {
       setOpsBusy(null);
     }
@@ -289,7 +309,7 @@ export default function OpsPage() {
   const runAuditViability = async () => {
     setOpsBusy('audit-viability');
     try {
-      const res = await apiFetch<{ ok: boolean; data: any }>('/ops/audit-viability', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: OpsTaskResult }>('/ops/audit-viability', {
         method: 'POST',
         body: JSON.stringify({ apply_changes: !opsDryRun }),
       });
@@ -305,8 +325,8 @@ export default function OpsPage() {
           data: res.data,
         });
       }
-    } catch (e: any) {
-      showToast(e.message || '全库存活率审计失败', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error && e.message) || '全库存活率审计失败', 'error');
     } finally {
       setOpsBusy(null);
     }

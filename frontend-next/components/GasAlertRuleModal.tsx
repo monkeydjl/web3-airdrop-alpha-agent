@@ -3,12 +3,14 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchEnvelope } from "@/lib/api";
+
+type AlertCondition = "below" | "above";
 
 interface GasRule {
   id: string;
   chain: string;
-  condition: "below" | "above";
+  condition: AlertCondition;
   threshold_gwei: number;
   label: string;
   enabled: boolean;
@@ -21,7 +23,7 @@ interface ActiveAlert {
   chain: string;
   current_gwei: number;
   threshold_gwei: number;
-  condition: "below" | "above";
+  condition: AlertCondition;
   severity: "success" | "warning";
   message: string;
   triggered_at: string;
@@ -40,7 +42,7 @@ export default function GasAlertRuleModal({ isOpen, onClose }: Props) {
 
   // New rule form
   const [chain, setChain] = useState("ethereum");
-  const [condition, setCondition] = useState<"below" | "above">("below");
+  const [condition, setCondition] = useState<AlertCondition>("below");
   const [thresholdGwei, setThresholdGwei] = useState("12");
   const [label, setLabel] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -50,13 +52,13 @@ export default function GasAlertRuleModal({ isOpen, onClose }: Props) {
     setError(null);
     try {
       const [rJson, aJson] = await Promise.all([
-        apiFetch<any>('/gas/alerts/rules'),
-        apiFetch<any>('/gas/alerts/active'),
+        apiFetchEnvelope<{ ok?: boolean; data: GasRule[] }>('/gas/alerts/rules'),
+        apiFetchEnvelope<{ ok?: boolean; data: ActiveAlert[] }>('/gas/alerts/active'),
       ]);
       if (rJson?.ok) setRules(rJson.data);
       if (aJson?.ok) setActiveAlerts(aJson.data);
-    } catch (e: any) {
-      setError(e.message || "获取 Gas 告警规则失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "获取 Gas 告警规则失败");
     } finally {
       setLoading(false);
     }
@@ -88,8 +90,8 @@ export default function GasAlertRuleModal({ isOpen, onClose }: Props) {
       });
       setLabel("");
       await fetchAlertsAndRules();
-    } catch (err: any) {
-      setError(err.message || "创建规则出错");
+    } catch (err: unknown) {
+      setError((err instanceof Error && err.message) || "创建规则出错");
     } finally {
       setSubmitting(false);
     }
@@ -189,7 +191,7 @@ export default function GasAlertRuleModal({ isOpen, onClose }: Props) {
               <label className="text-[11px] text-slate-400 block mb-1">触发条件</label>
               <select
                 value={condition}
-                onChange={(e) => setCondition(e.target.value as any)}
+                onChange={(e) => setCondition(e.target.value as AlertCondition)}
                 className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="below">低于阈值 (低费率交互窗口)</option>

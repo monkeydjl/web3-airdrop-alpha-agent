@@ -29,7 +29,7 @@ describe('hunter personas presets & helpers', () => {
     assert.equal(whale.name, '巨鲸质押生息党');
 
     // 未知或空 ID 回退为 balanced
-    const fallback = getPersonaConfig('unknown_persona' as any);
+    const fallback = getPersonaConfig('unknown_persona');
     assert.equal(fallback.id, 'balanced');
     assert.equal(fallback.name, '全能平衡模式');
 
