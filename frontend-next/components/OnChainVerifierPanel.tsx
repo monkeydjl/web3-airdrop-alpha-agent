@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import type { SupportedChain, OnChainVerificationResult } from '@/lib/types';
 import {
   Activity,
@@ -52,7 +52,7 @@ export function OnChainVerifierPanel({
   // 加载支持的公共 RPC 链列表
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ ok: boolean; data: SupportedChain[] }>('/onchain/chains')
+    apiFetchEnvelope<{ ok: boolean; data: SupportedChain[] }>('/onchain/chains')
       .then((res) => {
         if (!cancelled && res.ok && Array.isArray(res.data)) {
           setChains(res.data);
@@ -87,7 +87,7 @@ export function OnChainVerifierPanel({
     setLoading(true);
 
     try {
-      const res = await apiFetch<{ ok: boolean; data: OnChainVerificationResult }>('/onchain/verify', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: OnChainVerificationResult }>('/onchain/verify', {
         method: 'POST',
         body: JSON.stringify({
           address: trimmed,

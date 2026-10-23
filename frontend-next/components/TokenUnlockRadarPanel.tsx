@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
-import { SimulatedDataBadge } from "@/components/SimulatedDataBadge";
+import { apiFetchEnvelope } from "@/lib/api";
+import { SimulatedDataBadge, type DataQualityMeta } from "@/components/SimulatedDataBadge";
 
 interface UnlockItem {
   project_id: string;
@@ -51,7 +51,7 @@ export default function TokenUnlockRadarPanel() {
   const [unlocks, setUnlocks] = useState<UnlockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dataQuality, setDataQuality] = useState<any>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
   const [selectedPressure, setSelectedPressure] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("date");
 
@@ -65,13 +65,15 @@ export default function TokenUnlockRadarPanel() {
       }
       params.set("sort_by", sortBy);
 
-      const json = await apiFetch<any>(`/unlocks/schedule?${params.toString()}`);
+      const json = await apiFetchEnvelope<{ ok?: boolean; data?: UnlockItem[]; data_quality?: DataQualityMeta | null }>(
+        `/unlocks/schedule?${params.toString()}`,
+      );
       if (json?.ok && Array.isArray(json.data)) {
         setUnlocks(json.data);
         setDataQuality(json.data_quality ?? null);
       }
-    } catch (e: any) {
-      setError(e.message || "加载代币解锁日程失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "加载代币解锁日程失败");
     } finally {
       setLoading(false);
     }

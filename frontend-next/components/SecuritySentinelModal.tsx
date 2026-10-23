@@ -3,7 +3,38 @@
 import { Modal } from '@/components/Modal';
 
 import { useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
+
+/** `POST /security/approvals` 的 `data`（`app/services/security_sentinel.py::scan_token_approvals`）。 */
+interface ApprovalScan {
+  wallet_address: string;
+  security_score: number;
+  risk_status: string;
+  risk_status_zh: string;
+  unlimited_allowances_count: number;
+  unverified_spenders_count: number;
+  approvals: {
+    network: string;
+    token: string;
+    spender_name: string;
+    spender_address: string;
+    allowance: string;
+    risk_tier: string;
+    is_unlimited: boolean;
+    is_verified_spender: boolean;
+  }[];
+  revoke_url: string;
+  recommendation: string;
+}
+
+/** `POST /security/domain-check` 的 `data`。 */
+interface DomainCheck {
+  url: string;
+  is_safe: boolean;
+  risk_level: string;
+  risk_level_zh: string;
+  reasons: string[];
+}
 
 interface SecuritySentinelModalProps {
   initialAddress?: string;
@@ -20,8 +51,8 @@ export function SecuritySentinelModal({
   const [address, setAddress] = useState(initialAddress);
   const [url, setUrl] = useState(initialUrl);
 
-  const [approvalResult, setApprovalResult] = useState<any | null>(null);
-  const [domainResult, setDomainResult] = useState<any | null>(null);
+  const [approvalResult, setApprovalResult] = useState<ApprovalScan | null>(null);
+  const [domainResult, setDomainResult] = useState<DomainCheck | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleScanApprovals = async () => {
@@ -29,7 +60,7 @@ export function SecuritySentinelModal({
     setLoading(true);
     setApprovalResult(null);
     try {
-      const res = await apiFetch<{ ok: boolean; data: any }>('/security/approvals', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: ApprovalScan }>('/security/approvals', {
         method: 'POST',
         body: JSON.stringify({ wallet_address: address.trim() }),
       });
@@ -48,7 +79,7 @@ export function SecuritySentinelModal({
     setLoading(true);
     setDomainResult(null);
     try {
-      const res = await apiFetch<{ ok: boolean; data: any }>('/security/domain-check', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data: DomainCheck }>('/security/domain-check', {
         method: 'POST',
         body: JSON.stringify({ url: url.trim() }),
       });
@@ -163,7 +194,7 @@ export function SecuritySentinelModal({
                   <div className="space-y-1.5">
                     <span className="text-xs font-semibold text-ink">已发现的典型授权清单：</span>
                     <div className="divide-y divide-line/60 rounded-xl border border-line bg-surface-2 overflow-hidden text-xs">
-                      {approvalResult.approvals.map((item: any, idx: number) => (
+                      {approvalResult.approvals.map((item, idx) => (
                         <div key={idx} className="p-2.5 flex items-center justify-between">
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-1.5 font-bold text-ink">

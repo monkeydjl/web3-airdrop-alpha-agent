@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 export function BotNotificationPanel() {
   const [command, setCommand] = useState('/alpha');
@@ -21,15 +21,15 @@ export function BotNotificationPanel() {
     setCmdLoading(true);
     setReply(null);
     try {
-      const res = await apiFetch<{ ok: boolean; reply: string }>('/bot/command', {
+      const res = await apiFetchEnvelope<{ ok: boolean; reply: string }>('/bot/command', {
         method: 'POST',
         body: JSON.stringify({ command: cmdToRun }),
       });
       if (res?.reply) {
         setReply(res.reply);
       }
-    } catch (e: any) {
-      setReply(`执行出错: ${e?.message || '网络连接失败'}`);
+    } catch (e: unknown) {
+      setReply(`执行出错: ${(e instanceof Error && e.message) || '网络连接失败'}`);
     } finally {
       setCmdLoading(false);
     }
@@ -39,7 +39,7 @@ export function BotNotificationPanel() {
     setSendLoading(true);
     setSendResult(null);
     try {
-      const res = await apiFetch<{ ok: boolean; status: string }>('/bot/test-send', {
+      const res = await apiFetchEnvelope<{ ok: boolean; status: string }>('/bot/test-send', {
         method: 'POST',
         body: JSON.stringify({
           channel,
@@ -55,8 +55,8 @@ export function BotNotificationPanel() {
       } else {
         setSendResult({ ok: false, message: '发送失败，请检查 Webhook 或 Token 是否有效。' });
       }
-    } catch (e: any) {
-      setSendResult({ ok: false, message: `请求出错: ${e?.message || '配置无效'}` });
+    } catch (e: unknown) {
+      setSendResult({ ok: false, message: `请求出错: ${(e instanceof Error && e.message) || '配置无效'}` });
     } finally {
       setSendLoading(false);
     }

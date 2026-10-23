@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface BridgePool {
   bridge_id: string;
@@ -65,7 +65,7 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetch<{ data: { bridge_pools: BridgePool[]; pegged_assets: PeggedAsset[] } }>(
+    apiFetchEnvelope<{ data: { bridge_pools: BridgePool[]; pegged_assets: PeggedAsset[] } }>(
       '/bridge-liquidity/overview'
     )
       .then((res) => {
@@ -84,7 +84,7 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
   const runSimulation = async (amount: number, from: string, to: string, asset: string) => {
     setSimulating(true);
     try {
-      const res = await apiFetch<{ data: RouteSimulation }>('/bridge-liquidity/simulate-route', {
+      const res = await apiFetchEnvelope<{ data: RouteSimulation }>('/bridge-liquidity/simulate-route', {
         method: 'POST',
         body: JSON.stringify({
           from_chain: from,

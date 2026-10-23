@@ -1,6 +1,6 @@
 'use client';
 
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
 import { Calculator, TrendingUp, Clock, DollarSign, Sparkles, PieChart, ArrowUpRight } from 'lucide-react';
 import Link from 'next/link';
@@ -42,7 +42,7 @@ export function RoiSimulatorPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch<{ ok: boolean; data: PortfolioSimulationData }>(
+      const res = await apiFetchEnvelope<{ ok: boolean; data: PortfolioSimulationData }>(
         '/roi/simulate/portfolio',
         {
           method: 'POST',

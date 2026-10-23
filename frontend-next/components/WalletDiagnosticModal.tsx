@@ -3,13 +3,13 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
 
 interface DimensionInfo {
   score: number;
   label: string;
   detail: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 interface DiagnosticResult {
@@ -27,6 +27,14 @@ interface DiagnosticResult {
   };
   vulnerabilities: string[];
   actionable_guide: string[];
+}
+
+interface DiagnosticRequest {
+  wallet_address: string;
+  active_months?: number;
+  tx_count?: number;
+  unique_contracts?: number;
+  total_gas_spent_eth?: number;
 }
 
 interface Props {
@@ -61,13 +69,13 @@ export default function WalletDiagnosticModal({
     setLoading(true);
     setError(null);
     try {
-      const body: any = { wallet_address: addr };
+      const body: DiagnosticRequest = { wallet_address: addr };
       if (activeMonths) body.active_months = parseInt(activeMonths, 10);
       if (txCount) body.tx_count = parseInt(txCount, 10);
       if (uniqueContracts) body.unique_contracts = parseInt(uniqueContracts, 10);
       if (gasEth) body.total_gas_spent_eth = parseFloat(gasEth);
 
-      const json = await apiFetch<any>('/diagnostic/wallet', {
+      const json = await apiFetchEnvelope<DiagnosticResult>('/diagnostic/wallet', {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -75,8 +83,8 @@ export default function WalletDiagnosticModal({
         setResult(json);
         setCheckedGuide({});
       }
-    } catch (e: any) {
-      setError(e.message || "体检失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "体检失败");
     } finally {
       setLoading(false);
     }

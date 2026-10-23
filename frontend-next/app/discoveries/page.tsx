@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { TopBar } from '@/components/TopBar';
 import { EmptyState, Toast } from '@/components/ui';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import type { DiscoveryItem, DiscoveriesResponse } from '@/lib/types';
 
@@ -158,12 +158,13 @@ export default function DiscoveriesPage() {
     if (runningAnalysis) return;
     setRunningAnalysis(true);
     try {
-      const res = await apiFetch<{ ok: boolean; data?: { total_scored?: number } }>('/run', {
+      const res = await apiFetchEnvelope<{ ok: boolean; data?: { scored_count?: number } }>('/run', {
         method: 'POST',
         body: JSON.stringify({}),
       });
       if (res?.ok) {
-        const count = res.data?.total_scored ?? 0;
+        // 后端字段是 scored_count（pipeline_run.py）；此前读 total_scored 恒为 0
+        const count = res.data?.scored_count ?? 0;
         setToast({ message: `分析运行完成，共评分处理 ${count} 个项目`, type: 'success' });
       } else {
         setToast({ message: '分析完成', type: 'success' });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 import { StatCard } from './ui';
 import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
@@ -37,7 +37,7 @@ export function AirdropCalendarPanel() {
   const fetchEvents = async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<{ ok: boolean; data: { events: CalendarEvent[]; total: number } }>(
+      const res = await apiFetchEnvelope<{ ok: boolean; data: { events: CalendarEvent[]; total: number } }>(
         '/calendar/events',
       );
       if (res?.data?.events) {

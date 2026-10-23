@@ -24,6 +24,7 @@ const FILES = [
   './lib/batch7.test.ts',
   './lib/modalShell.test.ts',
   './lib/modalFocus.test.ts',
+  './lib/apiEnvelope.test.ts',
 ];
 
 for (const f of FILES) {

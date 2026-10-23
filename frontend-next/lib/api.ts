@@ -24,8 +24,31 @@ export function isAbortError(err: unknown): boolean {
  * `NEXT_PUBLIC_*` 变量内联进浏览器 bundle，任何访客都能在 DevTools 里读到管理员
  * 密钥——那等于把鉴权直接送人。需要本地直连后端调试时，请让后端 API_KEY 留空
  * （MVP 无鉴权模式），而不是把密钥暴露给浏览器。
+ *
+ * 返回值是响应体的 **`data` 字段**（`{ok, data}` 信封拆掉一层）。后端有不少端点
+ * 不包 `data`（`/pnl/summary`、`/sell-off/simulate` 等直接把字段放顶层），或者把
+ * `data_quality` / `count` 这类元信息放在信封上 —— 这些要用 `apiFetchEnvelope`。
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const json = await request(path, init);
+  return json.data as T;
+}
+
+/**
+ * 与 `apiFetch` 相同的请求 / 鉴权 / 报错逻辑，但返回**完整响应体**，不拆 `data`。
+ *
+ * 为什么需要（2026-10-08）：约 10 个面板把 `apiFetch` 的返回值当成完整信封去读
+ * （`res?.ok`、`res.data`、`res.data_quality`），而 `apiFetch` 给的是 `json.data` ——
+ * 顶层平铺的端点拿到 `undefined`，包了 `data` 的端点被多拆一层，面板永远是空的。
+ * 类型全是 `any`，所以编译器一声没吭。
+ *
+ * `T` 描述整个响应体，例如 `apiFetchEnvelope<{ ok: boolean; data: Foo[]; count: number }>`。
+ */
+export async function apiFetchEnvelope<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await request(path, init)) as T;
+}
+
+async function request(path: string, init?: RequestInit): Promise<ApiResponse<unknown> & Record<string, unknown>> {
   const url = `${API_BASE}${path}`;
   let res: Response;
   const headers: Record<string, string> = {
@@ -73,9 +96,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   const text = await res.text();
-  let json: ApiResponse<T> & { detail?: unknown };
+  let json: ApiResponse<unknown> & Record<string, unknown> & { detail?: unknown };
   try {
-    json = text ? JSON.parse(text) : ({} as ApiResponse<T>);
+    json = text ? JSON.parse(text) : {};
   } catch {
     const snippet = text.replace(/\s+/g, ' ').slice(0, 180);
     // Next rewrite 失败或后端崩溃时常见 HTML 500
@@ -104,7 +127,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     }
     throw new Error(json.error?.message || fallback);
   }
-  return json.data as T;
+  return json;
 }
 
 

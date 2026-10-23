@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
 import { SimulatedDataBadge } from "@/components/SimulatedDataBadge";
 
 interface NodeItem {
@@ -66,15 +66,15 @@ export default function SybilLineageGraphModal({ isOpen, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const json = await apiFetch<LineageResult>("/lineage/detect", {
+      const json = await apiFetchEnvelope<LineageResult>("/lineage/detect", {
         method: "POST",
         body: JSON.stringify({ wallet_addresses: addrs }),
       });
       if (json?.ok) {
         setResult(json);
       }
-    } catch (e: any) {
-      setError(e.message || "血缘检测计算失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "血缘检测计算失败");
     } finally {
       setLoading(false);
     }

@@ -3,15 +3,46 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { StatCard } from './ui';
 import SellOffSimulatorModal from '@/components/SellOffSimulatorModal';
-import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
+
+/** `GET /pnl/summary` 单条记录（`app/services/airdrop_pnl.py::get_pnl_summary` 补算了现值 / 净赚 / RoI）。 */
+interface HarvestRecord {
+  id: number | string;
+  project_name: string;
+  token_symbol: string;
+  amount_claimed: number;
+  current_price_usd: number;
+  ath_price_usd: number;
+  gas_spent_usd: number;
+  claimed_at: string;
+  notes?: string;
+  current_value_usd: number;
+  ath_value_usd: number;
+  net_profit_usd: number;
+  gas_roi_multiple: number;
+}
+
+interface PnlSummary {
+  ok: boolean;
+  total_claimed_projects: number;
+  total_current_value_usd: number;
+  total_ath_value_usd: number;
+  total_gas_spent_usd: number;
+  net_current_profit_usd: number;
+  overall_roi_multiple: number;
+  hunter_tier: string;
+  hunter_tier_badge: string;
+  records: HarvestRecord[];
+  data_quality?: DataQualityMeta | null;
+}
 
 export function AirdropPnlPanel() {
-  const [data, setData] = useState<any | null>(null);
+  const [data, setData] = useState<PnlSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dataQuality, setDataQuality] = useState<any>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
   const [copiedTrophy, setCopiedTrophy] = useState(false);
@@ -28,7 +59,7 @@ export function AirdropPnlPanel() {
   const fetchPnl = async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<any>('/pnl/summary');
+      const res = await apiFetchEnvelope<PnlSummary>('/pnl/summary');
       if (res?.ok) {
         setData(res);
         setDataQuality(res.data_quality ?? null);
@@ -201,7 +232,7 @@ export function AirdropPnlPanel() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line/50">
-              {data?.records?.map((r: any) => (
+              {data?.records?.map((r) => (
                 <tr key={r.id} className="hover:bg-surface-2/60 transition">
                   <td className="py-3 px-3 font-semibold text-ink">
                     <div>{r.project_name}</div>

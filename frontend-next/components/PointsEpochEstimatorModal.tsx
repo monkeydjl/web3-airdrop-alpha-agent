@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchEnvelope } from "@/lib/api";
 
 interface BoostPool {
   pool: string;
@@ -71,7 +71,7 @@ export default function PointsEpochEstimatorModal({
     setLoading(true);
     setError(null);
     try {
-      const json = await apiFetch<PointsResult>("/points/estimate", {
+      const json = await apiFetchEnvelope<PointsResult>("/points/estimate", {
         method: "POST",
         body: JSON.stringify({
           protocol_id: targetPid,
@@ -83,8 +83,8 @@ export default function PointsEpochEstimatorModal({
       if (json?.ok) {
         setResult(json);
       }
-    } catch (e: any) {
-      setError(e.message || "估值推演失败");
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "估值推演失败");
     } finally {
       setLoading(false);
     }

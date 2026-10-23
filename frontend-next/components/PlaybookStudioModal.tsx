@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface PlaybookStep {
   step_no: number;
@@ -49,7 +49,7 @@ export default function PlaybookStudioModal({
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetch<{ data: { templates: PlaybookTemplate[] } }>('/playbook/templates')
+    apiFetchEnvelope<{ data: { templates: PlaybookTemplate[] } }>('/playbook/templates')
       .then((res) => {
         if (res?.data?.templates) {
           const list = res.data.templates;
@@ -68,7 +68,7 @@ export default function PlaybookStudioModal({
   const generateScript = async (pId?: string, jMin = jitterMin, jMax = jitterMax) => {
     if (!pId && !selectedTemplate?.id) return;
     try {
-      const res = await apiFetch<{ data: { executable_code: string } }>(
+      const res = await apiFetchEnvelope<{ data: { executable_code: string } }>(
         '/playbook/validate-and-generate',
         {
           method: 'POST',

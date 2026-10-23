@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Star } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import type { Project } from '@/lib/types';
 import { ConfidenceBar, LabelBadge, ScoreRing } from './ui';
 import {
@@ -358,7 +358,7 @@ export const ProjectCard = memo(function ProjectCard({
               if (dossierLoading) return;
               setDossierLoading(true);
               try {
-                const res = await apiFetch<{ ok: boolean; data?: AlphaDossierData }>(`/projects/${project.id}/dossier`);
+                const res = await apiFetchEnvelope<{ ok: boolean; data?: AlphaDossierData }>(`/projects/${project.id}/dossier`);
                 if (res?.ok && res.data) {
                   setDossierData(res.data);
                 }

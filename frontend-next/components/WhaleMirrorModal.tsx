@@ -3,7 +3,7 @@
 import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetchEnvelope } from '@/lib/api';
 
 interface WhaleBenchmark {
   airdrop_id: string;
@@ -61,7 +61,7 @@ export default function WhaleMirrorModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    apiFetch<{ data: { benchmarks: WhaleBenchmark[] } }>('/whale-mirror/benchmarks')
+    apiFetchEnvelope<{ data: { benchmarks: WhaleBenchmark[] } }>('/whale-mirror/benchmarks')
       .then((res) => {
         if (res?.data?.benchmarks) {
           setBenchmarks(res.data.benchmarks);
@@ -83,7 +83,7 @@ export default function WhaleMirrorModal({
   ) => {
     setLoading(true);
     try {
-      const res = await apiFetch<{ data: CompareResult }>('/whale-mirror/compare', {
+      const res = await apiFetchEnvelope<{ data: CompareResult }>('/whale-mirror/compare', {
         method: 'POST',
         body: JSON.stringify({
           benchmark_id: bmId,
