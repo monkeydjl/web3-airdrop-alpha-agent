@@ -4,6 +4,27 @@
 > **① CI 口径差排查与修复**、**② 测试提速 + xdist 并行**、
 > **③ 存量文档漂移（parity 守卫）修绿**（✅ 已完成，14 失败清零）、
 > **④ 测试数据库守卫体系**（静态守卫双规则 + 空库酸测 + 豁免纪律）。
+>
+> **2026-10-30 增量**：见下一节「10 月下旬收尾」；下方 9 月内容保持不变。
+
+## 10 月下旬收尾（2026-10-30）
+
+- **采集源评分卡**：新增 `app/services/source_scorecard.py`，`GET /api/v1/collections/sources`
+  每行带 `scorecard`（产量 / 分析率 / 隔离率 / 均分 / 新鲜度 / verdict），运维台展示徽标与
+  处置建议，补上「只能看开关」的盲区。
+- **校准口径修正**：`extract_samples` 按 `p.source` / `f.user_id` 分桶，`historical_backfill`
+  归 `backtest`；`check_gate` 只数 `live`。此前 50 条历史样本被误算进 live（门禁虚高到
+  53/200），修正后真实进度 **live 3 / FARM 2 / backtest 50**。
+- **`/feedback/calibration/status`**：新增 `gate`（真实门禁、差多少、按来源分布）与
+  `roi_ledger`（台账事件与来源分桶），旧字段保留兼容；`/review` 改为双进度条 + 台账说明。
+- **一键回填接台账**：`POST /feedback` 与 `/feedback/batch` 在同一事务写
+  `roi_outcomes(source='manual')`；到账记 `airdrop_received`、未领记 `airdrop_missed`，
+  `dumped` 不写，`(user, project)` 幂等，项目不存在时不写孤儿行。
+- **回溯脚本**：新增 `--roi-only` 幂等补录台账（50 条 `backtest`、`amount_usd` 留 NULL）；
+  `INSERT OR REPLACE` 改为 `WHERE NOT EXISTS`（`feedback` 无唯一键时会重复灌入），启动时清理重复行。
+- **验证**：后端 4054 passed / 25 skipped（覆盖率 88.70%）；`ruff check` / `ruff format --check`
+  全绿（顺带还清 8 个文件的格式欠账）；前端 typecheck / lint / 123 tests 全绿；文档 parity 169 passed。
+- **状态**：改动未提交 git。
 
 ## 项目当前状态
 
