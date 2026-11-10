@@ -31,6 +31,11 @@ class CollectionRepository:
     def __init__(self, conn: DbConnection | None = None) -> None:
         self._conn = conn
 
+    @property
+    def conn(self) -> DbConnection | None:
+        """已注入的共享连接；None 表示每次操作自建并自行关闭。"""
+        return self._conn
+
     def _get_conn(self) -> DbConnection:
         return self._conn if self._conn else get_connection()
 

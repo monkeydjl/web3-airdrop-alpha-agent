@@ -375,6 +375,54 @@ class DedupKeysRepository:
         ).fetchall()
         return [dict_from_row(r) for r in rows]
 
+    def list_aliases(self, project_id: str | None = None, source: str | None = None) -> list[dict[str, Any]]:
+        """列出参与身份解析的别名（source 为 NULL 的历史行不算）。"""
+        sql = "SELECT * FROM dedup_keys WHERE source IS NOT NULL"
+        params: list[Any] = []
+        if project_id:
+            sql += " AND project_id = ?"
+            params.append(project_id)
+        if source:
+            sql += " AND source = ?"
+            params.append(source)
+        sql += " ORDER BY project_id, dedup_key"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict_from_row(r) for r in rows]
+
+    def upsert_alias(
+        self,
+        *,
+        dedup_key: str,
+        project_id: str,
+        source: str,
+        confidence: float,
+        notes: str | None = None,
+        name_raw: str = "",
+        sector_raw: str = "",
+    ) -> None:
+        """写入/更新一条别名。
+
+        与 `app.identity.ProjectIdentityResolver.upsert_alias` 共用同一张表；
+        需要"降级保护"语义时请走解析器（这里只做纯 SQL 写入）。
+        """
+        self.conn.execute(
+            """
+            INSERT INTO dedup_keys
+                (dedup_key, project_id, name_raw, sector_raw, source, confidence, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(dedup_key) DO UPDATE SET
+                project_id = excluded.project_id,
+                name_raw = excluded.name_raw,
+                sector_raw = excluded.sector_raw,
+                source = excluded.source,
+                confidence = excluded.confidence,
+                notes = excluded.notes,
+                updated_at = datetime('now')
+            """,
+            (dedup_key, project_id, name_raw, sector_raw, source, confidence, notes),
+        )
+        self.conn.commit()
+
 
 # ── PromptVersionsRepository ────────────────────
 

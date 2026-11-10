@@ -25,6 +25,7 @@ from app.collectors.noise import (
     is_rootdata_non_project,
     is_tooling_repo,
 )
+from app.identity import ProjectIdentityResolver, ResolvedIdentity
 from app.services.token_registry import RegistryIndex, registry_confirms_launch
 from app.utils.normalize import (
     create_dedup_key,
@@ -44,7 +45,17 @@ logger = structlog.get_logger(__name__)
 _UNKNOWN_SECTOR_KEY = "Unknown"
 
 
-def _fold_sectorless_groups(groups: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+def _fold_sectorless_groups(
+    groups: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    """把"赛道未知"的分组并入同名且赛道已知的分组（只返回归并结果）。"""
+    folded, _folded_keys = _fold_sectorless_groups_with_map(groups)
+    return folded
+
+
+def _fold_sectorless_groups_with_map(
+    groups: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
     """把"赛道未知"的分组并入同名且赛道已知的分组。
 
     dedup_key 是 `name::sector`。任务门户(galxe/layer3)、链上活动(etherscan)、
@@ -55,6 +66,9 @@ def _fold_sectorless_groups(groups: dict[str, list[dict[str, Any]]]) -> dict[str
     这里在合并前做一次归并：若某个 `name::Unknown` 分组恰好只对应一个同名且赛道
     已知的分组，就并进去。**只在唯一匹配时归并**——同名但落在多个赛道时无从判断
     该归给谁，保持原样比猜错安全。
+
+    返回 (归并后的分组, {被折叠的键: 目标键})。第二个返回值用于把这些键学成
+    自动别名（见 `_dedup_records`），否则每轮都要重新折叠一次。
     """
     by_name: dict[str, list[str]] = {}
     for key_str in groups:
@@ -63,6 +77,7 @@ def _fold_sectorless_groups(groups: dict[str, list[dict[str, Any]]]) -> dict[str
             by_name.setdefault(name_key, []).append(key_str)
 
     folded = dict(groups)
+    folded_keys: dict[str, str] = {}
     for key_str in list(folded):
         name_key, _, sector_key = key_str.partition("::")
         if sector_key != _UNKNOWN_SECTOR_KEY or not name_key:
@@ -72,8 +87,9 @@ def _fold_sectorless_groups(groups: dict[str, list[dict[str, Any]]]) -> dict[str
             continue
         target = candidates[0]
         folded[target] = folded[target] + folded.pop(key_str)
+        folded_keys[key_str] = target
         logger.info("collector.dedup.folded_sectorless", name=name_key, into=target)
-    return folded
+    return folded, folded_keys
 
 
 # 文本融资信号：必须出现真实的融资语境，而非裸词 "funding"/"raised"。
@@ -210,12 +226,23 @@ class CollectorAgent(BaseAgent):
     def __init__(self) -> None:
         super().__init__("collector")
 
-    def _raw_to_record(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Normalize a raw seed/API record and assign deterministic project_id."""
+    def _raw_to_record(
+        self,
+        raw: dict[str, Any],
+        resolver: ProjectIdentityResolver | None = None,
+    ) -> dict[str, Any]:
+        """Normalize a raw seed/API record and assign project_id.
+
+        `resolver` 非空时走别名解析（手工/回填/自动别名优先生效）；
+        为空时保持旧的 uuid5 行为，便于纯函数式调用与测试。
+        """
         name = raw.get("name", "")
         sector = raw.get("sector")
         dedup_key = create_dedup_key(name, sector)
-        project_id = generate_deterministic_id(dedup_key)
+        if resolver is not None:
+            project_id = resolver.resolve(name, sector).project_id
+        else:
+            project_id = generate_deterministic_id(dedup_key)
         ext = self._infer_airdrop_flags(str(raw.get("source") or "seed"), raw)
         return {
             "project_id": project_id,
@@ -604,43 +631,77 @@ class CollectorAgent(BaseAgent):
             "funding_quality": float(funding.get("funding_quality") or 0),
         }
 
-    def _dedup_records(self, records: list[dict[str, Any]]) -> list[RawProject]:
-        """Group records by dedup key, merge conflicts, and return RawProjects."""
+    def _dedup_records(
+        self,
+        records: list[dict[str, Any]],
+        resolver: ProjectIdentityResolver | None = None,
+    ) -> list[RawProject]:
+        """Group records into projects, then merge groups that share an identity.
+
+        两阶段：
+        1. 按源内 `dedup_key`（name::sector）分组，并把"赛道未知"的分组并入同名
+           唯一分组（`_fold_sectorless_groups`）；
+        2. 按别名解析出的 `project_id` 二次归并：项目改名、赛道写法差异、跨源命名
+           差异经别名指向同一项目时，把多个 `dedup_key` 分组合成一个 RawProject，
+           并把没有别名的键学成 `auto` 别名（只写精确键，同名多赛道不会互串）。
+
+        没有别名命中时解析结果就是旧的 uuid5，行为与改造前一致。
+        """
         groups: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
             key = rec.pop("_dedup_key")
-            key_str = key.to_string()
-            groups.setdefault(key_str, []).append(rec)
+            groups.setdefault(key.to_string(), []).append(rec)
 
-        groups = _fold_sectorless_groups(groups)
+        groups, folded_keys = _fold_sectorless_groups_with_map(groups)
+        resolver = resolver or ProjectIdentityResolver()
+
+        buckets: dict[str, list[tuple[str, list[dict[str, Any]], ResolvedIdentity]]] = {}
+        for key_str, items in groups.items():
+            identity = resolver.resolve_key(key_str)
+            buckets.setdefault(identity.project_id, []).append((key_str, items, identity))
+
+        key_to_project = {
+            key_str: project_id for project_id, entries in buckets.items() for key_str, _items, _ident in entries
+        }
+        learned: list[tuple[str, str]] = []
+        for folded_key, target in folded_keys.items():
+            project_id = key_to_project.get(target)
+            if not project_id:
+                continue
+            try:
+                folded_identity = resolver.resolve_key(folded_key)
+            except ValueError:
+                continue
+            if folded_identity.is_legacy:
+                learned.append((folded_key, project_id))
 
         results: list[RawProject] = []
-        for key_str, items in groups.items():
-            merged = merge_raw_records(items, source_key="source")
-            canonical = create_dedup_key(merged.get("name", ""), merged.get("sector"))
-            # project_id 必须与合并后的 (name, sector) 一致。
-            # merged["project_id"] 来自优先级最高的那条记录，而 sector 走的是
-            # "最高可信已知值"——两者可能来自不同记录。归并了无赛道记录之后尤其
-            # 容易错位：id 还挂在 name::Unknown 上，sector 却已是 Lending，于是
-            # 同一真实项目多出一行，且 mark_raw_project_processed 的 dedup_key
-            # 回退（create_dedup_key(name, sector)）也对不上。
-            expected_id = generate_deterministic_id(canonical)
-            project_id = merged.get("project_id")
-            if not project_id or (key_str != canonical.to_string() and project_id != expected_id):
-                project_id = expected_id
+        for project_id, entries in buckets.items():
+            all_items = [item for _key, items, _ident in entries for item in items]
+            merged = merge_raw_records(all_items, source_key="source")
 
-            if len(items) > 1:
+            if len(entries) > 1:
+                logger.info(
+                    "collector.dedup.identity_merged",
+                    project_id=project_id,
+                    name=merged.get("name"),
+                    keys=[key_str for key_str, _items, _ident in entries],
+                )
+                # 同组里没有别名的键学成 auto 精确别名，下一轮直接命中。
+                learned.extend((key_str, project_id) for key_str, _items, identity in entries if identity.is_legacy)
+
+            if len(all_items) > 1:
                 logger.info(
                     "collector.dedup",
                     project_id=project_id,
                     name=merged.get("name"),
-                    dedup_key=key_str,
+                    dedup_keys=[key_str for key_str, _items, _ident in entries],
                     sources=merged.get("source"),
-                    duplicates=len(items),
+                    duplicates=len(all_items),
                 )
 
             raw_ids: list[str] = []
-            for item in items:
+            for item in all_items:
                 rid = item.get("raw_id")
                 if rid:
                     raw_ids.append(str(rid))
@@ -713,6 +774,10 @@ class CollectorAgent(BaseAgent):
                     raw_ids=raw_ids,
                 )
             )
+
+        if learned:
+            # best-effort：身份别名写失败不能影响本轮采集结果
+            resolver.learn_auto_aliases(learned)
 
         return results
 
@@ -852,6 +917,9 @@ class CollectorAgent(BaseAgent):
             min_discovery_score=min_discovery_score,
             limit=fetch_limit,
         )
+        # 身份解析器复用仓库连接：所有行共用一份别名索引（一次 SELECT），
+        # 且与 repo 的写入落在同一个数据库上（测试的 db_override 也生效）。
+        resolver = ProjectIdentityResolver(getattr(repo, "conn", None))
 
         records: list[dict[str, Any]] = []
         noise_skipped = 0
@@ -985,7 +1053,10 @@ class CollectorAgent(BaseAgent):
                     continue
 
             dedup = create_dedup_key(name, sector)
-            project_id = row.get("project_id") or generate_deterministic_id(dedup)
+            # 身份解析统一入口：别名命中优先，未命中回落旧 uuid5。
+            # 不再优先采用 raw 行里存的 project_id —— 那是历史解析结果，
+            # 别名上线后继续沿用会让同一项目在不同轮次之间来回跳 ID。
+            project_id = resolver.resolve(name, sector).project_id
             accepted_keys.add(row_key)
             records.append(
                 {
@@ -1033,7 +1104,7 @@ class CollectorAgent(BaseAgent):
                 }
             )
 
-        projects = self._dedup_records(records)
+        projects = self._dedup_records(records, resolver)
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             "collector.repository.completed",
@@ -1100,8 +1171,9 @@ class CollectorAgent(BaseAgent):
         logger.info("collector.seed.started", count=len(seed_projects))
         start_time = time.time()
 
-        records = [self._raw_to_record(raw) for raw in seed_projects]
-        results = self._dedup_records(records)
+        resolver = ProjectIdentityResolver()
+        records = [self._raw_to_record(raw, resolver) for raw in seed_projects]
+        results = self._dedup_records(records, resolver)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(

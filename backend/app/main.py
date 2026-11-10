@@ -100,6 +100,26 @@ def create_app(
             app_owns_conn = True
 
         try:
+            # 手工别名文件同步（可选）：手册配置的别名可信度最高，必须覆盖
+            # 回填/自动推断结果。失败只告警 —— 别名文件写错不应让服务起不来。
+            if settings.project_alias_file:
+                try:
+                    from app.identity import load_manual_aliases_file
+
+                    alias_stats = load_manual_aliases_file(settings.project_alias_file, conn=app_conn)
+                    logger.info(
+                        "app.project_alias_file_synced",
+                        path=settings.project_alias_file,
+                        **alias_stats,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "app.project_alias_file_failed",
+                        path=settings.project_alias_file,
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+
             if settings.app_env != "testing":
                 # 与 API 路由共用同一批采集器实例，令牌桶限流才不会被逐请求重置
                 registry = get_default_registry()
@@ -578,6 +598,7 @@ def create_app(
         playbook,
         pnl,
         points,
+        project_identity,
         projects,
         public_config,
         quarantine,
@@ -670,6 +691,7 @@ def create_app(
     app.include_router(playbook.router, prefix="/api/v1", tags=["v1"])
     app.include_router(team_studio.router, prefix="/api/v1", tags=["v1"])
     app.include_router(identity.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(project_identity.router, prefix="/api/v1", tags=["v1"])
     app.include_router(whale_mirror.router, prefix="/api/v1", tags=["v1"])
     app.include_router(impermanent_loss.router, prefix="/api/v1", tags=["v1"])
     app.include_router(paymaster.router, prefix="/api/v1", tags=["v1"])

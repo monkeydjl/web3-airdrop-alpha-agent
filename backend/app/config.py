@@ -300,6 +300,13 @@ class Settings(BaseSettings):
     # 同步路由在线程池并发执行，SQLite 写锁需要等待窗口而非立即报错
     sqlite_busy_timeout_seconds: float = 10.0
 
+    # ── 项目身份别名 ──────────────────────────────
+    # 可选 JSON 别名文件路径（空 = 不同步）。启动时把其中的条目按 manual 别名写入，
+    # 手工别名优先级最高，可覆盖回填/自动推断结果。
+    # 格式：{"aliases":[{"dedup_key":"foo::DeFi","project_id":"..."}]}
+    # 也支持 {"name":"Foo","sector":"DeFi","project_id":"..."}。
+    project_alias_file: str = ""
+
     # ── API 鉴权 ──────────────────────────────────
     api_key: str = ""  # 空 = 无鉴权（MVP 模式）
     # V2 匿名 token（ADR-008）：HMAC-SHA256 签名的 Bearer token

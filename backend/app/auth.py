@@ -136,6 +136,12 @@ ADMIN_ONLY_METHOD_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
         frozenset({"POST", "PATCH", "PUT", "DELETE"}),
         re.compile(r"^/api/v1/projects/[^/]+/unhide(?:/|$)"),
     ),
+    # 项目身份别名是全局身份数据：改错会让所有项目解析到错误的 project_id，
+    # 波及历史评分、反馈与参与记录。读接口保持开放，写接口仅管理员。
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/project-identity(?:/|$)"),
+    ),
 )
 
 

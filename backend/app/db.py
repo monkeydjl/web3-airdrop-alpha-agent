@@ -782,7 +782,12 @@ def _sqlite_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 name_raw    TEXT NOT NULL,
                 sector_raw  TEXT NOT NULL,
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                -- 别名来源（manual / backfill / auto）。NULL = 改造前的历史行，不参与解析。
+                source      TEXT,
+                confidence  REAL,
+                notes       TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -1392,7 +1397,12 @@ def _postgres_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 name_raw    TEXT NOT NULL,
                 sector_raw  TEXT NOT NULL,
-                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                -- 别名来源（manual / backfill / auto）。NULL = 改造前的历史行，不参与解析。
+                source      TEXT,
+                confidence  REAL,
+                notes       TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -1607,6 +1617,17 @@ def init_db(conn: Any = None) -> None:
         )
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
+        # 项目身份别名（app/identity.py）：dedup_keys 从"未使用的映射表"升级为别名表。
+        # CREATE TABLE IF NOT EXISTS 不会给存量库补列，必须逐列登记。
+        _add_column_if_not_exists(db, "dedup_keys", "source", "TEXT")
+        _add_column_if_not_exists(db, "dedup_keys", "confidence", "REAL")
+        _add_column_if_not_exists(db, "dedup_keys", "notes", "TEXT")
+        _add_column_if_not_exists(
+            db,
+            "dedup_keys",
+            "updated_at",
+            "TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP",
+        )
 
         interaction_columns = {
             "wallet_cohort_id": "TEXT",
@@ -1632,6 +1653,7 @@ def init_db(conn: Any = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);
             CREATE INDEX IF NOT EXISTS idx_projects_discovered_at ON projects(discovered_at DESC);
             CREATE INDEX IF NOT EXISTS idx_raw_quarantined ON raw_projects(quarantined);
+            CREATE INDEX IF NOT EXISTS idx_dedup_source ON dedup_keys(source);
         """)
         db.commit()
     except Exception:

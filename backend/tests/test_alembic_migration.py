@@ -89,6 +89,8 @@ _REVISION_TABLES: dict[str, set[str]] = {
     # 0013 只给 projects 加了两列（hidden_reason / hidden_at），不引入新表
     "0013": set(),
     "0014": {"token_registry"},
+    # 0015 给 dedup_keys 加别名列（source / confidence / notes / updated_at），不引入新表
+    "0015": set(),
 }
 _REVISION_ORDER = [
     "0001",
@@ -105,6 +107,7 @@ _REVISION_ORDER = [
     "0012",
     "0013",
     "0014",
+    "0015",
 ]
 
 

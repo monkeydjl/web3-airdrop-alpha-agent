@@ -69,12 +69,12 @@
 
 ### 2.1 写操作的鉴权分布（实测，2026-10-08 随恢复显示端点更新）
 
-全仓共 **85 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **89 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 14 |
+| 管理员专用 | 18 |
 | 无鉴权（公开） | 5 |
 | 匿名 token 可调 | 66 |
 <!-- write-auth-split:end -->
@@ -87,7 +87,10 @@
 以及 2026-09-02 领取监控的三个写端点 ——
 `POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
 `DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41），
-以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表）。
+以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表），
+以及 2026-11-09 项目身份别名的三个写端点 + 回填（`POST /project-identity/aliases`、
+`DELETE /project-identity/aliases/{alias_id}`、`POST /project-identity/aliases/backfill`，
+别名是全局身份数据，见 §54-§58）。
 
 公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
 `POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
@@ -311,6 +314,11 @@
 | GET | `/api/v1/watched-wallets/{wallet_id}/activity` | v1 | 扩展功能（2026-09-22） | 监控钱包动态（实网查询） |
 | GET | `/api/v1/whale-mirror/benchmarks` | v1 | 扩展功能（2026-09-22） | 跟单基准列表（标注 simulated） |
 | POST | `/api/v1/whale-mirror/compare` | v1 | 扩展功能（2026-09-22） | 跟单对比分析（标注 simulated） |
+| GET | `/api/v1/project-identity/aliases` | v1 | V3（已实现，2026-11-09） | 项目身份别名列表（§54） |
+| POST | `/api/v1/project-identity/aliases` | v1 | V3（已实现，2026-11-09） | 新增/覆盖手工别名（管理员） |
+| DELETE | `/api/v1/project-identity/aliases/{alias_id}` | v1 | V3（已实现，2026-11-09） | 删除别名（管理员） |
+| POST | `/api/v1/project-identity/resolve` | v1 | V3（已实现，2026-11-09） | 调试：查看名称/赛道解析到哪个 project_id |
+| POST | `/api/v1/project-identity/aliases/backfill` | v1 | V3（已实现，2026-11-09） | 存量 projects 行回填 backfill 别名（默认 dry-run，管理员） |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |
@@ -3146,3 +3154,122 @@ label="IGNORE"** —— 那是模型的结论，跳过是用户的决定，要�
 当 HA 未启用 (`ha_enabled=false`) 时，所有实例均独立运行调度器，`is_leader` 默认为 `true`，`status` 为 `"standalone"`。
 
 回归测试：`backend/tests/test_leader_election.py`、`backend/tests/api/test_ha_endpoints.py`。
+
+## 54. GET /api/v1/project-identity/aliases
+
+列出项目身份别名（来自 `dedup_keys.source IS NOT NULL` 的行）。`source` 为 NULL 的
+历史行不参与解析，也不会出现在这里。
+
+**查询参数**：`project_id`（可选）、`source`（可选：`manual` / `backfill` / `auto`）、
+`limit`（默认 500，最大 5000）。
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "aliases": [
+      {
+        "id": 12,
+        "dedup_key": "uniswap::DEX",
+        "project_id": "0b0f7a4e-...",
+        "name_raw": "uniswap",
+        "sector_raw": "DEX",
+        "source": "backfill",
+        "confidence": 0.9,
+        "notes": "backfill: 既有 projects 行"
+      }
+    ],
+    "total": 1
+  },
+  "error": null
+}
+```
+
+## 55. POST /api/v1/project-identity/aliases
+
+新增或覆盖一条**手工**别名（`source=manual`，优先级最高，可覆盖回填/自动推断）。
+别名键格式 `name::Sector`；`name::*` 是名称级别名，仅手工可配置，表示该名称下所有
+赛道都归到同一项目。管理员专属（匿名 token 返回 403）。
+
+**请求体**:
+
+```json
+{ "dedup_key": "uniswap protocol::de-fi", "project_id": "0b0f7a4e-...", "notes": "官方改名" }
+```
+
+`dedup_key` 会先归一化（`normalize_name` / `normalize_sector`），因此
+`uniswap protocol::de-fi` 与 `Uniswap::DeFi` 等价。
+
+**响应 200**: `{"ok": true, "data": {"applied": true, "alias_key": "uniswap::DeFi", ...}}`
+
+**错误**：400 别名键非法 / 名称级键非手工来源；409 写入被更高优先级别名保护。
+
+## 56. DELETE /api/v1/project-identity/aliases/{alias_id}
+
+删除一条别名。只写 `dedup_keys`，不改动任何项目数据（`projects` / `project_history`
+原样保留，未命中别名后自动回落旧 uuid5）。管理员专属。
+
+**响应 200**: `{"ok": true, "data": {"alias_id": 12, "deleted": true}}`；别名不存在返回 404。
+
+## 57. POST /api/v1/project-identity/resolve
+
+调试端点：查看某个名称 + 赛道最终解析到哪个 `project_id`，以及命中的层级。
+
+**请求体**: `{"name": "Uniswap Protocol", "sector": "defi"}`
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "0b0f7a4e-...",
+    "name_key": "uniswap",
+    "sector_key": "DeFi",
+    "alias_key": "uniswap::DeFi",
+    "source": "manual",
+    "confidence": 1.0,
+    "matched": "manual_exact",
+    "is_legacy": false
+  }
+}
+```
+
+`matched` 取值：`manual_exact` / `manual_name` / `backfill_exact` / `auto_exact` /
+`auto_name` / `legacy`。`legacy` 表示没有别名命中，走的是与改造前完全一致的
+`uuid5("name::sector")`。
+
+## 58. POST /api/v1/project-identity/aliases/backfill
+
+把既有 `projects` 行的 `(name, sector)` 钉成 `backfill` 别名。**默认 dry-run**
+（`apply=false` 只出报告），`apply=true` 才写库。管理员专属。
+
+冲突只报告、绝不自动合并：
+`alias_points_elsewhere`（别名已指向别的 project_id）、
+`multiple_projects_share_key`（多个 projects 行共享同一别名键，存量重复）。
+
+**请求体**: `{"apply": false, "limit": 1000}`
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "apply": false,
+    "scanned": 702,
+    "already_pinned": 0,
+    "candidate_count": 699,
+    "conflict_count": 3,
+    "applied": 0,
+    "candidates": [{ "dedup_key": "aave::Lending", "project_id": "...", "name": "Aave", "sector": "Lending" }],
+    "conflicts": [{ "dedup_key": "nexus::L1", "reason": "multiple_projects_share_key", "project_ids": ["...", "..."] }],
+    "source": "backfill"
+  }
+}
+```
+
+命令行等价入口：`cd backend && python scripts/backfill_project_aliases.py`（dry-run）、
+`--apply`（写库）、`--json`（完整报告）。

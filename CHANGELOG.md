@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+### Added — 项目身份别名映射，改名/赛道差异不再劈裂历史（2026-11-09）
+
+项目身份此前只有 `uuid5(normalize_name(name)::normalize_sector(sector))` 一个来源，
+项目改名、赛道写法变化或跨源命名差异都会生成第二个 `project_id`，`project_history`
+与历史评分被劈成两条记录。
+
+- 新模块 `app/identity.py`：复用既有的 `dedup_keys` 表作为别名表（新增 `source` /
+  `confidence` / `notes` / `updated_at` 列），统一解析入口 `ProjectIdentityResolver`。
+  优先级：手工精确 → 手工名称级 → 回填精确 → 自动精确 → 历史自动名称级 → 旧 uuid5。
+- **ID 不漂移**：未命中任何别名时结果与改造前逐字节一致；`backfill` 别名把既有
+  `projects` 行钉在原 ID 上，历史记录不会变孤儿。
+- **同名多赛道不误合并**：只有手工别名可以写名称级（`name::*`），回填/自动一律精确键。
+  自动别名只在「多个分组已解析到同一 project_id」时学习，失败不阻断采集。
+- 采集接入：`_dedup_records` 改为「源内 dedup_key 分组 → 按解析后的 project_id 二次归并」，
+  折叠的 `name::Unknown` 键会学成 `auto` 别名，下一轮直接命中。
+- 新 API（管理员写、只读开放）：`GET/POST /api/v1/project-identity/aliases`、
+  `DELETE /api/v1/project-identity/aliases/{alias_id}`、`POST /api/v1/project-identity/resolve`、
+  `POST /api/v1/project-identity/aliases/backfill`（默认 dry-run）。
+- 新脚本 `backend/scripts/backfill_project_aliases.py`（默认 dry-run、`--apply` 写库、
+  `--json` 报告），冲突只报告不合并。
+- 新配置 `PROJECT_ALIAS_FILE`：启动时把 JSON 手工别名同步进库，优先级最高。
+- 迁移：Alembic `0015_project_aliases`；SQLite/PostgreSQL DDL 与 `init_db` 兼容存量库。
+
+
 ### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
 
 每次 CI 都报「Node.js 20 is deprecated … forced to run on Node.js 24」。各 action 升到

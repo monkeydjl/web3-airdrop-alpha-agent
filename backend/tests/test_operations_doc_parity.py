@@ -710,11 +710,14 @@ class TestClaimsOfAbsenceAreStillTrue:
 
 
 class TestDeadTableListIsComplete:
-    """§12.14 列的 7 张死表 —— 这一栏此前只写了 `metrics` 一张。
+    """§12.14 列的死表 —— 这一栏此前只写了 `metrics` 一张。
 
-    2026-08-25 在线上库上逐表实测才发现是 7 张。
-    **只钉一张的门禁会让另外 6 张继续隐形** —— 而其中 `audit_logs`
+    2026-08-25 在线上库上逐表实测才发现是一批。
+    **只钉一张的门禁会让其余的表继续隐形** —— 而其中 `audit_logs`
     是审计日志，会被直接算进合规评估。
+
+    `dedup_keys` 已在 2026-11-09 接上身份别名解析（`app/identity.py` 写
+    `source` / `confidence` / `notes`），不再属于死表，也不再参与这里的核对。
 
     三个方向都要守：
       · 死表里出现了生产写入方 → 文档过期（好事，但必须同步）
@@ -722,13 +725,13 @@ class TestDeadTableListIsComplete:
       · 隔离实现改成用那张表 → 它就不再是死表
     """
 
-    # 判据：0 行 + 除 repositories/ 外无写入方（2026-08-25 线上库实测）
+    # 判据：0 行 + 除 repositories/ 外无写入方（2026-08-25 线上库实测；
+    # dedup_keys 于 2026-11-09 移出，见类文档）
     _DEAD_TABLES = (
         "metrics",
         "audit_logs",
         "llm_eval_changelog",
         "narratives",
-        "dedup_keys",
         "prompt_versions",
         "quarantine",
     )
