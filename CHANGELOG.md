@@ -56,6 +56,13 @@ liquidity mining 这类通用词也算成积分计划，而资格门与已发币
 
 
 
+### Added — 采集源评分卡（2026-10-30）
+
+`GET /api/v1/collections/sources` 每行新增 `scorecard`：产量、分析率、隔离率、平均发现分、
+最近同步与 verdict（healthy / noisy / stale / idle），运维台按徽标展示并给出处置建议，
+取代过去只能看「开 / 关」的盲区。实现见 `app/services/source_scorecard.py`。
+
+
 ### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
 
 每次 CI 都报「Node.js 20 is deprecated … forced to run on Node.js 24」。各 action 升到

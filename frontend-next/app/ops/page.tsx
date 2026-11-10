@@ -6,7 +6,7 @@ import { TopBar } from '@/components/TopBar';
 import { apiFetch, fetchHealth, apiFetchEnvelope } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
-import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData } from '@/lib/types';
+import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData, SourceVerdict } from '@/lib/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Download, FileSpreadsheet, FileText, HeartPulse, RefreshCw, UploadCloud } from 'lucide-react';
 
@@ -203,6 +203,16 @@ function syncStatusZh(s?: string | null) {
   if (s === 'not_registered') return '未注册';
   return s;
 }
+
+const SOURCE_VERDICT: Record<SourceVerdict, { label: string; className: string }> = {
+  healthy: { label: '健康', className: 'bg-farm-soft text-farm dark:bg-farm/15 dark:text-farm' },
+  noisy: { label: '噪声高', className: 'bg-amber-500/10 text-amber-500 border-amber-500/30' },
+  low_signal: { label: '低信号', className: 'bg-amber-500/10 text-amber-500 border-amber-500/30' },
+  stale: { label: '已断流', className: 'bg-orange-500/10 text-orange-500 border-orange-500/30' },
+  failing: { label: '同步失败', className: 'bg-red-500/10 text-red-500 border-red-500/30' },
+  idle: { label: '未产出', className: 'bg-surface-3 text-ink-muted' },
+  no_data: { label: '无数据', className: 'bg-surface-3 text-ink-muted' },
+};
 
 /** 导入导出的取数逻辑抽在 lib/download.ts，那里可被 node 直接加载做单测 */
 import { API_PREFIX, downloadFile, errorMessageFromBody, validateUploadFile } from '@/lib/download';
@@ -821,6 +831,8 @@ export default function OpsPage() {
                 const name = s.source_name || sourceZh(s.source_id);
                 const toggling = busy === `toggle-${s.source_id}`;
                 const cronExpr = cronOf(s.source_id, runtimeSources);
+                const sc = s.scorecard;
+                const verdict = sc ? SOURCE_VERDICT[sc.verdict] : null;
                 return (
                   <article
                     key={s.source_id}
@@ -850,6 +862,24 @@ export default function OpsPage() {
                         {s.sync_status && s.operatorEnabled ? ` · ${syncStatusZh(s.sync_status)}` : ''}
                       </span>
                     </div>
+                    {sc && verdict ? (
+                      <div className="mt-1 space-y-1.5" title={sc.recommendation}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`badge ${verdict.className}`}>{verdict.label}</span>
+                          <span className="font-mono text-[11px] text-ink-faint">
+                            {sc.avg_discovery_score != null
+                              ? `均分 ${sc.avg_discovery_score.toFixed(2)}`
+                              : '均分 —'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-ink-faint">
+                          入库 {sc.total_raw} · 分析 {sc.analyzed} · 隔离 {sc.quarantined}
+                        </div>
+                        {sc.verdict !== 'healthy' ? (
+                          <div className="text-[11px] leading-snug text-ink-muted">{sc.recommendation}</div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="ops-source-foot">
                       {/* 用后端真实的 api_calls_today，不再画写死的配额进度条 */}
                       <span className="text-[11px] text-ink-faint">

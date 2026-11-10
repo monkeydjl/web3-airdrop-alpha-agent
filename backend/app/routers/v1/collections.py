@@ -24,6 +24,7 @@ from app.collectors.registry import CollectorRegistry
 from app.config import settings
 from app.db import DbConnection, connection_scope, scalar
 from app.inflight import QueueDrainInProgressError, claim_run, collect_key
+from app.services.source_scorecard import fetch_source_scorecards
 
 logger = structlog.get_logger(__name__)
 
@@ -184,7 +185,11 @@ def _operator_enabled(conn: DbConnection, source_id: str) -> bool:
     return bool(row["enabled"])
 
 
-def _source_payload(conn: DbConnection, collector: DataCollector) -> dict[str, Any]:
+def _source_payload(
+    conn: DbConnection,
+    collector: DataCollector,
+    scorecard: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build list/patch payload: config_ready ∧ operator_enabled → is_enabled."""
     source_id = collector.source_id
     config_ready = bool(collector.is_enabled())
@@ -210,6 +215,9 @@ def _source_payload(conn: DbConnection, collector: DataCollector) -> dict[str, A
             "api_calls_today": 0,
         }
 
+    if scorecard is None:
+        scorecard = fetch_source_scorecards(conn, [source_id]).get(source_id, {})
+
     return {
         "source_id": source_id,
         "source_name": collector.source_name,
@@ -218,6 +226,7 @@ def _source_payload(conn: DbConnection, collector: DataCollector) -> dict[str, A
         "operator_enabled": operator_enabled,
         "is_enabled": config_ready and operator_enabled,
         "status": status,
+        "scorecard": scorecard,
     }
 
 
@@ -228,7 +237,9 @@ def list_collection_sources() -> CollectionSourcesResponse:
     repo = CollectionRepository()
     conn = repo._get_conn()
     try:
-        sources = [_source_payload(conn, collector) for collector in registry.list_all()]
+        collectors = registry.list_all()
+        cards = fetch_source_scorecards(conn, [collector.source_id for collector in collectors])
+        sources = [_source_payload(conn, collector, cards.get(collector.source_id)) for collector in collectors]
         return CollectionSourcesResponse(
             ok=True,
             data={"sources": sources},

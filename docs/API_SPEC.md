@@ -1157,9 +1157,9 @@ curl -X POST http://localhost:8002/api/v1/run \
 > 前端 `discoveries/page.tsx` 正是消费这个端点（由
 > `test_frontend_enum_parity.py::TestNoHardcodedSourceList` 钉住）。
 
-查询所有数据源的当前状态与最近同步信息。实测返回 **10 个源**：
-`coingecko` / `cryptorank` / `defillama` / `etherscan` / `galxe` /
-`github` / `layer3` / `rootdata` / `twitter_keyword` / `twitter_kol`。
+查询所有数据源的当前状态、最近同步信息与采集源评分卡。返回注册表中的全部源（当前 17 个），
+包括 `defillama` / `github` / `github_curated` / `coingecko` / `medium` / `mirror` /
+`telegram` / `farcaster` 以及需要凭据的付费源。
 
 **响应 200**（实测形状）
 
@@ -1180,6 +1180,21 @@ curl -X POST http://localhost:8002/api/v1/run \
           "sync_status": "success",
           "last_sync": "2026-08-15 14:51:17",
           "api_calls_today": 0
+        },
+        "scorecard": {
+          "total_raw": 236,
+          "analyzed": 236,
+          "pending": 0,
+          "quarantined": 0,
+          "high_signal": 210,
+          "avg_discovery_score": 0.76,
+          "analysis_rate": 1.0,
+          "quarantine_rate": 0.0,
+          "last_discovered_at": "2026-08-15 14:48:02",
+          "last_sync": "2026-08-15 14:51:17",
+          "freshness_hours": 1.2,
+          "verdict": "healthy",
+          "recommendation": "产出稳定，可保持当前调度"
         }
       }
     ]
@@ -1195,6 +1210,8 @@ curl -X POST http://localhost:8002/api/v1/run \
 | `config_ready` | 该源所需的配置（如 API key）是否齐备 |
 | `operator_enabled` | 运维是否手动开启（`PATCH /collections/{source_id}` 改这个） |
 | `is_enabled` | 两者都成立才为 `true`，即**实际会不会跑** |
+
+`scorecard` 由 `raw_projects` 与 `data_sources` 实时聚合，不含估算：`total_raw` / `analyzed` / `pending` / `quarantined` / `high_signal` 为计数，`avg_discovery_score` 为平均发现分，`analysis_rate` / `quarantine_rate` 为比率，`freshness_hours` 为距上次同步的小时数；`verdict` 取值 `healthy` / `noisy` / `low_signal` / `stale` / `failing` / `idle` / `no_data`，`recommendation` 为对应处理建议。
 
 ---
 

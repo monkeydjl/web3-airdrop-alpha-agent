@@ -96,6 +96,12 @@ class TestCollectionsEndpoints:
         assert "operator_enabled" in sample
         assert "config_ready" in sample
         assert "is_enabled" in sample
+        assert "scorecard" in sample
+        scorecard = sample["scorecard"]
+        assert scorecard["total_raw"] == 0
+        assert scorecard["verdict"] == "idle"
+        assert "avg_discovery_score" in scorecard
+        assert "recommendation" in scorecard
 
     def test_patch_collection_source_toggle(self, client: TestClient) -> None:
         """运营商开关写入 data_sources.enabled，并阻止 trigger。"""
