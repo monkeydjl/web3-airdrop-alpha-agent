@@ -307,29 +307,11 @@ class DefiLlamaCollector(DataCollector):
             "has_github": bool(protocol.get("github")),
             "no_token_yet": no_token,
             "has_testnet": has_testnet,
-            "has_points_program": (
-                True
-                if (
-                    any(
-                        kw in str(protocol.get("description") or "").lower()
-                        for kw in (
-                            "points",
-                            "staking",
-                            "stakers",
-                            "restaking",
-                            "vault",
-                            "incentive",
-                            "rewards",
-                            "deposit",
-                        )
-                    )
-                    or any(
-                        cat in str(protocol.get("category") or "").lower()
-                        for cat in ("restaking", "liquid staking", "yield", "leveraged farming", "basis")
-                    )
-                )
-                else None
-            ),
+            # 积分计划不再由采集器用关键词拼（2026-11-09 统一口径）。staking /
+            # vault / restaking / incentive 这类通用词只是弱佐证，不能单独把
+            # has_points_program 置真，判定统一交给 _infer_airdrop_flags 的
+            # 字段级证据 + 明确积分措辞（见 app/utils/points.py）。
+            "has_points_program": None,
             "recent_funding": bool(protocol.get("funding") or protocol.get("recent_funding")),
             "funding": protocol.get("funding"),
         }

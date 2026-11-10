@@ -20,6 +20,7 @@ from app.agents.eligibility import (
     VETO_NO_PARTICIPATION_PATH,
 )
 from app.services.project_signals import signals_view
+from app.utils.points import signals_have_points_program
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ def generate_multi_wallet_strategy(project_data: Any) -> MultiWalletStrategy:
     )
     is_mainnet = stage == "mainnet"
     is_testnet = stage == "testnet" or (not is_mainnet and bool(p.get("has_testnet")))
-    has_points = bool(p.get("has_points_program"))
+    has_points = signals_have_points_program(p)
 
     # 1. Ineligible projects: token already launched or explicit refusal
     if label == "IGNORE" or veto in (VETO_ALREADY_LAUNCHED, VETO_EXPLICIT_NO_AIRDROP):

@@ -69,10 +69,11 @@ class RawProject:
     # 状态未知；None = 旧调用方未提供，按 not no_token_yet 兼容。只有确认已发币才触发
     # already_launched 否决、入库门隔离与默认列表隐藏。
     token_launch_confirmed: bool | None = None
-    # 严格积分证据（2026-10-08）：只认「points program / points + airdrop·rewards」
-    # 这类明确措辞或可信源显式字段。has_points_program 的宽松推断（restaking /
-    # incentive / vaults 也算）仍用于 airdrop_signal 子分；已发币项目的后续空投
-    # 路径只看这个字段。None = 旧调用方未提供，回退 has_points_program。
+    # 严格积分证据（2026-10-08，2026-11-09 统一口径）：只认字段级标注或
+    # 「points program / points + airdrop·rewards」这类明确措辞。通用词（restaking /
+    # incentive / vaults…）在任何一层都只是弱佐证，不再置真 `has_points_program`。
+    # 下游统一走 app.utils.points，不再各写一份判断。None = 旧调用方未提供，
+    # 回退已归一化的 has_points_program。
     explicit_points_program: bool | None = None
 
     # v1.2 extended signals (docs / social / repo health / airdrop clarity)

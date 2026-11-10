@@ -49,6 +49,7 @@ from app.services.viability_gate import (
     UNBACKED_POINTS_MACHINE,
     evaluate_project_viability,
 )
+from app.utils.points import signals_have_points_program
 
 
 def run_viability_audit(*, apply_changes: bool = False) -> dict[str, Any]:
@@ -97,7 +98,7 @@ def run_viability_audit(*, apply_changes: bool = False) -> dict[str, Any]:
             )
             github_inactive_days = signals.get("github_recent_push_days")
             tvl_usd = signals.get("tvl_usd")
-            has_points_program = bool(signals.get("has_points_program"))
+            has_points_program = signals_have_points_program(signals)
             stage = str(p.get("stage") or "ideation")
 
             res = evaluate_project_viability(

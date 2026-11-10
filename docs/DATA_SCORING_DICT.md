@@ -402,6 +402,12 @@ MVP 用 `config.SECTOR_PROFILE` 维护赛道基础热度与动量；V2 迁移到
 一旦对某字段给出显式取值即直接采信，不参与 OR / max。否则一条 twitter 噪声就能把人工确认的
 "已发币"翻回 `no_token_yet=True`，把 `airdrop_signal` 从 20 顶到 100。
 
+> 积分计划（2026-11-09 统一口径）：参与 OR 的 `has_points_program` 已由
+> `CollectorAgent._infer_airdrop_flags` 按单一规则归一化——只认字段级证据与明确积分措辞，
+> restaking / incentive / vaults 这类通用词不再置真（DefiLlama 的关键词拼接字段被忽略）。
+> 下游（入库门、`airdrop_signal`、资格门、后续路径）统一读 `app/utils/points.py`，
+> 因此"已发币 + 仅通用词"在每一层都不通过。
+
 `source_count = max(1, 参与合并的来源数, 记录中已有值)`。此前恒为 1，使 §166/§175 的多源加成永不生效、
 `DATA_QUALITY.md §141` 的"≥2 源覆盖率 ≥30%"周 KPI 无法测量。
 

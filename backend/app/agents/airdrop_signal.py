@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from app.agents.eligibility import is_already_launched_without_airdrop_path
+from app.utils.points import project_has_points_program
 
 if TYPE_CHECKING:
     from app.agents.base import RawProject
@@ -33,7 +34,9 @@ def airdrop_signal_subscore(project: RawProject) -> float:
 
     已上市且无空投叙事的项目封顶 35。
     """
-    has_points = bool(project.has_points_program)
+    # 积分计划与资格门共用唯一判定（2026-11-09）：通用词不再算积分，
+    # 已发币项目不能靠 restaking / vaults 之类措辞拿到积分台阶。
+    has_points = project_has_points_program(project)
     no_token = bool(project.no_token_yet)
     has_testnet = bool(project.has_testnet) or ((project.stage or "").lower() == "testnet")
     explicit = bool(getattr(project, "explicit_airdrop_mention", False))

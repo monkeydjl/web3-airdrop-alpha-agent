@@ -28,11 +28,13 @@
 （2026-10-08）。**严格匹配**：名称归一（小写、去非字母数字）后唯一命中一个币；有 symbol 时
 symbol 也要一致；无 symbol 时归一名称至少 8 个字符。只补确认，不改写「确认未发币」。
 
-### 严格积分证据（explicit_points_program）
-已发币项目「后续空投路径」里的积分条件（2026-10-08，ADR-015 补充）：只认明确措辞
-（points program / points system / points + airdrop·rewards）或可信源显式字段。
-与宽松的 `has_points_program` 区分：后者把 restaking、incentive、vaults 也算进去，
-只用于 `airdrop_signal` 子分，不再豁免 `already_launched` 否决、入库门与默认列表隐藏。
+### 严格积分证据（explicit_points_program / has_points_program）
+积分计划判定只有一个真源（2026-11-09 统一，见 `app/utils/points.py`）：字段级证据
+`explicit_points_program` 权威优先；没有该字段时，`has_points_program` 本身就是按同一
+口径归一化后的值。通用词（restaking / incentive / vaults / liquidity mining…）只是弱佐证，
+**任何一层都不能单独把它置真**，也不能单独豁免 `already_launched` 否决、入库门与默认
+列表隐藏。采集侧只认明确措辞（points program / points system / points + airdrop·rewards）
+或可信源显式字段；DefiLlama 的关键词拼接字段不再采信。
 
 ### 隐藏（hidden_reason）
 项目仍在库、但不出现在默认列表 / 看板 / 推送的状态，由每日已发币复查写入

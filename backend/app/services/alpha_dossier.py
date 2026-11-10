@@ -31,6 +31,7 @@ from app.services.multi_wallet_strategy import generate_multi_wallet_strategy
 from app.services.participation_tasks import generate_participation_tasks
 from app.services.signal_correlation import correlate_signals_for_project
 from app.services.viability_gate import evaluate_project_viability
+from app.utils.points import signals_have_points_program
 
 logger = structlog.get_logger(__name__)
 
@@ -99,7 +100,7 @@ def generate_alpha_dossier(project_id: str) -> dict[str, Any]:
         funding_rounds=funding_rounds,
         funding_last_date=funding_last_date,
         funding_investors=funding_investors,
-        has_points_program=bool(signals.get("has_points_program")),
+        has_points_program=signals_have_points_program(signals),
         stage=stage,
     )
     v_tier = viability.get("tier", "borderline")

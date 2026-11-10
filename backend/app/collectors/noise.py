@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.utils.points import resolve_points_program
+
 # Categories that are not early airdrop alpha
 CATEGORY_DENY = frozenset(
     {
@@ -216,9 +218,9 @@ def is_listed_token_no_airdrop_signals(
         return False
 
     # Token is listed. Keep only with a post-launch airdrop path.
-    # 积分只认严格证据（2026-10-08，与 has_post_launch_airdrop_path 同口径）；
-    # None = 旧调用方未提供，回退宽松的 has_points_program。
-    points = has_points_program if explicit_points_program is None else explicit_points_program
+    # 积分判定与资格门共用 app.utils.points（2026-11-09 统一口径）。
+    # None = 旧调用方未提供，回退已归一化的 has_points_program。
+    points = resolve_points_program(explicit=explicit_points_program, has_points=has_points_program)
     has_post_launch_path = points or has_task_portal or explicit_airdrop_mention
 
     return not has_post_launch_path

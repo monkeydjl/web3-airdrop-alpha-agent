@@ -157,15 +157,18 @@ _EXPLICIT_NO_AIRDROP_RE = re.compile(
 
 # 能对「已发币」给出正面证据的来源：上市行情源本身即证据；defillama 的
 # no_token_yet=False 来自真实 ticker / gecko_id；manual/api/seed 是刻意断言。
-# 严格积分证据（2026-10-08）：has_points_program 的宽松推断把 restaking / incentive /
-# vaults / liquidity mining 都算作积分计划，20 个确认已发币的项目全靠这类通用词
-# 躲过了 already_launched 否决与默认列表隐藏。已发币项目的「后续空投路径」只认
-# 明确的积分措辞；宽松版保留给 airdrop_signal 子分，不改评分口径。
+# 严格积分证据（2026-10-08，2026-11-09 全面收紧）：历史上 has_points_program 的宽松
+# 推断把 restaking / incentive / vaults / liquidity mining 都算作积分计划，20 个确认
+# 已发币的项目全靠这类通用词躲过了 already_launched 否决与默认列表隐藏。现在通用词
+# 在任何一层都只是弱佐证，不能单独置真；`has_points_program` 本身就是按这一口径
+# 归一化后的值，下游（空投信号阶梯 / 资格门 / 后续路径）统一读
+# `app.utils.points`，不再保留宽松版。
 _POINTS_PHRASE_RE = re.compile(r"\bpoints?\s+(?:program|programme|system|campaign|season)s?\b")
 _POINTS_WORD_RE = re.compile(r"\bpoints\b")
 _POINTS_CONTEXT_RE = re.compile(r"\b(?:airdrops?|loyalty|rewards?|portals?)\b")
-# defillama 采集器自己用宽松关键词（staking / vault / rewards…）写 has_points_program，
-# 它的显式值不能当严格证据。
+# 这些来源的 has_points_program 可能来自关键词拼接而非字段级标注（defillama 采集器
+# 曾用 staking / vault / rewards… 拼字段；存量 raw_data 里仍可能带着旧值），
+# 因此其显式值不能当权威证据，只有明确的积分措辞才认。
 _LOOSE_POINTS_SOURCES = frozenset({"defillama"})
 
 
@@ -252,7 +255,10 @@ class CollectorAgent(BaseAgent):
             "stage": raw.get("stage") or ext.get("stage"),
             "source": raw.get("source", "seed"),
             "has_testnet": bool(raw.get("has_testnet", ext.get("has_testnet", False))),
-            "has_points_program": bool(raw.get("has_points_program", ext.get("has_points_program", False))),
+            # 积分计划只认 _infer_airdrop_flags 的归一化结果（字段级证据 +
+            # 明确积分措辞）；不再直接透传 raw 的宽松字段，避免 defillama 那种
+            # 关键词拼出的 has_points_program 又漏进来。
+            "has_points_program": bool(ext.get("has_points_program", False)),
             "explicit_points_program": ext.get("explicit_points_program"),
             "no_token_yet": bool(raw.get("no_token_yet", ext.get("no_token_yet", False))),
             "token_launch_confirmed": ext.get("token_launch_confirmed"),
@@ -330,7 +336,10 @@ class CollectorAgent(BaseAgent):
 
         no_token = _explicit("no_token_yet")
         has_testnet = _explicit("has_testnet")
-        has_points = _explicit("has_points_program")
+        # 积分计划：defillama 的 has_points_program 是它自己用 staking / vault /
+        # rewards 等通用词拼出来的，不是字段级证据，不能当权威输入（见
+        # _LOOSE_POINTS_SOURCES）。其余来源的显式字段是刻意标注，照常采信。
+        has_points = None if source_id in _LOOSE_POINTS_SOURCES else _explicit("has_points_program")
         recent_funding = _explicit("recent_funding")
 
         # Source-aware defaults when flags missing
@@ -361,21 +370,11 @@ class CollectorAgent(BaseAgent):
         completed_airdrop = bool(_AIRDROP_COMPLETED_RE.search(text))
 
         if has_points is None:
-            has_points = not completed_airdrop and (
-                "points program" in text
-                or "points system" in text
-                or "point system" in text
-                or (
-                    "points" in text
-                    and ("airdrop" in text or "loyalty" in text or "reward" in text or "portal" in text)
-                )
-                or "incentive" in text
-                or "restaking" in text
-                or "stakers" in text
-                or "staking rewards" in text
-                or "vaults" in text
-                or "liquidity mining" in text
-            )
+            # 统一口径（2026-11-09）：通用词（incentive / restaking / stakers /
+            # vaults / liquidity mining …）只是弱佐证，不能单独把积分计划置真。
+            # 只有明确的积分措辞（points program / points + airdrop·rewards）或
+            # 字段级证据才算数 —— 与资格门、已发币复查共用同一判定。
+            has_points = _infer_explicit_points_program(source_id, raw_data, text, completed=completed_airdrop)
 
         if recent_funding is None:
             # 裸 "funding" / "raised" 会把 "hourly funding rate settlement"、

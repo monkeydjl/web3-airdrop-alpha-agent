@@ -29,6 +29,7 @@ from app.services.viability_gate import (
     UNBACKED_POINTS_MACHINE,
     evaluate_project_viability,
 )
+from app.utils.points import signals_have_points_program
 
 logger = structlog.get_logger(__name__)
 
@@ -161,7 +162,7 @@ async def sync_database_defillama_raises(
                     funding_lead_investors=proto_funding.get("lead_investors", []),
                     github_inactive_days=signals.get("github_recent_push_days"),
                     tvl_usd=signals.get("tvl_usd"),
-                    has_points_program=bool(signals.get("has_points_program")),
+                    has_points_program=signals_have_points_program(signals),
                 )
                 new_viability = viability_eval.get("tier", "viable")
                 if old_viability == "unviable" and new_viability in ("viable", "borderline"):
@@ -270,7 +271,7 @@ def audit_database_viability(*, apply_changes: bool = False) -> dict[str, Any]:
                 )
                 github_inactive_days = signals.get("github_recent_push_days")
                 tvl_usd = signals.get("tvl_usd")
-                has_points_program = bool(signals.get("has_points_program"))
+                has_points_program = signals_have_points_program(signals)
                 stage = str(p.get("stage") or "ideation")
 
                 res = evaluate_project_viability(

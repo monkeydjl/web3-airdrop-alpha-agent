@@ -13,6 +13,7 @@ from app.opportunity.models import (
     RiskSet,
 )
 from app.services.project_signals import parse_meta
+from app.utils.points import signals_have_points_program
 
 SOURCE_GRADE_WEIGHT = {"A": 1.0, "B": 0.8, "C": 0.5, "D": 0.2, "U": 0.0}
 
@@ -605,7 +606,20 @@ def build_inputs(
     )
     from app.services.viability_gate import evaluate_project_viability
 
-    has_points = bool(project_row.get("has_points_program"))
+    structured = _structured_signals(project_row)
+    # 积分判定统一走 app.utils.points（2026-11-09）：行上的 has_points_program
+    # 可能是扁平化的归一化信号，meta["signals"] 里也可能有一份；显式字段优先，
+    # 且无论来自哪里，explicit_points_program 为 False 时都不算积分计划。
+    explicit_points = structured.get("explicit_points_program")
+    if explicit_points is None:
+        explicit_points = project_row.get("explicit_points_program")
+    has_points = signals_have_points_program(
+        {
+            "has_points_program": bool(project_row.get("has_points_program"))
+            or bool(structured.get("has_points_program")),
+            "explicit_points_program": explicit_points,
+        }
+    )
     # fatigue/friction 的结构化输入走 meta["signals"]（services.project_signals 的
     # SIGNAL_KEYS 词表），不再对 description/sector 做文本匹配——"s3x 含 s3"、
     # "perplexity 含 perp" 这类子串误判从根上消除。读取只经 _structured_signals

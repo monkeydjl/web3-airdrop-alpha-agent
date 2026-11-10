@@ -31,6 +31,30 @@
 - 新配置 `PROJECT_ALIAS_FILE`：启动时把 JSON 手工别名同步进库，优先级最高。
 - 迁移：Alembic `0015_project_aliases`；SQLite/PostgreSQL DDL 与 `init_db` 兼容存量库。
 
+### Changed — 积分计划判定统一为单一真源，通用词不再豁免否决（2026-11-09）
+
+`has_points_program` 此前有宽松 / 严格两套口径：采集侧把 restaking、incentive、vaults、
+liquidity mining 这类通用词也算成积分计划，而资格门与已发币复查只认
+`explicit_points_program`。同一份数据在 `airdrop_signal` 里算积分、在 `already_launched`
+否决里不算，已发币项目可借通用词同时拿到积分台阶并绕过资格否决。
+
+- 新增 `app/utils/points.py`：`resolve_points_program` / `project_has_points_program` /
+  `signals_have_points_program`，全仓唯一判定入口。字段级证据
+  `explicit_points_program` 优先；缺失时才采信已归一化的 `has_points_program`。
+- 收紧采集侧（`app/agents/collector.py`）：删除通用词推断块；DefiLlama 的关键词拼接字段
+  （`app/collectors/defillama.py`）改为 `None` 并不再采信；`_raw_to_record` 只认归一化结果，
+  不再透传 raw 的宽松字段。重新扫描存量项目即按新口径重算，无需迁移脚本
+  （`project_evaluation` 与 `collectors` 都会重跑 `_infer_airdrop_flags`）。
+- 下游统一：`eligibility`（后续路径 / 参与路径）、`airdrop_signal` 阶梯、`noise` 入库门、
+  `risk`、`scorer`、`alpha_dossier`、`ops_tasks`、`participation_tasks`、
+  `multi_wallet_strategy`、`opportunity/evidence` 全部改走同一入口。
+- `scripts/rescore_all.py` 重算时不再把存量 meta 的宽松 `has_points_program` 当输入或覆盖结果。
+- 测试：更新 2 个依赖旧口径的断言，新增 `tests/agents/test_points_program_unified.py`
+  覆盖"已发币 + 仅通用词"在采集归一化、入库隔离、资格门、信号阶梯四处均不通过；
+  字段级积分证据仍正常豁免。文档同步 `GLOSSARY.md`、`DATA_SCORING_DICT.md`。
+
+
+
 
 ### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
 

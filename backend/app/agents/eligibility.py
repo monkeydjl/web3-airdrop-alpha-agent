@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from app.utils.points import project_has_points_program
+
 if TYPE_CHECKING:
     from app.agents.base import RawProject
 
@@ -32,11 +34,11 @@ class EligibilityDecision:
 def has_post_launch_airdrop_path(project: RawProject) -> bool:
     """Whether a launched token still has explicit evidence of a campaign path.
 
-    积分只认严格证据 ``explicit_points_program``（2026-10-08）：restaking / incentive
-    之类通用词不构成已发币项目的后续路径。旧调用方不传（None）时回退宽松字段。
+    积分判定统一走 `app.utils.points.project_has_points_program`（2026-11-09）：
+    字段级 `explicit_points_program` 是权威，缺失时才用已归一化的
+    `has_points_program`。restaking / incentive 之类通用词在任何一层都不再算数。
     """
-    strict_points = getattr(project, "explicit_points_program", None)
-    points = project.has_points_program if strict_points is None else strict_points
+    points = project_has_points_program(project)
     return bool(
         points or getattr(project, "explicit_airdrop_mention", False) or getattr(project, "has_task_portal", False)
     )
@@ -83,7 +85,7 @@ def has_participation_path(project: RawProject) -> bool:
 
     return bool(
         project.has_testnet
-        or project.has_points_program
+        or project_has_points_program(project)
         or getattr(project, "has_task_portal", False)
         or getattr(project, "explicit_airdrop_mention", False)
     )

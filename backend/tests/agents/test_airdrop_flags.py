@@ -12,7 +12,24 @@ def test_defillama_unlisted_sets_no_token():
     assert flags["has_testnet"] is True
 
 
-def test_defillama_explicit_flags_win():
+def test_explicit_points_field_wins_for_trusted_source():
+    """非宽松源的字段级标注是权威证据，优先采信。"""
+    flags = CollectorAgent._infer_airdrop_flags(
+        "rootdata",
+        {
+            "no_token_yet": False,
+            "has_testnet": True,
+            "has_points_program": True,
+            "gecko_id": None,
+        },
+    )
+    assert flags["no_token_yet"] is False
+    assert flags["has_points_program"] is True
+
+
+def test_defillama_keyword_points_field_is_ignored():
+    """defillama 的 has_points_program 曾由 staking / vault / incentive 等通用词拼出，
+    不是字段级证据（2026-11-09 统一口径后不再采信）。"""
     flags = CollectorAgent._infer_airdrop_flags(
         "defillama",
         {
@@ -23,7 +40,8 @@ def test_defillama_explicit_flags_win():
         },
     )
     assert flags["no_token_yet"] is False
-    assert flags["has_points_program"] is True
+    assert flags["has_points_program"] is False
+    assert flags["explicit_points_program"] is False
 
 
 def test_coingecko_listed_not_no_token():

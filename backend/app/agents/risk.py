@@ -16,6 +16,7 @@ import structlog
 from app.agents.airdrop_signal import airdrop_signal_subscore
 from app.agents.base import AgentError, BaseAgent, PipelineState, RawProject
 from app.models import RiskResult
+from app.utils.points import project_has_points_program
 
 logger = structlog.get_logger(__name__)
 
@@ -119,7 +120,7 @@ def assess_sybil_difficulty(project: "RawProject") -> str:
     if project.stage == "mainnet":
         return "high"
 
-    if project.has_testnet and project.has_points_program:
+    if project.has_testnet and project_has_points_program(project):
         return "high"
 
     if project.has_testnet or project.stage == "testnet":
@@ -145,7 +146,7 @@ def assess_farming_cost(project: "RawProject") -> str:
     if project.stage == "mainnet":
         return "high"
 
-    if project.has_points_program or project.stage == "testnet":
+    if project_has_points_program(project) or project.stage == "testnet":
         return "medium"
 
     return "low"
@@ -206,7 +207,7 @@ def generate_risk_flags(
         flags.append("no product yet")
 
     # No airdrop signals
-    if not project.has_points_program and not project.no_token_yet:
+    if not project_has_points_program(project) and not project.no_token_yet:
         flags.append("weak airdrop signals")
 
     return flags

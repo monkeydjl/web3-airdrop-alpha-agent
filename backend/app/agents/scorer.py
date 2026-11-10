@@ -19,6 +19,7 @@ from app.agents.eligibility import apply_eligibility_gate
 from app.agents.narrative import canonical_sector_key
 from app.config import settings
 from app.models import ScoreResult
+from app.utils.points import project_has_points_program
 
 logger = structlog.get_logger(__name__)
 
@@ -335,7 +336,7 @@ class ScorerAgent(BaseAgent):
             bool(getattr(p, "has_github", False)),
             bool(getattr(p, "has_twitter", False) or getattr(p, "has_discord", False)),
             bool(
-                p.has_points_program
+                project_has_points_program(p)
                 or getattr(p, "has_task_portal", False)
                 or getattr(p, "explicit_airdrop_mention", False)
             ),
