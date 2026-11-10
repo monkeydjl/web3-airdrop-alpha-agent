@@ -55,7 +55,6 @@ liquidity mining 这类通用词也算成积分计划，而资格门与已发币
 
 
 
-
 ### Added — 采集源评分卡（2026-10-30）
 
 `GET /api/v1/collections/sources` 每行新增 `scorecard`：产量、分析率、隔离率、平均发现分、
@@ -74,6 +73,14 @@ liquidity mining 这类通用词也算成积分计划，而资格门与已发币
 `roi_outcomes(source='manual')`（`airdropped → airdrop_received`、`not_airdropped →
 airdrop_missed`，`dumped` 不写），同一 `(user, project)` 幂等，项目不存在时不写孤儿行。
 
+### Fixed — 历史回溯脚本重复灌入 + 全仓格式欠账（2026-10-30）
+
+`feedback` 表没有唯一键，脚本里的 `INSERT OR REPLACE` 实际是纯插入 —— 重跑一次就把同一批
+历史样本翻倍。改为 `INSERT ... WHERE NOT EXISTS`，并在启动时清理已重复的行（只动
+`historical_backfill`）。另补 `--roi-only` 幂等补录收益台账，50 条 `backtest` 记录的
+`amount_usd` 留 NULL（数据集没有金额，不编造）。
+
+顺带修掉仓库里 8 个文件的 `ruff format` 欠账，`test_ci_parity` 的格式腿恢复绿色。
 
 ### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
 
