@@ -1,46 +1,98 @@
 # Web3 Airdrop Alpha Agent System
 
-多智能体驱动的 Web3 早期项目识别与空投参与决策系统。
+从自动发现、结构化评分到「今天做什么」的 Web3 空投 Alpha 终端。
 
-[![Tests](https://img.shields.io/badge/tests-CI%20green-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-4054%20passed-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Next.js](https://img.shields.io/badge/Next.js-16.4-000000)](https://nextjs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#许可证)
 
 ---
 
-## 功能概览
+## 这是什么
 
-### 核心能力
+大多数「空投工具」只做两件事：堆信息、给结论。这个项目把中间缺失的两段补上了：
 
-- **6 Agent 并行评分流水线** — Narrative / Team / Risk / Tokenomics / AirdropSignal / Scorer，单项目评分延迟 < 2s
-- **10 个数据源采集器** — DefiLlama / GitHub / CoinGecko / CryptoRank / Etherscan / RootData / Twitter KOL / Twitter Keywords / Galxe / Layer3，统一调度 + 熔断 + 跨源合并
-- **三档分类决策** — FARM (>= 65 分, 高推荐) / WATCH (观察) / IGNORE (不推荐)
-- **Opportunity Shadow 旁路模型** — `opportunity-v2.0` 非权威评估，追加不可变经济快照，不影响主分数
-- **LLM 增强**（可选） — OpenAI 接口增强评分叙述，按发现分数阈值触发，日预算可控
-- **权重自动校准** — 基于反馈数据自动调整八维权重，支持 A/B 对比和灰度发布
-- **Bearer 鉴权 + 匿名 Token** — 生产默认强制鉴权；管理员用 `X-API-Key`，普通读请求由前端服务端注入 72h TTL 匿名 token
-- **Prometheus 指标 + Grafana Dashboard** — 运行时指标覆盖服务可用性与 pipeline 失败率；生产公网不暴露 `/metrics`
-- **Docker 一键部署** — 开发用 SQLite / PostgreSQL；生产全栈必须使用 `docker-compose.prod.yml`
+1. **自动发现**：定时扫描 17 个数据源（默认启用 8 个来源），把「可能是早期空投机会」的项目送进发现队列，而不是等人工录入。
+2. **可解释评分**：四个分析 Agent 并行给出叙事、团队、风险、代币经济结论，再由 Scorer 做八维加权，最后经过空投资格门控产出 `FARM / WATCH / IGNORE`。
+3. **可执行闭环**：评分之后不是结束——系统生成跨项目「今日行动」、参与清单、每日通知、ROI 台账与领取监控，结果再回流到反馈校准。
 
-### 评分模型
+分数是决策辅助，不是投资建议；系统不托管私钥，也不自动执行链上交易。
 
-主评分模型 `score-v1.4` 八因子加权：
+---
+
+## 核心能力
+
+- **自动发现闭环**：17 个采集器 → `raw_projects` 发现队列 → `discovery_score ≥ 0.30` 进入分析 → 去重 / 噪声过滤 / 脏数据隔离。
+- **四 Agent 并行分析 + Scorer**：Narrative、Team、Tokenomics 并行；Risk 在 Tokenomics 之后执行，确保使用真实解锁数据；Scorer 产出八维加权分与理由。
+- **空投资格门控（ADR-015）**：已发币且没有后续参与路径、明确声明无空投等项目会被确定性降级，避免「高分但已经错过」的项目占据 FARM。
+- **三档决策**：`FARM`（优先参与）/ `WATCH`（观察）/ `IGNORE`（不推荐）。
+- **行动闭环（F1–F4）**：决策推送、参与任务追踪、ROI 台账与历史回测、自有地址领取监控。
+- **Web 终端**：14 个页面、56 个前端组件，覆盖工作台、发现队列、水龙头、空投日历、洞察、参与复盘、结果复盘、运维台、通知中心、归档、收藏、系统设置与项目详情。
+- **运维能力**：统一调度器、官网活性探测、已发币复查、归档保留期、数据源开关与**采集源评分卡**（产量/分析率/隔离率/均分/断流）、异常检测、导入导出、可选多实例选主。
+- **生产安全**：Bearer + API Key 分档鉴权、匿名 Token、限流、CORS 白名单、日志脱敏、LLM 日预算、Prometheus 指标。
+- **诚实的数据口径**：核心链路使用真实公开数据；演示/估算类扩展端点统一标记 `data_quality: simulated`，前端显示「模拟数据」角标。
+
+---
+
+## 评分模型
+
+主模型 `score-v1.4`，当前生效权重组 `v1.2`（Σ = 1.0，可由环境变量覆盖并在写入时记录 `weight_version`）：
 
 | 维度 | 权重 | 说明 |
-|------|------|------|
-| 空投信号 | 20% | 测试网、积分计划、无代币、近期融资 |
-| 叙事时机 | 15% | 赛道热度 + 项目阶段 |
-| 团队信誉 | 15% | VC 背书 + 创始人背景 |
-| 风险评估 | 15% | 代币风险 + 解锁压力 |
-| 代币经济 | 15% | 分配比例 + 解锁周期 |
-| 竞争度 | 10% | 同赛道竞争强度 |
-| 执行力 | 5% | 开发活跃度 |
-| 透明度 | 5% | 文档 + 路线图 |
+| --- | --- | --- |
+| 空投信号 | 18% | 测试网、积分计划、未发币、任务入口、融资质量、多源交叉验证 |
+| 叙事时机 | 15% | 赛道热度 + 项目阶段（early / peak / late） |
+| 团队信誉 | 12% | VC 背书、创始人背景、融资质量 |
+| 风险评估 | 12% | 代币风险、解锁压力、女巫难度 |
+| 代币经济 | 10% | 分配比例、解锁周期 |
+| 竞争度 | 10% | 同赛道项目数量 |
+| 执行力 | 13% | GitHub 活跃度、路线图、推进信号 |
+| 透明度 | 10% | 文档、白皮书、社媒完整度 |
 
-**三档分类**：FARM (>= 65) / WATCH (50-64) / IGNORE (< 50)
+**标签阈值**：`FARM ≥ 65`、`WATCH 50–64`、`IGNORE < 50`。
 
-Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curated-multiwallet-v1`，评估以追加方式保存不可变快照，属于非权威 Shadow 输出；`score-v1.4` 的项目分数与标签仍是主决策。
+标签并非只由分数决定。确定性资格门控会在打分后追加否决：已发币且无参与路径、明确声明无空投、没有当前可执行路径的项目，即使质量分高也会被降级并写明原因。证据置信度低于 0.5 时还会执行 `FARM → WATCH`、`WATCH → IGNORE` 的保守降级。
+
+**权重校准按来源分桶**：校准样本分 `live`（真实使用留痕）与 `backtest`（历史回测）两类，门禁只统计 `live`。回测样本能验证模型、提前跑通流程，但替代不了当前分布下的真实结果——所以灌再多历史回测也不会让门禁通过。门禁为 ≥200 条 live 样本且其中 ≥30 条 FARM 相关，未达标不切换默认权重。
+
+**Opportunity Shadow**：`opportunity-v2.0` 旁路模型以追加方式保存不可变经济快照，属于非权威评估；项目分数与标签仍以 `score-v1.4` 为准。
+
+---
+
+## 从采集到行动
+
+```text
+17 个采集器
+    │
+    ▼
+raw_projects（发现队列）
+    │  discovery_score ≥ 0.30
+    ▼
+去重 / 噪声过滤 / 隔离 ──▶ quarantine
+    │
+    ▼
+信号合并（project_signals）
+    │
+    ├── Narrative ──┐
+    ├── Team ───────┤ 并行
+    └── Tokenomics ─┴──▶ Risk（依赖解锁数据）
+                              │
+                              ▼
+                    Scorer（score-v1.4）
+                              │
+                              ▼
+              标签 + 资格门控（ADR-015）
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+     项目库 / 历史快照    Opportunity Shadow   今日行动 / 通知
+          │                                       │
+          └──────────────▶ 参与记录 / ROI / 反馈校准 ◀──┘
+```
+
+调度器默认按源的 cron 分别采集；分析任务每日 08:00 UTC 消费未处理队列；归档、官网活性、已发币复查、Alpha 速递与通知摘要各有独立开关和任务记录，可在运维台查看实际注册状态。
 
 ---
 
@@ -48,506 +100,401 @@ Opportunity 旁路模型使用 `opportunity-v2.0` + 配置档案 `low-cost-curat
 
 ### 前置要求
 
-- Python 3.10+
-- Node.js 18+（前端）
-- Docker 20+（可选，容器化部署）
+- Python 3.11+
+- Node.js 20.9+（Docker 镜像使用 Node 22）
+- Docker 20+（可选）
 
-### 方式 1: 本地开发
+### 方式一：本地开发
 
 ```bash
-# 1. 克隆仓库
 git clone <repo-url>
 cd Web3-Airdrop-Alpha-Agent-System
 
-# 2. 配置环境变量
+# 1. 环境变量
 cp .env.example .env
-# 编辑 .env：本地可保持 APP_ENV=development。
-# 若启用 API 鉴权，再设置：
-#   API_KEY=<python -c "import secrets; print(secrets.token_urlsafe(32))">
-#   AUTH_TOKEN_SECRET=<python -c "import secrets; print(secrets.token_urlsafe(48))">
+# 本地可保持 APP_ENV=development；生产配置见下方「生产部署」
+# 若启用鉴权，再设置 API_KEY 与 AUTH_TOKEN_SECRET
 
-# 3. 启动后端
+# 2. 后端
 cd backend
-pip install -e ".[dev]"
+python -m venv venv
+# Windows PowerShell: .\venv\Scripts\Activate.ps1
+# macOS / Linux:     source venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8002
 
-# 4. 启动前端（另开终端）
+# 3. 前端（另开终端）
 cd frontend-next
 npm install
 npm run dev
 ```
 
-### 方式 2: Docker 部署
+访问：
+
+| 服务 | 地址 |
+| --- | --- |
+| 前端 | http://localhost:3002 |
+| Swagger | http://localhost:8002/docs |
+| ReDoc | http://localhost:8002/redoc |
+| 健康检查 | http://localhost:8002/health |
+| Prometheus 指标 | http://localhost:8002/metrics |
+
+### 方式二：Windows 一键启动
+
+```batch
+Start.bat   :: 创建虚拟环境、安装依赖、启动后端 + 前端
+Stop.bat    :: 停止服务
+```
+
+### 方式三：Docker
 
 ```bash
-# SQLite 模式（最简，开发测试）
+# 最简 SQLite
 docker compose up -d --build
 
-# PostgreSQL 模式（数据量大时推荐）
+# 基础 compose 的 PostgreSQL（需在 .env 设置 DB_BACKEND=postgres）
 docker compose --profile postgres up -d --build
-# 在 .env 中设置 DB_BACKEND=postgres
 
-# 生产全栈（Nginx + Next.js 前端 + PostgreSQL + 监控栈）
+# 生产全栈：Nginx + Next.js + FastAPI + PostgreSQL + Prometheus/Grafana/Alertmanager
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-> ⚠️ **生产部署必须用 `docker-compose.prod.yml`**，不是 `docker-compose.yml --profile production`。
+生产端口映射：
+
+| 服务 | 宿主机 | 说明 |
+| --- | --- | --- |
+| Nginx | `18080` | 页面 + API 统一入口 |
+| Next.js | `13002` | 前端调试入口 |
+| Prometheus | `19090` | 指标查询 |
+| Alertmanager | `19093` | 告警管理 |
+| Grafana | `13000` | 监控面板 |
+| Loki | `13100` | 日志查询（`observability` profile） |
+| OTel Collector | `14317` / `14318` / `18889` | OTLP / 指标（`observability` profile） |
+| Jaeger | `11686` | 链路追踪（`observability` profile） |
+
+> 生产部署必须使用 `docker-compose.prod.yml`，不要用 `docker-compose.yml --profile production`。前者才包含 Next.js 前端与生产 nginx 配置；后者只有裸 API，浏览器请求会绕过前端凭据注入而得到 401。
 >
-> 区别：
-> - `docker-compose.yml` 的 `--profile production` 只有 `backend` + `postgres` + `nginx`，
->   **没有 Next.js 前端服务**，挂的是根目录 `nginx.conf`（整站直连后端的纯 API 入口）。
->   起来后只有裸 API、没有 UI，且浏览器 API 请求会绕过前端代理拿不到凭据 → 全站 401。
-> - `docker-compose.prod.yml` 才包含完整的 `frontend` 服务与生产 nginx 配置
->   （`docker/nginx/nginx-http.conf`），将 `/api/` 先转发给 Next.js，
->   由 `frontend-next/proxy.ts` 在服务端按请求路径分档注入凭据：
->   - 管理员端点（`/run`、`/settings/*`、`/watched-wallets` 等）注入 `X-API-Key`
->   - 其余只读端点（`/projects`、`/public-config` 等）注入匿名 Bearer token
->
-> 生产环境还需在 `.env` 里设置以下必填项（详见 `docs/GO_LIVE_CHECKLIST.md`）：
-> ```bash
-> APP_ENV=production
-> API_KEY=<至少 32 字符随机字符串>
-> AUTH_TOKEN_SECRET=<至少 48 字符随机字符串>
-> BACKEND_API_KEY=<与 API_KEY 同值>
-> POSTGRES_PASSWORD=<强密码>
-> CORS_ORIGINS=<实际前端域名>
-> TRUSTED_PROXY_COUNT=1  # 按实际反代层数设置，见 GO_LIVE_CHECKLIST §1b
-> ```
-
-#### Docker 端口映射
-
-宿主机端口采用 `1` 前缀方案（原端口前加 `1`），避免与其他项目冲突：
-
-| 服务 | 宿主机 | 容器内 | 说明 |
-|------|--------|--------|------|
-| **Nginx 反向代理** | `18080` | 80 | 前端页面 + API 代理入口 |
-| **前端 (Next.js)** | `13002` | 3002 | 可直连调试 |
-| **Prometheus** | `19090` | 9090 | 指标查询 |
-| **Grafana** | `13000` | 3000 | 监控面板登录 |
-| **Loki** | `13100` | 3100 | 日志查询 API |
-
-> 后端 API、PostgreSQL 位于 `backend` 内部网络，不暴露到宿主机。
-> 可选服务（OTel Collector `14317`/`14318`/`18889`、Jaeger `11686`）需启用 `observability` profile。
-
-### 方式 3: Windows 一键启动
-
-```batch
-Start.bat   :: 启动后端 + 前端
-Stop.bat    :: 停止所有服务
-```
-
-### 访问地址
-
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 前端 | http://localhost:3002 | Next.js 16 + React 19 |
-| API 文档 | http://localhost:8002/docs | Swagger UI |
-| API 参照 | http://localhost:8002/redoc | ReDoc |
-| 健康检查 | http://localhost:8002/health | 本地后端健康探针 |
-| 指标 | http://localhost:8002/metrics | 本地 Prometheus 格式指标 |
-
-> 生产全栈的公网入口是 `http://<host>:18080`（TLS 由上游反代终止时）。
-> 后端 API、PostgreSQL 和 `/metrics` 均不应直接暴露到公网：生产 nginx 对公网
-> `/metrics` 返回 403，Prometheus 通过 Docker `backend` 网络直连 `airdrop-web:8002/metrics`。
-> 查看生产指标请登录 Grafana，而不是公开 exporter。
-
-## API 概览
-
-主要端点：
-
-### 核心操作
-
-```bash
-# 触发评分流水线（seed 数据）
-curl -X POST http://localhost:8002/api/v1/run \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"source":"seed"}'
-
-# 查询项目列表
-curl -H "X-API-Key: $API_KEY" \
-  "http://localhost:8002/api/v1/projects?sort_by=score&order=desc&limit=10"
-
-# 触发采集
-curl -X POST -H "X-API-Key: $API_KEY" \
-  http://localhost:8002/api/v1/collections/defillama/trigger
-```
-
-### 主要端点分组
-
-| 分组 | 端点 | 说明 |
-|------|------|------|
-| 评分 | `POST /api/v1/run` | 触发评分流水线 |
-| 项目 | `GET/POST /api/v1/projects` | 项目 CRUD |
-| 采集 | `GET/POST /api/v1/collections/{source}` | 采集源管理 + 手动触发 |
-| Opportunity | `GET /api/v1/projects/{id}/opportunity` | Shadow 旁路评估 |
-| 反馈 | `GET/POST /api/v1/feedback` | 人工反馈 + 权重校准输入 |
-| 鉴权 | `POST /api/v1/auth/anonymous` | 匿名 Token 签发 |
-| 观察列表 | `GET/POST /api/v1/watchlist` | 关注项目标记 |
-| 隔离 | `GET /api/v1/quarantine` | 数据质量隔离管理 |
-| 公开配置 | `GET /api/v1/public-config` | 匿名可读的权重与标签阈值 |
-| 领取监控 | `GET/POST /api/v1/watched-wallets` | 自有地址到账监控（管理员锁） |
-| 导入导出 | `GET /api/v1/export/*`, `POST /api/v1/import/*` | Excel/CSV 批量操作 |
-| 校准 | `GET /api/v1/calibration/status` | 权重校准状态 |
-| LLM | `GET /api/v1/llm/status` | LLM 增强状态 |
-| 监控 | `GET /health`, `GET /metrics` | 健康检查 + Prometheus 指标（公网不暴露） |
-| Webhook | `POST /api/v1/webhook/alchemy` | Alchemy 事件回调 |
-
-完整 API 文档见 [docs/API_SPEC.md](docs/API_SPEC.md) 或运行时 `/docs`。
+> 生产 `.env` 至少需要：`APP_ENV=production`、`API_KEY`、`AUTH_TOKEN_SECRET`、`BACKEND_API_KEY`、`POSTGRES_PASSWORD`、`CORS_ORIGINS`、`TRUSTED_PROXY_COUNT=1`。完整清单见 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md)。
 
 ---
 
 ## 数据源
 
-10 个采集器，按配置启用：
+17 个采集器，按「配置开关 + 凭据 + 数据库源开关」三重条件决定是否运行：
 
-| 数据源 | 类型 | 默认 | 说明 |
-|--------|------|------|------|
-| DefiLlama | 免费 API | 启用 | TVL + 协议元数据 |
-| GitHub | 免费 API | 启用 | 开发活跃度（建议设 Token 提升 60->5000 req/h） |
-| CoinGecko | 免费 API | 启用 | 币种价格 + 市值 |
-| CryptoRank | API Key | 启用 | 项目库 + 融资数据 |
-| Etherscan | 免费 API | 启用 | 链上交互数据 |
-| RootData | API Key | 禁用 | 项目库 + 融资数据 |
-| Twitter KOL | Bearer Token | 禁用 | KOL/VC 动态 |
-| Twitter Keywords | Bearer Token | 禁用 | 关键词监控 |
-| Galxe | API Key | 禁用 | 活动数据 |
-| Layer3 | API Key | 禁用 | 活动数据 |
+| 采集器 | source_id | 默认 | 凭据 / 说明 |
+| --- | --- | --- | --- |
+| DefiLlama | `defillama` | 启用 | 免费；协议 TVL、链、赛道 |
+| GitHub | `github` | 启用 | 免费；建议配置 Token 提升配额 |
+| GitHub Curated | `github_curated` | 启用 | 公开 raw 内容；社区测试网与水龙头清单 |
+| CoinGecko | `coingecko` | 启用 | 免费；行情与全量币表（用于发币判定） |
+| Medium | `medium` | 启用 | RSS，无需 Key |
+| Mirror | `mirror` | 启用 | 公开内容端点，无需 Key |
+| Telegram | `telegram` | 启用 | 公开频道，无需 Key |
+| Farcaster | `farcaster` | 启用 | 公共 Hub，无需 Key |
+| CryptoRank | `cryptorank` | 关闭 | API Key |
+| RootData | `rootdata` | 关闭 | API Key |
+| Twitter KOL | `twitter_kol` | 关闭 | Bearer Token（付费） |
+| Twitter Keywords | `twitter_keyword` | 关闭 | Bearer Token（付费） |
+| Etherscan | `etherscan` | 关闭 | API Key |
+| Galxe | `galxe` | 关闭 | API Key |
+| Layer3 | `layer3` | 关闭 | API Key |
+| Discord | `discord` | 关闭 | Bot Token |
+| Reddit | `reddit` | 关闭 | OAuth |
 
-采集器具备熔断器（`FETCHER_CIRCUIT_BREAKER`）、速率限制和跨源字段合并。调度器按 `CRON_EXPRESSION` 定时触发（默认每日 08:00 UTC）。
+采集层统一具备域名白名单、速率限制、熔断、缓存与跨源字段合并。低于发现阈值的记录不会直接丢弃，而是按保留期归档，便于复盘「当时为什么没立项」。
+
+### 数据可信度
+
+- **核心链路是真实数据**：采集、去重、信号合并、评分、资格门控与 ROI 台账均基于真实输入或确定性计算。
+- **扩展工具箱含演示/估算端点**：跨链报价、聪明钱、女巫图谱、解锁雷达、积分推演等部分输出属于模拟或经验估算，响应会带 `data_quality.quality = "simulated"`，前端显示「模拟数据」角标。此类输出只适合教学与演练，不应作为资金决策依据。完整审计见 [EXPANSION_AUDIT_REPORT.md](docs/EXPANSION_AUDIT_REPORT.md)。
+- **生产不灌种子数据**：`APP_ENV=production` 会强制关闭 seed 回退，避免内置示例项目混入真实库。
+- **不构成投资建议**：系统输出是研究辅助，不保证空投存在、资格或收益。
+
+---
+
+## API 概览
+
+所有业务端点使用统一响应包络：
+
+```json
+{ "ok": true, "data": {}, "error": null }
+```
+
+本地 `API_KEY` 为空时鉴权中间件短路，便于开发；生产必须配置鉴权。匿名用户可换取 72h Token 访问普通端点，管理员端点需要 `X-API-Key`。
+
+```bash
+# 消费发现队列中的未处理项目并评分
+curl -X POST http://localhost:8002/api/v1/run \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# 直接提交项目评分
+curl -X POST http://localhost:8002/api/v1/run \
+  -H "Content-Type: application/json" \
+  -d '{"projects":[{"name":"LayerX","sector":"L2","stage":"testnet","has_testnet":true,"no_token_yet":true}]}'
+
+# 查询项目
+curl "http://localhost:8002/api/v1/projects?sort_by=score&order=desc&limit=10"
+
+# 今日行动
+curl "http://localhost:8002/api/v1/action-queue?limit=5"
+
+# 手动触发单个采集源
+curl -X POST http://localhost:8002/api/v1/collections/defillama/trigger
+```
+
+主要端点分组：
+
+| 分组 | 代表端点 | 说明 |
+| --- | --- | --- |
+| 分析 | `POST /api/v1/run` | 消费队列或提交项目评分 |
+| 项目 | `GET/POST /api/v1/projects` | 列表、详情、评分、恢复显示 |
+| 发现 | `GET /api/v1/discoveries` | 原始发现队列与发现分 |
+| 采集 | `GET/PATCH/POST /api/v1/collections/*` | 源状态、评分卡、开关、手动触发 |
+| 行动 | `GET /api/v1/action-queue` | 跨项目今日行动 |
+| 参与 | `GET/POST/PATCH /api/v1/interactions` | 参与记录与完成状态 |
+| ROI | `GET/POST /api/v1/projects/{id}/roi/*` | 投入与产出台账 |
+| Opportunity | `GET /api/v1/projects/{id}/opportunity` | Shadow 评估与证据 |
+| 通知 | `GET /api/v1/notifications` | 站内通知与已读状态 |
+| 领取监控 | `GET/POST /api/v1/watched-wallets` | 自有地址到账监控（管理员） |
+| 水龙头 | `GET /api/v1/faucets` | 列表、冷却、存活探测 |
+| 洞察 | `GET /api/v1/insights` | 标签、赛道、风险、机会榜 |
+| 运维 | `GET /api/v1/scheduler/jobs`、`GET /api/v1/anomalies` | 调度与异常 |
+| 迁移 | `GET /api/v1/export/*`、`POST /api/v1/import/*` | Excel / CSV 导入导出 |
+| 监控 | `GET /health`、`GET /metrics` | 健康检查与指标 |
+
+完整契约见 [API_SPEC.md](docs/API_SPEC.md) 或运行时 `/docs`。
 
 ---
 
 ## 系统架构
 
-```
-┌──────────────────────────────────────────────────┐
-│         Next.js 16 / React 19 Frontend          │
-│              http://localhost:3002                │
-└──────────────────┬───────────────────────────────┘
-                   │ REST API (X-API-Key)
-                   ▼
-┌──────────────────────────────────────────────────┐
-│              FastAPI Backend                      │
-│           http://localhost:8002                    │
-├──────────────────────────────────────────────────┤
-│                                                   │
-│  ┌─────────────┐   ┌──────────────────────┐      │
-│  │  Collector   │   │  Unified Scheduler   │      │
-│  │  Registry    │   │  (APScheduler)        │      │
-│  │  (10 sources)│   │  cron + misfire      │      │
-│  └──────┬──────┘   └──────────┬───────────┘      │
-│         │                       │                  │
-│         ▼                       ▼                  │
-│  ┌──────────────────────────────────────┐         │
-│  │     Multi-Agent Pipeline              │         │
-│  │  ┌─────────┬─────────┬─────────┐      │         │
-│  │  │Narrative│  Team   │  Risk   │      │         │
-│  │  └─────────┴─────────┴─────────┘      │         │
-│  │  ┌─────────────┬──────────────┐       │         │
-│  │  │ Tokenomics  │AirdropSignal│       │         │
-│  │  └─────────────┴──────────────┘       │         │
-│  │            ▼                          │         │
-│  │       Scorer (score-v1.4)             │         │
-│  │            ▼                          │         │
-│  │  Opportunity Shadow (v2.0)            │         │
-│  └──────────────────────────────────────┘         │
-│                     ▼                              │
-│  ┌──────────────────────────────────────┐         │
-│  │  Repository Pattern                   │         │
-│  │  SQLite (WAL) / PostgreSQL             │         │
-│  │  + Alembic Migrations                 │         │
-│  └──────────────────────────────────────┘         │
-└──────────────────────────────────────────────────┘
+```text
+┌────────────────────────────────────────────────────────┐
+│ Next.js 16 / React 19 前端（14 页面 / 56 组件）          │
+└──────────────────────────┬─────────────────────────────┘
+                           │ /api 经 Next 服务端代理，分档注入凭据
+┌──────────────────────────▼─────────────────────────────┐
+│ FastAPI 后端（62 个路由模块）                            │
+│                                                        │
+│  UnifiedScheduler（APScheduler）                        │
+│    ├─ collect_{source}  17 源 cron                      │
+│    ├─ analysis_run_queue                                │
+│    ├─ archive_cleanup / vitals_probe / launch_review    │
+│    └─ daily_alpha_digest / notify_digest                │
+│                                                        │
+│  Collector Registry → raw_projects → 分析流水线          │
+│  SimpleOrchestrator → 4 Agent + Scorer + 资格门控        │
+│                                                        │
+│  鉴权 / 限流 / 指标 / 追踪 / LLM 预算 / 审计              │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+┌──────────────────────────▼─────────────────────────────┐
+│ SQLite（WAL）/ PostgreSQL + Alembic（14 个迁移）         │
+│ projects / raw_projects / project_signals / history     │
+│ participation / roi / notify / watched_wallets / token  │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Agent 流水线
+- **分析 Agent**：Narrative（叙事时机）、Team（团队信誉）、Risk（风险与解锁）、Tokenomics（代币经济）。
+- **Scorer**：八维加权、置信度修正、理由生成、资格门控。
+- **Opportunity Shadow**：旁路经济评估，不修改主分。
+- **高可用**：可选数据库选主（`HA_ENABLED`），多实例下仅主实例执行调度任务。
 
-```
-Collector → [Narrative, Team, Risk, Tokenomics, AirdropSignal] → Scorer
-                          (并行执行, Semaphore 限流)
-                                   │
-                                   ▼
-                          Opportunity Shadow
-                          (追加评估, 不修改主分)
-```
+---
 
-- **Narrative**: 叙事时机分析（赛道热度 + 项目阶段）
-- **Team**: 团队信誉分析（VC 背书 + 创始人）
-- **Risk**: 风险评估（代币风险 + 解锁压力）
-- **Tokenomics**: 代币经济学（分配比例 + 解锁周期）
-- **AirdropSignal**: 空投信号检测（测试网 + 积分 + 融资）
-- **Scorer**: `score-v1.4` 八维加权评分
-- **Opportunity Shadow**: `opportunity-v2.0` 旁路评估，保存不可变经济快照
+## 界面
+
+| 页面 | 路径 | 作用 |
+| --- | --- | --- |
+| 工作台 | `/` | 指标概览、今日行动、校准进度 |
+| 发现队列 | `/discoveries` | 采集原始发现与发现分 |
+| 水龙头 | `/faucets` | 公共 RPC/HTTP 存活探测与领取冷却 |
+| 空投日历 | `/calendar` | 里程碑、倒计时、ICS 导出（日期含模拟标记） |
+| 洞察 | `/insights` | 标签分布、赛道热度、高风险团队、机会榜 |
+| 参与复盘 | `/portfolio` | ROI 台账、PnL、跨链/无常损失/团队协作工具 |
+| 结果复盘 | `/review` | 一键批量标记真实结果，同时写入收益台账；按校准引擎真实门禁口径（live / FARM 样本）展示进度 |
+| 运维台 | `/ops` | 数据源评分卡、调度任务、异常检测、隔离区、导入导出 |
+| 通知中心 | `/notifications` | 站内通知与已读管理 |
+| 归档历史 | `/archive` | 归档运行与保留策略 |
+| 收藏关注 | `/collections` | Watchlist 项目与评分 |
+| 不参与 | `/skipped` | 用户主动排除的项目 |
+| 系统设置 | `/settings` | 自动化、数据源、界面与安全配置 |
+| 项目详情 | `/project/[id]` | 评分因子、信号、时间轴、AI 简报/追问、参与清单、多钱包策略、Alpha 研报 |
+
+扩展工具箱（位于洞察 / 参与复盘 / 项目详情）：Gas 告警、跨链路由、钱包体检、女巫隔离自查、身份护照、解锁雷达、积分推演、组合对比等。涉及模拟数据的面板会显式标注。
 
 ---
 
 ## 项目结构
 
-```
+```text
 Web3-Airdrop-Alpha-Agent-System/
-├── backend/                    # 后端服务
+├── backend/
 │   ├── app/
-│   │   ├── agents/             # 6 个 Agent + Orchestrator
-│   │   ├── collectors/         # 10 个采集器 + Registry + Scheduler
-│   │   ├── opportunity/        # Opportunity Shadow 旁路模型
-│   │   │   └── calibration/    # 权重校准
-│   │   ├── routers/v1/         # API 路由 (16 个模块)
-│   │   ├── services/           # 业务服务层
-│   │   ├── repositories/       # V2 数据访问层
-│   │   ├── llm/                # LLM 客户端
-│   │   ├── config.py           # Pydantic Settings
-│   │   ├── db.py               # 数据库抽象层
-│   │   ├── auth.py             # 鉴权中间件
-│   │   ├── metrics.py          # Prometheus 指标
-│   │   └── main.py             # FastAPI 入口
-│   ├── alembic/                # 数据库迁移
-│   ├── tests/                  # 测试套件
-│   ├── scripts/                # 运维 + 校准脚本
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── frontend-next/              # Next.js 16 前端
-│   ├── app/                    # App Router 页面
-│   ├── components/             # React 组件
-│   └── lib/                    # API 客户端 + 工具
-├── configs/                    # 配置文件
-│   ├── feature-flags/          # 功能开关
-│   └── observability/          # Prometheus + Grafana + OTel
-├── docker/                     # Docker 辅助配置
-│   ├── loki/                   # 日志收集
-│   └── nginx/                  # 反向代理
-├── docs/                       # 技术文档
-│   ├── adr/                    # 14 份 ADR
-│   ├── ENGINEERING_ROADMAP.md
-│   ├── API_SPEC.md
-│   ├── DEPLOYMENT.md
-│   ├── GO_LIVE_CHECKLIST.md
-│   ├── GO_LIVE_REPORT.md
-│   └── ...
-├── scripts/                    # 运维脚本
-│   └── deploy/                 # 部署 + 回滚脚本
-├── docker-compose.yml          # SQLite 模式
-├── docker-compose.postgres.yml # PostgreSQL 模式
-├── docker-compose.prod.yml     # 生产全栈
-├── .env.example                # 环境变量模板
-├── Start.bat / Stop.bat        # Windows 一键启停
-└── README.md                   # 本文件
+│   │   ├── agents/          # 4 个分析 Agent + Scorer + 资格门控 + 编排器
+│   │   ├── collectors/      # 17 个采集器、注册表、持久化、噪声过滤
+│   │   ├── opportunity/     # Shadow 评估、经济快照、校准
+│   │   ├── routers/v1/      # 62 个 API 路由模块
+│   │   ├── services/        # 57 个业务服务
+│   │   ├── repositories/    # 数据访问层
+│   │   ├── llm/             # 多接口 LLM 客户端与预算
+│   │   ├── config.py        # Pydantic Settings
+│   │   ├── scheduler.py     # 统一调度器
+│   │   ├── auth.py          # 鉴权中间件
+│   │   ├── metrics.py       # Prometheus 指标
+│   │   └── main.py          # FastAPI 入口
+│   ├── alembic/             # 14 个数据库迁移
+│   ├── tests/               # 后端测试套件（4079 条用例）
+│   ├── scripts/             # 校准、种子、双跑对比等脚本
+│   └── requirements*.txt
+├── frontend-next/
+│   ├── app/                 # 14 个页面
+│   ├── components/          # 56 个 React 组件
+│   ├── lib/                 # API 客户端、类型、格式化
+│   └── proxy.ts             # 服务端凭据注入
+├── configs/                 # 功能开关与可观测性配置
+├── docker/                  # Dockerfile、nginx、loki 配置
+├── docs/                    # 16 份 ADR + 产品/架构/API/数据/运维文档
+├── scripts/                 # 部署、回滚、工作流脚本
+├── docker-compose.yml       # 开发 SQLite / PostgreSQL
+├── docker-compose.prod.yml  # 生产全栈
+├── Start.bat / Stop.bat     # Windows 一键启停
+└── README.md
 ```
 
 ---
 
 ## 配置
 
-### 核心环境变量
+复制 `.env.example` 到 `.env`。常用变量：
 
-复制 `.env.example` 到 `.env` 并配置：
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `production` 启用生产自检（弱密钥、localhost CORS、seed 回退等） |
+| `API_KEY` | 空 | 管理员 API Key；为空时后端鉴权短路（仅适合本地） |
+| `AUTH_TOKEN_SECRET` | 空 | 匿名 Bearer Token 签名密钥；生产为空拒绝启动 |
+| `BACKEND_API_KEY` | 空 | 仅 Next.js 服务端使用，必须与 `API_KEY` 同值 |
+| `API_PROXY_TARGET` | `http://web:8002` | 前端构建期 rewrite 与运行期换取 Token 的内网地址 |
+| `CORS_ORIGINS` | localhost | 生产填实际前端域名，不得含 localhost |
+| `TRUSTED_PROXY_COUNT` | `0` | 受控反代层数；生产 nginx + web 填 `1` |
+| `DB_BACKEND` | `sqlite` | `sqlite` 或 `postgres` |
+| `POSTGRES_PASSWORD` | 空 | PostgreSQL 密码（至少 16 字符） |
+| `GITHUB_TOKEN` | 空 | 提升 GitHub API 配额；不设仍可受限速保护运行 |
+| `OPENAI_API_KEY` | 空 | LLM 增强（默认关闭，规则引擎完整可用） |
+| `LLM_DAILY_BUDGET_USD` | `1.0` | 日预算；`0` 或负数表示不限额 |
+| `DISCOVERY_SCORE_ANALYSIS_THRESHOLD` | `0.30` | 发现分达到该值才进入分析 |
+| `SCHEDULER_ENABLED` | `true` | 分析调度总开关 |
+| `COLLECTION_SCHEDULER_ENABLED` | `true` | 采集调度总开关 |
+| `NOTIFY_ENABLED` | `false` | 出站通知开关；关闭时仍写通知日志 |
+| `SEED_FALLBACK_ENABLED` | `true` | 采集全挂时回退示例数据；生产强制关闭 |
 
-| 变量 | 必填 | 默认 | 说明 |
-|------|------|------|------|
-| `APP_ENV` | 生产是 | development | 生产全栈 compose 会强制覆盖为 `production`，从而启用安全校验 |
-| `API_KEY` | 生产是 | - | 后端管理员 API Key，至少 32 字符；空值会关闭后端鉴权 |
-| `AUTH_TOKEN_SECRET` | 生产是 | - | 匿名 Bearer token 的签名密钥；生产为空会拒绝启动 |
-| `BACKEND_API_KEY` | 生产前端是 | - | 必须与 `API_KEY` 同值；仅在 Next.js 服务端用于管理员端点，**不能**使用 `NEXT_PUBLIC_` 前缀 |
-| `API_PROXY_TARGET` | 生产前端是 | `http://web:8002` | Next.js 构建期 rewrite 与运行期匿名 token 换取均使用此内网地址 |
-| `CORS_ORIGINS` | 生产是 | localhost | 填实际前端域名；production 中包含 localhost / 127.0.0.1 会拒绝启动 |
-| `TRUSTED_PROXY_COUNT` | 反代时是 | 0 | 本仓生产拓扑 nginx → web 填 `1`；每多一层受控反代加 `1` |
-| `DB_BACKEND` | 否 | sqlite | `sqlite` 或 `postgres` |
-| `DB_PATH` | SQLite 时 | data/airdrop.db | SQLite 文件路径 |
-| `POSTGRES_PASSWORD` | PostgreSQL 时 | - | 强密码（至少 16 字符，不能用 `airdrop` / `postgres` 等占位符） |
-| `OPENAI_API_KEY` | 否 | - | LLM 增强（不设则走规则引擎） |
-| `LLM_DAILY_BUDGET_USD` | 否 | 1.0 | LLM 日费用上限，超出后拒绝调用并降级回规则引擎；`0` = 不限额 |
-| `RATE_LIMIT_REQUESTS` | 否 | 100 | 每 60 秒单 IP 最大请求数 |
-| `SEED_FALLBACK_ENABLED` | 否 | true | 采集全挂时使用内置种子；生产建议设为 `false`，避免仪表盘混入兜底数据 |
-
-完整变量列表见 `.env.example`。
+完整变量、采集源凭据与调度 cron 见 [.env.example](.env.example) 与 [DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 ---
 
-## 测试
+## 测试与质量门
 
 ```bash
 cd backend
 
-# 运行全部测试
+# 全量测试（含覆盖率，门槛 80%）
 pytest
 
-# 按模块运行
-pytest tests/agents/          # Agent 测试
-pytest tests/api/             # API 端点测试
-pytest tests/collectors/      # 采集器测试
-pytest tests/opportunity/     # Opportunity Shadow 测试
-pytest tests/golden/          # 金标准回归测试
+# 并行快速跑（不生成覆盖率）
+pytest -n 8 --no-cov
 
-# 生成覆盖率报告
-pytest --cov=app --cov-report=html
+# 分组运行
+pytest tests/agents/
+pytest tests/collectors/
+pytest tests/api/          # 若目录存在
+pytest tests/opportunity/
+pytest tests/golden/
 ```
 
-测试基线以 CI 最新一次后端全量结果为准。本地建议：
+2026-10-30 本机全量结果：**4054 passed / 25 skipped**（共收集 4079 条，约 17 分钟）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
+
+代码质量门：
 
 ```bash
 cd backend
-venv/Scripts/python.exe -m pytest --no-cov -p no:cacheprovider
-```
+ruff check .
+ruff format --check .
+mypy app                    # strict
 
-近期 CI 已验证过 3292 passed / 5 skipped。
+cd ../frontend-next
+npm run typecheck
+npm run lint
+npm test
+```
 
 ---
 
 ## 监控
 
-### Prometheus 指标
-
-本地开发可直接查看：
-
-```bash
-curl http://localhost:8002/metrics
-```
-
-生产全栈中 `/metrics` **不通过 nginx 向公网转发**（公网请求返回 403），避免暴露
-项目数量、pipeline 成败、LLM 花费与采集源错误率等运行信息。Prometheus 已在 Docker
-`backend` 网络内直连 `airdrop-web:8002/metrics`；外部监控请使用 Grafana 登录入口。
-
 关键指标：
 
-- `pipeline_runs_total` — 评分流水线运行次数
-- `pipeline_run_duration_seconds` — 评分延迟
-- `airdrop_fetcher_cache_hits_total` — 采集器缓存命中
-- `airdrop_fetcher_circuit_breaker_state` — 熔断器状态
+- `airdrop_pipeline_runs_total` / `airdrop_pipeline_duration_seconds` — 流水线运行与延迟
+- `airdrop_projects_scored_total` / `airdrop_projects_by_label_total` — 评分产出与标签分布
+- `airdrop_fetcher_cache_hits_total` — 采集缓存命中
+- `airdrop_fetcher_circuit_breaker_state` — 熔断状态
 - `airdrop_competition_cache_hits_total` — 竞争度缓存命中
 
-### 告警规则
+预置告警（`configs/observability/prometheus/alert_rules.yml`）：服务不可用、错误率过高、连续流水线失败。
 
-预置 3 条告警（`configs/observability/prometheus/alert_rules.yml`）：
+Grafana 面板：`configs/observability/grafana/dashboards/airdrop-system-overview-v2.json`。
 
-- `APIDown` — 服务不可用 (1m, critical)
-- `HighAPIErrorRate` — 错误率 > 0.1/s (5m, critical)
-- `PipelineConsecutiveFailures` — 15 分钟内 >= 2 次失败 (critical)
-
-### Grafana
-
-导入 `configs/observability/grafana/dashboard-system-overview.json` 查看系统概览面板。
+生产环境中 `/metrics` 不对公网开放；Prometheus 通过 Docker `backend` 网络直连后端。
 
 ---
 
-## 部署
+## 生产部署
 
-### 部署检查
-
-上线前请按 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) 逐项检查，或查看 [GO_LIVE_REPORT.md](docs/GO_LIVE_REPORT.md) 获取最新检查结果。
-
-### Docker 命令
+上线前逐项执行 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md)，部署与回滚细节见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 ```bash
-docker build -t airdrop-alpha:latest -f docker/Dockerfile .
-
-# SQLite 基础部署
-docker compose up -d --build
-
-# 仅启用基础 compose 的 PostgreSQL
-docker compose --profile postgres up -d --build
-
-# 生产全栈（推荐：Next.js + FastAPI + PostgreSQL + Nginx + 监控）
 docker compose -f docker-compose.prod.yml up -d --build
-
-# 查看生产日志
 docker compose -f docker-compose.prod.yml logs -f web
-
-# 生产健康检查
 curl http://localhost:18080/health
 
-# 停止生产全栈
+# 数据库迁移（容器名 airdrop-web）
+docker exec airdrop-web alembic upgrade head
+docker exec airdrop-web alembic downgrade -1
+
 docker compose -f docker-compose.prod.yml down
 ```
-
-> 生产命令使用独立的 `docker-compose.prod.yml`，不要改写成
-> `docker compose --profile production`。完整变量要求、限流验证、备份恢复与回滚流程见
-> [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) 和 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
-
-### 数据库迁移
-
-生产全栈的后端容器名为 `airdrop-web`：
-
-```bash
-# 应用迁移
-docker exec airdrop-web alembic upgrade head
-
-# 回滚
-docker exec airdrop-web alembic downgrade -1
-```
-
-详细部署指南见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
-
----
-
-## 技术栈
-
-### 后端
-
-- **框架**: FastAPI 0.115 + Pydantic 2.10
-- **Python**: 3.10+
-- **数据库**: SQLite (WAL 模式) / PostgreSQL（通过 `DB_BACKEND` 切换）
-- **迁移**: Alembic
-- **调度**: APScheduler (Unified Scheduler)
-- **日志**: structlog (JSON, 脱敏)
-- **指标**: prometheus-client
-- **鉴权**: Bearer Token + API Key
-- **限流**: 滑动窗口 + IP 限流
-
-### 前端
-
-- **框架**: Next.js 16 + React 19 + TypeScript
-- **样式**: Tailwind CSS
-- **图表**: 自建轻量图表库 (ADR-011)
-- **构建**: 标准-next 构建
-
-### 基础设施
-
-- **容器**: Docker + docker-compose
-- **反向代理**: Nginx (可选)
-- **监控**: Prometheus + Grafana
-- **日志收集**: Loki + Promtail (可选)
-- **CI/CD**: GitHub Actions
 
 ---
 
 ## 文档
 
-### 开发与部署
-
-- [docs/ENGINEERING_ROADMAP.md](docs/ENGINEERING_ROADMAP.md) — 工程路线图
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — 部署指南
-- [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) — 上线检查清单
-- [docs/GO_LIVE_REPORT.md](docs/GO_LIVE_REPORT.md) — 上线检查报告
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) — 运维手册
-- [docs/WORKSPACE_LAYOUT.md](docs/WORKSPACE_LAYOUT.md) — 工作区文件布局与清理指南（活文件/再生区/灰区清单）
-- [docs/SECURITY.md](docs/SECURITY.md) — 安全规范
-
-### API 与数据
-
-- [docs/API_SPEC.md](docs/API_SPEC.md) — API 规格说明
-- [docs/DATA_SCORING_DICT.md](docs/DATA_SCORING_DICT.md) — 评分算法字典
-- [docs/DATABASE_DDL.md](docs/DATABASE_DDL.md) — 数据库 DDL
-- [docs/DATA_SOURCE_STRATEGY.md](docs/DATA_SOURCE_STRATEGY.md) — 数据源策略
-
-### 架构决策
-
-- [docs/adr/](docs/adr/) — 14 份架构决策记录
-- [docs/V2_TASKS.md](docs/V2_TASKS.md) — V2 任务追踪
+- 文档总索引：[docs/00_index.md](docs/00_index.md)
+- 产品与用户故事：[01_product.md](docs/01_product.md)、[USER_STORIES.md](docs/USER_STORIES.md)
+- 架构与路线图：[02_architecture.md](docs/02_architecture.md)、[ENGINEERING_ROADMAP.md](docs/ENGINEERING_ROADMAP.md)
+- 评分与权重：[DATA_SCORING_DICT.md](docs/DATA_SCORING_DICT.md)、[WEIGHT_CALIBRATION.md](docs/WEIGHT_CALIBRATION.md)
+- 数据源策略：[DATA_SOURCE_STRATEGY.md](docs/DATA_SOURCE_STRATEGY.md)
+- 行动闭环：[ACTION_LOOP_DESIGN.md](docs/ACTION_LOOP_DESIGN.md)
+- 扩展功能审计：[EXPANSION_AUDIT_REPORT.md](docs/EXPANSION_AUDIT_REPORT.md)
+- API 契约：[API_SPEC.md](docs/API_SPEC.md)
+- 数据库：[DATABASE_DDL.md](docs/DATABASE_DDL.md)
+- 运维与监控：[OPERATIONS.md](docs/OPERATIONS.md)、[OBSERVABILITY.md](docs/OBSERVABILITY.md)
+- 安全：[SECURITY.md](docs/SECURITY.md)
+- 当前进度：[PHASES.md](docs/PHASES.md)、[HANDOFF.md](HANDOFF.md)
+- 架构决策：[docs/adr/](docs/adr/)（16 份）
+- 变更记录：[CHANGELOG.md](CHANGELOG.md)
 
 ---
 
 ## 贡献
 
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-详见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [CONVENTIONS.md](CONVENTIONS.md)。
+1. Fork 仓库并创建特性分支
+2. 遵循 [CONVENTIONS.md](CONVENTIONS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)
+3. 提交前跑后端 `ruff`、`mypy`、`pytest` 与前端 `typecheck`、`lint`、`test`
+4. 提交 Pull Request，说明变更动机与验证方式
 
 ---
 
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE)
+MIT License。
