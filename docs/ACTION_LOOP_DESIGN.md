@@ -291,6 +291,19 @@ CREATE TABLE IF NOT EXISTS roi_outcomes (         -- 产出
   不混算 —— 回测样本是历史分布，live 是当前分布。
 - 门槛 200/30 **不变**（测试钉着）；回测的价值是让「有效样本」不用苦等几个月自然积累。
 
+**实施记录（2026-10）**
+
+- 复盘页一键回填（`POST /api/v1/feedback/batch`）与单条 `POST /api/v1/feedback` 在**同一事务**内
+  同时写 `feedback` 与 `roi_outcomes(source='manual')`，避免「反馈写成功、台账没写」的半截状态。
+  同一 `(user, project)` 只保留一条人工空投产出行：重复标记不新增，结果变更则更新事件并保留
+  用户后补的金额/凭证；项目不存在时不写（`WHERE EXISTS` 挡住孤儿行）。
+- `historical_backfill` 的反馈与台账分别标记 `backtest` 桶，`check_gate` 只数 `live`。此前 50 条
+  历史样本被误算进 live、门禁进度虚高，已由 `extract_samples` 按 `p.source` / `f.user_id` 分桶修正。
+- `scripts/backfill_historical_samples.py` 新增 `--roi-only` 幂等补录台账（`amount_usd` 留 NULL，
+  数据集没有金额就不编造）。该脚本原先的 `INSERT OR REPLACE INTO feedback` 因 `feedback` 表
+  无唯一键而等价于纯插入，重跑一次会翻倍灌入；现已改为 `INSERT ... WHERE NOT EXISTS`，
+  启动时顺带清理已重复的历史行（只动 `historical_backfill`，不碰真实用户反馈）。
+
 ### 4.4 历史回测
 
 - 数据：`backend/data/backtest/airdrops_2024_2025.json`，目标 ~50 个已知项目。每条：

@@ -181,7 +181,7 @@
 | POST | `/api/v1/feedback/batch` | v1 | V2（已实现） | 批量提交反馈（单次上限 50 条） |
 | GET | `/api/v1/feedback/{project_id}` | v1 | V2（已实现） | 查询某项目的反馈汇总（**按项目**，无不带参数的列表端点） |
 | GET | `/api/v1/feedback/pending-review` | v1 | V2（已实现） | 待复盘队列 |
-| GET | `/api/v1/calibration/status` | v1 | V2（已实现） | 校准状态（样本量 / 是否达到 200 门槛） |
+| GET | `/api/v1/calibration/status` | v1 | V2（已实现） | 校准状态（真实门禁 live 样本 / FARM 样本，详见 §10.3） |
 | GET | `/api/v1/action-queue` | v1 | V2（已实现） | 今日行动队列 |
 | GET / POST | `/api/v1/interactions` | v1 | V2（已实现） | 参与记录列表 / 新建 |
 | GET | `/api/v1/interactions/summary` | v1 | V2（已实现） | 参与记录聚合（成本/收益/命中率） |
@@ -813,11 +813,12 @@ curl -X POST http://localhost:8002/api/v1/run \
 **错误**：`422` 非法 signal/outcome 枚举或超长 note（FastAPI 校验，
 **不是 400** —— 原文写错）；`404` 项目不存在。
 
-> 反馈是权重校准的唯一输入。校准门槛为 **200 条样本**
-> （`app/services/feedback.py` 的 `min_samples`），未达门槛时
-> `/calibration/status` 会明确回「样本不足」而不是给一个不可信的调整建议。
-> 实测当前 `feedback` 表 **0 条** —— 复盘页显示的进度条是真实的 0/200，
-> 不是加载失败。
+> 权重校准有两类输入：`feedback` 提供主观四档与结果监督，`roi_outcomes` 提供真实产出
+> （`airdrop_received` → 正样本、`airdrop_missed` → 负样本）。校准门禁为
+> **≥200 条 live 样本且其中 ≥30 条 FARM 相关**，`backtest`（历史回测）样本不计入；
+> 未达门槛时 `/calibration/status` 会明确回「样本不足」而不是给一个不可信的调整建议。
+> 实测（2026-10-30）：live 3 / FARM 2、backtest 50 —— 复盘页进度条是真实值，不是加载失败。
+
 ---
 
 ## 10. GET /api/v1/feedback/{project_id}
@@ -862,6 +863,31 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 批量提交反馈，单次上限 **50** 条（前端 `BATCH_LIMIT` 由
 `test_frontend_enum_parity.py` 钉住与后端一致）。
+
+同一批结果同时写入收益台账 `roi_outcomes`（`source='manual'`）：
+`outcome=airdropped` → `airdrop_received`，`not_airdropped` → `airdrop_missed`；
+`dumped` 只是项目失败，不代表空投产出，**不写台账**。同一 `(user, project)`
+只保留一条人工空投产出行（重复标记同一结果不新增，改了结果则更新该行）。
+响应里的 `roi_outcomes_written` 是本批实际写入/更新的台账行数。
+
+### 10.3 GET /api/v1/calibration/status
+
+权重校准状态。**反馈条数不等于有效样本数**：`total_feedback` 是 feedback 表行数，
+`gate` 才走校准引擎的真实提取口径（同项目去重、要求项目 `sub_scores` 八维齐全）。
+
+| 字段 | 说明 |
+| --- | --- |
+| `gate.live_samples` | 计入 live 桶的有效样本（权威门禁计数） |
+| `gate.farm_samples` | 其中真实标签为 FARM 的样本（门槛 30） |
+| `gate.min_live_samples` / `gate.min_farm_samples` | 200 / 30，阈值由 WEIGHT_CALIBRATION §3.3 规定，接口不修改 |
+| `gate.samples_needed` / `gate.farm_samples_needed` | 还差多少条才达门禁 |
+| `gate.total_by_source` | `live` / `backtest` 分桶计数；回测样本**不计入**门禁 |
+| `roi_ledger.event_counts` | 收益台账各事件条数（`airdrop_received` / `airdrop_missed` 等） |
+| `roi_ledger.manual_signal_samples` | 人工录入（live）的到账/未领样本数 |
+| `roi_ledger.signal_samples_by_source` | 按 `live` / `backtest` 分桶的正负样本数；历史回溯补录记为 backtest |
+
+旧字段 `calibration_ready` / `samples_needed` 仍按反馈条数计算，保持历史接口契约；
+判断「能否启动校准」应以 `gate.passed` 为准。
 
 ---
 

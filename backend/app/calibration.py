@@ -151,11 +151,14 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
     - outcome 非空 → 用 outcome 映射
 
     同一 user+project 7 日内重复只保留最新一条（§3.2）。
+
+    ``historical_backfill`` 的反馈（回溯脚本灌入的历史真值）归入 backtest 桶，
+    不计入门禁 —— 门槛要的是「当前分布下的真实结果」，不是历史数据凑数。
     """
     rows = conn.execute(
         """
-        SELECT f.project_id, f.signal, f.outcome, f.note,
-               p.sub_scores, p.label, p.score
+        SELECT f.project_id, f.signal, f.outcome, f.note, f.user_id,
+               p.sub_scores, p.label, p.score, p.source
         FROM feedback f
         JOIN projects p ON f.project_id = p.id
         WHERE (f.signal = 'wrong_label' AND f.note IS NOT NULL)
@@ -205,6 +208,10 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
         if true_label is None:
             continue
 
+        # 历史回溯标注是回测样本，不是真实使用留痕（ACTION_LOOP_DESIGN §4.3）。
+        # 此前只看 signal/outcome，把 historical_backfill 的 50 条全部算进 live 桶，
+        # 等于用历史数据冒充当前分布、白送门禁进度。
+        is_backfill = (row["source"] or "") == "historical_backfill" or (row["user_id"] or "") == "historical_backfill"
         samples.append(
             CalibrationSample(
                 project_id=project_id,
@@ -213,7 +220,7 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
                 current_label=row["label"] or LABEL_IGNORE,
                 signal=signal,
                 outcome=outcome,
-                source=SOURCE_LIVE,
+                source=SOURCE_BACKTEST if is_backfill else SOURCE_LIVE,
             ),
         )
 

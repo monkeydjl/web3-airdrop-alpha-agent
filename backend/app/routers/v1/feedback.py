@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import ROLE_ADMIN, get_current_user
+from app.calibration import MIN_FARM_SAMPLES, MIN_VALID_SAMPLES, check_gate, extract_samples
 from app.config import settings
 from app.db import connection_scope, dict_from_row, insert_returning_id
 from app.metrics import record_feedback
@@ -85,6 +86,66 @@ class FeedbackBatchRequest(BaseModel):
 
     items: list[FeedbackBatchItem] = Field(..., min_length=1, max_length=50, description="结果标记列表")
     user_id: str | None = Field(None, max_length=64, description="用户匿名标识（可选）")
+
+
+# feedback.outcome → roi_outcomes.event（ACTION_LOOP_DESIGN §4.3）。
+# 只有「确认到账 / 确认没领到」构成校准正负样本；dumped 只说明项目失败，
+# 不代表空投产出归零，因此不写台账 —— 它的监督信号仍由 feedback.outcome 承担。
+OUTCOME_TO_ROI_EVENT = {
+    "airdropped": "airdrop_received",
+    "not_airdropped": "airdrop_missed",
+}
+
+
+def _record_outcome_in_ledger(conn: Any, project_id: str, uid: str, outcome: str | None) -> str | None:
+    """把一次结果标记同步记入收益台账（``source='manual'``）。
+
+    返回实际写入/更新的 ``roi_outcomes.event``；无对应台账事件时返回 ``None``。
+
+    为什么必须写：收益台账是校准的「真实产出」来源，而复盘页的一键回填此前
+    只写 ``feedback``，台账永远是空的 —— 校准只能学到主观四档，学不到有没有
+    真领到钱。两者的 ``source`` 分桶不同：这里写 manual → live 桶。
+
+    幂等：同一 (user, project) 只保留一条人工空投产出行。重复标记同一结果不新增；
+    结果改了则更新已有行的事件，**保留**用户后来补录的金额/代币/凭证。
+    """
+    event = OUTCOME_TO_ROI_EVENT.get(outcome or "")
+    if event is None:
+        return None
+
+    rows = conn.execute(
+        """
+        SELECT id, event FROM roi_outcomes
+        WHERE user_id = ? AND project_id = ? AND source = 'manual'
+          AND event IN ('airdrop_received', 'airdrop_missed')
+        ORDER BY id DESC
+        """,
+        (uid, project_id),
+    ).fetchall()
+
+    if not rows:
+        # WHERE EXISTS 挡住不存在的项目：单条反馈端点不校验 project_id 存在性，
+        # 台账行 JOIN 不到 projects 会变成永远提取不出样本的孤儿记录。
+        cursor = conn.execute(
+            """
+            INSERT INTO roi_outcomes
+                (user_id, project_id, event, amount_usd, tokens, tx_hash, source)
+            SELECT ?, ?, ?, NULL, NULL, NULL, 'manual'
+            WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
+            """,
+            (uid, project_id, event, project_id),
+        )
+        return event if cursor.rowcount else None
+
+    latest = rows[0]
+    if str(latest["event"]) == event:
+        return None
+
+    conn.execute(
+        "UPDATE roi_outcomes SET event = ? WHERE id = ?",
+        (event, latest["id"]),
+    )
+    return event
 
 
 class EventRequest(BaseModel):
@@ -311,6 +372,10 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                         (meta_json, reason_json, datetime.now(UTC), request.project_id),
                     )
 
+            # 结果标记同步进收益台账（source='manual'）—— 反馈与台账写在同一事务里，
+            # 避免出现「反馈写成功、台账没写」的半截状态。
+            _record_outcome_in_ledger(conn, request.project_id, uid, request.outcome)
+
             conn.commit()
 
         record_feedback(signal=request.signal)
@@ -354,11 +419,17 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
     description=(
         "一次提交多个项目的实际结果，用于快速积累权重校准样本。\n\n"
         "校准门禁需要 200 条样本，逐条提交成本过高会让校准永久无法启动。"
-        "\n\nReference: WEIGHT_CALIBRATION.md §3.3"
+        "\n\n结果同时写入收益台账（`source='manual'`）：到账记 `airdrop_received`、"
+        "确认未领记 `airdrop_missed`，两者是校准的正负样本来源。"
+        "\n\nReference: WEIGHT_CALIBRATION.md §3.3 / ACTION_LOOP_DESIGN.md §4.3"
     ),
 )
 def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> FeedbackResponse:
-    """批量写入结果标记。整批在同一事务内提交，避免部分写入。"""
+    """批量写入结果标记。整批在同一事务内提交，避免部分写入。
+
+    同一批结果同时落 ``roi_outcomes``（manual 来源），复盘页「一键回填」因此
+    一次就能喂两个下游：feedback 供门禁、台账供真实产出样本。
+    """
     if not settings.enable_feedback_system:
         raise HTTPException(
             status_code=400,
@@ -374,6 +445,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
         uid = request.user_id or DEFAULT_USER
 
     project_ids = [item.project_id for item in request.items]
+    ledger_written = 0
 
     try:
         with connection_scope() as conn:
@@ -404,6 +476,12 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
                 """,
                 [(item.project_id, uid, item.signal, item.note, item.outcome) for item in request.items],
             )
+
+            # 同一批结果同时落收益台账（source='manual'）：一次回填喂两处，
+            # 台账有了真实产出，校准的 live 桶才可能真正增长。
+            for item in request.items:
+                if _record_outcome_in_ledger(conn, item.project_id, uid, item.outcome) is not None:
+                    ledger_written += 1
 
             # 同步更新项目状态：复盘确认已空投的项目自动沉淀为 ended + already_launched
             for item in request.items:
@@ -454,6 +532,8 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
             data={
                 "saved": len(request.items),
                 "project_ids": project_ids,
+                # 本批实际写/更新到收益台账的行数（重复标记同一结果不计）
+                "roi_outcomes_written": ledger_written,
             }
         )
     except HTTPException:
@@ -779,12 +859,14 @@ def list_events(
     description=(
         "返回权重校准的当前状态：权重版本、反馈样本数与门禁阈值、"
         "信号分布、以及最近的 weight_changelog 记录。"
+        "\n\n`gate` 按校准引擎的真实口径给出计入 live 桶的有效样本"
+        "（同项目去重、缺子分的反馈不计入），与 `total_feedback` 不是同一个数。"
         "\n\nReference: WEIGHT_CALIBRATION.md §3.3 / §7"
     ),
 )
 def get_calibration_status() -> FeedbackResponse:
     """获取权重校准状态。"""
-    min_samples = 200  # WEIGHT_CALIBRATION.md §3.3
+    min_samples = MIN_VALID_SAMPLES  # WEIGHT_CALIBRATION.md §3.3
 
     try:
         with connection_scope() as conn:
@@ -807,6 +889,27 @@ def get_calibration_status() -> FeedbackResponse:
                 "SELECT outcome, COUNT(*) as cnt FROM feedback WHERE outcome IS NOT NULL GROUP BY outcome"
             ).fetchall()
             outcome_counts = {row["outcome"]: row["cnt"] for row in outcome_rows}
+
+            # 真实门禁口径：走校准引擎自己的样本提取，同项目去重、缺子分的反馈不计入。
+            # 反馈条数 ≥200 不等于门禁通过 —— 面板若只显示前者，会让人高估进度。
+            gate = check_gate(extract_samples(conn))
+
+            # 收益台账：真实产出的正负样本来源（airdrop_received / airdrop_missed）。
+            # source='manual' → live，'backtest' → 回测桶（§4.3 分开统计，不混算）。
+            roi_rows = conn.execute("SELECT event, COUNT(*) as cnt FROM roi_outcomes GROUP BY event").fetchall()
+            roi_event_counts = {row["event"]: row["cnt"] for row in roi_rows}
+            roi_signal_rows = conn.execute(
+                """
+                SELECT source, COUNT(*) as cnt FROM roi_outcomes
+                WHERE event IN ('airdrop_received', 'airdrop_missed')
+                GROUP BY source
+                """
+            ).fetchall()
+            roi_signal_by_source: dict[str, int] = {"live": 0, "backtest": 0}
+            for row in roi_signal_rows:
+                bucket = "backtest" if row["source"] == "backtest" else "live"
+                roi_signal_by_source[bucket] += int(row["cnt"])
+            roi_manual_samples = roi_signal_by_source["live"]
 
             # 最近 weight_changelog 记录
             changelog_rows = conn.execute(
@@ -842,6 +945,7 @@ def get_calibration_status() -> FeedbackResponse:
         # 当前权重版本
         from app.config import settings
 
+        # 兼容老字段：仍按反馈条数计算（历史接口契约），但 gate.passed 才是权威结论
         ready = total_feedback >= min_samples
 
         return FeedbackResponse(
@@ -854,6 +958,24 @@ def get_calibration_status() -> FeedbackResponse:
                 "samples_needed": max(0, min_samples - total_feedback),
                 "signal_counts": signal_counts,
                 "outcome_counts": outcome_counts,
+                "gate": {
+                    "passed": gate.passed,
+                    "reason": gate.reason,
+                    "live_samples": gate.total_samples,
+                    "strong_samples": gate.strong_samples,
+                    "farm_samples": gate.farm_samples,
+                    "min_live_samples": MIN_VALID_SAMPLES,
+                    "min_farm_samples": MIN_FARM_SAMPLES,
+                    "samples_needed": max(0, MIN_VALID_SAMPLES - gate.total_samples),
+                    "farm_samples_needed": max(0, MIN_FARM_SAMPLES - gate.farm_samples),
+                    "total_by_source": gate.total_by_source,
+                    "farm_by_source": gate.farm_by_source,
+                },
+                "roi_ledger": {
+                    "event_counts": roi_event_counts,
+                    "manual_signal_samples": roi_manual_samples,
+                    "signal_samples_by_source": roi_signal_by_source,
+                },
                 "changelog": changelog,
             }
         )

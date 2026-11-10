@@ -31,6 +31,20 @@ interface PendingData {
   already_marked: number;
 }
 
+interface CalibrationGate {
+  passed: boolean;
+  reason: string;
+  live_samples: number;
+  strong_samples: number;
+  farm_samples: number;
+  min_live_samples: number;
+  min_farm_samples: number;
+  samples_needed: number;
+  farm_samples_needed: number;
+  total_by_source?: Record<string, number>;
+  farm_by_source?: Record<string, number>;
+}
+
 interface CalibrationStatus {
   weight_version?: string;
   min_samples_gate?: number;
@@ -38,6 +52,13 @@ interface CalibrationStatus {
   strong_samples?: number;
   calibration_ready?: boolean;
   samples_needed?: number;
+  /** 真实门禁口径（与 total_feedback 不同：同项目去重、缺子分的反馈不计入） */
+  gate?: CalibrationGate;
+  roi_ledger?: {
+    event_counts?: Record<string, number>;
+    manual_signal_samples?: number;
+    signal_samples_by_source?: Record<string, number>;
+  };
 }
 
 /** 后端 outcome 枚举（WEIGHT_CALIBRATION §3.1） */
@@ -82,10 +103,20 @@ export default function ReviewPage() {
   const items = data?.pending?.items ?? [];
   const cal = data?.calibration ?? null;
 
-  const gate = cal?.min_samples_gate ?? 200;
-  const current = cal?.total_feedback ?? 0;
-  const needed = cal?.samples_needed ?? Math.max(0, gate - current);
-  const pct = gate > 0 ? Math.min(100, Math.round((current / gate) * 100)) : 0;
+  const gateThreshold = cal?.min_samples_gate ?? 200;
+  const feedbackTotal = cal?.total_feedback ?? 0;
+  // 真实门禁口径：校准引擎按项目去重、缺子分的反馈不计入，live 样本才是权威进度
+  const liveSamples = cal?.gate?.live_samples ?? feedbackTotal;
+  const minLive = cal?.gate?.min_live_samples ?? gateThreshold;
+  const needed = Math.max(0, minLive - liveSamples);
+  const pct = minLive > 0 ? Math.min(100, Math.round((liveSamples / minLive) * 100)) : 0;
+
+  const farmSamples = cal?.gate?.farm_samples ?? 0;
+  const minFarm = cal?.gate?.min_farm_samples ?? 30;
+  const farmPct = minFarm > 0 ? Math.min(100, Math.round((farmSamples / minFarm) * 100)) : 0;
+  const ready = cal?.gate?.passed ?? Boolean(cal?.calibration_ready);
+  const roiLive = cal?.roi_ledger?.signal_samples_by_source?.live ?? cal?.roi_ledger?.manual_signal_samples ?? 0;
+  const roiBacktest = cal?.roi_ledger?.signal_samples_by_source?.backtest ?? 0;
 
   const pickedCount = Object.keys(picked).length;
 
@@ -147,27 +178,68 @@ export default function ReviewPage() {
       </TopBar>
 
       <div className="app-content space-y-4 animate-fade-in">
-        {/* 校准进度 */}
+        {/* 校准进度：按校准引擎的真实门禁口径展示，而不是反馈总条数 */}
         <div className="dash-card p-5">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">权重校准进度</h2>
             <span className="text-xs text-ink-muted">
-              权重版本 {cal?.weight_version ?? '—'} · 门禁 {gate} 条
+              权重版本 {cal?.weight_version ?? '—'} · 门禁 {minLive} 条 / FARM {minFarm} 条
             </span>
           </div>
-          <div className="cal-bar" role="progressbar" aria-valuenow={current} aria-valuemin={0} aria-valuemax={gate} aria-label="权重校准样本进度">
+
+          <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-ink-muted">
+            <span>有效样本（live）</span>
+            <span className="font-mono text-ink">
+              {liveSamples} / {minLive}
+            </span>
+          </div>
+          <div
+            className="cal-bar mt-1"
+            role="progressbar"
+            aria-valuenow={liveSamples}
+            aria-valuemin={0}
+            aria-valuemax={minLive}
+            aria-label="权重校准有效样本进度"
+          >
             <div className="cal-bar-fill" style={{ width: `${pct}%` }} />
           </div>
-          <p className="mt-2 text-xs text-ink-muted">
-            已有 <strong className="text-ink">{current}</strong> 条样本
+
+          <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 text-xs text-ink-muted">
+            <span>FARM 相关样本</span>
+            <span className="font-mono text-ink">
+              {farmSamples} / {minFarm}
+            </span>
+          </div>
+          <div
+            className="cal-bar mt-1"
+            role="progressbar"
+            aria-valuenow={farmSamples}
+            aria-valuemin={0}
+            aria-valuemax={minFarm}
+            aria-label="FARM 相关样本进度"
+          >
+            <div className="cal-bar-fill" style={{ width: `${farmPct}%` }} />
+          </div>
+
+          <p className="mt-3 text-xs text-ink-muted">
+            反馈共 <strong className="text-ink">{feedbackTotal}</strong> 条
             {cal?.strong_samples != null ? `（强监督 ${cal.strong_samples} 条）` : ''}
-            {cal?.calibration_ready
+            {ready
               ? ' · 已达门禁，可以运行权重校准'
-              : ` · 还需 ${needed} 条才能启动校准`}
+              : ` · 还差 ${needed} 条有效样本${farmSamples < minFarm ? `、${minFarm - farmSamples} 条 FARM 样本` : ''}`}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
-            校准需要真实结果作监督信号。标得越多，评分决策引擎的权重越贴近你的实际收益。
-            门禁阈值由 WEIGHT_CALIBRATION 规定，本页不修改它。
+            有效样本由校准引擎按项目去重、并要求项目有完整子分 ——
+            因此它通常少于反馈总条数。FARM 门槛用来避免全是「没领到」的样本把权重带偏。
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
+            收益台账产出样本：人工 {roiLive} 条 · 历史回测 {roiBacktest} 条（到账计正样本、确认未领计负样本）。
+            在上方勾选「空投了 / 没空投」提交时，会同时写一笔台账，金额留空待补。
+            {roiLive === 0 && roiBacktest === 0
+              ? '还没有台账记录 —— 标几条结果就会开始累积；金额可在项目页的收益台账补录。'
+              : roiLive === 0
+                ? '真实操作留痕仍为 0 —— 历史样本能验证回测，但不能替代当前分布下的真实结果。'
+                : ''}
           </p>
         </div>
 

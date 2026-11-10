@@ -62,6 +62,18 @@ liquidity mining 这类通用词也算成积分计划，而资格门与已发币
 最近同步与 verdict（healthy / noisy / stale / idle），运维台按徽标展示并给出处置建议，
 取代过去只能看「开 / 关」的盲区。实现见 `app/services/source_scorecard.py`。
 
+### Changed — 校准门禁改按样本来源分桶，一键回填同时写收益台账（2026-10-30）
+
+校准进度此前用「反馈总条数」计算，把 50 条 `historical_backfill` 历史样本当成真实使用
+留痕，门禁显示 53/200 的虚高进度。现在 `extract_samples` 按 `p.source` / `f.user_id` 分桶，
+`check_gate` 只数 live；`GET /api/v1/feedback/calibration/status` 新增 `gate`
+（live / FARM 样本、还差多少、按来源分布）与 `roi_ledger`，旧字段保留兼容。`/review`
+改为双进度条 + 台账来源说明，真实进度回落到 live 3 / FARM 2。
+
+同时把结果标记接进台账：`POST /api/v1/feedback` 与 `/feedback/batch` 在同一事务内写
+`roi_outcomes(source='manual')`（`airdropped → airdrop_received`、`not_airdropped →
+airdrop_missed`，`dumped` 不写），同一 `(user, project)` 幂等，项目不存在时不写孤儿行。
+
 
 ### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
 

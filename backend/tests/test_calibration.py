@@ -119,6 +119,7 @@ def test_extract_samples_outcome(conn):
     _insert_feedback(conn, "proj-2", signal="correct_outcome", outcome="airdropped")
 
     samples = extract_samples(conn)
+
     assert len(samples) == 1
     assert samples[0].true_label == "FARM"
     assert samples[0].outcome == "airdropped"
@@ -154,6 +155,22 @@ def test_extract_samples_skips_no_supervision(conn):
 
     samples = extract_samples(conn)
     assert len(samples) == 0
+
+
+def test_extract_samples_historical_backfill_goes_to_backtest_bucket(conn):
+    """historical_backfill 反馈归入 backtest 桶，不得冒充 live 样本凑门禁（§4.3）。"""
+    subscores = _make_subscores()
+    _insert_project(conn, "hist-1", subscores, label="FARM")
+    _insert_feedback(conn, "hist-1", signal="useful", outcome="airdropped", user_id="historical_backfill")
+
+    samples = extract_samples(conn)
+    assert len(samples) == 1
+    assert samples[0].source == "backtest"
+
+    gate = check_gate(samples)
+    assert gate.passed is False
+    assert gate.total_samples == 0
+    assert gate.total_by_source == {"live": 0, "backtest": 1}
 
 
 # ── Gate check tests ───────────────────────────
