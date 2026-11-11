@@ -26,9 +26,11 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 import sys
 import zlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -116,36 +118,460 @@ def detect_auto_column(conn: sqlite3.Connection, table: str, columns: list[dict[
     return str(col["name"])
 
 
-def get_sqlite_unique_indexes(conn: sqlite3.Connection, table: str) -> list[list[str]]:
-    """返回 SQLite 侧 UNIQUE 索引/约束的列组合（含单列与复合）。
+class IndexSqlError(Exception):
+    """SQLite 索引 DDL 中存在无法安全等价翻译到 PG 的构造。"""
 
-    `PRAGMA index_list` 的 origin：'pk' 是主键（已由 PRIMARY KEY 覆盖）、
-    'u' 是 UNIQUE 约束、'c' 是 CREATE INDEX。部分索引与表达式索引无法映射
-    成普通 PG 唯一索引，直接跳过。
+
+@dataclass
+class UniqueIndexSpec:
+    source_name: str
+    pg_name: str
+    pg_terms: list[str]
+    pg_where: str | None
+    kind: str  # columns | partial | expression | skipped
+    columns: list[str] | None = None
+    skip_reason: str | None = None
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\.\d+")
+_ALLOWED_FUNCS = {
+    "lower",
+    "upper",
+    "trim",
+    "ltrim",
+    "rtrim",
+    "coalesce",
+    "ifnull",
+    "nullif",
+    "length",
+    "replace",
+}
+_FUNC_RENAMES = {"ifnull": "coalesce"}
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _crc(text: str) -> str:
+    return f"{zlib.crc32(text.encode()):08x}"
+
+
+def _tokenize(sql: str) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch == "'":
+            j = i + 1
+            buf = ["'"]
+            while j < len(sql):
+                if sql[j] == "'":
+                    if j + 1 < len(sql) and sql[j + 1] == "'":
+                        buf.append("''")
+                        j += 2
+                        continue
+                    buf.append("'")
+                    j += 1
+                    break
+                buf.append(sql[j])
+                j += 1
+            else:
+                raise IndexSqlError("unterminated string literal")
+            tokens.append(("string", "".join(buf)))
+            i = j
+            continue
+        if ch in '"`[':
+            close = "]" if ch == "[" else ch
+            j = i + 1
+            buf = []
+            while j < len(sql):
+                if sql[j] == close:
+                    if close == '"' and j + 1 < len(sql) and sql[j + 1] == '"':
+                        buf.append('"')
+                        j += 2
+                        continue
+                    j += 1
+                    break
+                buf.append(sql[j])
+                j += 1
+            else:
+                raise IndexSqlError("unterminated quoted identifier")
+            tokens.append(("ident", "".join(buf)))
+            i = j
+            continue
+        match = _NUMBER_RE.match(sql, i)
+        if match:
+            tokens.append(("number", match.group(0)))
+            i = match.end()
+            continue
+        match = _IDENT_RE.match(sql, i)
+        if match:
+            tokens.append(("ident", match.group(0)))
+            i = match.end()
+            continue
+        two = sql[i : i + 2]
+        if two in ("<=", ">=", "<>", "!=", "||"):
+            tokens.append(("op", two))
+            i += 2
+            continue
+        if ch in "=<>+-*/%(),.":
+            tokens.append((ch if ch in "(),." else "op", ch))
+            i += 1
+            continue
+        raise IndexSqlError(f"unsupported character {ch!r}")
+    return tokens
+
+
+class _IndexSqlParser:
+    """把 SQLite 索引项/WHERE 条件转换成 PG 等价片段。
+
+    只接受可证明等价的构造：列引用、字面量、括号、拼接、算术、白名单函数，
+    以及 AND/OR/NOT/IS [NOT] NULL/比较/IN 列表。LIKE、GLOB、BETWEEN、COLLATE、
+    子查询和 SQLite 特有函数一律抛 IndexSqlError，由调用方记录为跳过。
     """
-    result: list[list[str]] = []
-    for row in conn.execute(f"PRAGMA index_list([{table}])").fetchall():
-        index_name = str(row[1])
-        is_unique = bool(row[2])
-        origin = str(row[3]) if len(row) > 3 else "c"
-        partial = bool(row[4]) if len(row) > 4 else False
-        if not is_unique or origin == "pk" or partial:
-            continue
-        info = conn.execute(f"PRAGMA index_info([{index_name}])").fetchall()
-        cols = [r[2] for r in sorted(info, key=lambda r: r[0])]
-        if not cols or any(c is None for c in cols):
-            continue
-        result.append([str(c) for c in cols])
-    return result
+
+    def __init__(self, tokens: list[tuple[str, str]], columns: dict[str, str]) -> None:
+        self._tokens = tokens
+        self._pos = 0
+        self._columns = columns
+
+    def _peek(self) -> tuple[str, str]:
+        return self._tokens[self._pos] if self._pos < len(self._tokens) else ("eof", "")
+
+    def _take(self) -> tuple[str, str]:
+        tok = self._peek()
+        if tok[0] == "eof":
+            raise IndexSqlError("unexpected end of index definition")
+        self._pos += 1
+        return tok
+
+    def _accept(self, kind: str, value: str | None = None) -> bool:
+        tok = self._peek()
+        if tok[0] == kind and (value is None or tok[1].lower() == value):
+            self._pos += 1
+            return True
+        return False
+
+    def _expect(self, kind: str, value: str | None = None) -> None:
+        if not self._accept(kind, value):
+            raise IndexSqlError(f"expected {value or kind}, got {self._peek()[1]!r}")
+
+    def _is_keyword(self, word: str) -> bool:
+        tok = self._peek()
+        return tok[0] == "ident" and tok[1].lower() == word
+
+    def statement(self) -> str:
+        result = self._concat()
+        if self._peek()[0] != "eof":
+            raise IndexSqlError(f"unexpected token {self._peek()[1]!r}")
+        return result
+
+    def condition(self) -> str:
+        result = self._or()
+        if self._peek()[0] != "eof":
+            raise IndexSqlError(f"unsupported predicate near {self._peek()[1]!r}")
+        return result
+
+    def _concat(self) -> str:
+        left = self._additive()
+        while self._accept("op", "||"):
+            left = f"({left} || {self._additive()})"
+        return left
+
+    def _additive(self) -> str:
+        left = self._term()
+        while True:
+            tok = self._peek()
+            if tok[0] != "op" or tok[1] not in ("+", "-"):
+                return left
+            self._take()
+            left = f"({left} {tok[1]} {self._term()})"
+
+    def _term(self) -> str:
+        left = self._unary()
+        while True:
+            tok = self._peek()
+            if tok[0] != "op" or tok[1] not in ("*", "/", "%"):
+                return left
+            self._take()
+            left = f"({left} {tok[1]} {self._unary()})"
+
+    def _unary(self) -> str:
+        if self._accept("op", "-"):
+            return f"(-{self._unary()})"
+        return self._primary()
+
+    def _primary(self) -> str:
+        tok = self._peek()
+        if tok[0] == "number":
+            self._take()
+            return tok[1]
+        if tok[0] == "string":
+            self._take()
+            return tok[1]
+        if tok[0] == "ident":
+            self._take()
+            if self._peek()[0] == "(":
+                return self._function(tok[1])
+            if tok[1].lower() == "null":
+                return "NULL"
+            canonical = self._columns.get(tok[1].lower())
+            if canonical is None:
+                raise IndexSqlError(f"unknown or unsupported identifier {tok[1]}")
+            return _quote_ident(canonical)
+        if tok[0] == "(":
+            self._take()
+            inner = self._concat()
+            self._expect(")")
+            return f"({inner})"
+        raise IndexSqlError(f"unsupported token {tok[1]!r}")
+
+    def _function(self, name: str) -> str:
+        fn = name.lower()
+        if fn not in _ALLOWED_FUNCS:
+            raise IndexSqlError(f"unsupported function {name}()")
+        self._expect("(")
+        args: list[str] = []
+        if self._peek()[0] != ")":
+            args.append(self._concat())
+            while self._accept(","):
+                args.append(self._concat())
+        self._expect(")")
+        if not args:
+            raise IndexSqlError(f"{name}() has no arguments")
+        return f"{_FUNC_RENAMES.get(fn, fn)}({', '.join(args)})"
+
+    def _or(self) -> str:
+        left = self._and()
+        while self._is_keyword("or"):
+            self._take()
+            left = f"({left} OR {self._and()})"
+        return left
+
+    def _and(self) -> str:
+        left = self._not()
+        while self._is_keyword("and"):
+            self._take()
+            left = f"({left} AND {self._not()})"
+        return left
+
+    def _not(self) -> str:
+        if self._is_keyword("not"):
+            self._take()
+            return f"(NOT {self._not()})"
+        return self._predicate()
+
+    def _predicate(self) -> str:
+        if self._peek()[0] == "(":
+            save = self._pos
+            try:
+                self._take()
+                inner = self._or()
+                self._expect(")")
+                return f"({inner})"
+            except IndexSqlError:
+                self._pos = save
+        left = self._concat()
+        if self._is_keyword("is"):
+            self._take()
+            negated = self._is_keyword("not")
+            if negated:
+                self._take()
+            if self._is_keyword("null"):
+                self._take()
+                return f"({left} IS {'NOT ' if negated else ''}NULL)"
+            right = self._concat()
+            op = "IS DISTINCT FROM" if negated else "IS NOT DISTINCT FROM"
+            return f"({left} {op} {right})"
+        tok = self._peek()
+        if tok[0] == "op" and tok[1] in ("=", "!=", "<>", "<", "<=", ">", ">="):
+            self._take()
+            return f"({left} {tok[1]} {self._concat()})"
+        if self._is_keyword("not") or self._is_keyword("in"):
+            negated = self._is_keyword("not")
+            if negated:
+                self._take()
+            if not self._is_keyword("in"):
+                raise IndexSqlError("NOT is only supported before IN in index predicates")
+            self._take()
+            self._expect("(")
+            items: list[str] = []
+            if self._peek()[0] != ")":
+                items.append(self._literal())
+                while self._accept(","):
+                    items.append(self._literal())
+            self._expect(")")
+            if not items:
+                raise IndexSqlError("empty IN list")
+            return f"({left} {'NOT IN' if negated else 'IN'} ({', '.join(items)}))"
+        for word in ("like", "glob", "between", "collate"):
+            if self._is_keyword(word):
+                raise IndexSqlError(f"{word.upper()} predicate is not translated")
+        raise IndexSqlError("bare expressions are not valid index predicates")
+
+    def _literal(self) -> str:
+        negated = self._accept("op", "-")
+        tok = self._take()
+        if tok[0] == "number":
+            return ("-" if negated else "") + tok[1]
+        if tok[0] == "string" and not negated:
+            return tok[1]
+        if tok[0] == "ident" and tok[1].lower() == "null" and not negated:
+            return "NULL"
+        raise IndexSqlError("IN list supports literals only")
 
 
-def pg_index_name(table: str, columns: list[str]) -> str:
-    """可预测的唯一索引名：uq_<表>_<列...>，超过 PG 63 字节上限时截断加 CRC。"""
-    base = "uq_" + "_".join([table, *columns])
+def _split_index_ddl(ddl: str) -> tuple[list[list[tuple[str, str]]], list[tuple[str, str]] | None]:
+    """拆出 CREATE INDEX 的索引项列表与可选 WHERE 子句 token。"""
+    tokens = _tokenize(ddl)
+    pos = 0
+
+    def take() -> tuple[str, str]:
+        nonlocal pos
+        if pos >= len(tokens):
+            raise IndexSqlError("unexpected end of CREATE INDEX statement")
+        tok = tokens[pos]
+        pos += 1
+        return tok
+
+    def word(expected: str) -> None:
+        tok = take()
+        if tok[0] != "ident" or tok[1].lower() != expected:
+            raise IndexSqlError(f"expected {expected.upper()} in CREATE INDEX statement")
+
+    def optional_word(expected: str) -> bool:
+        nonlocal pos
+        if pos < len(tokens) and tokens[pos][0] == "ident" and tokens[pos][1].lower() == expected:
+            pos += 1
+            return True
+        return False
+
+    word("create")
+    optional_word("unique")
+    word("index")
+    if optional_word("if"):
+        word("not")
+        word("exists")
+    take()  # index name
+    word("on")
+    take()  # table name
+    if take()[0] != "(":
+        raise IndexSqlError("missing column list in CREATE INDEX statement")
+    groups: list[list[tuple[str, str]]] = []
+    group: list[tuple[str, str]] = []
+    depth = 1
+    while True:
+        tok = take()
+        if tok[0] == "(":
+            depth += 1
+        elif tok[0] == ")":
+            depth -= 1
+            if depth == 0:
+                groups.append(group)
+                break
+        elif tok[0] == "," and depth == 1:
+            groups.append(group)
+            group = []
+            continue
+        group.append(tok)
+    where_tokens = tokens[pos:] or None
+    if where_tokens:
+        if where_tokens[0][0] != "ident" or where_tokens[0][1].lower() != "where":
+            raise IndexSqlError("unsupported clause after index columns")
+        where_tokens = where_tokens[1:] or None
+    return groups, where_tokens
+
+
+def _index_name(table: str, parts: list[str], where_sql: str | None) -> str:
+    """可预测的唯一索引名：uq_<表>_<列/expr_crc...>[_p<crc>]。"""
+    base = "uq_" + "_".join([table, *parts])
+    if where_sql:
+        base += "_p" + _crc(where_sql)
     if len(base.encode()) <= 63:
         return base
-    digest = f"{zlib.crc32(base.encode()):08x}"
-    return f"{base.encode()[:54].decode(errors='ignore')}_{digest}"
+    return f"{base.encode()[:54].decode(errors='ignore')}_{_crc(base)}"
+
+
+def collect_unique_indexes(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: list[dict[str, Any]],
+) -> list[UniqueIndexSpec]:
+    """收集 SQLite 的唯一索引，并翻译部分索引谓词与表达式索引。"""
+    colmap = {str(c["name"]).lower(): str(c["name"]) for c in columns}
+    ddl_by_name = {
+        str(r[0]): str(r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ?", (table,)
+        ).fetchall()
+        if r[1]
+    }
+    specs: list[UniqueIndexSpec] = []
+    for row in conn.execute(f"PRAGMA index_list([{table}])").fetchall():
+        source_name = str(row[1])
+        is_unique = bool(row[2])
+        origin = str(row[3]) if len(row) > 3 else "c"
+        if not is_unique or origin == "pk":
+            continue
+        ddl = ddl_by_name.get(source_name)
+        try:
+            if ddl is None:
+                # UNIQUE 表约束生成的 sqlite_autoindex：只可能是普通列
+                info = conn.execute(f"PRAGMA index_info([{source_name}])").fetchall()
+                names = [str(r[2]) for r in sorted(info, key=lambda r: r[0]) if r[2] is not None]
+                if not names or len(names) != len(info):
+                    raise IndexSqlError("autoindex has expression columns")
+                specs.append(
+                    UniqueIndexSpec(
+                        source_name,
+                        _index_name(table, names, None),
+                        [_quote_ident(c) for c in names],
+                        None,
+                        "columns",
+                        columns=names,
+                    )
+                )
+                continue
+            groups, where_tokens = _split_index_ddl(ddl)
+            parts: list[str] = []
+            terms: list[str] = []
+            has_expression = False
+            for group in groups:
+                if not group:
+                    raise IndexSqlError("empty index term")
+                if len(group) == 1 and group[0][0] == "ident" and group[0][1].lower() in colmap:
+                    canonical = colmap[group[0][1].lower()]
+                    parts.append(canonical)
+                    terms.append(_quote_ident(canonical))
+                else:
+                    expression = _IndexSqlParser([*group, ("eof", "")], colmap).statement()
+                    parts.append("expr_" + _crc(expression))
+                    terms.append(expression)
+                    has_expression = True
+            if not terms:
+                raise IndexSqlError("empty index column list")
+            where_sql = None
+            if where_tokens:
+                where_sql = _IndexSqlParser([*where_tokens, ("eof", "")], colmap).condition()
+            kind = "expression" if has_expression else ("partial" if where_sql else "columns")
+            specs.append(
+                UniqueIndexSpec(
+                    source_name,
+                    _index_name(table, parts, where_sql),
+                    terms,
+                    where_sql,
+                    kind,
+                    columns=None if has_expression or where_sql else parts,
+                )
+            )
+        except IndexSqlError as exc:
+            specs.append(UniqueIndexSpec(source_name, "", [], None, "skipped", skip_reason=str(exc)))
+    return specs
 
 
 def get_pg_unique_indexes(pg: psycopg.Connection[DictRow], table: str) -> set[frozenset[Any]]:
@@ -168,29 +594,56 @@ def get_pg_unique_indexes(pg: psycopg.Connection[DictRow], table: str) -> set[fr
     return {frozenset(r["cols"]) for r in rows}
 
 
+def get_pg_index_names(pg: psycopg.Connection[DictRow], table: str) -> set[str]:
+    rows = pg.execute(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = %s",
+        (table,),
+    ).fetchall()
+    return {str(r["indexname"]) for r in rows}
+
+
 def create_pg_unique_indexes(
     pg: psycopg.Connection[DictRow],
     table: str,
     sqlite_conn: sqlite3.Connection,
+    columns: list[dict[str, Any]],
+    report: list[tuple[str, str, str, str]],
 ) -> None:
-    """把 SQLite 的 UNIQUE 索引复制到 PG（幂等）。
+    """把 SQLite 的 UNIQUE 索引复制到 PG（幂等），并记录复制/跳过清单。
 
     迁入 alembic 已建表的库时，等价唯一索引通常已存在（只是名字不同），
-    因此按列集合比对后跳过，不重复建索引、不改动既有 schema。
+    普通列索引按列集合比对跳过；部分/表达式索引按可预测的名字判定。
     """
-    existing = get_pg_unique_indexes(pg, table)
-    for cols in get_sqlite_unique_indexes(sqlite_conn, table):
-        key = frozenset(cols)
-        if key in existing:
+    existing_columns = get_pg_unique_indexes(pg, table)
+    existing_names = get_pg_index_names(pg, table)
+    for spec in collect_unique_indexes(sqlite_conn, table, columns):
+        if spec.skip_reason:
+            report.append((table, spec.source_name, "skipped", spec.skip_reason))
             continue
-        stmt = sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {tbl} ({cols})").format(
-            name=sql.Identifier(pg_index_name(table, cols)),
+        if spec.columns is not None:
+            key = frozenset(spec.columns)
+            if key in existing_columns:
+                continue
+        elif spec.pg_name in existing_names:
+            report.append((table, spec.source_name, "exists", "equivalent index already exists"))
+            continue
+        stmt = sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {tbl} ({terms}){where}").format(
+            name=sql.Identifier(spec.pg_name),
             tbl=sql.Identifier(table),
-            cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+            terms=sql.SQL(", ").join(sql.SQL(term) for term in spec.pg_terms),
+            where=sql.SQL(" WHERE " + spec.pg_where) if spec.pg_where else sql.SQL(""),
         )
-        with pg.cursor() as cur:
-            cur.execute(stmt)
-        existing.add(key)
+        try:
+            with pg.cursor() as cur:
+                cur.execute(stmt)
+        except Exception as exc:
+            pg.rollback()
+            report.append((table, spec.source_name, "skipped", f"create failed: {exc}"))
+            continue
+        if spec.columns is not None:
+            existing_columns.add(frozenset(spec.columns))
+        existing_names.add(spec.pg_name)
+        report.append((table, spec.source_name, "copied", spec.kind))
     pg.commit()
 
 
@@ -276,6 +729,7 @@ def migrate_table(
     pg: psycopg.Connection[DictRow] | None,
     table: str,
     dry_run: bool = False,
+    index_report: list[tuple[str, str, str, str]] | None = None,
 ) -> dict[str, int]:
     stats = {"total": 0, "inserted": 0, "skipped": 0, "errors": 0}
 
@@ -292,8 +746,8 @@ def migrate_table(
     # Create PG table (IF NOT EXISTS：已由 alembic 建表的库保持原 schema 不动)
     auto_column = detect_auto_column(sqlite_conn, table, columns)
     create_pg_table(pg, table, columns, auto_column=auto_column)
-    # 复制 SQLite 的 UNIQUE 索引；等价索引已存在时跳过
-    create_pg_unique_indexes(pg, table, sqlite_conn)
+    # 复制 SQLite 的 UNIQUE 索引（含部分/表达式索引）；跳过项会记录原因
+    create_pg_unique_indexes(pg, table, sqlite_conn, columns, index_report if index_report is not None else [])
 
     # Migrate rows
     sqlite_conn.row_factory = sqlite3.Row
@@ -459,13 +913,14 @@ def main() -> None:
             print()
 
     total_stats = {"total": 0, "inserted": 0, "skipped": 0, "errors": 0}
+    index_report: list[tuple[str, str, str, str]] = []
     for table in tables:
         if table not in sqlite_tables:
             print(f"  SKIP {table}: not in SQLite")
             continue
         if table == "sqlite_sequence":
             continue
-        stats = migrate_table(sqlite_conn, pg, table, dry_run=args.dry_run)
+        stats = migrate_table(sqlite_conn, pg, table, dry_run=args.dry_run, index_report=index_report)
         status = "OK" if stats["errors"] == 0 else f"ERRORS={stats['errors']}"
         print(f"  {table}: total={stats['total']} inserted={stats['inserted']} skipped={stats['skipped']} [{status}]")
         for k in total_stats:
@@ -477,6 +932,18 @@ def main() -> None:
         f"skipped={total_stats['skipped']}, "
         f"errors={total_stats['errors']}"
     )
+
+    if index_report:
+        copied = [r for r in index_report if r[2] == "copied"]
+        exists = [r for r in index_report if r[2] == "exists"]
+        skipped = [r for r in index_report if r[2] == "skipped"]
+        print(f"\nUnique index replication: copied={len(copied)} exists={len(exists)} skipped={len(skipped)}")
+        for table, source, _status, detail in copied:
+            print(f"  copied  {table}.{source} ({detail})")
+        for table, source, _status, detail in exists:
+            print(f"  exists  {table}.{source}: {detail}")
+        for table, source, _status, detail in skipped:
+            print(f"  SKIPPED {table}.{source}: {detail}")
 
     if not args.dry_run and total_stats["errors"] == 0:
         print("\nMigration complete. Run verify_postgres.py to validate.")
