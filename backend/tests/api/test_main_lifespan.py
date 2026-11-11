@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 import app.main as main_module
 from app.collectors.base import CollectorResult, RawDiscovery
@@ -747,3 +748,42 @@ def test_scheduled_failure_isolation_per_provider(monkeypatch, source_id: str, f
         assert mock_emitter.emit.call_count == 2
         # github (unsupported) must not invoke writer again
         assert mock_writer.process.call_count == 1
+
+
+def test_github_missing_token_warning_describes_anonymous_mode(monkeypatch) -> None:
+    """无 token 的告警必须如实说明「仍以未认证方式运行」，不能写成整源不跑。"""
+    monkeypatch.setattr(main_module.settings, "github_enabled", True)
+    monkeypatch.setattr(main_module.settings, "github_token", "")
+
+    with capture_logs() as logs:
+        main_module._warn_github_missing_token()
+
+    events = [event for event in logs if event["event"] == "app.collector_disabled_missing_credential"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["log_level"] == "warning"
+    assert event["source"] == "github"
+    assert "未认证方式运行" in event["reason"]
+    assert "不会运行" not in event["reason"]
+    assert "可能不完整" in event["impact"]
+    assert "GITHUB_RETRY" in event["impact"]
+
+
+def test_github_missing_token_warning_silent_with_token(monkeypatch) -> None:
+    monkeypatch.setattr(main_module.settings, "github_enabled", True)
+    monkeypatch.setattr(main_module.settings, "github_token", "ghp_placeholder_for_test")
+
+    with capture_logs() as logs:
+        main_module._warn_github_missing_token()
+
+    assert [event for event in logs if event["event"] == "app.collector_disabled_missing_credential"] == []
+
+
+def test_github_missing_token_warning_silent_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(main_module.settings, "github_enabled", False)
+    monkeypatch.setattr(main_module.settings, "github_token", "")
+
+    with capture_logs() as logs:
+        main_module._warn_github_missing_token()
+
+    assert [event for event in logs if event["event"] == "app.collector_disabled_missing_credential"] == []

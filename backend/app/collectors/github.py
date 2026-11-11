@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import httpx
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
@@ -107,6 +109,11 @@ class GitHubCollector(DataCollector):
 
     注意：GitHub Search API 对未认证请求限流严格（10 req/min），
     建议配置 GITHUB_TOKEN 以提升配额（30 req/min）。
+    无 token 不带 Authorization 头，按未认证方式运行（不是跳过）。
+
+    搜索失败按 GITHUB_RETRY 做指数退避重试，只重试可恢复的失败
+    （网络错误 / 429 / 5xx）；403 属权限或硬限流，重试只会放大配额压力。
+    每次请求单独受 GITHUB_TIMEOUT 约束，每次重试也都先过本地令牌桶。
     """
 
     STARS_THRESHOLD = 20
@@ -114,6 +121,9 @@ class GitHubCollector(DataCollector):
     SEARCH_WINDOW_DAYS = 90
     # Cap raw discovery score so weak-relevance repos rarely enter analysis (threshold 0.3)
     MAX_DISCOVERY_SCORE = 0.85
+    # 重试退避：1s、2s、4s…；429/5xx 带 Retry-After 时取两者较大值。
+    RETRY_BASE_DELAY: float = 1.0
+    RETRY_MAX_DELAY: float = 60.0
 
     def __init__(self) -> None:
         super().__init__(source_id="github", source_name="GitHub")
@@ -174,7 +184,7 @@ class GitHubCollector(DataCollector):
         return result
 
     async def _search_repositories(self) -> list[dict[str, Any]]:
-        """搜索 GitHub 仓库。
+        """搜索 GitHub 仓库（含按 GITHUB_RETRY 的退避重试）。
 
         查询关注：近期更新的、与空投/测试网水龙头/积分相关的仓库。
         """
@@ -194,6 +204,47 @@ class GitHubCollector(DataCollector):
         if settings.github_token:
             headers["Authorization"] = f"Bearer {settings.github_token}"
 
+        # GITHUB_RETRY 是「重试次数」，总尝试数是 1 + retry；负数/None 视为不重试。
+        attempts = 1 + max(0, int(self.retry or 0))
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            retry_after: float | None = None
+            try:
+                return await self._request_repositories(url, params, headers)
+            except httpx.HTTPStatusError as exc:
+                if not self._is_retryable_status(exc.response.status_code):
+                    raise
+                last_error = exc
+                retry_after = self._retry_after_seconds(exc.response)
+            except httpx.TransportError as exc:
+                # 连接失败 / 读写超时等都属可重试；TimeoutException 也在此列。
+                last_error = exc
+
+            if attempt >= attempts:
+                break
+
+            delay = self._retry_delay(attempt, retry_after)
+            self.logger.warning(
+                "github.retry",
+                attempt=attempt,
+                max_attempts=attempts,
+                delay_seconds=round(delay, 2),
+                error_type=type(last_error).__name__,
+                error=str(last_error)[:200],
+            )
+            await asyncio.sleep(delay)
+
+        assert last_error is not None
+        raise last_error
+
+    async def _request_repositories(
+        self,
+        url: str,
+        params: dict[str, str | int | float | bool | None],
+        headers: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """发一次搜索请求；每次尝试都重新过令牌桶并受 GITHUB_TIMEOUT 约束。"""
         async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
             response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
@@ -203,6 +254,30 @@ class GitHubCollector(DataCollector):
             raise ValueError(f"Unexpected GitHub response type: {type(data)}")
 
         return cast(list[dict[str, Any]], data.get("items", []))
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        """429 与 5xx 可重试；403 常是权限或硬限流，按次重试只会放大配额压力。"""
+        return status_code == 429 or 500 <= status_code < 600
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> float | None:
+        """解析 Retry-After 的秒数形式；HTTP-date 形式不解析，退回指数退避。"""
+        raw = response.headers.get("Retry-After")
+        if not raw:
+            return None
+        try:
+            return max(0.0, float(raw.strip()))
+        except ValueError:
+            return None
+
+    def _retry_delay(self, attempt: int, retry_after: float | None) -> float:
+        """指数退避 + Retry-After 取大，并限制单次等待上限。"""
+        # 用 2.0 而非 2：mypy 把 int ** int 视作 Any（负指数时结果可能是 float）。
+        backoff: float = self.RETRY_BASE_DELAY * (2.0 ** (attempt - 1))
+        if retry_after is not None:
+            backoff = max(backoff, retry_after)
+        return min(self.RETRY_MAX_DELAY, backoff)
 
     def _is_relevant_repo(self, repo: dict[str, Any]) -> bool:
         """Noise filter: denylist, language, keyword relevance."""

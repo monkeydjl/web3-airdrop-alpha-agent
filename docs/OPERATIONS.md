@@ -502,7 +502,7 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 |---|---|---|
 | `defillama` | `DEFILLAMA_ENABLED` | ❌ 免费无 Key |
 | `coingecko` | `COINGECKO_ENABLED` | ❌ 免费额度够用 |
-| `github` | `GITHUB_ENABLED` | ❌ 无 token 时走未认证公开搜索（限流 1 rps；配置 `GITHUB_TOKEN` 可提升配额） |
+| `github` | `GITHUB_ENABLED` | ❌ 无 token 时走未认证公开搜索（限流 1 rps；配置 `GITHUB_TOKEN` 可提升配额；网络错误/5xx/429 按 `GITHUB_RETRY` 退避重试，403 不重试） |
 | `github_curated` | `GITHUB_ENABLED` | ❌ 抓公开 curated 列表无需 Key（与 `github` 共用同一开关） |
 | `cryptorank` | `CRYPTORANK_ENABLED` | ✅ `CRYPTORANK_API_KEY` |
 | `etherscan` | `ETHERSCAN_ENABLED` | ✅ `ETHERSCAN_API_KEY` |

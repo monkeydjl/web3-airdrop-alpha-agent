@@ -68,7 +68,7 @@
 
 | 键名 | 不配的后果 |
 |---|---|
-| `GITHUB_TOKEN` | 采集器**仍然运行**，但走匿名配额（≤ 10 req/min），结果会被截断 |
+| `GITHUB_TOKEN` | 两个 GitHub 源都**照常运行**，token 不是它们的前置条件（门禁只有 `GITHUB_ENABLED`）。`github` 走未认证公开搜索：进程内令牌桶限速 1 req/s，GitHub 服务端对未认证 Search API 另限 10 次/分钟；网络错误 / 5xx / 429 会先按 `GITHUB_RETRY` 退避重试（403 不重试），重试仍失败则该轮返回 `status=error`，而不是「少采几条」。`github_curated` 抓的是 `raw.githubusercontent.com` 公开文件，与 token 无关 |
 | `ETHERSCAN_API_KEY` | `ETHERSCAN_ENABLED` 即使为 true，`is_enabled()` 也返回 false，整源跳过 |
 | `CRYPTORANK_API_KEY` | 同上，状态记为 `skipped`（干净跳过，不伪造数据） |
 | `COINGECKO_API_KEY` | 不影响运行，仅免费额度更低 |
@@ -76,8 +76,8 @@
 | `NOTIFY_ENABLED=true` 及 Telegram / Discord webhook | 默认为 `false`，不注册推送任务；sender 未配置时返回空而不抛错 |
 | `ENABLE_LLM_ENHANCEMENT=true` + provider 三元组 | 默认 `false`，评分走纯规则路径（功能完整，只是没有 LLM 增强） |
 
-DefiLlama / Medium / CoinGecko 三个源**不需要任何 key**，只受 `*_ENABLED` 开关控制，
-所以「零外部 key」也能把主链路跑起来。
+DefiLlama / Medium / CoinGecko / GitHub（`github` 与 `github_curated`）**都不需要任何 key**，
+只受 `*_ENABLED` 开关控制，所以「零外部 key」也能把主链路跑起来。
 
 ---
 
@@ -152,8 +152,9 @@ venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8002
 
 - 入口是 `app.main:app`；端口默认 `8002`（避开常见的 8000）。
 - 实测启动耗时：全新库 **4.7s**，45 MB 存量库 **4.6s**，无阻塞点。
-- 启动日志里如果出现 `collector_disabled_missing_credential`，是「该源缺 key 所以不跑」的正常提示，
-  不是错误。
+- 启动日志里如果出现 `collector_disabled_missing_credential`（`source=github`），是「`GITHUB_ENABLED=true`
+  但 `GITHUB_TOKEN` 为空」的告警。`github` 采集器**实际仍会以未认证方式运行**（见 §1.3、§5.6），
+  这条日志提示的是匿名配额下 execution 维度的信号可能不完整，不代表整个源被跳过，也不是错误。
 
 ### 3.3 健康检查
 
@@ -357,8 +358,12 @@ npm run start
   ```
 
 - [ ] 采集完成后 `projects` 表有新增记录，且 `source` 不是 `seed`。
-- [ ] 无 `GITHUB_TOKEN` 时 `github_curated` 可能返回 `status=partial`、`items_collected=0`
-      （匿名配额 ≤10 req/min），属已知降级而非故障。
+- [ ] 无 `GITHUB_TOKEN` 时 `github` 仍会采集（门禁只有 `GITHUB_ENABLED`）：正常返回 `status=success`
+      或 `partial`；只有在约 1 分钟窗口内反复手动触发、打满 GitHub 未认证搜索配额（10 次/分钟）时，
+      才会返回 `status=error`、`items_collected=0`，属限流而非配置错误。
+- [ ] `github_curated` 与 token 无关，它抓 `raw.githubusercontent.com` 的公开 markdown。内置清单已清空，
+      远程抓取失败（断网、404、内容解析不出条目）时返回 `status=partial`、`items_collected=0`；
+      排查方向是出站网络，不是 `GITHUB_TOKEN`。
 - [ ] 启动日志中无 `collector_disabled_missing_credential` 之外的异常告警。
 
 ---

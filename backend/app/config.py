@@ -478,11 +478,12 @@ class Settings(BaseSettings):
     defillama_base_url: str = "https://api.llama.fi"
     defillama_timeout: int = 30
     defillama_retry: int = 3
-    # GitHub（P0，免费）
+    # GitHub（P0，免费；token 可选，不配则走未认证搜索）
     github_enabled: bool = True
     github_token: str = ""
     github_api_base_url: str = "https://api.github.com"
     github_timeout: int = 30
+    # 搜索请求失败（网络错误 / 5xx / 429）的重试次数；指数退避，403 不重试
     github_retry: int = 3
     # CoinGecko（P0，免费）
     coingecko_enabled: bool = True

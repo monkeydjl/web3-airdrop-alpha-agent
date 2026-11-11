@@ -44,6 +44,22 @@ setup_tracing()
 logger = structlog.get_logger(__name__)
 
 
+def _warn_github_missing_token() -> None:
+    """GITHUB_ENABLED=true 但无 token 时的启动告警。
+
+    GitHub 采集器在无 token 时**不会**被 is_enabled() 挡掉，而是以未认证方式
+    继续运行；这里只提示配额更低、信号可能不完整，不能写成「本源不会运行」。
+    """
+    if not settings.github_enabled or settings.github_token:
+        return
+    logger.warning(
+        "app.collector_disabled_missing_credential",
+        source="github",
+        reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索仍会以未认证方式运行，受服务端配额限制（未认证 10 次/分钟）",
+        impact="execution 维度（权重 0.13）的 GitHub 活跃度信号可能不完整；可重试失败按 GITHUB_RETRY 退避重试",
+    )
+
+
 def create_app(
     db_override: DbConnection | None = None,
     leader_elector: Any | None = None,
@@ -72,16 +88,10 @@ def create_app(
             collection_scheduler_enabled=settings.collection_scheduler_enabled,
         )
 
-        # 采集源"开了但缺 key"必须显式告警：这类源的 is_enabled() 返回 False，
-        # 于是整源静默不跑。GitHub 尤其致命——execution 维度占 13% 权重，缺了
-        # 会让所有项目的开发活跃度恒为空，而运维看不到任何异常。
-        if settings.github_enabled and not settings.github_token:
-            logger.warning(
-                "app.collector_disabled_missing_credential",
-                source="github",
-                reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索需要 token，本源不会运行",
-                impact="execution 维度（权重 0.13）的 GitHub 活跃度信号将始终缺失",
-            )
+        # 采集源"开了但缺 key"要显式告警，避免运维误以为链路正常。
+        # 注意 GitHub 是例外：无 token 时 is_enabled() 仍为 True，采集器会以
+        # 未认证方式继续运行，只是配额更低、信号可能不完整——文案必须如实描述。
+        _warn_github_missing_token()
 
         if db_override is None:
             init_db()
