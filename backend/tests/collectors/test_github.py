@@ -318,7 +318,7 @@ async def test_github_retries_5xx_then_succeeds(retrying_collector: GitHubCollec
     assert result.status == "success"
     assert len(result.items) == 1
     assert route.call_count == 2
-    retry_events = [event for event in logs if event["event"] == "github.retry"]
+    retry_events = [event for event in logs if event["event"] == "collector.retry"]
     assert len(retry_events) == 1
     assert retry_events[0]["attempt"] == 1
     assert retry_events[0]["max_attempts"] == 3

@@ -13,8 +13,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, ClassVar, cast
 
@@ -104,19 +102,6 @@ class TwitterCollector(DataCollector):
             "tweet.fields": "created_at,public_metrics,author_id,lang",
         }
 
-    @asynccontextmanager
-    async def _http_client(self, client: httpx.AsyncClient | None = None) -> AsyncIterator[httpx.AsyncClient]:
-        """复用调用方传入的客户端，否则临时自建一个。
-
-        批量查询（KOL 分批 / 多关键词）传入同一客户端即可跨请求复用连接，
-        省掉每轮搜索一次 TCP+TLS 握手。
-        """
-        if client is not None:
-            yield client
-        else:
-            async with self.http_client(timeout=self.timeout) as owned:
-                yield owned
-
     async def _search_recent(
         self,
         query: str,
@@ -127,10 +112,15 @@ class TwitterCollector(DataCollector):
         url = f"{self.base_url}/tweets/search/recent"
         params = self._search_params(query, max_results)
 
-        async with self._http_client(client) as http, self.rate_limiter:
-            response = await http.get(url, params=params, headers=self._headers())
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry(
+            "GET",
+            url,
+            client=client,
+            params=params,
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected Twitter response type: {type(data)}")
@@ -422,19 +412,20 @@ class TwitterCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 Twitter API 可用性（调用 search/recent 配额检查）。"""
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(
-                    f"{self.base_url}/tweets/search/recent",
-                    params={"query": "airdrop", "max_results": 10},
-                    headers=self._headers(),
-                )
-                response.raise_for_status()
-                data = response.json()
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "tweet_count": len(data.get("data", [])),
-                }
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/tweets/search/recent",
+                timeout=10,
+                params={"query": "airdrop", "max_results": 10},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "tweet_count": len(data.get("data", [])),
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,

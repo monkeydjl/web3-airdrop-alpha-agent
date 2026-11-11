@@ -473,6 +473,9 @@ class Settings(BaseSettings):
     discord_notify_webhook_url: str = ""
 
     # ── 外部数据源 (ADR-012) ─────────────────────
+    # 各源 *_retry 是「重试次数」（总尝试 = 1 + n），统一由
+    # DataCollector.request_with_retry 执行：只重试网络错误 / 429 / 5xx，
+    # 其余 4xx 不重试，尊重 Retry-After，指数退避单次最长 60s。
     # DefiLlama（P0，免费）
     defillama_enabled: bool = True
     defillama_base_url: str = "https://api.llama.fi"
@@ -483,7 +486,6 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_api_base_url: str = "https://api.github.com"
     github_timeout: int = 30
-    # 搜索请求失败（网络错误 / 5xx / 429）的重试次数；指数退避，403 不重试
     github_retry: int = 3
     # CoinGecko（P0，免费）
     coingecko_enabled: bool = True

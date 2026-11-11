@@ -80,14 +80,14 @@ class DiscordCollector(DataCollector):
 
     async def _fetch_messages(self) -> list[dict[str, Any]]:
         url = f"{DISCORD_API_BASE}/channels/{self.channel_id}/messages"
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(
-                url,
-                params={"limit": MESSAGE_LIMIT},
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry(
+            "GET",
+            url,
+            params={"limit": MESSAGE_LIMIT},
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
         return [m for m in data if isinstance(m, dict)]
 
     def _build_discovery(self, message: dict[str, Any]) -> RawDiscovery | None:
@@ -143,13 +143,14 @@ class DiscordCollector(DataCollector):
         if not self.is_enabled():
             return {"source_id": self.source_id, "status": "disabled"}
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(
-                    f"{DISCORD_API_BASE}/channels/{self.channel_id}/messages",
-                    params={"limit": 1},
-                    headers=self._headers(),
-                )
-                response.raise_for_status()
+            response = await self.request_with_retry(
+                "GET",
+                f"{DISCORD_API_BASE}/channels/{self.channel_id}/messages",
+                timeout=10,
+                params={"limit": 1},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
             return {"source_id": self.source_id, "status": "healthy"}
         except Exception as e:
             return {"source_id": self.source_id, "status": "unhealthy", "error": str(e)}

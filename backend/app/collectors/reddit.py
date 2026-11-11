@@ -88,14 +88,14 @@ class RedditCollector(DataCollector):
         return result
 
     async def _fetch_access_token(self) -> str:
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.post(
-                OAUTH_ENDPOINT,
-                headers=self._auth_header(),
-                data={"grant_type": "client_credentials"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry(
+            "POST",
+            OAUTH_ENDPOINT,
+            headers=self._auth_header(),
+            data={"grant_type": "client_credentials"},
+        )
+        response.raise_for_status()
+        data = response.json()
         token = data.get("access_token")
         if not token:
             # 不把整个 OAuth 响应体塞进异常/日志：只留错误码，避免上游原文外泄
@@ -111,13 +111,14 @@ class RedditCollector(DataCollector):
         async with self.http_client(timeout=self.timeout) as client:
             for term in SEARCH_TERMS:
                 try:
-                    async with self.rate_limiter:
-                        response = await client.get(
-                            SEARCH_URL,
-                            params={"q": term, "sort": "new", "limit": self.MAX_RESULTS},
-                            headers=headers,
-                        )
-                        response.raise_for_status()
+                    response = await self.request_with_retry(
+                        "GET",
+                        SEARCH_URL,
+                        client=client,
+                        params={"q": term, "sort": "new", "limit": self.MAX_RESULTS},
+                        headers=headers,
+                    )
+                    response.raise_for_status()
                     posts.extend(self._parse_search(response.json()))
                     succeeded += 1
                 except Exception as e:

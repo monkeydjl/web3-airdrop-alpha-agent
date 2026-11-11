@@ -101,10 +101,9 @@ class Layer3Collector(DataCollector):
 
         params: dict[str, str | int | float | bool | None] = {"limit": limit, "status": "active"}
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url, params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected Layer3 response type: {type(data)}")

@@ -519,6 +519,11 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 | `farcaster` | `FARCASTER_ENABLED` | ❌ Hub 公开 API 免费无需 Key |
 <!-- collection-ready:end -->
 
+> 所有采集源的 HTTP 请求共用同一套重试实现（`DataCollector.request_with_retry`）：
+> 各自的 `*_RETRY` 是重试次数（总尝试 = 1 + n）；只重试网络错误 / 429 / 5xx，
+> 其余 4xx 不重试；退避 1s、2s、4s…（尊重 `Retry-After`，单次最长 60s），
+> 每次尝试都重新通过本地令牌桶。
+
 > 注意两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`：关掉它会同时停掉
 > KOL 轮询和关键词搜索，没法只留一个。
 

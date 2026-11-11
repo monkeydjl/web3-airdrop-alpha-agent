@@ -46,6 +46,7 @@ class RootDataCollector(DataCollector):
         super().__init__(source_id="rootdata", source_name="RootData")
         self.base_url = getattr(settings, "rootdata_base_url", "https://api.rootdata.com").rstrip("/")
         self.timeout = getattr(settings, "rootdata_timeout", 30)
+        self.retry = getattr(settings, "rootdata_retry", 3)
         self.api_key = getattr(settings, "rootdata_api_key", "") or ""
         self.rate_limiter = TokenBucketRateLimiter("rootdata")
         self.logger = logger.bind(source_id=self.source_id)
@@ -113,14 +114,13 @@ class RootDataCollector(DataCollector):
             "Content-Type": "application/json",
             "apikey": self.api_key,
         }
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code == 401 or resp.status_code == 403:
-                raise RuntimeError(f"RootData auth failed HTTP {resp.status_code}")
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.request_with_retry("POST", url, json=payload, headers=headers)
+        if resp.status_code == 401 or resp.status_code == 403:
+            raise RuntimeError(f"RootData auth failed HTTP {resp.status_code}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
 
     async def _search(self, query: str) -> list[dict[str, Any]]:
         """POST /open/ser_inv — search project/VC/people."""

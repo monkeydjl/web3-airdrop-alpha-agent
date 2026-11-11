@@ -95,10 +95,9 @@ class CoinGeckoCollector(DataCollector):
         if settings.coingecko_api_key:
             headers["x-cg-demo-api-key"] = settings.coingecko_api_key
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url, params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, list):
             raise ValueError(f"Unexpected CoinGecko response type: {type(data)}")
@@ -192,20 +191,21 @@ class CoinGeckoCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 CoinGecko API 可用性。"""
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                headers: dict[str, str] = {}
-                if settings.coingecko_api_key:
-                    headers["x-cg-demo-api-key"] = settings.coingecko_api_key
-                response = await client.get(
-                    f"{self.base_url}/ping",
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "ping": response.json(),
-                }
+            headers: dict[str, str] = {}
+            if settings.coingecko_api_key:
+                headers["x-cg-demo-api-key"] = settings.coingecko_api_key
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/ping",
+                timeout=10,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "ping": response.json(),
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,

@@ -124,14 +124,14 @@ class GalxeCollector(DataCollector):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.post(
-                GALXE_GRAPHQL_URL,
-                json=query,
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry(
+            "POST",
+            GALXE_GRAPHQL_URL,
+            json=query,
+            headers=headers,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         if "errors" in data:
             raise ValueError(f"Galxe GraphQL error: {data['errors']}")

@@ -49,6 +49,8 @@ class GitHubCuratedCollector(DataCollector):
     def __init__(self) -> None:
         super().__init__(source_id="github_curated", source_name="GitHub Curated Testnets")
         self.timeout = 20
+        # 与 github 采集器共用同一上游配额口径
+        self.retry = settings.github_retry
         self.rate_limiter = TokenBucketRateLimiter("github")
         self.logger = logger.bind(source_id=self.source_id)
 
@@ -153,7 +155,7 @@ class GitHubCuratedCollector(DataCollector):
         async with self.http_client(timeout=self.timeout) as client:
             for url in DEFAULT_REMOTE_CURATED_URLS:
                 try:
-                    resp = await client.get(url, headers=headers)
+                    resp = await self.request_with_retry("GET", url, client=client, headers=headers)
                     if resp.status_code == 200:
                         parsed = self._parse_markdown_table_or_links(resp.text)
                         discoveries.extend(parsed)

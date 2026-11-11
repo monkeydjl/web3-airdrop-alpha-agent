@@ -103,9 +103,8 @@ class FarcasterCollector(DataCollector):
                 query_url = f"{self.hub_url}/v1/castsByParent?url={parent_url}&pageSize=25&reverse=1"
                 try:
                     assert_url_allowed(query_url)
-                    async with self.rate_limiter:
-                        response = await client.get(query_url)
-                        response.raise_for_status()
+                    response = await self.request_with_retry("GET", query_url, client=client)
+                    response.raise_for_status()
 
                     payload = response.json()
                     messages = payload.get("messages", [])

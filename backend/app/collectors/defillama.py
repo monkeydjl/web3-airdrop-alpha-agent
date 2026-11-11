@@ -110,10 +110,9 @@ class DefiLlamaCollector(DataCollector):
         """拉取 DefiLlama /protocols 全量协议列表。"""
         url = f"{self.base_url}/protocols"
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, list):
             raise ValueError(f"Unexpected DefiLlama response type: {type(data)}")
@@ -423,14 +422,17 @@ class DefiLlamaCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 DefiLlama API 可用性。"""
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(f"{self.base_url}/protocols")
-                response.raise_for_status()
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "protocols_count": len(response.json()) if isinstance(response.json(), list) else 0,
-                }
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/protocols",
+                timeout=10,
+            )
+            response.raise_for_status()
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "protocols_count": len(response.json()) if isinstance(response.json(), list) else 0,
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,
