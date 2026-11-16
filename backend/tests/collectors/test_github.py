@@ -382,12 +382,18 @@ async def test_github_zero_retry_single_attempt(monkeypatch) -> None:
 
 
 def test_github_retry_delay_backoff_and_caps() -> None:
+    """退避翻倍 + 抖动（[d, d + 0.5d]），Retry-After 取大不抖动，封顶 RETRY_MAX_DELAY。
+
+    2026-11-13：网络退避加抖动后不再是确定值（防多任务同时失败时齐射重试）
+    —— 断言区间而非精确值；Retry-After 是上游明确指令，保持精确。
+    """
     collector = GitHubCollector()
 
-    assert collector._retry_delay(1, None) == 1.0
-    assert collector._retry_delay(2, None) == 2.0
-    assert collector._retry_delay(3, None) == 4.0
-    assert collector._retry_delay(1, 5.0) == 5.0  # Retry-After 大于退避时取它
+    for attempt, base in ((1, 1.0), (2, 2.0), (3, 4.0)):
+        delay = collector._retry_delay(attempt, None)
+        assert base <= delay <= base * 1.5, f"attempt={attempt}: {delay} 不在 [d, d + 0.5d] 区间"
+
+    assert collector._retry_delay(1, 5.0) == 5.0  # Retry-After 大于退避时取它（不抖动）
     assert collector._retry_delay(1, 600.0) == collector.RETRY_MAX_DELAY
     assert collector._retry_delay(100, None) == collector.RETRY_MAX_DELAY
 

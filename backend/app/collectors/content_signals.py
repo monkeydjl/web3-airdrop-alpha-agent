@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import re
 
-# 信号关键词 → 信号类型（与 twitter.py::SIGNAL_KEYWORDS 语义一致）
+# 信号关键词 → 信号类型 —— **单一真相源**：twitter.py 从这里导入。
+# 此前 twitter 与本文件各持一份且已漂移（twitter 缺 whitelist /
+# "token launch"，本文件缺裸 "launch"）。裸 "launch" 补进基表：
+# "launching today" 这类内容在所有内容源上语义一致。
 SIGNAL_KEYWORDS: dict[str, str] = {
     "testnet": "testnet",
     "mainnet": "mainnet",
@@ -23,6 +26,7 @@ SIGNAL_KEYWORDS: dict[str, str] = {
     "tge": "tge",
     "token launch": "launch",
     "whitelist": "whitelist",
+    "launch": "launch",
 }
 
 

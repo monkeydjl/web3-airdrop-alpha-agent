@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -173,6 +174,64 @@ class DataCollector(ABC):
         """该源是否在当前配置下启用。子类可覆盖。"""
         return True
 
+    def _build_items(
+        self,
+        raw_items: Iterable[dict[str, Any]],
+        result: CollectorResult,
+        *,
+        keep: Callable[[RawDiscovery], bool] | None = None,
+    ) -> tuple[int, int]:
+        """批量把原始条目转成 discovery：**单条失败只丢该条**，不拖垮整轮。
+
+        此前多个采集器裸循环 `result.items.append(self._build_discovery(item))`
+        对脏数据无防护 —— 一条畸形行（无法解析的时间戳、缺失字段）抛异常后
+        整轮 status=error，已转好的条目全部丢弃。telegram/farcaster 的
+        "单通道失败只丢该批"是成熟模式，这里把同款容错下沉到基类
+        （2026-11-13 审查 P2-5）。
+
+        Args:
+            raw_items: 源返回的原始条目。
+            result: 目标采集结果（条目追加到 ``result.items``）。
+            keep: 可选保留谓词（如 layer3/galxe 的 ``discovery_score > 0``）。
+
+        Returns:
+            (built, failed)：成功条数与失败条数（失败已记 warning 日志）。
+        """
+        built = 0
+        failed = 0
+        total = 0
+        for index, item in enumerate(raw_items):
+            total += 1
+            try:
+                discovery = self._build_discovery(item)
+            except Exception as exc:
+                failed += 1
+                self.logger.warning(
+                    "collector.item_failed",
+                    index=index,
+                    error_type=type(exc).__name__,
+                    error=redact(str(exc))[:200],
+                )
+                continue
+            if discovery is not None and (keep is None or keep(discovery)):
+                result.items.append(discovery)
+                built += 1
+        if failed:
+            self.logger.warning(
+                "collector.items_partial",
+                total=total,
+                built=built,
+                failed=failed,
+            )
+        return built, failed
+
+    def _build_discovery(self, item: dict[str, Any]) -> RawDiscovery | None:
+        """把一条源侧原始条目转成 discovery；返回 None 表示丢弃该条。
+
+        子类必须实现（`_build_items` 依赖它做批量容错转换）。
+        """
+        raise NotImplementedError
+
     async def request_with_retry(
         self,
         method: str,
@@ -256,12 +315,17 @@ class DataCollector(ABC):
             return None
 
     def _retry_delay(self, attempt: int, retry_after: float | None) -> float:
-        """指数退避 + Retry-After 取大，并限制单次等待上限。"""
+        """指数退避 + Retry-After 取大，网络退避加抖动，并限制单次等待上限。
+
+        抖动 [0, 0.5d)：纯确定性退避在多任务同时失败时会把重试**同步化**
+        （同一秒齐射重试，把上游打成二次风暴）—— 2026-11-13 审查 P2-4。
+        Retry-After 是上游明确指令：取大后原样等待，不打折扣也不抖动。
+        """
         # 用 2.0 而非 2：mypy 把 int ** int 视作 Any（负指数时结果可能是 float）。
         backoff: float = self.RETRY_BASE_DELAY * (2.0 ** (attempt - 1))
         if retry_after is not None:
-            backoff = max(backoff, retry_after)
-        return min(self.RETRY_MAX_DELAY, backoff)
+            return min(self.RETRY_MAX_DELAY, max(backoff, retry_after))
+        return min(self.RETRY_MAX_DELAY, backoff + random.uniform(0, backoff * 0.5))  # noqa: S311 - 退避抖动非密码学用途
 
     @contextlib.asynccontextmanager
     async def http_client(

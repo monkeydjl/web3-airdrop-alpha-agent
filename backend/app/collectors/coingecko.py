@@ -65,9 +65,8 @@ class CoinGeckoCollector(DataCollector):
                 total_coins=len(coins),
             )
 
-            for coin in coins:
-                discovery = self._build_discovery(coin)
-                result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(coins, result)
 
             result.status = "success" if result.items else "partial"
 

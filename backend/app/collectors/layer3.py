@@ -62,10 +62,8 @@ class Layer3Collector(DataCollector):
                 task_count=len(tasks),
             )
 
-            for task in tasks:
-                discovery = self._build_discovery(task)
-                if discovery.discovery_score > 0:
-                    result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(tasks, result, keep=lambda d: d.discovery_score > 0)
 
             result.status = "success" if result.items else "partial"
 

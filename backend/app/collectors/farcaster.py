@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import structlog
 
@@ -44,6 +45,9 @@ def farcaster_time_to_datetime(farcaster_seconds: int | float | None) -> datetim
 
 class FarcasterCollector(DataCollector):
     """Farcaster 公开 Hub 内容采集器（Hubble HTTP API，零成本免 Key）。"""
+
+    # castsByParent 每页 25 条；跟随 nextPageCursor，封顶防 API 异常态下失控翻页
+    MAX_CURSOR_PAGES = 3
 
     def __init__(self) -> None:
         super().__init__(source_id="farcaster", source_name="Farcaster")
@@ -100,32 +104,44 @@ class FarcasterCollector(DataCollector):
         async with self.http_client(timeout=self.timeout, follow_redirects=True) as client:
             for channel in self.channels:
                 parent_url = f"https://farcaster.xyz/~/channel/{channel}"
-                query_url = f"{self.hub_url}/v1/castsByParent?url={parent_url}&pageSize=25&reverse=1"
+                # parent_url 含 `: / ~`，必须 percent-encoding 后再拼进 query
+                # （2026-11-14 审查 P3-20；safe="" 让 / 也编码）。
+                encoded_parent = quote(parent_url, safe="")
+                # cursor 翻页（2026-11-13 审查 P2-6）：Hubble 返回
+                # nextPageCursor，此前固定取第一页 25 条。封顶 MAX_CURSOR_PAGES。
+                cursor: str | None = None
                 try:
-                    assert_url_allowed(query_url)
-                    response = await self.request_with_retry("GET", query_url, client=client)
-                    response.raise_for_status()
+                    for _page in range(self.MAX_CURSOR_PAGES):
+                        query_url = f"{self.hub_url}/v1/castsByParent?url={encoded_parent}&pageSize=25&reverse=1"
+                        if cursor:
+                            query_url += f"&cursor={quote(cursor, safe='')}"
+                        assert_url_allowed(query_url)
+                        response = await self.request_with_retry("GET", query_url, client=client)
+                        response.raise_for_status()
 
-                    payload = response.json()
-                    messages = payload.get("messages", [])
-                    for msg in messages:
-                        cast_data = msg.get("data", {})
-                        body = cast_data.get("castAddBody", {})
-                        text = body.get("text", "")
-                        if not text.strip():
-                            continue
-                        cast_hash = msg.get("hash", "")
-                        items.append(
-                            {
-                                "channel": channel,
-                                "hash": cast_hash,
-                                "fid": cast_data.get("fid"),
-                                "timestamp": cast_data.get("timestamp"),
-                                "text": text,
-                                "embeds": body.get("embeds", []),
-                            }
-                        )
-                    succeeded += 1
+                        payload = response.json()
+                        messages = payload.get("messages", [])
+                        for msg in messages:
+                            cast_data = msg.get("data", {})
+                            body = cast_data.get("castAddBody", {})
+                            text = body.get("text", "")
+                            if not text.strip():
+                                continue
+                            cast_hash = msg.get("hash", "")
+                            items.append(
+                                {
+                                    "channel": channel,
+                                    "hash": cast_hash,
+                                    "fid": cast_data.get("fid"),
+                                    "timestamp": cast_data.get("timestamp"),
+                                    "text": text,
+                                    "embeds": body.get("embeds", []),
+                                }
+                            )
+                        succeeded += 1
+                        cursor = payload.get("nextPageCursor") or None
+                        if not cursor or not messages:
+                            break
                 except Exception as e:
                     last_error = e
                     self.logger.warning("farcaster.channel_failed", channel=channel, error=str(e))

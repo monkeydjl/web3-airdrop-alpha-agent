@@ -51,18 +51,10 @@ DEFAULT_KEYWORDS = [
     "TGE soon",
 ]
 
-# 信号关键词 → 信号类型
-SIGNAL_KEYWORDS = {
-    "testnet": "testnet",
-    "mainnet": "mainnet",
-    "points": "points",
-    "airdrop": "airdrop",
-    "funding": "funding",
-    "raised": "funding",
-    "invest": "funding",
-    "tge": "tge",
-    "launch": "launch",
-}
+# 信号关键词：单一真相源在 content_signals（2026-11-14 消除双份漂移）。
+# 本表在共享基表之上**不再**追加 twitter 私有条目 —— whitelist /
+# "token launch" 此前只在 content_signals 侧生效，属于不一致而非特性。
+from app.collectors.content_signals import SIGNAL_KEYWORDS  # noqa: E402
 
 
 class TwitterCollector(DataCollector):
@@ -72,6 +64,9 @@ class TwitterCollector(DataCollector):
     """
 
     MAX_RESULTS = 50
+    # 每查询最多跟随的页数：50×3=150 条封顶，防 API 异常态（永远带 next_token）
+    # 下失控翻页烧配额。
+    MAX_PAGES_PER_QUERY = 3
     SOURCE_TYPE = "api"
 
     def __init__(self, source_id: str, source_name: str) -> None:
@@ -108,9 +103,37 @@ class TwitterCollector(DataCollector):
         max_results: int | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> list[dict[str, Any]]:
-        """调用 Twitter API v2 search/recent。"""
+        """调用 Twitter API v2 search/recent，**自动跟随 meta.next_token 翻页**。
+
+        此前只取第一页（≤50/25 条）—— twitter_keyword 每 15 分钟一轮、
+        search/recent 窗口重叠，第一页之外的讨论全部漏采，而热度统计正是
+        以这些信号为输入（2026-11-13 审查 P2-6）。页数封顶
+        `MAX_PAGES_PER_QUERY` 防失控翻页；无 next_token / 空页即停。
+        """
+        tweets: list[dict[str, Any]] = []
+        next_token: str | None = None
+        for _page in range(self.MAX_PAGES_PER_QUERY):
+            page_tweets, next_token = await self._search_recent_page(
+                query, max_results, next_token=next_token, client=client
+            )
+            tweets.extend(page_tweets)
+            if not next_token or not page_tweets:
+                break
+        return tweets
+
+    async def _search_recent_page(
+        self,
+        query: str,
+        max_results: int | None = None,
+        *,
+        next_token: str | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """单页 search/recent：返回 (tweets, next_token)。"""
         url = f"{self.base_url}/tweets/search/recent"
         params = self._search_params(query, max_results)
+        if next_token:
+            params["next_token"] = next_token
 
         response = await self.request_with_retry(
             "GET",
@@ -125,7 +148,12 @@ class TwitterCollector(DataCollector):
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected Twitter response type: {type(data)}")
 
-        return cast(list[dict[str, Any]], data.get("data", []))
+        # `or []` 防 "data": null：.get("data", []) 只在键**缺席**时给默认值，
+        # 显式 null 会原样返回 None，下游迭代直接 TypeError。
+        tweets = cast(list[dict[str, Any]], data.get("data") or [])
+        meta = data.get("meta") or {}
+        raw_next = meta.get("next_token") if isinstance(meta, dict) else None
+        return tweets, raw_next if isinstance(raw_next, str) and raw_next else None
 
     def _extract_project_signals(self, tweets: list[dict[str, Any]]) -> list[RawDiscovery]:
         """从推文列表中提取项目信号，生成 RawDiscovery。"""
@@ -258,7 +286,9 @@ class TwitterCollector(DataCollector):
 
         return None
 
-    # 常见句子开头词/情感词, 不应作为项目名
+    # 常见句子开头词/情感词, 不应作为项目名。
+    # ⚠ 与 content_signals.NAME_STOP_WORDS 有意不同：这是推文正文词表，
+    # 那是内容标题词表 —— 不要"顺手合并"。
     STOP_WORDS: ClassVar[set[str]] = {
         "The",
         "This",

@@ -123,6 +123,27 @@ def _is_btc_credential(name: str, slug: str) -> bool:
     return any(tok == "btc" or _BTC_CREDENTIAL_TOKEN_RE.match(tok) for tok in tokens)
 
 
+def _contains_word_like(blob: str, word: str) -> bool:
+    """blob 里出现 word 且**两侧都是分词边界**（非字母数字）才算命中。
+
+    裸子串匹配会误杀共享前缀的无关品牌：`"curvegrid"` 含 `"curve"` 但它是
+    独立基建公司；`"wrappedvault"` 与 wrapped BTC 凭据无关。
+    （2026-11-14 审查 P2-9。）
+    """
+    return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", blob) is not None
+
+
+def is_facet_word_continuation(full: str, base: str) -> bool:
+    """`full` 以 `base` 开头时，余下部分是否为子条目式延续。
+
+    余下为空，或以分词边界（非字母数字，如空格/横线/下划线）起头，才算
+    同一品牌的子条目；否则两个品牌只是共享前缀（"OndoXYZ" vs "Ondo"）。
+    与 `_contains_word_like` 同一审查来源。
+    """
+    remainder = full[len(base) :]
+    return not remainder or not remainder[0].isalnum()
+
+
 def is_noise_project(
     *,
     name: str = "",
@@ -141,9 +162,9 @@ def is_noise_project(
     parent_l = (parent or "").lower()
     blob = f"{name_l} {slug_l} {parent_l}"
 
-    if any(s in blob for s in NAME_DENY_SUBSTRINGS):
+    if any(_contains_word_like(blob, s) for s in NAME_DENY_SUBSTRINGS):
         return True
-    if any(s in blob for s in RWA_CREDENTIAL_DENY_SUBSTRINGS):
+    if any(_contains_word_like(blob, s) for s in RWA_CREDENTIAL_DENY_SUBSTRINGS):
         return True
     if any(slug_l.startswith(p) or name_l.startswith(p) for p in SLUG_DENY_PREFIXES):
         return True

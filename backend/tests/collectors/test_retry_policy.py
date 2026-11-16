@@ -74,3 +74,46 @@ async def test_zero_retry_makes_single_attempt(monkeypatch) -> None:
 
     assert result.status == "error"
     assert route.call_count == 1
+
+
+# ── 退避抖动（2026-11-13 审查 P2-4 回归）────────────────────────
+#
+# 纯确定性退避（1s/2s/4s）在多任务同时失败时会把重试**同步化**——
+# 所有源在同一秒齐射重试，把上游打成二次风暴。契约：网络退避加
+# [0, 0.5d) 的均匀抖动；Retry-After 是上游明确指令，不抖动。
+
+
+def _seeded_collector() -> DefiLlamaCollector:
+    collector = DefiLlamaCollector()
+    collector.RETRY_BASE_DELAY = 1.0
+    collector.RETRY_MAX_DELAY = 60.0
+    return collector
+
+
+def test_backoff_has_jitter(monkeypatch) -> None:
+    """网络退避必须过抖动：[d, d + 0.5d)。"""
+    import random as random_mod
+
+    import app.collectors.base as base_mod
+
+    collector = _seeded_collector()
+    captured: dict = {}
+
+    def fake_uniform(low: float, high: float) -> float:
+        captured["low"], captured["high"] = low, high
+        return 0.5 * high  # 抖动取一半 → 1.0 + 0.25 = 1.25（非确定性基线 1.0）
+
+    monkeypatch.setattr(random_mod, "uniform", fake_uniform)
+    monkeypatch.setattr(base_mod.random, "uniform", fake_uniform)
+
+    delay = collector._retry_delay(1, None)
+
+    assert (captured["low"], captured["high"]) == (0.0, 0.5), "退避没有经过抖动采样"
+    assert delay == pytest.approx(1.25), f"退避仍是确定性值 {delay}（未加抖动）"
+
+
+def test_retry_after_is_not_jittered() -> None:
+    """上游 Retry-After 是明确指令：取大后原样等待，不打折扣也不抖动。"""
+    collector = _seeded_collector()
+    assert collector._retry_delay(1, 30.0) == 30.0
+    assert collector._retry_delay(3, 120.0) == 60.0  # 封顶 RETRY_MAX_DELAY

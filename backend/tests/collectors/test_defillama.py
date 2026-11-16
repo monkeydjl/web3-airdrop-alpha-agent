@@ -399,3 +399,39 @@ class TestZombieFilter:
         ]
         out = collector._filter_candidates(protocols)
         assert out == [], "Goose 这种条目不该留下来 (testnet 是展能不是保命)"
+
+
+class TestFacetPrefixWordBoundary:
+    """facet 品牌前缀必须带词边界（2026-11-14 审查 P2-9）。
+
+    上市条目 "Ondo" 此前会杀掉任何 "OndoXyz" 的 pre-TGE 新项目 ——
+    余下部分必须是分词边界（空格/横线/下划线起头）才算同一品牌的子条目。
+    """
+
+    def test_shared_prefix_only_brand_is_kept(self, collector: DefiLlamaCollector) -> None:
+        protocols = [
+            sample_protocol(
+                name="Ondo",
+                slug="ondo",
+                category="RWA",
+                symbol="ONDO",
+                gecko_id="ondo-finance",
+            ),
+            sample_protocol(name="OndoXYZ Protocol", slug="ondoxyz", category="Yield"),
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == ["OndoXYZ Protocol"], "共享前缀的独立品牌被 facet 规则误杀"
+
+    def test_word_boundary_facet_still_killed(self, collector: DefiLlamaCollector) -> None:
+        protocols = [
+            sample_protocol(
+                name="Ondo",
+                slug="ondo",
+                category="RWA",
+                symbol="ONDO",
+                gecko_id="ondo-finance",
+            ),
+            sample_protocol(name="Ondo Staking", slug="ondo-staking", category="Farm"),
+        ]
+        candidates = collector._filter_candidates(protocols)
+        assert [c["name"] for c in candidates] == []

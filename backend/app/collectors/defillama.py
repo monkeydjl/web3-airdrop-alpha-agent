@@ -17,7 +17,7 @@ from typing import Any
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
-from app.collectors.noise import is_listed_brand_subproduct, is_noise_protocol
+from app.collectors.noise import is_facet_word_continuation, is_listed_brand_subproduct, is_noise_protocol
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.services.defillama_raises import fetch_protocol_funding
@@ -90,9 +90,8 @@ class DefiLlamaCollector(DataCollector):
                             protocol["funding"] = funding_info
                             protocol["recent_funding"] = True
 
-            for protocol in candidates:
-                discovery = self._build_discovery(protocol)
-                result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(candidates, result)
 
             result.status = "success" if result.items else "partial"
 
@@ -170,24 +169,14 @@ class DefiLlamaCollector(DataCollector):
         return candidates
 
     def _is_zombie(self, protocol: dict[str, Any]) -> bool:
-        """判定一个项目是不是已基本死亡（属于战内 没有下文）。
+        """判定一个 DefiLlama 协议是不是占位/僵尸条目。
 
-        所谓僵尸项目 = 完成需求双一动一线。当 DefiLlama 的数据里该项目的
-        官网网址字段为完备占位（prefixes dir that conspires against复数
-        “ defillama.com/protocol/... ”）或者 apa 链接 —— 数据面上告诉我们
-        我们从没听说过真正的官网域名；项目就是个废墟，不再覆盖着找线索。
+        DefiLlama 对没有真实官网的项目会填 `defillama.com/protocol/<slug>`
+        这类**站内占位链接**，或干脆留空 —— 两种情况都说明"我们没听说过
+        它的独立域名"，项目没有可验证的落地页，不作为独立发现条目输出。
         """
         url = str(protocol.get("url") or "")
         return not url or "defillama.com" in url
-
-    async def _drop_zombies(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """调用示意同一方法 _filter_candidates 可用，方便测试。这里调用无关
-        纯通了，先看有没有 GitHub 再决定推没推。"""
-        zombie = [c for c in candidates if self._is_zombie(c)]
-        alive = [c for c in candidates if not self._is_zombie(c)]
-        if zombie:
-            self.logger.info("defillama.zombie_skipped", count=len(zombie))
-        return alive
 
     def _is_facet_of_listed(
         self,
@@ -213,7 +202,9 @@ class DefiLlamaCollector(DataCollector):
                 return True
         if name:
             for listed in listed_names:
-                if len(listed) >= 3 and name.startswith(listed):
+                # 词边界（2026-11-14 审查 P2-9）：裸前缀会误杀共享前缀的独立
+                # 品牌（"Ondo" → "OndoXyz"）—— 余下部分必须是分词边界。
+                if len(listed) >= 3 and name.startswith(listed) and is_facet_word_continuation(name, listed):
                     return True
         # 3. 品牌首词兜底（静态注册表）：父链接为 null、名字与母条目互不为
         #    前缀时（实测：Plume Vaults vs Plume Mainnet，PLUME 早已 TGE），

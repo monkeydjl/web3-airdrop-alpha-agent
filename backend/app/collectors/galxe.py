@@ -64,10 +64,8 @@ class GalxeCollector(DataCollector):
                 campaign_count=len(campaigns),
             )
 
-            for campaign in campaigns:
-                discovery = self._build_discovery(campaign)
-                if discovery.discovery_score > 0:
-                    result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(campaigns, result, keep=lambda d: d.discovery_score > 0)
 
             result.status = "success" if result.items else "partial"
 
@@ -133,7 +131,12 @@ class GalxeCollector(DataCollector):
         response.raise_for_status()
         data = response.json()
 
-        if "errors" in data:
+        if not isinstance(data, dict):
+            # `"errors" in data` 对 str 做的是**子串匹配**、对 list 做的是成员匹配，
+            # 语义都不对 —— 非对象响应给清晰的 ValueError（2026-11-14 审查 P3-20）。
+            raise ValueError(f"Galxe GraphQL 返回非对象 payload（{type(data).__name__}）")
+
+        if data.get("errors"):
             raise ValueError(f"Galxe GraphQL error: {data['errors']}")
 
         # GraphQL 部分失败时 data / campaignList 可能为 null 且无顶层 errors，

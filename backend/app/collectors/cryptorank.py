@@ -115,8 +115,10 @@ class CryptoRankCollector(DataCollector):
                     "limit": self.PAGE_SIZE,
                     "offset": offset,
                 }
-                async with self.http_client(timeout=self.timeout) as client:
-                    response = await self.request_with_retry("GET", url, client=client, params=params, headers=headers)
+                # 用外层 client（2026-11-13 审查 P2-8）：内层曾再开一个
+                # `async with self.http_client(...)` 同名遮蔽，TCP/TLS 连接
+                # 每页重建，外层"循环外创建以复用连接"的注释形同虚设。
+                response = await self.request_with_retry("GET", url, client=client, params=params, headers=headers)
                 response.raise_for_status()
                 payload = response.json()
                 if not isinstance(payload, dict):

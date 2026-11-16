@@ -148,18 +148,11 @@ class GitHubCollector(DataCollector):
                 total_repos=len(repos),
             )
 
-            kept = 0
-            skipped = 0
-            for repo in repos:
-                if not self._is_relevant_repo(repo):
-                    skipped += 1
-                    continue
-                discovery = self._build_discovery(repo)
-                if discovery is None:
-                    skipped += 1
-                    continue
-                result.items.append(discovery)
-                kept += 1
+            relevant = [repo for repo in repos if self._is_relevant_repo(repo)]
+            # 单条脏数据只丢该条（基类容错，2026-11-13）：此前一条畸形行抛异常
+            # 会让整轮 status=error，已转好的条目全部丢弃。
+            kept, _failed = self._build_items(relevant, result)
+            skipped = len(repos) - kept
             self.logger.info(
                 "github.filtered",
                 kept=kept,
