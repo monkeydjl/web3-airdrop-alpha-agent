@@ -38,7 +38,7 @@ from typing import Any
 # 项目根目录（假设本脚本位于 evaluation/llm/ 下）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
-GOLDEN_SAMPLES = PROJECT_ROOT / "tests" / "golden" / "projects.jsonl"
+GOLDEN_SAMPLES = PROJECT_ROOT / "backend" / "tests" / "golden" / "projects.jsonl"  # golden 样本在 backend/tests 下，此前路径断裂（默认评估模式必 FileNotFoundError）
 REPORT_DIR = PROJECT_ROOT / "evaluation" / "llm"
 METRICS_HISTORY = REPORT_DIR / "metrics_history.json"
 

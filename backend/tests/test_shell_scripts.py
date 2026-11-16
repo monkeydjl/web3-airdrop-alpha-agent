@@ -298,7 +298,12 @@ class TestComposeInvocationIsConsistent:
         offenders = [
             ln.strip()
             for ln in _code_lines("scripts/deploy.sh")
-            if "docker-compose" in ln and "command -v" not in ln and 'COMPOSE="docker-compose"' not in ln
+            if "docker-compose" in ln
+            and "command -v" not in ln
+            and 'COMPOSE="docker-compose"' not in ln
+            # compose **文件名**引用（-f docker-compose.prod.yml）不是对
+            # v1 二进制的调用 —— 守卫的靶子是"绕过 $COMPOSE 直接执行"。
+            and not re.search(r"docker-compose[\w.-]*\.ya?ml", ln)
         ]
         assert not offenders, f"deploy.sh 仍直接调用 docker-compose：{offenders}"
 

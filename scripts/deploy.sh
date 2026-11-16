@@ -47,6 +47,22 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # 硬编码一个端口就是上面第 1 条问题的来源，所以这里不写死。
 DEFAULT_PORT=8002
 
+# ── 2026-11-13 修复：prod 分支此前部署的是开发 compose ────────────
+# 原脚本全文不引用 docker-compose.prod.yml，`deploy.sh prod` 的 build/up
+# 全部打在开发用 docker-compose.yml 上（默认 SQLite、无 PG/前端/监控栈），
+# 而 backup.sh 与 rollback.sh 指向的是 prod 栈的容器名 —— 同一个仓库里
+# 存在两套互相不认识的"生产"定义。现在按环境显式选择 compose 文件与
+# 服务名，dev/prod 各自对齐自己那一套。
+if [ "$ENVIRONMENT" = "prod" ]; then
+    COMPOSE_FILES="-f docker-compose.prod.yml"
+    BACKEND_SERVICE="web"                 # prod compose 的后端服务名
+    BACKEND_CONTAINER="airdrop-web"       # prod compose 的 container_name
+else
+    COMPOSE_FILES=""
+    BACKEND_SERVICE="backend"
+    BACKEND_CONTAINER="airdrop-alpha-backend"
+fi
+
 echo "🚀 开始部署 Web3 Airdrop Alpha Agent System"
 echo "环境: $ENVIRONMENT"
 echo "目录: $PROJECT_ROOT"
@@ -180,42 +196,48 @@ echo ""
 
 # 停止现有容器
 echo "🛑 停止现有容器..."
-$COMPOSE down 2>/dev/null || true
+$COMPOSE $COMPOSE_FILES down 2>/dev/null || true
 echo "✅ 现有容器已停止"
 echo ""
 
 # 构建镜像
 echo "🔨 构建 Docker 镜像..."
 if [ "$ENVIRONMENT" = "prod" ]; then
-    $COMPOSE build --no-cache
+    $COMPOSE $COMPOSE_FILES build --no-cache
 else
-    $COMPOSE build
+    $COMPOSE $COMPOSE_FILES build
 fi
 echo "✅ 镜像构建完成"
 echo ""
 
 # 启动服务
 echo "▶️  启动服务..."
-if [ "$ENVIRONMENT" = "prod" ]; then
-    # 生产环境：启动 Nginx（nginx 服务在 production profile 下）
-    $COMPOSE --profile production up -d
-else
-    # 开发环境：仅启动后端
-    $COMPOSE up -d
-fi
+# prod compose 的核心服务（nginx/frontend/web/db/监控）没有 profile，
+# 直接 up -d 即全部启动；observability 附加栈按需手动拉起（见文件头注释）。
+$COMPOSE $COMPOSE_FILES up -d
 echo "✅ 服务启动完成"
 echo ""
 
 # 等待服务就绪
-echo "⏳ 等待服务就绪（端口 $HOST_PORT）..."
+# dev：探测宿主端口；prod：后端只 expose 不发布端口，直接读 compose 定义的
+# 容器 healthcheck 状态（airdrop-web），不依赖宿主端口假设。
+echo "⏳ 等待服务就绪..."
 sleep 5
+
+check_backend_ready() {
+    if [ "$ENVIRONMENT" = "prod" ]; then
+        [ "$(docker inspect -f '{{.State.Health.Status}}' "$BACKEND_CONTAINER" 2>/dev/null)" = "healthy" ]
+    else
+        curl -s -f "http://localhost:$HOST_PORT/health" > /dev/null 2>&1
+    fi
+}
 
 MAX_RETRIES=30
 RETRY_COUNT=0
 READY=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if curl -s -f "http://localhost:$HOST_PORT/health" > /dev/null 2>&1; then
+    if check_backend_ready; then
         echo "✅ 服务已就绪"
         READY=1
         break
@@ -223,12 +245,12 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 
     # 容器已经退出时不必再等满 30 次 —— 那不是"启动慢"，是"起不来"。
     # 这两种情况的处置动作完全不同，报成同一个信息会让人查错方向。
-    if ! $COMPOSE ps --status running 2>/dev/null | grep -q backend; then
+    if ! $COMPOSE $COMPOSE_FILES ps --status running 2>/dev/null | grep -q "$BACKEND_SERVICE"; then
         echo ""
         echo "❌ 后端容器已退出（不是启动慢，是启动失败）"
         echo ""
         echo "最后 50 行日志:"
-        $COMPOSE logs --tail=50 backend || true
+        $COMPOSE $COMPOSE_FILES logs --tail=50 "$BACKEND_SERVICE" || true
         exit 1
     fi
 
@@ -239,10 +261,14 @@ done
 
 if [ $READY -eq 0 ]; then
     echo "❌ 服务在 $((MAX_RETRIES * 2 + 5)) 秒内未就绪"
-    echo "   探测地址: http://localhost:$HOST_PORT/health"
+    if [ "$ENVIRONMENT" = "prod" ]; then
+        echo "   探测方式: docker inspect -f '{{.State.Health.Status}}' $BACKEND_CONTAINER"
+    else
+        echo "   探测地址: http://localhost:$HOST_PORT/health"
+    fi
     echo ""
     echo "查看日志:"
-    $COMPOSE logs --tail=50 backend
+    $COMPOSE $COMPOSE_FILES logs --tail=50 "$BACKEND_SERVICE"
     exit 1
 fi
 
@@ -254,19 +280,21 @@ echo "✅ 部署成功！"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "🔗 服务地址:"
-echo "   API: http://localhost:$HOST_PORT"
-echo "   文档: http://localhost:$HOST_PORT/docs"
-echo "   健康检查: http://localhost:$HOST_PORT/health"
-
 if [ "$ENVIRONMENT" = "prod" ]; then
-    echo "   Nginx: http://localhost:${NGINX_PORT:-80}"
+    echo "   Nginx:    http://localhost:18080"
+    echo "   前端:     http://localhost:13002"
+    echo "   健康检查: http://localhost:18080/health"
+else
+    echo "   API: http://localhost:$HOST_PORT"
+    echo "   文档: http://localhost:$HOST_PORT/docs"
+    echo "   健康检查: http://localhost:$HOST_PORT/health"
 fi
 
 echo ""
 echo "📋 常用命令:"
-echo "   查看日志: $COMPOSE logs -f backend"
-echo "   查看状态: $COMPOSE ps"
-echo "   停止服务: $COMPOSE down"
+echo "   查看日志: $COMPOSE $COMPOSE_FILES logs -f $BACKEND_SERVICE"
+echo "   查看状态: $COMPOSE $COMPOSE_FILES ps"
+echo "   停止服务: $COMPOSE $COMPOSE_FILES down"
 echo "   健康检查: API_URL=http://localhost:$HOST_PORT ./scripts/health-check.sh"
 echo "   备份数据: ./scripts/backup.sh"
 echo ""

@@ -25,6 +25,7 @@ const FILES = [
   './lib/modalShell.test.ts',
   './lib/modalFocus.test.ts',
   './lib/apiEnvelope.test.ts',
+  './lib/proxyParity.test.ts',
 ];
 
 for (const f of FILES) {

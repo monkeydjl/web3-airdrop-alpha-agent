@@ -743,6 +743,7 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 | `/api/v1/projects/{project_id}/funding` | POST / PATCH / PUT / DELETE | GET / HEAD | PATCH 改融资数据并触发重算。通配段在路径**中间**，前缀匹配写不出来；同一路径的 GET 是普通只读明细。 |
 | `/api/v1/projects/{project_id}/unhide` | POST / PATCH / PUT / DELETE | GET / HEAD | 恢复显示改的是**全局**默认列表，并让每日已发币复查从此跳过该项目（2026-10-08）。 |
 | `/api/v1/project-identity/*` | POST / PATCH / PUT / DELETE | GET / HEAD | 别名决定项目解析到哪个 `project_id`（见 API_SPEC §54-§58）。改错会让所有项目的历史评分、反馈与参与记录挂到错误的项目上；`GET /aliases` 与调试查询保持开放。 |
+| `/api/v1/bot/test-send` | POST / PATCH / PUT / DELETE | — | 出站发送动作，目标 URL 来自请求体（2026-11-13）。发送函数已强制出站域名白名单，角色锁挡住"用任意 webhook 地址做消息中继"的滥用面；`/bot/command` 只读渲染，保持匿名。 |
 <!-- admin-method-rules:end -->
 
 `/collections/` 用的是**方法白名单取反**（GET/HEAD 之外全锁），

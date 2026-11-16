@@ -55,7 +55,12 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
     'Content-Type': 'application/json',
   };
 
-  // 客户端凭据自动附加（支持 localStorage / sessionStorage）
+  // 管理员凭据的手工注入通道（2026-11-13 审查后保留并写明用途）：
+  // 全前端没有任何代码**写入**这两个键 —— 正常访客的凭据由服务端 proxy.ts
+  // 注入，浏览器不接触任何密钥。这里的存在只为一个场景：管理员在 DevTools
+  // 里手工 `localStorage.setItem('api_key', ...)` 后，浏览器直发的管理动作
+  // （proxy 对管理端点不代签）能带上凭据。若未来补上登录 UI，请同步重构这里；
+  // 若确定不走这条路，删除本块即可 —— 它是唯一的客户端凭据面。
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     const apiKey = localStorage.getItem('api_key') || sessionStorage.getItem('api_key');
@@ -88,11 +93,9 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
   } catch (cause) {
     // 主动取消不是故障，原样抛出让调用方识别
     if (isAbortError(cause)) throw cause;
-    // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"
-    throw new Error(
-      `无法连接 API（${url}）。请确认后端已在 8002 启动，前端 3002 的 rewrite 指向 127.0.0.1:8002。`,
-      { cause },
-    );
+    // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"。
+    // 文案对生产用户保持环境中立（2026-11-13 审查：此前硬编码"8002 / 127.0.0.1"）。
+    throw new Error(`无法连接 API（${url}）。请确认后端服务是否在线。`, { cause });
   }
 
   const text = await res.text();
@@ -104,7 +107,7 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
     // Next rewrite 失败或后端崩溃时常见 HTML 500
     if (res.status >= 500) {
       throw new Error(
-        `后端错误 HTTP ${res.status}（非 JSON）。请确认 uvicorn 在 8002 正常运行，并查看后端终端日志。${snippet ? ` 摘要: ${snippet}` : ''}`,
+        `后端错误 HTTP ${res.status}（非 JSON）。请稍后重试，若持续出现请联系管理员查看服务日志。${snippet ? ` 摘要: ${snippet}` : ''}`,
       );
     }
     throw new Error(

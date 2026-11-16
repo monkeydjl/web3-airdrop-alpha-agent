@@ -101,7 +101,8 @@ jobs:
 
       - name: Run full backend test suite
         run: >-
-          pytest tests -q
+          # -n auto：xdist 并行（conftest 已做 per-worker 建库隔离，2026-11-13）
+          pytest tests -q -n auto
           --cov=app
           --cov-report=term-missing
           --cov-report=xml

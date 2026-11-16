@@ -205,6 +205,12 @@ class _PostgresCursor:
     def fetchone(self) -> dict[str, int]:
         return {"exists": 1}
 
+    def fetchall(self) -> list[dict[str, int]]:
+        # 2026-11-13：init_db 增加了 _dedupe_raw_projects 的存量重复扫描。
+        # 本假连接只关注 DDL/事务顺序，返回空集让去重成为空扫 no-op
+        # （与 backend/tests/test_db_init.py 的同名替身同款）。
+        return []
+
     def close(self) -> None:
         pass
 
@@ -408,6 +414,12 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
             stack.enter_context(patch.object(main_module, "UnifiedScheduler", _UnifiedSched))
             stack.enter_context(patch.object(main_module, "CollectionRepository", _PersistRepo))
             stack.enter_context(patch.object(main_module, "init_db", lambda: None))
+            # 2026-11-13：main.on_collection 的持久化也移入了 asyncio.to_thread
+            # （与手动路径同一 P1-4 口径）—— _run_coro_sync 无事件循环，
+            # 同样降级为同步直调（与下方手动段的 patch 同款）。
+            stack.enter_context(
+                patch.object(main_module.asyncio, "to_thread", lambda fn, *a, **k: _sync_direct(fn, *a, **k))
+            )
             stack.enter_context(
                 patch(
                     "app.opportunity.economic_repository.EconomicSnapshotRepository",
@@ -438,7 +450,15 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
 
     # ── Manual request path: ctor boom after persist; result unmodified ──
     _raw_m, conn_m, _snap_m, _evid_m = _sqlite_evidence_stack()
-    close_m = _track_close(conn_m)
+    close_m = {"n": 0}
+
+    def _counting_close_m() -> None:
+        # 2026-11-14（审查 P2-11）：路由合法地开**两个**作用域（operator 门禁 +
+        # 持久化），每个退出都记账一次；借用连接的生命周期由本用例自己管理，
+        # 计数不真关（真关会破坏第二个作用域）。
+        close_m["n"] += 1
+
+    conn_m.close = _counting_close_m  # type: ignore[method-assign]
     persisted: list[CollectorResult] = []
 
     class _FakeCollector:
@@ -511,7 +531,8 @@ def _prove_construction_failure_isolation(result: CollectorResult) -> bool:
             return False
         if data.get("status") != result.status:
             return False
-        if close_m["n"] != 1:
+        # 门禁 + 持久化各开一个作用域，各自退出记账一次
+        if close_m["n"] != 2:
             return False
         if len(persisted) != 1 or persisted[0] is not result:
             return False
@@ -3746,7 +3767,9 @@ def _case_17_1_26() -> bool:
         return False
     if "collections.economic_failed" not in collections_src:
         return False
-    if "conn.close()" not in collections_src:
+    # 2026-11-14（审查 P2-11）：路由层不再手写 finally conn.close() —— own 契约
+    # 由 connection_scope 统一保证（恰开恰关一次），静态契约随之更新。
+    if "with connection_scope() as conn" not in collections_src:
         return False
     # process_persisted_collection itself never closes connections.
     integ_src = inspect.getsource(process_persisted_collection)

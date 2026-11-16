@@ -83,7 +83,7 @@ services:
   # 并设 DB_BACKEND=postgres（或直接设 DATABASE_URL）
   # ══════════════════════════════════════════════════════════════
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine  # 与生产（docker-compose.prod.yml）同版本：开发/生产 PG 大版本不一致会让行为差异只在本机可见
     container_name: airdrop-alpha-postgres
     restart: unless-stopped
     profiles:

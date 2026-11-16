@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-10-08 随恢复显示端点更新）
+### 2.1 写操作的鉴权分布（实测，2026-11-13 随 bot/test-send 收紧更新）
 
 全仓共 **89 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 18 |
+| 管理员专用 | 19 |
 | 无鉴权（公开） | 5 |
-| 匿名 token 可调 | 66 |
+| 匿名 token 可调 | 65 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -90,7 +90,9 @@
 以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表），
 以及 2026-11-09 项目身份别名的三个写端点 + 回填（`POST /project-identity/aliases`、
 `DELETE /project-identity/aliases/{alias_id}`、`POST /project-identity/aliases/backfill`，
-别名是全局身份数据，见 §54-§58）。
+别名是全局身份数据，见 §54-§58），
+以及 2026-11-13 的 `POST /bot/test-send`（出站发送动作，目标 URL 来自请求体，
+2026-11-13 前登记为匿名可写——与事实不符，服务端并不要求预配置）。
 
 公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
 `POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
