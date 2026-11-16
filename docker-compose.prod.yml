@@ -80,6 +80,10 @@ services:
       # 容器照样变绿但运行的并不是生产安全口径。
       - APP_ENV=production
       - PORT=8002
+      # 限流的可信代理跳数（2026-11-13 审查 M-2）：真实拓扑 nginx → Next →
+      # backend，两跳。留 0 时限流键退化成 Next 容器 IP（全站共桶）；
+      # 取值与 .env 里 TRUSTED_PROXY_COUNT 同源，运维可按真实部署改。
+      - TRUSTED_PROXY_COUNT=${TRUSTED_PROXY_COUNT:-1}
       - DATABASE_URL=postgresql://airdrop:${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD（生产必须强密码）}@db:5432/airdrop
       # 用 :? 而非裸 ${API_KEY}：environment 的插值即便展开成空串也会**覆盖**
       # env_file 里的正确值。裸写法只给 Compose 一个 warning，后端却变成
@@ -148,9 +152,10 @@ services:
     image: prom/prometheus:latest
     container_name: airdrop-prometheus
     logging: *default-logging
-    # 宿主机 19090 → 容器 9090
+    # 宿主机 19090 → 容器 9090。绑回环（2026-11-14 审查 L-7）：Prometheus
+    # 无鉴权，0.0.0.0 = 指标画像挂公网；远程运维走 SSH 隧道。
     ports:
-      - "19090:9090"
+      - "127.0.0.1:19090:9090"
     volumes:
       - ./configs/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./configs/observability/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
@@ -170,7 +175,7 @@ services:
     logging: *default-logging
     # 宿主机 19093 → 容器 9093
     ports:
-      - "19093:9093"
+      - "127.0.0.1:19093:9093"
     volumes:
       - ./configs/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     entrypoint: /bin/sh
@@ -194,7 +199,7 @@ services:
     logging: *default-logging
     # 宿主机 13000 → 容器 3000
     ports:
-      - "13000:3000"
+      - "127.0.0.1:13000:3000"
     environment:
       # `:?` 而非裸 `${GRAFANA_PASSWORD}`：裸写法在未设置时展开成**空串**，
       # compose 只打一行 warning 就继续启动，而 Grafana 收到空密码会回落到
@@ -222,7 +227,7 @@ services:
     profiles: ["observability"]
     # 宿主机 13100 → 容器 3100
     ports:
-      - "13100:3100"
+      - "127.0.0.1:13100:3100"
     volumes:
       - ./docker/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
@@ -254,9 +259,9 @@ services:
       - ./configs/observability/otel/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
     # 宿主机 14317/14318/18889 → 容器 4317/4318/8889
     ports:
-      - "14317:4317"   # OTLP gRPC
-      - "14318:4318"   # OTLP HTTP
-      - "18889:8889"   # Prometheus exporter
+      - "127.0.0.1:14317:4317"   # OTLP gRPC
+      - "127.0.0.1:14318:4318"   # OTLP HTTP
+      - "127.0.0.1:18889:8889"   # Prometheus exporter
     networks:
       - backend   # web 通过 backend 网络上报 trace
       - monitoring  # non-internal 网络：允许宿主端口发布 + Prometheus 抓取
@@ -268,7 +273,7 @@ services:
     profiles: ["observability"]
     # 宿主机 11686 → 容器 16686
     ports:
-      - "11686:16686"
+      - "127.0.0.1:11686:16686"
     networks:
       - backend   # 接收 otel-collector 的 trace
       - monitoring  # non-internal 网络：允许宿主访问 Jaeger UI

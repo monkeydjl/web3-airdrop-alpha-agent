@@ -9,6 +9,7 @@ Reference:
 
 from __future__ import annotations
 
+import hmac
 import re
 import time
 import uuid
@@ -52,6 +53,36 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+def _first_user_role(bootstrap_token: str | None) -> str | None:
+    """首位注册用户的角色判定（防抢注，2026-11-13 审查 H-2）。
+
+    `/auth/register` 在 PUBLIC_PREFIXES 上 —— 此前"首位注册即 admin"等于
+    公网新部署时攻击者抢注即得永久管理员。规则：
+
+    - 配置了 `REGISTRATION_BOOTSTRAP_TOKEN` → 必须携带正确 token 才得 admin
+      （常量时间比较；配置即生效，不分环境）；
+    - 生产环境未配置 → 降级 viewer 并告警（运维应配置 token 后再注册首位账号）；
+    - 开发/测试未配置 → 保持原自举行为（admin），DX 不变。
+
+    Returns:
+        "admin" / "viewer"；None 表示校验失败（调用方拒绝创建用户，
+        自举名额不被消费）。
+    """
+    expected = settings.registration_bootstrap_token.strip()
+    if expected:
+        provided = (bootstrap_token or "").strip()
+        if not hmac.compare_digest(provided, expected):
+            return None
+        return "admin"
+    if settings.app_env == "production":
+        logger.warning(
+            "auth.first_user_bootstrap_degraded",
+            hint="Set REGISTRATION_BOOTSTRAP_TOKEN and register with it to create the admin",
+        )
+        return "viewer"
+    return "admin"
+
+
 # ═══════════════════════════════════════════════════════════════
 # Request / Response Models
 # ═══════════════════════════════════════════════════════════════
@@ -93,6 +124,10 @@ class RegisterRequest(BaseModel):
     email: str = Field(..., description="用户邮箱")
     password: str = Field(..., description="密码（长度≥8，包含大小写字母+数字）")
     display_name: str | None = Field(default=None, description="显示名称（可选）")
+    bootstrap_token: str | None = Field(
+        default=None,
+        description="首位 admin 自举令牌（仅当服务端配置了 REGISTRATION_BOOTSTRAP_TOKEN 时需要）",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -159,10 +194,17 @@ def issue_anonymous() -> AnonymousTokenResponse:
     "/auth/register",
     response_model=AuthTokenResponse,
     summary="用户注册",
-    description="创建新用户账户并返回 JWT Access Token 与 Refresh Token。首位注册用户自举为 admin，后续用户为 viewer。",
+    description=(
+        "创建新用户账户并返回 JWT Access Token 与 Refresh Token。首位用户默认自举为 admin；"
+        "生产环境或配置了 REGISTRATION_BOOTSTRAP_TOKEN 的部署需要携带正确的 bootstrap_token "
+        "才能获得 admin（防公网抢注，2026-11-13）。ALLOW_REGISTRATION=false 时关闭注册。"
+    ),
 )
 def register(body: RegisterRequest) -> Any:
     """用户注册端点。"""
+    if not settings.allow_registration:
+        return _error(403, "REGISTRATION_DISABLED", "Registration is disabled on this deployment")
+
     email = body.email.strip()
     if not _EMAIL_PATTERN.match(email):
         return _error(400, "INVALID_EMAIL", "Invalid email address format")
@@ -177,7 +219,13 @@ def register(body: RegisterRequest) -> Any:
             return _error(400, "EMAIL_ALREADY_REGISTERED", "Email is already registered")
 
         user_count = user_repo.count_users()
-        role = "admin" if user_count == 0 else "viewer"
+        if user_count == 0:
+            role = _first_user_role(body.bootstrap_token)
+            if role is None:
+                # fail-closed：token 不对就不建用户，自举名额不被消费
+                return _error(403, "BOOTSTRAP_TOKEN_REQUIRED", "Bootstrap token missing or incorrect")
+        else:
+            role = "viewer"
 
         user_id = f"usr_{uuid.uuid4().hex[:12]}"
         password_hash = hash_password(body.password)

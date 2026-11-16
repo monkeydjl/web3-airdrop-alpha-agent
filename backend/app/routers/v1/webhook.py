@@ -301,7 +301,11 @@ async def receive_alchemy_webhook(
 
 @router.get("/webhook/alchemy/status")
 def alchemy_webhook_status() -> JSONResponse:
-    """Health check for the Alchemy webhook endpoint."""
+    """Health check for the Alchemy webhook endpoint.
+
+    只回 `configured` 布尔（2026-11-13 审查 L-1）：端点在 PUBLIC_PREFIXES，
+    回显内部 webhook URL 等于把回调地址免费送给匿名抓取者。
+    """
     configured = bool(settings.alchemy_webhook_signing_key)
     return JSONResponse(
         status_code=200,
@@ -311,7 +315,6 @@ def alchemy_webhook_status() -> JSONResponse:
                 "source_id": "alchemy_webhook",
                 "source_type": "webhook",
                 "configured": configured,
-                "webhook_url": settings.alchemy_webhook_url or None,
             },
         },
     )

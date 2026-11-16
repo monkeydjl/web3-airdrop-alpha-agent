@@ -15,6 +15,7 @@ from app.services.bot_notifier import (
     send_discord_webhook,
     send_telegram_message,
 )
+from app.utils.domain_allowlist import DomainNotAllowedError
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/bot", tags=["bot"])
@@ -42,19 +43,32 @@ def execute_command(req: CommandRequest) -> dict[str, Any]:
 
 @router.post("/test-send", summary="测试向 Discord / Telegram 发送实时消息")
 def test_send_message(req: TestSendRequest) -> dict[str, Any]:
-    """发送测试通知."""
-    if req.channel.lower() == "discord":
-        if not req.webhook_url:
-            raise HTTPException(status_code=400, detail="webhook_url is required for Discord")
-        ok = send_discord_webhook(req.webhook_url, req.title, req.message)
-        return {"ok": ok, "channel": "discord", "status": "sent" if ok else "failed"}
+    """发送测试通知.
 
-    elif req.channel.lower() == "telegram":
-        if not req.bot_token or not req.chat_id:
-            raise HTTPException(status_code=400, detail="bot_token and chat_id are required for Telegram")
-        full_text = f"*{req.title}*\n\n{req.message}"
-        ok = send_telegram_message(req.bot_token, req.chat_id, full_text)
-        return {"ok": ok, "channel": "telegram", "status": "sent" if ok else "failed"}
+    目标 URL 过出站域名白名单（SECURITY §10.2，fail-closed）；
+    白名单拒绝映射为 400，让调用方看到明确原因而不是 500。
+    """
+    try:
+        if req.channel.lower() == "discord":
+            if not req.webhook_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "VALIDATION_ERROR", "message": "webhook_url is required for Discord"},
+                )
+            ok = send_discord_webhook(req.webhook_url, req.title, req.message)
+            return {"ok": ok, "channel": "discord", "status": "sent" if ok else "failed"}
 
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported channel: {req.channel}")
+        elif req.channel.lower() == "telegram":
+            if not req.bot_token or not req.chat_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "VALIDATION_ERROR", "message": "bot_token and chat_id are required for Telegram"},
+                )
+            full_text = f"*{req.title}*\n\n{req.message}"
+            ok = send_telegram_message(req.bot_token, req.chat_id, full_text)
+            return {"ok": ok, "channel": "telegram", "status": "sent" if ok else "failed"}
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported channel: {req.channel}")
+    except DomainNotAllowedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

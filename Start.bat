@@ -67,7 +67,10 @@ echo.
 
 REM Start backend
 echo [4/6] Starting backend service...
-start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8002"
+REM Bind 127.0.0.1 instead of 0.0.0.0: this script is for local development.
+REM With MVP no-auth mode, 0.0.0.0 would expose admin endpoints (/run, /settings,
+REM /import) to the whole LAN.
+start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 127.0.0.1 --port 8002"
 
 echo [INFO] Waiting for backend to start...
 timeout /t 3 /nobreak >nul

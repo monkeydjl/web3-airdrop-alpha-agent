@@ -88,7 +88,7 @@ def create_alias(req: AliasCreateRequest) -> dict[str, Any]:
 def delete_alias(alias_id: int) -> dict[str, Any]:
     deleted = ProjectIdentityResolver().delete_alias(alias_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="alias not found")
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "alias not found"})
     return {"ok": True, "data": {"alias_id": alias_id, "deleted": True}, "error": None}
 
 

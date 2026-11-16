@@ -48,6 +48,7 @@ const ADMIN_PREFIXES = [
   '/api/v1/scheduler',
   '/api/v1/notify',
   '/api/v1/watched-wallets',
+  '/api/v1/ops',
 ];
 
 /**
@@ -68,6 +69,16 @@ const ADMIN_METHOD_RULES: { methods: string[]; test: (p: string) => boolean }[] 
     methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
     // /api/v1/projects/{id}/unhide —— 撤销 launch_review 隐藏，管理员动作
     test: (p) => /^\/api\/v1\/projects\/[^/]+\/unhide(\/|$)/.test(p),
+  },
+  {
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    // /api/v1/project-identity —— 全局身份数据，写操作仅管理员
+    test: (p) => p === '/api/v1/project-identity' || p.startsWith('/api/v1/project-identity/'),
+  },
+  {
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    // /api/v1/bot/test-send —— 出站发送动作，目标 URL 来自请求体（2026-11-13）
+    test: (p) => p === '/api/v1/bot/test-send',
   },
 ];
 

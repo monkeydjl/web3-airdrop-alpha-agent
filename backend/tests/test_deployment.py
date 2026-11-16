@@ -236,6 +236,29 @@ class TestDeploymentScripts:
         script = os.path.join(PROJECT_ROOT, "scripts", "deploy.sh")
         assert os.path.exists(script)
 
+    def test_deploy_script_prod_targets_prod_compose(self):
+        """`deploy.sh prod` 必须部署 docker-compose.prod.yml，而不是开发栈。
+
+        2026-11-13 审查发现 prod 分支的全部 build/up 都打在开发用
+        docker-compose.yml 上（默认 SQLite、无 PG/前端/监控栈），而
+        backup.sh / rollback.sh 指向的是 prod 栈的容器名 —— 两套互相
+        不认识的"生产"定义。此守卫防止再漂移回去。
+        """
+        script = os.path.join(PROJECT_ROOT, "scripts", "deploy.sh")
+        with open(script, encoding="utf-8") as f:
+            content = f.read()
+        assert "docker-compose.prod.yml" in content, (
+            "deploy.sh 不再引用 docker-compose.prod.yml —— prod 分支会静默部署开发栈"
+        )
+        assert "-f docker-compose.prod.yml" in content or "-f  docker-compose.prod.yml" in content
+
+    def test_deploy_script_uses_prod_service_name_for_prod(self):
+        """prod 栈的后端服务名是 web（container_name airdrop-web），不是 backend。"""
+        script = os.path.join(PROJECT_ROOT, "scripts", "deploy.sh")
+        with open(script, encoding="utf-8") as f:
+            content = f.read()
+        assert 'BACKEND_SERVICE="web"' in content, "prod 环境的日志/ps/健康检查必须指向 prod compose 的服务名 web"
+
     @pytest.mark.skipif(os.name == "nt", reason="Executable test not reliable on Windows")
     def test_deploy_script_is_executable(self):
         """Test that deploy.sh is executable."""
@@ -411,6 +434,22 @@ class TestProductionEntrypointIsWired:
             "裸插值在未设置时展开成空串并覆盖 env_file，Compose 只 warning 不报错。"
         )
 
+    def test_prod_compose_sets_trusted_proxy_count(self):
+        """生产 compose 必须显式注入 TRUSTED_PROXY_COUNT（2026-11-13 审查 M-2）。
+
+        生产拓扑是 nginx → Next → backend（两跳）。代码默认值是 0：
+        - 留 0 时后端把所有请求记到 Next 容器 IP，全站共用一个限流桶
+          （正常用户互相挤兑）；
+        - 反过来若运维在 .env 多设跳数，攻击者伪造 X-Forwarded-For
+          即可每请求换桶，API key 爆破限流失效。
+        限流的正确性依赖这个值与真实拓扑一致，必须进部署配置而不是靠人记。
+        """
+        env = _service_env(_load_prod_compose()["services"]["web"])
+        assert "TRUSTED_PROXY_COUNT" in env, (
+            "生产 compose 的 web 服务没有注入 TRUSTED_PROXY_COUNT —— "
+            "限流键会退化成代理容器 IP（全站共桶）或被 X-Forwarded-For 伪造绕过"
+        )
+
     def test_frontend_dockerfile_bakes_the_proxy_target_at_build_time(self):
         """`next.config.js` 的 rewrites 在 build 时读 API_PROXY_TARGET 并写进产物。
 
@@ -444,3 +483,25 @@ class TestDockerIgnore:
             sensitive = [".env", "*.db", "__pycache__"]
             for pattern in sensitive:
                 assert pattern in content
+
+
+class TestMonitoringPortsBindLoopback:
+    """监控栈端口必须绑宿主回环，不得对公网发布（2026-11-14 审查 L-7）。
+
+    Prometheus 指标、Grafana 面板、Jaeger UI 都是无鉴权的运维画像：
+    绑 0.0.0.0 等于把"错误率、LLM 花费、采集源清单"免费挂在公网上。
+    远程运维走 SSH 隧道访问 127.0.0.1 —— 这是标准做法，不是限制。
+    """
+
+    def test_monitoring_ports_bind_loopback(self):
+        import re
+
+        content = (REPO_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+        # 形如 `- "19090:9090"` 的裸发布（宿主侧未限定地址）
+        naked = [m.group(0) for m in re.finditer(r'-\s*"(?!127\.0\.0\.1:)\d{4,5}:\d{2,5}"', content)]
+        # 前端 13002 / nginx 18080 面向用户，不在此约束内
+        unexpected = [p for p in naked if not p.endswith(('13002:3002"', '18080:80"'))]
+        assert not unexpected, (
+            f"生产 compose 有监控/内部端口对公网裸发布：{unexpected}。"
+            '改为 "127.0.0.1:<host>:<container>" —— 指标与 UI 是无鉴权运维画像。'
+        )

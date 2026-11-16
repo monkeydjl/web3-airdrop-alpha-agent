@@ -131,3 +131,79 @@ def test_anonymous_token_backward_compatibility() -> None:
     assert payload is not None
     assert payload["user_id"] == "anon-custom"
     assert payload["role"] == "anonymous"
+
+
+# ── 吊销缓存的有界性与 fail-open 告警（2026-11-13 审查回归）──────
+#
+# 此前 _BLACKLISTED_JTIS 是 set：只进不出，长生命周期进程无界增长；
+# is_jti_blacklisted 在 DB 异常时静默 fail-open —— 吊销检查失效无人知晓。
+
+
+class _RecordingLogger:
+    def __init__(self) -> None:
+        self.errors: list[tuple[str, dict]] = []
+
+    def error(self, event: str, **kw: object) -> None:
+        self.errors.append((event, kw))
+
+    def warning(self, event: str, **kw: object) -> None:
+        pass
+
+    def info(self, event: str, **kw: object) -> None:
+        pass
+
+
+def test_blacklist_cache_prunes_expired_entries(monkeypatch) -> None:
+    """缓存条目带过期时间，达到阈值时淘汰已过期项 —— 不再只进不出。"""
+    import time as time_mod
+
+    import app.auth as auth_mod
+
+    fresh_cache: dict[str, float] = {}
+    monkeypatch.setattr(auth_mod, "_BLACKLISTED_JTIS", fresh_cache)
+    now = time_mod.time()
+
+    for i in range(auth_mod._BLACKLIST_PRUNE_THRESHOLD):
+        auth_mod._blacklist_cache_add(f"expired-{i}", now - 10)
+    assert len(fresh_cache) == 0, "已过期条目未被淘汰 —— 缓存仍只进不出"
+
+    auth_mod._blacklist_cache_add("alive", now + 3600)
+    assert "alive" in fresh_cache, "未过期条目不得被误删"
+
+
+def test_blacklist_cache_bounded_under_churn(monkeypatch) -> None:
+    """持续吊销（含过期条目）下缓存尺寸有界。"""
+    import time as time_mod
+
+    import app.auth as auth_mod
+
+    fresh_cache: dict[str, float] = {}
+    monkeypatch.setattr(auth_mod, "_BLACKLISTED_JTIS", fresh_cache)
+    now = time_mod.time()
+
+    for i in range(5000):
+        auth_mod._blacklist_cache_add(f"jti-{i}", now - 1)
+    assert len(fresh_cache) <= auth_mod._BLACKLIST_PRUNE_THRESHOLD, f"缓存增长到 {len(fresh_cache)} —— 淘汰逻辑没有生效"
+
+
+def test_is_jti_blacklisted_logs_error_on_db_failure(monkeypatch) -> None:
+    """DB 异常时 fail-open 是显式取舍，但必须有 error 级告警 —— 不能静默。"""
+    import contextlib
+
+    import app.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_BLACKLISTED_JTIS", {})
+
+    @contextlib.contextmanager
+    def boom_scope(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("db down")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(auth_mod, "connection_scope", boom_scope)
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(auth_mod, "logger", recorder)
+
+    assert auth_mod.is_jti_blacklisted("some-jti") is False
+    assert any(e == "auth.jti_check_failed" for e, _ in recorder.errors), (
+        "吊销检查静默失效：DB 异常的 fail-open 没有任何告警"
+    )

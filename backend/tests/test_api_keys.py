@@ -141,3 +141,123 @@ def test_api_key_expiration():
 
         found = repo.find_active_key_by_raw(raw_key)
         assert found is None
+
+
+# ── bcrypt 扫描放大 DoS 回归（2026-11-13 审查）──────────────────
+#
+# find_active_key_by_raw 的 ak_ 快速路径未命中时（key_id 不存在 /
+# 已吊销 / 密文不匹配），此前会**继续落进全表扫描**：每个请求对全部
+# 未撤销 key 逐行 bcrypt（约 N×250ms 纯 CPU）。攻击者只要发一个格式
+# 合法但不存在的 `ak_{16hex}_{x}`，就能以限流内的请求量持续吃满 CPU。
+#
+# 契约：`ak_` 格式解析成功后，快速路径就是**权威判定** —— 该 raw key
+# 的哈希只可能存在于它声称的那一行，扫描不可能"救回"任何结果。
+# 全表扫描只保留给历史格式（非 ak_ 前缀）的兼容查找。
+
+
+def _seed_user_and_keys(n: int) -> list[str]:
+    """建 1 个用户 + n 个有效 key，返回 n 个 raw key。"""
+    from app.db import get_connection
+    from app.repositories.api_key import ApiKeyRepository
+    from app.repositories.user import UserRepository
+
+    raws: list[str] = []
+    with get_connection() as conn:
+        UserRepository(conn).create_user(
+            user_id="usr_dos",
+            email="dos@test.com",
+            password_hash="mock_hash",
+            role="analyst",
+        )
+        repo = ApiKeyRepository(conn)
+        for i in range(n):
+            key_id_hex = f"{i:016x}"
+            raw_key = f"ak_{key_id_hex}_super_secure_secret_{i}"
+            repo.create_key(
+                key_id=f"key_{key_id_hex}",
+                user_id="usr_dos",
+                name=f"k{i}",
+                key_hash=hash_password(raw_key),
+                role="analyst",
+            )
+            raws.append(raw_key)
+    return raws
+
+
+def _count_bcrypt_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """替换 api_key 命名空间里的 verify_password，统计 bcrypt 调用次数。"""
+    import app.repositories.api_key as ak_mod
+
+    counter = {"n": 0}
+    real_verify = ak_mod.verify_password
+
+    def counting_verify(raw: str, hashed: str) -> bool:
+        counter["n"] += 1
+        return real_verify(raw, hashed)
+
+    monkeypatch.setattr(ak_mod, "verify_password", counting_verify)
+    return counter
+
+
+def test_unknown_key_id_does_not_trigger_bcrypt_scan(monkeypatch):
+    """格式合法但 key_id 不存在 → 立即 None，0 次 bcrypt。"""
+    _seed_user_and_keys(3)
+    counter = _count_bcrypt_calls(monkeypatch)
+    from app.db import get_connection
+    from app.repositories.api_key import ApiKeyRepository
+
+    with get_connection() as conn:
+        result = ApiKeyRepository(conn).find_active_key_by_raw("ak_ffffffffffffffff_unknown")
+    assert result is None
+    assert counter["n"] == 0, f"key_id 未命中仍发生了 {counter['n']} 次 bcrypt —— 全表扫描放大 DoS 未修复"
+
+
+def test_revoked_key_does_not_trigger_bcrypt_scan(monkeypatch):
+    """key_id 命中但已吊销 → 立即 None，0 次 bcrypt（不扫其他行）。"""
+    raws = _seed_user_and_keys(3)
+    from app.db import get_connection
+    from app.repositories.api_key import ApiKeyRepository
+
+    with get_connection() as conn:
+        ApiKeyRepository(conn).revoke_key("key_0000000000000000", user_id="usr_dos")
+
+    counter = _count_bcrypt_calls(monkeypatch)
+    with get_connection() as conn:
+        result = ApiKeyRepository(conn).find_active_key_by_raw(raws[0])
+    assert result is None
+    assert counter["n"] == 0, f"已吊销 key 仍触发了 {counter['n']} 次 bcrypt 扫描"
+
+
+def test_wrong_secret_verifies_only_against_claimed_row(monkeypatch):
+    """key_id 命中但密文不匹配 → 恰好 1 次 bcrypt（对声称的那行），不是 1+N。"""
+    raws = _seed_user_and_keys(3)
+    from app.db import get_connection
+    from app.repositories.api_key import ApiKeyRepository
+
+    forged = raws[0].replace("_super_secure_secret_0", "_forged_secret_0")
+    counter = _count_bcrypt_calls(monkeypatch)
+    with get_connection() as conn:
+        result = ApiKeyRepository(conn).find_active_key_by_raw(forged)
+    assert result is None
+    assert counter["n"] == 1, f"密文不匹配触发了 {counter['n']} 次 bcrypt（应为 1）"
+
+
+def test_legacy_format_still_falls_back_to_scan():
+    """非 ak_ 前缀的历史格式 key 仍走全表扫描兼容路径（能被找到）。"""
+    _seed_user_and_keys(2)
+    legacy_raw = "legacy_plain_token_2024"
+    from app.auth import hash_password as _hp
+    from app.db import get_connection
+    from app.repositories.api_key import ApiKeyRepository
+
+    with get_connection() as conn:
+        ApiKeyRepository(conn).create_key(
+            key_id="key_legacy00000000",
+            user_id="usr_dos",
+            name="legacy",
+            key_hash=_hp(legacy_raw),
+            role="analyst",
+        )
+        found = ApiKeyRepository(conn).find_active_key_by_raw(legacy_raw)
+    assert found is not None
+    assert found["id"] == "key_legacy00000000"

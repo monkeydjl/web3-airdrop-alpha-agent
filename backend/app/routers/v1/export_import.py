@@ -97,7 +97,7 @@ def export_projects(
         )
 
         if not db_projects:
-            raise HTTPException(status_code=404, detail="没有找到符合条件的项目")
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "没有找到符合条件的项目"})
 
         # 转换为导出格式
         projects = [
@@ -310,7 +310,10 @@ async def import_projects(
         elif (file.filename or "").endswith(".csv") or file.content_type == "text/csv":
             projects_data = await asyncio.to_thread(import_projects_from_csv, content.decode("utf-8"))
         else:
-            raise HTTPException(status_code=400, detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件")
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": "不支持的文件格式，请上传 .xlsx 或 .csv 文件"},
+            )
 
         # 验证数据
         valid_projects, errors = validate_imported_projects(projects_data)

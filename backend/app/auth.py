@@ -142,6 +142,14 @@ ADMIN_ONLY_METHOD_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
         frozenset({"POST", "PATCH", "PUT", "DELETE"}),
         re.compile(r"^/api/v1/project-identity(?:/|$)"),
     ),
+    # Bot 测试发送（2026-11-13）：目标 URL 来自请求体，曾是全仓唯一绕过出站
+    # 域名白名单的出口（白名单已在 bot_notifier 内强制，这里补角色锁挡住
+    # "用任意 webhook 地址做消息中继"的滥用面）。/bot/command 只读渲染，
+    # 保持匿名可用（登记见 tests/test_admin_only_rules.py::ANON_WRITABLE）。
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/bot/test-send(?:/|$)"),
+    ),
 )
 
 
@@ -439,7 +447,21 @@ def verify_token(token: str) -> dict[str, Any] | None:
 # ═══════════════════════════════════════════════════════════════
 
 
-_BLACKLISTED_JTIS: set[str] = set()
+# 吊销缓存：jti → exp(epoch)。此前是 set（只进不出）：长生命周期进程无界
+# 增长。缓存的职责区间只是 token 未过期的那段时间 —— 过期即无人引用，
+# 按过期时间淘汰（达到阈值时批量清理一次，摊薄成本）。
+_BLACKLISTED_JTIS: dict[str, float] = {}
+_BLACKLIST_PRUNE_THRESHOLD = 1024
+
+
+def _blacklist_cache_add(jti: str, exp_epoch: float) -> None:
+    """记录一条吊销缓存（带过期时间）；达到阈值时淘汰已过期条目。"""
+    _BLACKLISTED_JTIS[jti] = exp_epoch
+    if len(_BLACKLISTED_JTIS) >= _BLACKLIST_PRUNE_THRESHOLD:
+        now = time.time()
+        for cached_jti, cached_exp in list(_BLACKLISTED_JTIS.items()):
+            if cached_exp < now:
+                del _BLACKLISTED_JTIS[cached_jti]
 
 
 def issue_access_token(
@@ -515,9 +537,13 @@ def blacklist_token_jti(
     conn: Any | None = None,
 ) -> None:
     """将 JTI 记入吊销黑名单（内存缓存 + 持久化表）。"""
-    _BLACKLISTED_JTIS.add(jti)
     if expires_at is None:
         expires_at = datetime.fromtimestamp(time.time() + 7 * 86400, tz=UTC)
+    try:
+        exp_epoch = expires_at.timestamp()
+    except (OSError, OverflowError, ValueError):  # pragma: no cover - 极端时间值
+        exp_epoch = time.time() + 7 * 86400
+    _blacklist_cache_add(jti, exp_epoch)
 
     from app.db import DbConnection
     from app.repositories.user import BlacklistedJtiRepository
@@ -557,9 +583,14 @@ def is_jti_blacklisted(jti: str, conn: Any | None = None) -> bool:
             with connection_scope() as c:
                 res = _do_check(c)
         if res:
-            _BLACKLISTED_JTIS.add(jti)
+            # DB 命中但拿不到记录的 expires_at：缓存 1 天后重新问库，
+            # 避免把吊销缓存变成又一个只进不出集合。
+            _blacklist_cache_add(jti, time.time() + 86400)
         return res
-    except Exception:
+    except Exception as exc:
+        # fail-open 是**显式取舍**：DB 瞬断期间放行吊销检查，避免全站登录不可用；
+        # 但绝不能静默 —— error 级告警让这次失效可见（2026-11-13 安全审查）。
+        logger.error("auth.jti_check_failed", jti=jti, error=str(exc))
         return False
 
 

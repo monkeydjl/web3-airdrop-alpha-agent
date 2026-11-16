@@ -21,7 +21,10 @@ def get_comparison(
     """横向比对选定项目的 8 维数据、雷达图对齐与差异化决策偏好."""
     project_ids = [i.strip() for i in ids.split(",") if i.strip()]
     if not project_ids:
-        raise HTTPException(status_code=400, detail="Must provide at least one project id")
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_ERROR", "message": "Must provide at least one project id"},
+        )
 
     try:
         data = compare_projects(project_ids)

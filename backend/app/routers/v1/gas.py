@@ -76,7 +76,7 @@ def remove_gas_alert_rule(
     """删除指定的告警规则."""
     success = delete_rule(rule_id)
     if not success:
-        raise HTTPException(status_code=404, detail="规则不存在或已删除")
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "规则不存在或已删除"})
     return {"ok": True, "message": "规则已成功删除"}
 
 
@@ -88,7 +88,7 @@ def switch_gas_alert_rule(
     """修改指定规则的启用开关."""
     updated = toggle_rule(rule_id, req.enabled)
     if not updated:
-        raise HTTPException(status_code=404, detail="规则未找到")
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "规则未找到"})
     return {"ok": True, "data": updated}
 
 

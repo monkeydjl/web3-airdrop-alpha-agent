@@ -418,7 +418,10 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
             if (body.opportunity_model_version is not None and body.opportunity_model_version != linkage[1]) or (
                 body.opportunity_profile_version is not None and body.opportunity_profile_version != linkage[2]
             ):
-                raise HTTPException(status_code=422, detail="Assessment version mismatch")
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "ASSESSMENT_VERSION_MISMATCH", "message": "Assessment version mismatch"},
+                )
             insert_sql = """
             INSERT INTO interactions (
                 project_id, user_id, status, started_at, ended_at,
@@ -733,7 +736,10 @@ def update_interaction(
                         "opportunity_profile_version" in supplied_linkage
                         and fields["opportunity_profile_version"] != linkage[2]
                     ):
-                        raise HTTPException(status_code=422, detail="Assessment version mismatch")
+                        raise HTTPException(
+                            status_code=422,
+                            detail={"code": "ASSESSMENT_VERSION_MISMATCH", "message": "Assessment version mismatch"},
+                        )
                 fields.update(
                     {
                         "opportunity_assessment_id": linkage[0],
