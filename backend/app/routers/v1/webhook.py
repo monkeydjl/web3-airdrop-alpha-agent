@@ -20,6 +20,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.collectors.base import CollectorResult, RawDiscovery, RawSignal
 from app.collectors.etherscan import _KNOWN_NOISE_CONTRACTS
@@ -167,7 +168,35 @@ def _process_claim_watch(payload: dict[str, Any]) -> bool:
         return False
 
 
-@router.post("/webhook/alchemy")
+class AlchemyWebhookData(BaseModel):
+    """webhook 处理结果（多个 200 分支的并集；未触发的字段缺省）。"""
+
+    event_id: str | None = None
+    processed: bool
+    claim_matched: bool | None = None
+
+
+class AlchemyWebhookResponse(BaseModel):
+    """Alchemy webhook 的统一信封（200 即受理；业务失败也在 200 里表达）。"""
+
+    ok: bool
+    data: AlchemyWebhookData
+
+
+class AlchemyStatusData(BaseModel):
+    """GET /webhook/alchemy/status 的健康信息（不回显内部 webhook URL）。"""
+
+    source_id: str
+    source_type: str
+    configured: bool
+
+
+class AlchemyStatusResponse(BaseModel):
+    ok: bool
+    data: AlchemyStatusData
+
+
+@router.post("/webhook/alchemy", response_model=AlchemyWebhookResponse)
 async def receive_alchemy_webhook(
     request: Request,
     x_alchemy_signature: str | None = Header(None, alias="x-alchemy-signature"),
@@ -299,7 +328,7 @@ async def receive_alchemy_webhook(
         )
 
 
-@router.get("/webhook/alchemy/status")
+@router.get("/webhook/alchemy/status", response_model=AlchemyStatusResponse)
 def alchemy_webhook_status() -> JSONResponse:
     """Health check for the Alchemy webhook endpoint.
 

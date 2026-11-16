@@ -101,9 +101,17 @@ def _require_project(project_id: str, repository: ProjectRepository) -> None:
         )
 
 
+class OpportunityEvidenceResponse(BaseModel):
+    """POST evidence 的信封：data 即存储后的 EvidenceRecord。"""
+
+    ok: bool
+    data: EvidenceRecord
+
+
 @router.post(
     "/projects/{project_id}/opportunity/evidence",
     status_code=status.HTTP_201_CREATED,
+    response_model=OpportunityEvidenceResponse,
 )
 def add_evidence(
     project_id: str,

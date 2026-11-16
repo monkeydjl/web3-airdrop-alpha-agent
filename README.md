@@ -2,7 +2,7 @@
 
 从自动发现、结构化评分到「今天做什么」的 Web3 空投 Alpha 终端。
 
-[![Tests](https://img.shields.io/badge/tests-4211%20passed-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-4212%20passed-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.4-000000)](https://nextjs.org/)
@@ -413,7 +413,7 @@ pytest tests/opportunity/
 pytest tests/golden/
 ```
 
-2026-11-16 本机全量结果：**4211 passed / 26 skipped**（-n 8 并行约 3.5 分钟，覆盖率 89.0%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
+2026-11-16 本机全量结果：**4212 passed / 26 skipped**（-n 8 并行约 3.5 分钟，覆盖率 89.0%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
 
 代码质量门：
 
