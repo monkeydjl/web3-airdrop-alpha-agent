@@ -127,6 +127,10 @@ WHITELIST = {
     # connection_scope 契约测试：只做 SELECT 1 / 异常路径，不触碰任何表——
     # sqlite3 对不存在的库文件自动建空文件即可满足，无 schema 需求。
     "tests/test_connection_scope.py",
+    # PG 兼容性回归（2026-11-13）：用 psycopg3 风格假连接（DbConnection 仅作
+    # 包装，raw 是内存假对象）钉住"INSERT 返回 id 不得依赖 cursor.lastrowid"，
+    # 全文件不触 DB_PATH、不碰任何真实库。
+    "tests/test_postgres_compat_inserts.py",
 }
 
 # 规则二豁免：文件确实直读默认库，但读的是**本文件同轮自建的数据**

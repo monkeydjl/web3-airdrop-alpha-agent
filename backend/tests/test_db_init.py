@@ -25,6 +25,12 @@ class _PostgresCursor:
         # Existing columns keep this fake focused on transaction ordering.
         return {"exists": 1}
 
+    def fetchall(self) -> list[dict[str, Any]]:
+        # 2026-11-13：init_db 增加了 _dedupe_raw_projects 的存量重复扫描
+        # （SELECT ... fetchall）。这些测试关注事务顺序而非数据，返回空集
+        # 让去重成为空扫 no-op。
+        return []
+
     def close(self) -> None:
         # 真实 psycopg 游标具备 close()；executescript 会显式关闭以防泄漏。
         # 这里保持 no-op，不记录事件以免影响顺序断言。

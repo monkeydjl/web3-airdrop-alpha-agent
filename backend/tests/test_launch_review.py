@@ -50,10 +50,15 @@ def _save(conn, pid: str, *, source: str = "rootdata", signals: dict | None = No
 
 
 def _raw(conn, pid: str, source_id: str, raw_data: dict, *, raw_id: str | None = None, at: str | None = None) -> None:
+    # 2026-11-13：raw_projects 有 (source_id, dedup_key) 唯一索引 —— 同键
+    # "二次采集"是 ON CONFLICT 合并（与生产写路径同语义），不再允许插重。
     conn.execute(
         """
         INSERT INTO raw_projects (raw_id, source_id, dedup_key, raw_data, discovered_at, processed, project_id)
         VALUES (?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(source_id, dedup_key) DO UPDATE SET
+            raw_data = excluded.raw_data,
+            discovered_at = excluded.discovered_at
         """,
         (
             raw_id or f"{pid}-{source_id}",

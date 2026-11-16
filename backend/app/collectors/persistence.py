@@ -24,6 +24,19 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# signal_data 里承载稳定外部 ID 的键（与 app/db.py 的回填键序一致）。
+# twitter → tweet_id、telegram → post_id、discord 消息级 → message_id。
+_SIGNAL_EXTERNAL_ID_KEYS = ("tweet_id", "post_id", "message_id")
+
+
+def _signal_external_id(signal_data: dict[str, Any]) -> str | None:
+    """从 signal_data 抽取稳定外部 ID；没有则 None（该行不参与幂等去重）。"""
+    for key in _SIGNAL_EXTERNAL_ID_KEYS:
+        value = signal_data.get(key)
+        if value:
+            return str(value)
+    return None
+
 
 class CollectionRepository:
     """采集数据持久化仓库。"""
@@ -83,7 +96,9 @@ class CollectionRepository:
                     result.items_new,
                     result.items_duplicate,
                     result.status,
-                    result.error_message,
+                    # 脱敏是持久层的统一职责（2026-11-13）：采集器只管 str(e)，
+                    # 任何走到这里的 error_message 都要过 redact（与批量路径同一契约）。
+                    redact(result.error_message) if result.error_message else None,
                 ),
             )
             conn.commit()
@@ -132,12 +147,21 @@ class CollectionRepository:
                 return False
 
             raw_id = uuid.uuid4().hex
+            # ON CONFLICT 兜底（2026-11-13）：上面的 SELECT 是防重的主判据，
+            # 但跨连接并发（定时采集与手动触发同源并发）时两个 SELECT 都可能
+            # 落空 —— 唯一索引 ux_raw_projects_source_dedup 会拒绝第二个
+            # INSERT，这里把竞态从 IntegrityError 降级为合并更新。
             conn.execute(
                 """
                 INSERT INTO raw_projects (
                     raw_id, source_id, dedup_key, raw_data, discovered_at,
                     processed, discovery_score, project_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, dedup_key) DO UPDATE SET
+                    raw_data = excluded.raw_data,
+                    discovery_score = excluded.discovery_score,
+                    discovered_at = excluded.discovered_at,
+                    project_id = excluded.project_id
                 """,
                 (
                     raw_id,
@@ -151,6 +175,8 @@ class CollectionRepository:
                 ),
             )
             conn.commit()
+            # 返回值语义（"是否新记录"）按 SELECT 判定，竞态合并时可能滞后
+            # 一拍 —— 调用方只把它当 best-effort 日志计数用。
             return True
         finally:
             if self._should_close():
@@ -168,8 +194,9 @@ class CollectionRepository:
                     """
                     INSERT INTO project_signals (
                         signal_id, project_id, dedup_key, signal_type,
-                        signal_source, signal_data, signal_strength, captured_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        signal_source, signal_data, signal_strength, captured_at, external_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(dedup_key, signal_type, signal_source, external_id) DO NOTHING
                     """,
                     (
                         uuid.uuid4().hex,
@@ -180,6 +207,7 @@ class CollectionRepository:
                         json.dumps(signal.signal_data, default=str),
                         signal.signal_strength,
                         signal.captured_at.isoformat(),
+                        _signal_external_id(signal.signal_data),
                     ),
                 )
             conn.commit()
@@ -447,12 +475,21 @@ class CollectionRepository:
                 else:
                     existing_keys.add(key)
                     raw_id = uuid.uuid4().hex
+                    # ON CONFLICT 兜底（2026-11-13）：本事务内的 existing_keys
+                    # 预检挡住单连接重复，跨连接并发由唯一索引
+                    # ux_raw_projects_source_dedup 兜住 —— 竞态合并而非报错。
+                    # raw_id 不在 DO UPDATE 集合里：保住原行的主键身份。
                     conn.execute(
                         """
                         INSERT INTO raw_projects (
                             raw_id, source_id, dedup_key, raw_data, discovered_at,
                             processed, discovery_score, project_id
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, dedup_key) DO UPDATE SET
+                            raw_data = excluded.raw_data,
+                            discovery_score = excluded.discovery_score,
+                            discovered_at = excluded.discovered_at,
+                            project_id = excluded.project_id
                         """,
                         (
                             raw_id,
@@ -470,12 +507,19 @@ class CollectionRepository:
                 # 写入信号
                 if discovery.raw_signals:
                     for signal in discovery.raw_signals:
+                        # 幂等键（2026-11-13）：带稳定外部 ID 的信号同一 identity
+                        # 只落一行（ux_project_signals_identity），否则 twitter_keyword
+                        # 每 15 分钟一轮的重叠窗口会把同一推文反复计数、并把
+                        # captured_at 刷成"永远新鲜"。无外部 ID 的信号 NULL 不冲突，
+                        # 照旧逐条追加。
+                        external_id = _signal_external_id(signal.signal_data)
                         conn.execute(
                             """
                             INSERT INTO project_signals (
                                 signal_id, project_id, dedup_key, signal_type,
-                                signal_source, signal_data, signal_strength, captured_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                signal_source, signal_data, signal_strength, captured_at, external_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(dedup_key, signal_type, signal_source, external_id) DO NOTHING
                             """,
                             (
                                 uuid.uuid4().hex,
@@ -486,6 +530,7 @@ class CollectionRepository:
                                 json.dumps(signal.signal_data, default=str),
                                 signal.signal_strength,
                                 signal.captured_at.isoformat(),
+                                external_id,
                             ),
                         )
 
