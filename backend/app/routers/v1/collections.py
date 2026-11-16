@@ -91,9 +91,7 @@ def list_discoveries(
     min_score: float = Query(0.0, ge=0.0),
 ) -> DiscoveriesResponse:
     """查询自动发现项目 (raw_projects 表), LEFT JOIN projects 展示评分."""
-    repo = CollectionRepository()
-    conn = repo._get_conn()
-    try:
+    with connection_scope() as conn:
         if processed is None:
             count_query = "SELECT COUNT(*) FROM raw_projects WHERE discovery_score >= ?"
             count_params = [min_score]
@@ -169,9 +167,6 @@ def list_discoveries(
                 "page_size": page_size,
             },
         )
-    finally:
-        if repo._should_close():
-            conn.close()
 
 
 def _operator_enabled(conn: DbConnection, source_id: str) -> bool:
@@ -234,9 +229,7 @@ def _source_payload(
 def list_collection_sources() -> CollectionSourcesResponse:
     """列出已注册的采集源及其状态。"""
     registry = _build_registry()
-    repo = CollectionRepository()
-    conn = repo._get_conn()
-    try:
+    with connection_scope() as conn:
         collectors = registry.list_all()
         cards = fetch_source_scorecards(conn, [collector.source_id for collector in collectors])
         sources = [_source_payload(conn, collector, cards.get(collector.source_id)) for collector in collectors]
@@ -244,9 +237,6 @@ def list_collection_sources() -> CollectionSourcesResponse:
             ok=True,
             data={"sources": sources},
         )
-    finally:
-        if repo._should_close():
-            conn.close()
 
 
 @router.patch(
@@ -269,8 +259,7 @@ def patch_collection_source(
     repo = CollectionRepository()
     # Register row if missing (default enabled=1 via table default).
     repo.ensure_source(source_id, collector.source_type, collector.source_name)
-    conn = repo._get_conn()
-    try:
+    with connection_scope() as conn:
         conn.execute(
             """
             UPDATE data_sources
@@ -288,9 +277,6 @@ def patch_collection_source(
             is_enabled=payload["is_enabled"],
         )
         return CollectionSourcePatchResponse(ok=True, data=payload)
-    finally:
-        if repo._should_close():
-            conn.close()
 
 
 @router.post("/collections/{source_id}/trigger", response_model=CollectionTriggerResponse)
@@ -317,10 +303,8 @@ async def trigger_collection(
             },
         )
 
-    repo_gate = CollectionRepository()
-    conn_gate: DbConnection | None = repo_gate._get_conn()
-    try:
-        if conn_gate is not None and not _operator_enabled(conn_gate, source_id):
+    with connection_scope() as conn_gate:
+        if not _operator_enabled(conn_gate, source_id):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -328,9 +312,6 @@ async def trigger_collection(
                     "message": f"Source {source_id} is disabled by operator",
                 },
             )
-    finally:
-        if repo_gate._should_close() and conn_gate is not None:
-            conn_gate.close()
 
     # 同一数据源同时只允许一次采集在飞：重复 POST（前端连点/重试）否则会各自
     # 发出真实出站请求、各自 persist。不同源之间不互斥。
@@ -344,10 +325,12 @@ async def trigger_collection(
                 },
             )
 
-        # own 连接：作用域覆盖 collect + 持久化 + 自动分析（finally close 等价）。
-        with connection_scope() as conn:
-            result = await collector.collect()
+        # 先采集（30s+ 网络 I/O），连接只在持久化阶段打开 —— 此前 own 连接
+        # 横跨 collect 全程，把库连接白白占用 30s+（2026-11-13 审查 P2-11）。
+        result = await collector.collect()
 
+        # own 连接：作用域覆盖持久化（finally close 等价）。
+        with connection_scope() as conn:
             # 持久化到 raw_projects 与 economic 处理（P1-4: 移出主事件循环）
             def _persist_and_economic() -> None:
                 repo = CollectionRepository(conn)

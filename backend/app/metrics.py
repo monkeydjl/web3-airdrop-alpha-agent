@@ -10,6 +10,7 @@ Reference:
 """
 
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -692,13 +693,17 @@ def update_db_gauges(conn: DbConnection) -> None:
         project_count = scalar(conn.execute("SELECT COUNT(*) FROM projects").fetchone())
         DB_PROJECTS.set(project_count)
 
-        raw_count = scalar(conn.execute("SELECT COUNT(*) FROM raw_projects WHERE processed_at IS NULL").fetchone())
+        # 未处理判据与 persistence/archive 同一口径（processed = 0）——
+        # 此前用 processed_at IS NULL，两种口径在不一致的历史行上会分叉。
+        raw_count = scalar(conn.execute("SELECT COUNT(*) FROM raw_projects WHERE processed = 0").fetchone())
         DB_RAW_PROJECTS.set(raw_count)
 
+        # cutoff 与 started_at 的写入格式（isoformat，T 分隔）对齐：
+        # SQL datetime('now') 产空格格式，TEXT 比较里同日期行永远"大于"它
+        # （见 archive.py::_cutoff_db_default 的实测记录）。
+        day_cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
         log_count = scalar(
-            conn.execute(
-                "SELECT COUNT(*) FROM collection_logs WHERE started_at >= datetime('now', '-1 day')"
-            ).fetchone()
+            conn.execute("SELECT COUNT(*) FROM collection_logs WHERE started_at >= ?", (day_cutoff,)).fetchone()
         )
         DB_COLLECTION_LOGS_24H.set(log_count)
     except Exception:

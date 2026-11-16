@@ -250,7 +250,10 @@ async def _run_pipeline(
     else:
         from_repository = True
         collector = CollectorAgent()
-        raw_projects = collector.collect_from_repository(
+        # P1-4: 同步 DB 读取移出主事件循环（2026-11-13，与 _update_gauges 同一口径；
+        # 500 条队列实测 2.8s+，期间 HTTP 全停摆）
+        raw_projects = await asyncio.to_thread(
+            collector.collect_from_repository,
             CollectionRepository(),
             min_discovery_score=settings.discovery_score_analysis_threshold,
             limit=limit if limit is not None else settings.analysis_run_limit,
@@ -299,7 +302,9 @@ async def _run_pipeline(
     if from_repository:
         # 只有真正写进 projects 的项目才允许出队（save_to_db=False 时不落库，
         # 传 None 退回"评分成功即出队"的旧判据）
-        marked = mark_successful_raw_projects(
+        # P1-4: 同步 DB 写（逐条 UPDATE 出队）移出主事件循环
+        marked = await asyncio.to_thread(
+            mark_successful_raw_projects,
             raw_projects,
             response.states,
             persisted_rows=response.persisted_project_rows if save_to_db else None,
@@ -361,7 +366,9 @@ async def _run_pipeline(
         "marked_processed": marked,
         "opportunity_shadow": opportunity_shadow,
     }
-    record_pipeline_run(
+    # P1-4: 同步 DB 写（logs 表 INSERT）移出主事件循环
+    await asyncio.to_thread(
+        record_pipeline_run,
         run_id=response.run_id,
         trigger=trigger,
         duration_ms=int(duration * 1000),

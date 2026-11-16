@@ -897,3 +897,130 @@ def test_project_save_replay_connection_borrow_and_own_close_semantics(db_conn, 
 
     ProjectRepository(economic_replay_enabled=False).save(state2)
     assert closed["v"] is True
+
+
+# ── 序列化写事务的失败分级（2026-11-13 审查 P1-4 回归）──────────────
+#
+# 此前三处 `with suppress(Exception): conn.begin_serialized_write()` 把
+# "已在事务中"（嵌套调用的预期情形）与真实失败（如 database is locked）
+# 一并吞掉 —— 后者等于"先拿写锁再读旧 meta"的保护无声失效，恰是注释
+# 声称要关闭的并发丢更新窗口。契约：预期分支保持静默，其余失败必须
+# 留下 warning 日志。
+
+
+class _RaisingConn:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self.kind = "sqlite"
+
+    def begin_serialized_write(self) -> None:
+        raise sqlite3.OperationalError(self.message)
+
+
+class _RecordingLogger:
+    """structlog logger 替身：直接记录 warning 调用。
+
+    不用 structlog.testing.capture_logs —— 它依赖 structlog 全局配置的
+    即时解析，xdist 同 worker 里先跑过 structlog.configure 的测试
+    （如 redact 系列）会把默认 logger 类冻结，capture 变成空转：
+    单跑绿、并行红的顺序耦合。注入模块级 logger 是无全局态的等价断言。
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[str, dict]] = []
+
+    def warning(self, event: str, **kw: object) -> None:
+        self.warnings.append((event, kw))
+
+
+def test_nested_transaction_failure_stays_silent(monkeypatch):
+    """嵌套事务（cannot start a transaction within a transaction）是预期分支，不告警。"""
+    from app import repository
+
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(repository, "logger", recorder)
+    repository._begin_serialized_write(_RaisingConn("cannot start a transaction within a transaction"))
+    assert recorder.warnings == [], f"预期分支不该告警：{recorder.warnings}"
+
+
+def test_unexpected_begin_failure_logs_warning(monkeypatch):
+    """锁超时等真实失败不得被静默吞掉 —— 必须留下 warning。"""
+    from app import repository
+
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(repository, "logger", recorder)
+    repository._begin_serialized_write(_RaisingConn("database is locked"))
+    assert recorder.warnings, "begin_serialized_write 的真实失败被静默吞掉了"
+    event, kwargs = recorder.warnings[0]
+    assert event == "repository.serialized_write_begin_failed"
+    assert "database is locked" in str(kwargs.get("error", ""))
+
+
+def test_conn_without_serialized_write_is_noop():
+    """PG 裸游标等没有 begin_serialized_write 的连接照常工作。"""
+    from app import repository
+
+    repository._begin_serialized_write(object())  # 无该属性 → no-op，不抛
+
+
+# ── list_projects 信号相关性 N+1 回归（2026-11-13 审查 P2-2）──────
+#
+# 此前列表路径对每行调用 correlate_signals_for_project（每行一条 SELECT，
+# page_size 上限 500 即 500 次查询/请求）。契约：列表路径**禁止**逐行
+# correlate —— 用 batch_correlate_signals 一次取回再按 id 查表。
+
+
+class TestListProjectsSignalBatching:
+    def test_list_projects_does_not_correlate_per_row(self, db_conn, sample_state, monkeypatch):
+        from dataclasses import replace
+
+        import pytest as _pytest
+
+        import app.services.signal_correlation as sc_mod
+        from app.repository import ProjectRepository
+
+        def _booby_trap(*args: object, **kwargs: object) -> dict:
+            _pytest.fail("list_projects 逐行调用了 correlate_signals_for_project —— N+1 回归")
+
+        monkeypatch.setattr(sc_mod, "correlate_signals_for_project", _booby_trap)
+
+        repo = ProjectRepository(db_conn)
+        for i in range(12):
+            state = deepcopy(sample_state)
+            state.project = replace(state.project, id=f"n1-{i}", name=f"N1 Project {i}")
+            repo.save(state)
+
+        projects, total = repo.list_projects(page_size=12)
+        assert total >= 12
+        assert len(projects) == 12
+        # 每行仍带 signal_consensus（来自批量结果或中性值）
+        for p in projects:
+            assert "signal_consensus" in p
+
+    def test_signal_consensus_values_match_single_project_path(self, db_conn, sample_state):
+        """批量口径与单项目口径必须一致（同一函数族计算）。"""
+        from dataclasses import replace
+
+        from app.repository import ProjectRepository
+        from app.services.signal_correlation import correlate_signals_for_project
+
+        repo = ProjectRepository(db_conn)
+        state = deepcopy(sample_state)
+        state.project = replace(state.project, id="n1-consistency", name="N1 Consistency")
+        repo.save(state)
+
+        # 给该项目种一条信号
+        db_conn.execute(
+            """
+            INSERT INTO project_signals (signal_id, project_id, dedup_key, signal_type,
+                                         signal_source, signal_data, signal_strength, captured_at)
+            VALUES ('sig-n1', 'n1-consistency', 'n1::key', 'twitter_mention', 'twitter', '{}', 0.9, ?)
+            """,
+            (__import__("datetime").datetime.now(__import__("datetime").UTC).isoformat(),),
+        )
+        db_conn.commit()
+
+        projects, _ = repo.list_projects(page_size=10)
+        batch_value = next(p for p in projects if p["id"] == "n1-consistency")["signal_consensus"]
+        single_value = correlate_signals_for_project(db_conn, "n1-consistency")
+        assert batch_value == single_value, "批量与单项目两条路径的 consensus 口径分叉"

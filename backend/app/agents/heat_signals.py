@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 
 import structlog
 
@@ -25,6 +26,18 @@ from app.config import settings
 from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
+
+
+def _cutoff_iso(hours: int) -> str:
+    """窗口截止时间，格式与列的写入格式（isoformat，T 分隔）对齐。
+
+    此前用 SQL `datetime('now', ?)` 生成**空格**格式的 cutoff 去比 T 格式的
+    captured_at —— SQLite 的 TEXT 比较里 'T'(0x54) > ' '(0x20)，同日期的行
+    无论几点都判成"在窗口内"，边界日最多多算一天
+    （archive.py::_cutoff_db_default 的 docstring 实测记录过同一个坑）。
+    cutoff 改在应用层按写入同款格式生成。
+    """
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 class HeatSignalProvider:
@@ -108,9 +121,9 @@ class HeatSignalProvider:
                     OR rp.project_id = ps.project_id
                 WHERE ps.signal_source = 'twitter'
                   AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                  AND ps.captured_at >= ?
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             twitter_count = int(twitter_row["cnt"]) if twitter_row and twitter_row["cnt"] else 0
@@ -127,9 +140,9 @@ class HeatSignalProvider:
                     OR rp.project_id = ps.project_id
                 WHERE ps.signal_type = 'funding'
                   AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                  AND ps.captured_at >= ?
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             funding_count = int(funding_row["cnt"]) if funding_row and funding_row["cnt"] else 0
@@ -147,9 +160,9 @@ class HeatSignalProvider:
                 WHERE ps.signal_type IN ('airdrop', 'tge')
                   AND ps.signal_source = 'twitter'
                   AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                  AND ps.captured_at >= ?
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             kol_count = int(kol_row["cnt"]) if kol_row and kol_row["cnt"] else 0

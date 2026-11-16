@@ -26,6 +26,24 @@ from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
+# "已在事务中" 是嵌套调用 save/update 的预期情形（SQLite BEGIN IMMEDIATE 的
+# 原话报错）；其余失败（database is locked 等）意味着"先拿写锁再读旧 meta"
+# 的防丢更新窗口没有关上 —— 不能与预期分支一起被静默吞掉。
+_EXPECTED_NESTED_TX_MARKERS = ("within a transaction",)
+
+
+def _begin_serialized_write(conn: Any) -> None:
+    """尽力开启序列化写事务：嵌套调用静默跳过，真实失败记 warning。"""
+    try:
+        if hasattr(conn, "begin_serialized_write"):
+            conn.begin_serialized_write()
+    except Exception as exc:
+        if not any(marker in str(exc) for marker in _EXPECTED_NESTED_TX_MARKERS):
+            logger.warning(
+                "repository.serialized_write_begin_failed",
+                error=str(exc)[:200],
+            )
+
 
 def _sub_scores_json(state: PipelineState) -> str | None:
     """子分快照序列化；无子分时返回 None（交由 UPSERT 的 COALESCE 保留旧值）。
@@ -109,9 +127,7 @@ class ProjectRepository:
 
             # Preserve + merge extended signals into meta.
             # 先开写事务/行锁再读旧 meta，关闭并发保存时的 read-modify-write 丢更新窗口。
-            with suppress(Exception):  # 已有事务打开时尽力而为
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_meta_sql = "SELECT meta FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_meta_sql += " FOR UPDATE"
@@ -353,9 +369,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            with suppress(Exception):
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_sql = "SELECT * FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_sql += " FOR UPDATE"
@@ -395,9 +409,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            with suppress(Exception):
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_sql = "SELECT * FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_sql += " FOR UPDATE"
@@ -796,10 +808,14 @@ class ProjectRepository:
                 offset = (page - 1) * page_size
                 projects = all_records[offset : offset + page_size]
 
-                from app.services.signal_correlation import correlate_signals_for_project
+                # 批量取回信号一致性（2026-11-13 审查 P2-2）：此前逐行
+                # correlate_signals_for_project，page_size 上限 500 即 500 次查询/请求。
+                from app.services.signal_correlation import batch_correlate_signals, calculate_consensus
 
+                consensus_by_id = batch_correlate_signals(conn, project_ids=[str(p.get("id") or "") for p in projects])
+                empty_consensus = calculate_consensus([])
                 for p in projects:
-                    p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+                    p["signal_consensus"] = consensus_by_id.get(str(p.get("id") or ""), empty_consensus)
 
                 logger.info(
                     "repository.project.listed_persona",
@@ -828,10 +844,15 @@ class ProjectRepository:
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]
-            from app.services.signal_correlation import correlate_signals_for_project
 
+            # 批量取回信号一致性（2026-11-13 审查 P2-2）：此前逐行 correlate，
+            # page_size 上限 500 即 500 次查询/请求。
+            from app.services.signal_correlation import batch_correlate_signals, calculate_consensus
+
+            consensus_by_id = batch_correlate_signals(conn, project_ids=[str(p.get("id") or "") for p in projects])
+            empty_consensus = calculate_consensus([])
             for p in projects:
-                p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+                p["signal_consensus"] = consensus_by_id.get(str(p.get("id") or ""), empty_consensus)
                 p["persona_applied"] = "balanced"
                 p["base_score"] = p.get("score")
                 p["persona_score"] = p.get("score")

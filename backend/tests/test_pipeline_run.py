@@ -8,7 +8,7 @@ import sqlite3
 from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 from pydantic import ValidationError
@@ -408,7 +408,7 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
     )
     monkeypatch.setattr(
         "app.pipeline_run.mark_successful_raw_projects",
-        lambda projects, states, **kwargs: events.append("raw-marked") or 1,
+        lambda projects, states, *args, **kwargs: events.append("raw-marked") or 1,
     )
     monkeypatch.setattr(
         "app.pipeline_run.PIPELINE_DURATION.observe",
@@ -426,14 +426,15 @@ async def test_opportunity_shadow_runs_after_orchestrator(monkeypatch):
         save_to_db=True,
     )
 
+    # 2026-11-13 起 collect / mark / gauges / record / shadow 全部经 to_thread；
+    # 不变的契约：所有 legacy 同步事件都发生在 shadow 评估之前，
+    # 且 shadow 确实经由 to_thread 执行。
     for legacy_event in (
         "duration-observed",
         "scored-metric",
         "raw-marked",
     ):
-        assert events.index(legacy_event) < events.index("to-thread")
-    # P1-4 (734f0a7)：gauges 更新已移入 to_thread，其余旧同步事件必须在其之前；
-    # shadow-evaluated 是第二个 to_thread 调用（opportunity shadow），晚于第一个。
+        assert events.index(legacy_event) < events.index("shadow-evaluated")
     assert events.count("to-thread") >= 2
     assert events.index("to-thread") < events.index("shadow-evaluated")
     rollout_metric.assert_called_once_with(True, 1.0)
@@ -501,7 +502,12 @@ async def test_shadow_metric_failures_preserve_primary_pipeline_response(monkeyp
         return response
 
     async def fake_to_thread(function, *args, **kwargs):
-        return function(*args, service_factory=Mock(return_value=service), **kwargs)
+        # service_factory 只注入给 opportunity shadow（它的被测契约）；
+        # 2026-11-13 起 record_pipeline_run / _update_gauges 也走 to_thread，
+        # 不能被误注入 —— 原样透传。
+        if getattr(function, "__name__", "") == "run_opportunity_shadow":
+            return function(*args, service_factory=Mock(return_value=service), **kwargs)
+        return function(*args, **kwargs)
 
     monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
     monkeypatch.setattr("app.pipeline_run.asyncio.to_thread", fake_to_thread)
@@ -553,7 +559,8 @@ async def test_opportunity_shadow_does_not_run_without_database_saves(monkeypatc
 
     monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
     monkeypatch.setattr("app.pipeline_run.settings.opportunity_shadow_enabled", True)
-    to_thread = Mock()
+    # AsyncMock：to_thread 现在承载 gauges + record_pipeline_run 两个真实 await 点
+    to_thread = AsyncMock()
     monkeypatch.setattr("app.pipeline_run.asyncio.to_thread", to_thread)
 
     await execute_analysis_pipeline(
@@ -561,11 +568,12 @@ async def test_opportunity_shadow_does_not_run_without_database_saves(monkeypatc
         save_to_db=False,
     )
 
-    # P1-4 (734f0a7) 后 gauges 更新也走 to_thread，save_to_db=False 不再意味着
-    # 完全无 to_thread；契约收窄为：to_thread 只被 gauges 调用，
-    # 绝不用于 opportunity shadow（试算/dry-run 无落库不得评估）。
-    assert to_thread.call_count == 1
-    assert "_update_gauges" in str(to_thread.call_args_list[0])
+    # P1-4 (734f0a7) 后 gauges 更新走 to_thread；2026-11-13 后 record_pipeline_run
+    # 也走 to_thread。契约收窄为：to_thread 绝不用于 opportunity shadow
+    # （试算/dry-run 无落库不得评估），gauges 照常执行。
+    called_names = [c.args[0].__name__ if c.args else "" for c in to_thread.call_args_list]
+    assert "run_opportunity_shadow" not in called_names
+    assert "_update_gauges" in called_names
 
 
 @pytest.mark.asyncio
@@ -968,6 +976,55 @@ class TestQueueDrainGuard:
         assert collect_calls == 1
         # 守卫已释放，后续运行不受影响
         assert QUEUE_DRAIN_KEY not in active_runs()
+
+    async def test_queue_drain_sync_db_calls_run_off_the_event_loop(self, monkeypatch):
+        """排空路径的同步 DB 调用必须移出事件循环（P1-4，2026-11-13）。
+
+        collect_from_repository / mark_successful_raw_projects / record_pipeline_run
+        此前直接跑在事件循环线程上：500 条队列实测 2.8s+，期间所有 HTTP 请求
+        停摆（同文件 _update_gauges / run_opportunity_shadow 已是 to_thread，
+        这三处漏修）。用线程身份断言：三个调用点都必须在 loop 线程之外执行。
+        """
+        import threading
+
+        loop_thread = threading.get_ident()
+        threads: dict[str, int] = {}
+
+        def fake_collect(self, repo, **kwargs):
+            threads["collect"] = threading.get_ident()
+            return [RawProject(id="project-1", name="Project One")]
+
+        async def fake_orchestrator(**kwargs):
+            return SimpleNamespace(
+                run_id="run-thread",
+                status="completed",
+                project_count=1,
+                states=[],
+                errors=[],
+                top_score=None,
+                persisted_project_rows=[],
+            )
+
+        def fake_mark(projects, states, persisted_rows=None, repo=None):
+            threads["mark"] = threading.get_ident()
+            return 1
+
+        def fake_record(**kwargs):
+            threads["record"] = threading.get_ident()
+
+        monkeypatch.setattr("app.pipeline_run.CollectorAgent.collect_from_repository", fake_collect)
+        monkeypatch.setattr("app.pipeline_run.run_orchestrator", fake_orchestrator)
+        monkeypatch.setattr("app.pipeline_run.mark_successful_raw_projects", fake_mark)
+        monkeypatch.setattr("app.pipeline_run.record_pipeline_run", fake_record)
+
+        result = await execute_analysis_pipeline(projects=None)
+
+        assert result["run_id"] == "run-thread"
+        assert threads.get("collect") != loop_thread, (
+            "collect_from_repository 仍跑在事件循环线程上 —— 分析期间 HTTP 全停摆"
+        )
+        assert threads.get("mark") != loop_thread, "mark_successful_raw_projects 仍跑在事件循环线程上"
+        assert threads.get("record") != loop_thread, "record_pipeline_run 仍跑在事件循环线程上"
 
     async def test_explicit_projects_bypass_the_guard(self, monkeypatch):
         """显式传 projects 的路径不共享队列，并发无害，不该被挡。"""

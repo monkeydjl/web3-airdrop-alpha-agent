@@ -53,6 +53,10 @@ def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
         # 获取工作表
         worksheet = writer.sheets["Projects"]
 
+        # 标签列位置从 DataFrame 列名推导 —— 原 magic 索引 row[6] 在列序调整时
+        # 会让着色错行（2026-11-13 审查 P3-5）。空列表时 DataFrame 无列，跳过着色。
+        label_col = df.columns.get_loc("标签") if len(df.columns) else None
+
         # 设置样式
         # 标题行样式
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -86,7 +90,9 @@ def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
 
             # 根据标签设置颜色
-            label = row[6].value  # G列是标签
+            if label_col is None:
+                continue
+            label = row[label_col].value
             if label == "FARM":
                 fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             elif label == "WATCH":

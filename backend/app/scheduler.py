@@ -87,6 +87,11 @@ class UnifiedScheduler:
             self._logger.info("unified_scheduler.disabled")
             return
 
+        # 复位关停标志（2026-11-13）：HA 场景 demote→promote→再 demote 时，
+        # 若此标志残留自上一次 shutdown，第二次 shutdown 会 early return，
+        # 降级实例继续跑 job 与新旧主双跑。
+        self._is_shutting_down = False
+
         self._register_collection_jobs()
         self._register_analysis_job()
         self._register_archive_job()

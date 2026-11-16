@@ -12,6 +12,7 @@ Web3 Airdrop Alpha Agent System 主应用入口。
 - API_SPEC.md 完整 API 契约
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -156,12 +157,48 @@ def create_app(
                     )
 
                 async def on_collection(source_id: str, result: CollectorResult) -> None:
-                    try:
+                    def _persist_and_economic() -> None:
                         repo.persist_collection_result(
                             result,
                             source_type="api",
                             source_name=source_id,
                         )
+
+                        # Economic path after successful persist only; failures must not
+                        # propagate（与 collections.trigger 的 _persist_and_economic 同一口径）。
+                        if economic_writer is not None and economic_emitter is not None:
+                            try:
+                                from app.opportunity.economic_integration import (
+                                    daily_run_id,
+                                    process_persisted_collection,
+                                )
+
+                                # CollectorResult.finished_at is optional on the type;
+                                # production collectors set it. Fall back to UTC now so
+                                # daily_run_id never receives None (contract requires datetime).
+                                finished = result.finished_at
+                                if finished is None:
+                                    from datetime import UTC, datetime
+
+                                    finished = datetime.now(UTC)
+                                process_persisted_collection(
+                                    result,
+                                    run_id=daily_run_id(result.source_id, finished),
+                                    writer=economic_writer,
+                                    emitter=economic_emitter,
+                                    settings_obj=settings,
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "app.collection_economic_failed",
+                                    source_id=source_id,
+                                    error_type=type(exc).__name__,
+                                    error=str(exc)[:200],
+                                )
+
+                    # P1-4: 同步 DB 写移出主事件循环（与 routers/v1/collections.py 同一修复）。
+                    try:
+                        await asyncio.to_thread(_persist_and_economic)
                     except Exception as exc:
                         logger.error(
                             "app.collection_persist_failed",
@@ -173,36 +210,6 @@ def create_app(
                         # analysis is not reached for this callback (same hard-fail as
                         # pre-Task-7 uncaught persist errors).
                         raise
-
-                    if economic_writer is not None and economic_emitter is not None:
-                        try:
-                            from app.opportunity.economic_integration import (
-                                daily_run_id,
-                                process_persisted_collection,
-                            )
-
-                            # CollectorResult.finished_at is optional on the type;
-                            # production collectors set it. Fall back to UTC now so
-                            # daily_run_id never receives None (contract requires datetime).
-                            finished = result.finished_at
-                            if finished is None:
-                                from datetime import UTC, datetime
-
-                                finished = datetime.now(UTC)
-                            process_persisted_collection(
-                                result,
-                                run_id=daily_run_id(result.source_id, finished),
-                                writer=economic_writer,
-                                emitter=economic_emitter,
-                                settings_obj=settings,
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "app.collection_economic_failed",
-                                source_id=source_id,
-                                error_type=type(exc).__name__,
-                                error=str(exc)[:200],
-                            )
 
                     if settings.collection_auto_run_enabled and result.status in (
                         "success",
@@ -387,7 +394,34 @@ def create_app(
         from app.metrics import HTTP_DURATION, HTTP_REQUESTS
 
         start = time.time()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # 实测（2026-11-14）：BaseHTTPMiddleware.call_next 会把路由内未处理
+            # 异常**原样上抛** —— @app.exception_handler(Exception) 挂在
+            # ServerErrorMiddleware（最外层），晚于本中间件。若不在此接住：
+            # 5xx 不计入 HTTP_REQUESTS、无耗时样本、无免责声明头、无请求日志
+            # —— 最需要被观测的故障在观测体系里完全隐形。
+            duration = (time.time() - start) * 1000
+            HTTP_REQUESTS.labels(method=request.method, status_class="5xx").inc()
+            HTTP_DURATION.observe(duration / 1000.0)
+            logger.error(
+                "api.request.failed",
+                method=request.method,
+                path=request.url.path,
+                duration_ms=round(duration, 2),
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=500,
+                headers={
+                    "X-Disclaimer": "Not investment advice. For informational purposes only.",
+                },
+                content={
+                    "ok": False,
+                    "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"},
+                },
+            )
         duration = (time.time() - start) * 1000
 
         # SECURITY.md §7.5：所有响应携带免责声明头
