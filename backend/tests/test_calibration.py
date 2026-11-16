@@ -623,3 +623,84 @@ def test_format_report_with_candidate():
     assert "0.13" in text
     assert "candidate" in text
     assert "42" in text  # changelog id
+
+
+# ── live 桶口径收口（2026-11-13 审查 P1 回归）────────────────────
+#
+# check_gate 只数 live 桶（"两类分开统计、绝不混算"），但 run_calibration 的
+# baseline 与 grid_search 却在 live+backtest 全集上优化 J —— 历史回测分布
+# 会拖走候选权重，而 changelog 里记的 sample_size（live 数）与实际参与搜索
+# 的集合对不上（不可审计）。契约：目标函数与搜索只吃 live 桶。
+
+
+def _seed_live_and_backtest(conn, *, live: list[tuple[dict, str]], backtest: list[tuple[dict, str]]) -> None:
+    """live 走普通 user_id 的 feedback；backtest 走 historical_backfill user_id。"""
+    for i, (sub, label) in enumerate(live):
+        _insert_project(conn, f"live-{i}", sub)
+        _insert_feedback(conn, f"live-{i}", signal="wrong_label", note=label, user_id="tester")
+    for i, (sub, label) in enumerate(backtest):
+        _insert_project(conn, f"bt-{i}", sub)
+        _insert_feedback(conn, f"bt-{i}", signal="wrong_label", note=label, user_id="historical_backfill")
+
+
+def _all(sub: float) -> dict:
+    return _make_subscores(**{k: sub for k in WEIGHT_KEYS})
+
+
+def test_run_calibration_baseline_j_is_live_only(conn):
+    """baseline J 必须只算 live 桶：混算会把回测的 FP/FN 灌进报告数字。"""
+    # live: 1 TP + 1 TN → J = 1.0；backtest: 1 FP + 1 FN → 混算 J = -0.5
+    _seed_live_and_backtest(
+        conn,
+        live=[(_all(100.0), "FARM"), (_all(20.0), "IGNORE")],
+        backtest=[(_all(100.0), "IGNORE"), (_all(20.0), "FARM")],
+    )
+    current = {k: cal_module.WEIGHTS[k] for k in WEIGHT_KEYS}
+
+    report = cal_module.run_calibration(conn, search=False)
+
+    expected = cal_module.compute_j([s for s in cal_module.extract_samples(conn) if s.source == "live"], current)["j"]
+    assert report.baseline_j == expected, (
+        f"baseline J={report.baseline_j} 与 live-only 口径 {expected} 不符 —— 回测样本被算进了目标函数"
+    )
+    assert report.baseline_j == 1.0, "本构造下 live-only J 应为 1.0（混算时为 -0.5）"
+
+
+def test_run_calibration_search_only_uses_live_samples(conn, monkeypatch):
+    """grid_search 收到的样本集合必须只含 live 桶。"""
+    _seed_live_and_backtest(
+        conn,
+        live=[(_all(100.0), "FARM"), (_all(20.0), "IGNORE")],
+        backtest=[(_all(100.0), "IGNORE"), (_all(20.0), "FARM"), (_all(50.0), "IGNORE")],
+    )
+
+    captured: dict = {}
+
+    def fake_grid_search(samples, current_weights, **kwargs):
+        captured["sources"] = [s.source for s in samples]
+        return current_weights.copy(), 0.0, cal_module.compute_j(samples, current_weights)
+
+    monkeypatch.setattr(cal_module, "grid_search", fake_grid_search)
+    cal_module.run_calibration(conn, search=True, force=True)
+
+    assert captured["sources"] == ["live", "live"], (
+        f"搜索吃到了非 live 样本：{captured.get('sources')} —— 回测分布拖走了候选权重"
+    )
+
+
+def test_run_calibration_recorded_sample_size_matches_searched_set(conn):
+    """changelog 的 sample_size 必须等于实际参与搜索的样本数（live 数）。"""
+    _seed_live_and_backtest(
+        conn,
+        live=[(_all(100.0), "FARM"), (_all(20.0), "IGNORE")],
+        backtest=[(_all(100.0), "IGNORE"), (_all(20.0), "FARM"), (_all(50.0), "IGNORE")],
+    )
+
+    report = cal_module.run_calibration(conn, search=True, force=True)
+
+    assert report.changelog_id is not None
+    row = conn.execute("SELECT sample_size FROM weight_changelog WHERE id = ?", (report.changelog_id,)).fetchone()
+    assert row is not None
+    assert row["sample_size"] == 2, (
+        f"changelog 记了 sample_size={row['sample_size']}，实际参与搜索的是 2 条 live —— 口径对不上不可审计"
+    )

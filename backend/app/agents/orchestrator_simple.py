@@ -449,11 +449,15 @@ def global_sector_counts(fallback: list[RawProject] | None = None) -> dict[str, 
     一个合理的样本，但单项目重算（如改完融资后触发 rescore）只会得到 {sector: 1}
     → 竞争度 100 分，而同一项目在 20 个项目的批次里只有 40 分——6.0 个加权分
     完全由"以什么方式触发重算"决定。此函数让重算路径与批量路径口径一致。
+
+    分组口径必须与批量路径一致：用 `canonical_sector_counts()`（规范键折叠）。
+    此前直接用原始写法的 `aggregate_counts("sector")`，同一项目在"批量评分"
+    与"单项目重算"两条路径上会得到不同的 competition 子分。
     """
     try:
         from app.repository import ProjectRepository
 
-        counts = {str(sector): int(n) for sector, n in ProjectRepository().aggregate_counts("sector").items() if sector}
+        counts = ProjectRepository().canonical_sector_counts()
         if counts:
             return counts
     except Exception as exc:  # pragma: no cover - 冷启动/无库时回落
@@ -461,8 +465,9 @@ def global_sector_counts(fallback: list[RawProject] | None = None) -> dict[str, 
 
     counts = {}
     for project in fallback or []:
-        if project.sector:
-            counts[project.sector] = counts.get(project.sector, 0) + 1
+        key = canonical_sector_key(project.sector)
+        if key:
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 

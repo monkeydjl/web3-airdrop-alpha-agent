@@ -26,7 +26,7 @@ import structlog
 
 from app.agents.scorer import LABEL_THRESHOLDS, WEIGHTS
 from app.config import settings
-from app.db import DbConnection
+from app.db import DbConnection, insert_returning_id
 
 logger = structlog.get_logger(__name__)
 
@@ -554,17 +554,20 @@ def record_candidate(
     metrics_json = json.dumps(metrics, sort_keys=True)
     now = datetime.now(UTC).isoformat()
 
-    cursor = conn.execute(
-        """
+    changelog_id = (
+        insert_returning_id(
+            conn,
+            """
         INSERT INTO weight_changelog
             (from_version, to_version, weights_json, sample_size,
              metrics_json, triggered_by, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 'candidate', ?)
         """,
-        (from_version, to_version, weights_json, sample_size, metrics_json, triggered_by, now),
+            (from_version, to_version, weights_json, sample_size, metrics_json, triggered_by, now),
+        )
+        or 0
     )
     conn.commit()
-    changelog_id = cursor.lastrowid or 0
 
     logger.info(
         "calibration.candidate_recorded",
@@ -609,12 +612,17 @@ def run_calibration(
 
     # 1. 提取样本
     samples = extract_samples(conn)
+    # 目标函数与搜索只吃 live 桶 —— 与 check_gate 同一口径（ACTION_LOOP_DESIGN
+    # §4.3 "两类绝不混算"的完整含义）。此前门禁只数 live，baseline 与搜索却在
+    # live+backtest 全集上算：历史分布拖走候选权重，而 changelog 记的
+    # sample_size（live 数）与实际参与搜索的集合对不上，候选不可审计。
+    live_samples = [s for s in samples if s.source == SOURCE_LIVE]
 
     # 2. 门禁检查
     gate = check_gate(samples)
 
-    # 3. 计算 baseline J
-    baseline_metrics = compute_j(samples, current_weights)
+    # 3. 计算 baseline J（live-only，与搜索口径一致）
+    baseline_metrics = compute_j(live_samples, current_weights)
     baseline_j = baseline_metrics["j"]
 
     if not gate.passed and not force:
@@ -641,8 +649,8 @@ def run_calibration(
             metrics=baseline_metrics,
         )
 
-    # 4. 搜索
-    if not samples:
+    # 4. 搜索（live-only）
+    if not live_samples:
         return CalibrationReport(
             gate=gate,
             baseline_j=baseline_j,
@@ -653,9 +661,9 @@ def run_calibration(
             metrics=baseline_metrics,
         )
 
-    best_weights, best_j, best_metrics = grid_search(samples, current_weights)
+    best_weights, best_j, best_metrics = grid_search(live_samples, current_weights)
 
-    # 5. 记录候选
+    # 5. 记录候选 —— sample_size 记实际参与搜索的样本数（live 数）
     new_version = f"v1.{int(current_version.split('.')[-1]) + 1}" if "." in current_version else "v2"
     effective_triggered = f"{triggered_by} (force_experiment)" if force and not gate.passed else triggered_by
     changelog_id = record_candidate(
@@ -663,7 +671,7 @@ def run_calibration(
         from_version=current_version,
         to_version=new_version,
         weights=best_weights,
-        sample_size=gate.total_samples,
+        sample_size=len(live_samples),
         metrics=best_metrics,
         triggered_by=effective_triggered,
     )
