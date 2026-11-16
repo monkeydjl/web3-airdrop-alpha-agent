@@ -35,9 +35,7 @@ from app.utils.normalize import (
 )
 
 if TYPE_CHECKING:
-    from app.collectors.base import CollectorResult
     from app.collectors.persistence import CollectionRepository
-    from app.collectors.registry import CollectorRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -779,68 +777,6 @@ class CollectorAgent(BaseAgent):
             resolver.learn_auto_aliases(learned)
 
         return results
-
-    async def collect_from_registry(
-        self,
-        registry: "CollectorRegistry",
-        repo: "CollectionRepository | None" = None,
-    ) -> list[RawProject]:
-        """Collect from all enabled collectors in registry.
-
-        Args:
-            registry: CollectorRegistry with registered collectors
-            repo: Optional repository to persist raw results
-
-        Returns:
-            List of merged RawProject objects
-        """
-        logger.info("collector.registry.started", collector_count=len(registry.list_enabled()))
-        start_time = time.time()
-
-        records: list[dict[str, Any]] = []
-        for collector in registry.list_enabled():
-            try:
-                result: CollectorResult = await collector.collect()
-                for discovery in result.items:
-                    raw_data = discovery.raw_data or {}
-                    airdrop_signals = raw_data.get("airdrop_signals", {})
-                    records.append(
-                        {
-                            "project_id": discovery.project_id,
-                            "name": discovery.name,
-                            "url": discovery.url,
-                            "sector": normalize_sector(discovery.sector) if discovery.sector else None,
-                            "stage": discovery.stage,
-                            "source": discovery.source_id,
-                            "has_testnet": airdrop_signals.get("has_testnet", False),
-                            "has_points_program": airdrop_signals.get("has_points_program", False),
-                            "no_token_yet": airdrop_signals.get("no_token_yet", False),
-                            "recent_funding": airdrop_signals.get("recent_funding", False),
-                            "discovery_score": discovery.discovery_score,
-                            "auto_discovered": True,
-                            "discovered_at": discovery.discovered_at,
-                            "_dedup_key": create_dedup_key(discovery.name, discovery.sector),
-                        }
-                    )
-                if repo is not None:
-                    repo.persist_collection_result(result)
-            except Exception as e:
-                logger.error(
-                    "collector.registry.error",
-                    source_id=collector.source_id,
-                    error=str(e),
-                )
-
-        projects = self._dedup_records(records)
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(
-            "collector.registry.completed",
-            input_count=len(records),
-            output_count=len(projects),
-            deduped=len(records) - len(projects),
-            duration_ms=round(duration_ms, 2),
-        )
-        return projects
 
     def _quarantine_row(
         self,

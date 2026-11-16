@@ -191,7 +191,6 @@ class AgentContext:
 
     # Concurrency control (V2)
     max_concurrent_projects: int = 10
-    llm_semaphore_size: int = 5
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,7 +198,6 @@ class AgentContext:
             "enable_llm": self.enable_llm,
             "llm_model": self.llm_model,
             "max_concurrent_projects": self.max_concurrent_projects,
-            "llm_semaphore_size": self.llm_semaphore_size,
         }
 
 
