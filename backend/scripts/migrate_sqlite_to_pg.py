@@ -43,9 +43,15 @@ except ImportError:
     sys.exit(1)
 
 
-# ── 表迁移顺序（尊重逻辑依赖，无 FK 约束但保持语义顺序）──
+# ── 表迁移顺序（尊重外键与逻辑依赖：父表在前、子表在后）──
 TABLE_ORDER = [
+    "users",
+    "sessions",
+    "api_keys",
+    "blacklisted_jti",
     "projects",
+    "dedup_keys",
+    "token_registry",
     "raw_projects",
     "project_signals",
     "collection_logs",
@@ -54,8 +60,28 @@ TABLE_ORDER = [
     "events",
     "feedback",
     "interactions",
+    "watchlist",
+    "project_skips",
+    "participation_plans",
+    "participation_tasks",
+    "roi_entries",
+    "roi_outcomes",
+    "watched_wallets",
+    "notify_log",
+    "notification_reads",
+    "llm_spend_daily",
+    "archive_runs",
     "raw_projects_archive",
     "project_signals_archive",
+    "quarantine",
+    "project_history",
+    "audit_logs",
+    "llm_eval_changelog",
+    "metrics",
+    "narratives",
+    "prompt_versions",
+    "weight_changelog",
+    "leader_election",
     "opportunity_evidence",
     "opportunity_assessments",
     "opportunity_economic_snapshots",
@@ -749,6 +775,20 @@ def migrate_table(
     # 复制 SQLite 的 UNIQUE 索引（含部分/表达式索引）；跳过项会记录原因
     create_pg_unique_indexes(pg, table, sqlite_conn, columns, index_report if index_report is not None else [])
 
+    # 查询 PG 侧各列真实类型，兼容 alembic 已建表中的 BOOLEAN / TIMESTAMPTZ 列
+    pg_col_types: dict[str, str] = {}
+    with pg.cursor() as meta_cur:
+        meta_cur.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        for mrow in meta_cur.fetchall():
+            pg_col_types[str(mrow["column_name"])] = str(mrow["data_type"]).lower()
+
     # Migrate rows
     sqlite_conn.row_factory = sqlite3.Row
     cur = sqlite_conn.execute(f"SELECT * FROM [{table}]")  # noqa: S608
@@ -757,35 +797,39 @@ def migrate_table(
     pk_cols = [c["name"] for c in columns if c["pk"]]
     has_serial = auto_column is not None
 
-    insert_cols = [c for c in col_names if c != auto_column]
+    # 保留自增主键原值（只过滤目标 PG 表不存在的列），防止删行空洞被重新连续编号
+    # 而破坏子表关联（如 participation_tasks.plan_id / notification_reads.notification_id）。
+    insert_cols = [c for c in col_names if not pg_col_types or c in pg_col_types]
     placeholders = ", ".join(["%s"] * len(insert_cols))
     col_list = ", ".join(f'"{c}"' for c in insert_cols)
 
-    # Use ON CONFLICT for idempotent re-runs
-    conflict_clause = ""
-    if pk_cols and not has_serial:
-        conflict_target = ", ".join(f'"{c}"' for c in pk_cols)
-        conflict_clause = f" ON CONFLICT ({conflict_target}) DO NOTHING"
-    elif has_serial:
-        conflict_clause = " ON CONFLICT DO NOTHING"
+    # Use ON CONFLICT DO NOTHING for idempotent re-runs across PK + unique indexes
+    conflict_clause = " ON CONFLICT DO NOTHING" if (pk_cols or has_serial) else ""
 
     insert_sql = f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}'  # noqa: S608
 
     with pg.cursor() as pg_cur:
         for row in cur:
+            pg_cur.execute("SAVEPOINT row_sp")
             try:
-                values = []
+                values: list[Any] = []
                 for c in insert_cols:
                     val = row[c]
-                    if c in tz_cols:
+                    pg_dtype = pg_col_types.get(c, "")
+                    if val is not None and pg_dtype == "boolean" and isinstance(val, int):
+                        val = bool(val)
+                    elif c in tz_cols or pg_dtype == "timestamp with time zone":
                         val = normalize_timestamp(val)
                     values.append(val)
                 pg_cur.execute(insert_sql, values)
+                pg_cur.execute("RELEASE SAVEPOINT row_sp")
                 if pg_cur.rowcount > 0:
                     stats["inserted"] += 1
                 else:
                     stats["skipped"] += 1
             except Exception as e:
+                pg_cur.execute("ROLLBACK TO SAVEPOINT row_sp")
+                pg_cur.execute("RELEASE SAVEPOINT row_sp")
                 stats["errors"] += 1
                 if stats["errors"] <= 3:
                     pk_desc = row.keys()
@@ -826,7 +870,7 @@ def find_non_empty_targets(pg: psycopg.Connection[DictRow], tables: list[str]) -
     """返回目标库中已有数据的表及其行数（用于防止重复灌库）。"""
     non_empty: list[tuple[str, int]] = []
     for table in tables:
-        if table == "sqlite_sequence" or not table_exists(pg, table):
+        if table in ("sqlite_sequence", "alembic_version") or not table_exists(pg, table):
             continue
         count_sql = sql.SQL("SELECT COUNT(*) AS c FROM {tbl}").format(tbl=sql.Identifier(table))
         row = pg.execute(count_sql).fetchone()
@@ -837,8 +881,8 @@ def find_non_empty_targets(pg: psycopg.Connection[DictRow], tables: list[str]) -
 
 
 def clear_tables(pg: psycopg.Connection[DictRow], tables: list[str]) -> None:
-    """--force 的显式逃生口：清空目标表后完整重灌（用 DELETE，避免 TRUNCATE 的 FK 连带）。"""
-    for table in tables:
+    """--force 的显式逃生口：按逆序清空目标表（先子表后父表，遵守 FK 约束）。"""
+    for table in reversed(tables):
         pg.execute(sql.SQL("DELETE FROM {tbl}").format(tbl=sql.Identifier(table)))
     pg.commit()
 
@@ -918,7 +962,7 @@ def main() -> None:
         if table not in sqlite_tables:
             print(f"  SKIP {table}: not in SQLite")
             continue
-        if table == "sqlite_sequence":
+        if table in ("sqlite_sequence", "alembic_version"):
             continue
         stats = migrate_table(sqlite_conn, pg, table, dry_run=args.dry_run, index_report=index_report)
         status = "OK" if stats["errors"] == 0 else f"ERRORS={stats['errors']}"

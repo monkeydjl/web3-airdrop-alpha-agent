@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 
 from app.auth import verify_password
-from app.db import DbConnection, dict_from_row
+from app.db import DbConnection, dict_from_row, scalar
 
 logger = structlog.get_logger(__name__)
 
@@ -118,16 +118,22 @@ class ApiKeyRepository:
         raw = raw_key.strip()
         now = datetime.now(UTC)
 
-        # 1. ak_{key_id_hex}_{secret}：主键检索，命中与否都到此为止
+        # 1. ak_{key_id_hex}_{secret}：主键检索，命中与否都到此为止（含畸形 ak_ 前缀）
         if raw.startswith("ak_"):
             parts = raw.split("_", 2)
-            if len(parts) == 3 and len(parts[1]) == 16:
-                record = self.get_by_id(f"key_{parts[1]}")
-                if not record or record.get("is_revoked") or self._expired(record.get("expires_at"), now):
-                    return None
-                if verify_password(raw, str(record["key_hash"])):
-                    return record
+            if len(parts) != 3 or len(parts[1]) != 16:
                 return None
+            record = self.get_by_id(f"key_{parts[1]}")
+            if (
+                not record
+                or record.get("is_revoked")
+                or self._expired(record.get("expires_at"), now)
+                or not self._is_user_active(record.get("user_id"))
+            ):
+                return None
+            if verify_password(raw, str(record["key_hash"])):
+                return record
+            return None
 
         # 2. 历史格式兼容：扫描当前所有未撤销的 API Key 并校验 bcrypt
         rows = self.conn.execute(
@@ -137,12 +143,21 @@ class ApiKeyRepository:
             record = dict_from_row(r)
             if not record:
                 continue
-            if self._expired(record.get("expires_at"), now):
+            if self._expired(record.get("expires_at"), now) or not self._is_user_active(record.get("user_id")):
                 continue
             if verify_password(raw, str(record["key_hash"])):
                 return record
 
         return None
+
+    def _is_user_active(self, user_id: Any) -> bool:
+        """检查 API Key 所属用户是否仍存在且处于活跃状态（is_active != 0）。"""
+        if not user_id:
+            return False
+        row = self.conn.execute("SELECT is_active FROM users WHERE id = ?", (str(user_id),)).fetchone()
+        if not row:
+            return False
+        return bool(scalar(row, 0))
 
     @staticmethod
     def _expired(expires_at: Any, now: datetime) -> bool:

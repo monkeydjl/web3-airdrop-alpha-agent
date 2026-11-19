@@ -130,10 +130,21 @@ class TestRecordOutcome:
         assert outcome["source"] == "manual"
         assert outcome["tx_hash"] == "0xabc"
 
-        # 验证关联的项目主表是否原子联动为 ended / already_launched
-        proj = client.get("/api/v1/projects/proj-1", headers=_auth(token_a)).json()["data"]["project"]
-        assert proj["stage"] == "ended"
-        assert proj["veto"] == "already_launched"
+        # 安全边界（P0-3）：匿名访客记个人台账不得篡改全局 projects 主表状态
+        proj_after_anon = client.get("/api/v1/projects/proj-1", headers=_auth(token_a)).json()["data"]["project"]
+        assert proj_after_anon["stage"] is None
+        assert proj_after_anon["veto"] is None
+
+        # 管理员录入结果时，关联的项目主表原子联动为 ended / already_launched
+        r_admin = client.post(
+            "/api/v1/projects/proj-1/roi/outcomes",
+            json={"event": "airdrop_received", "amount_usd": 480.0, "tokens": 120.0, "tx_hash": "0xabc"},
+            headers=ADMIN_HEADERS,
+        )
+        assert r_admin.status_code == 200
+        proj_after_admin = client.get("/api/v1/projects/proj-1", headers=ADMIN_HEADERS).json()["data"]["project"]
+        assert proj_after_admin["stage"] == "ended"
+        assert proj_after_admin["veto"] == "already_launched"
 
     @pytest.mark.parametrize("event", ["token_launched", "airdrop_missed", "campaign_ended"])
     def test_all_outcome_events_accepted(self, authed, event):

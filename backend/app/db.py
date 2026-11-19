@@ -15,6 +15,7 @@ import contextlib
 import os
 import re
 import sqlite3
+import threading
 from collections.abc import Callable, Iterable, Iterator
 from datetime import date, datetime
 from pathlib import Path
@@ -112,6 +113,9 @@ class DbConnection:
 
     def _normalize(self, sql: str, params: Iterable[Any] | None) -> tuple[str, tuple[Any, ...] | None]:
         if self.kind == "postgres":
+            # psycopg3 将 SQL 中的单 `%` 解析为占位符（仅允许 %s/%b/%t）。
+            # 先把字面量 `%`（如 LIKE '%foo%'）统一转义为 `%%`，再将 `?` 改写为 `%s`。
+            sql = re.sub(r"%%|%", "%%", sql)
             # datetime('now', ?)  must become interval cast before `?` rewrite
             # SQLite datetime('now') 语义为 UTC。Postgres NOW() 返回带时区的
             # timestamptz，写入 naive TIMESTAMP 列时按会话时区截断，非 UTC 服务器
@@ -173,18 +177,15 @@ _ENSURED_SQLITE_DIRS: set[str] = set()
 # 只是池化连接的"close"含义 = 归还池（回滚 + 入池）。
 _SQLITE_POOL_MAX_PER_PATH = 4
 _sqlite_pool: dict[str, list[Any]] = {}
+_sqlite_pool_lock = threading.Lock()
 
 
 def _sqlite_pool_enabled() -> bool:
     """测试环境关闭（理由见上）；池仅对 SQLite 默认后端生效。"""
-    return settings.app_env != "test"
+    return settings.app_env not in ("test", "testing")
 
 
 def _pool_return_sqlite(pool_key: str, raw: Any) -> None:
-    idle = _sqlite_pool.setdefault(pool_key, [])
-    if len(idle) >= _SQLITE_POOL_MAX_PER_PATH:
-        raw.close()
-        return
     try:
         raw.rollback()  # 清掉遗留事务，防止下一个借用者接上半截事务
     except Exception:
@@ -192,7 +193,16 @@ def _pool_return_sqlite(pool_key: str, raw: Any) -> None:
         with contextlib.suppress(Exception):
             raw.close()
         return
-    idle.append(raw)
+    should_close = False
+    with _sqlite_pool_lock:
+        idle = _sqlite_pool.setdefault(pool_key, [])
+        if len(idle) >= _SQLITE_POOL_MAX_PER_PATH:
+            should_close = True
+        else:
+            idle.append(raw)
+    if should_close:
+        with contextlib.suppress(Exception):
+            raw.close()
 
 
 class PooledDbConnection(DbConnection):
@@ -285,9 +295,12 @@ def _connect_sqlite() -> DbConnection:
     db_path = Path(settings.db_path)
     pool_key = os.path.abspath(str(db_path)) if _sqlite_pool_enabled() else None
     if pool_key is not None:
-        idle = _sqlite_pool.get(pool_key)
-        while idle:
-            raw = idle.pop()
+        while True:
+            with _sqlite_pool_lock:
+                idle = _sqlite_pool.get(pool_key)
+                raw = idle.pop() if idle else None
+            if raw is None:
+                break
             # 借用侧校验：库文件可能已被会话级删除重建（test-db-isolation 等），
             # 句柄指向已删除文件会写进"幽灵文件"——丢弃并新建。
             if os.path.exists(pool_key):
@@ -296,9 +309,12 @@ def _connect_sqlite() -> DbConnection:
                 raw.close()
     parent = db_path.parent
     # mkdir 是 syscall，每次建连都做在热路径上是浪费；目录只需确认一次
-    if str(parent) not in _ENSURED_SQLITE_DIRS:
-        parent.mkdir(parents=True, exist_ok=True)
-        _ENSURED_SQLITE_DIRS.add(str(parent))
+    parent_key = str(parent)
+    if parent_key not in _ENSURED_SQLITE_DIRS:
+        with _sqlite_pool_lock:
+            if parent_key not in _ENSURED_SQLITE_DIRS:
+                parent.mkdir(parents=True, exist_ok=True)
+                _ENSURED_SQLITE_DIRS.add(parent_key)
     # 路由处理器现由线程池并发执行，SQLite 写锁竞争是真实存在的；
     # 显式 busy_timeout 让并发写等待而不是直接抛 "database is locked"。
     # check_same_thread=False：同步生成器依赖（如 get_opportunity_workflow_service）

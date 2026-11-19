@@ -198,20 +198,23 @@ _DROP_INDEXES = [
 
 def upgrade() -> None:
     """创建 V2 新表 + 补全索引。"""
+    import re
+
     from sqlalchemy import text
 
     bind = op.get_bind()
+    ddl = _NEW_TABLES_SQL
+    if bind.dialect.name == "postgresql":
+        ddl = ddl.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+        ddl = re.sub(r"\bTIMESTAMP\b", "TIMESTAMPTZ", ddl)
 
-    # 按分号拆分为独立语句，逐条执行（兼容 SQLite + PostgreSQL）
-    for stmt in _NEW_TABLES_SQL.split(";"):
-        stmt = stmt.strip()
-        # 跳过空语句和纯注释行
-        if stmt and not stmt.startswith("--"):
-            # 去掉前导注释行
-            lines = [line for line in stmt.split("\n") if not line.strip().startswith("--")]
-            clean = "\n".join(lines).strip()
-            if clean:
-                bind.execute(text(clean))
+    # 按分号拆分为独立语句，先剥离前导 `--` 注释行再判空（原逻辑先判
+    # `not stmt.startswith("--")` 会把所有带头注释的 CREATE TABLE 整条跳过）。
+    for stmt in ddl.split(";"):
+        lines = [line for line in stmt.split("\n") if not line.strip().startswith("--")]
+        clean = "\n".join(lines).strip()
+        if clean:
+            bind.execute(text(clean))
 
 
 def downgrade() -> None:
