@@ -8,6 +8,54 @@
 
 ## [Unreleased]
 
+### Fixed — 全量审查收尾：数据完整性 / 安全 / 异步边界 / 业务口径 / 连接池（2026-11-16，分支 fix/review-sweep-2026-11，8 commit）
+
+八批修复的完整脉络见 `HANDOFF.md`「11 月审查修复」一节。要点：
+
+- **PG 后端启用即崩（P0）**：8 处 `cursor.lastrowid`（psycopg3 已删除该属性）改走
+  `insert_returning_id`——审计日志 / metrics / 隔离区 / 项目历史 / prompt 版本 / 校准
+  changelog / 归档运行记录在 `DB_BACKEND=postgres` 下全部 AttributeError。
+- **数据完整性**：`raw_projects` 补 `UNIQUE(source_id, dedup_key)`（存量去重保留 processed
+  行）+ 写路径 `ON CONFLICT`；`project_signals` 加 `external_id` 幂等键 + 唯一索引 +
+  存量回填去重（同一条推文每 15 分钟重复计数、captured_at 永远"新鲜"两个问题同修）；
+  采集错误信息入库统一 redact（批量路径已有，单条路径漏了）。
+- **安全**：`/bot/test-send` 出站白名单旁路关闭 + 管理员锁 + 凭据日志脱敏；注册自举
+  admin 防抢注（`ALLOW_REGISTRATION` / `REGISTRATION_BOOTSTRAP_TOKEN`，生产无 token
+  降级 viewer）；api_key 未知 key_id 提前返回（全表 bcrypt 扫描放大 DoS）；JTI 吊销
+  缓存带过期淘汰 + DB 故障 fail-open 改 error 告警；公开端点不再回显内部 webhook URL；
+  10 处字符串错误 detail → 语义化错误码（静态守卫）；生产 compose 监控端口绑回环。
+- **异步边界**：采集回调与排空路径的同步 DB 调用移入 `to_thread`（500 条队列冻结全站
+  HTTP 2.8s+）；路由未处理异常计入 5xx 指标 / 日志 / 免责声明头（实测
+  BaseHTTPMiddleware.call_next 原样上抛，此前 5xx 完全隐形）；调度器降级→提升→再降级
+  时第二次 shutdown 生效（`_is_shutting_down` 在 start() 复位）；`begin_serialized_write`
+  失败不再被静默吞掉（嵌套事务分支保持静默）。
+- **业务口径**：校准 baseline/搜索只吃 live 桶（与门禁口径一致，changelog 可审计）；
+  竞争度基线在重算路径与理由生成统一为规范键折叠（此前同项目批量/重算分数不同）；
+  `list_projects` 信号一致性改批量查询（N+1×500）；`SIGNAL_KEYWORDS` 单一真相源。
+- **采集器**：twitter（next_token）/ etherscan（page/offset）/ farcaster（nextPageCursor）
+  分页补齐，页数封顶；**galxe 迁移到 `campaigns` schema**——旧 `campaignList` 查询已被
+  生产 schema 下线（实测 GRAPHQL_VALIDATION_FAILED，源静默死亡），新查询与 Relay 分页
+  语义经生产端点内省确认；per-item 容错下沉基类（单条脏数据不拖垮整轮）；重试加抖动；
+  噪声匹配词边界（`Curvegrid` / `OndoXyz` 误杀修复）；galxe/etherscan/farcaster 各自
+  的快赢修复（合约名全地址、URL 编码、非对象响应清晰报错、零速率除零）。
+- **性能**：SQLite 连接池（每连接 64MB PRAGMA cache 不再每请求重付；APP_ENV=test 关闭；
+  按 db_path 键控、封顶 4、归还回滚、幽灵句柄两侧校验）；`llm_providers` 指纹缓存
+  （每条日志约 240 次 environ 查找消除；reset 钩子同步清缓存——空库酸测实测抓到）。
+- **路由契约**：response_model 覆盖率守卫（173 操作全覆盖；文件/文本下载端点豁免
+  登记），3 个 JSON 端点补模型；路由层私有连接访问收口到 `connection_scope`，
+  collect 期间不再持有库连接。
+- **对账**：`deploy.sh prod` 指向真正的生产 compose（此前部署开发栈）；Makefile 假目标
+  清理；pyproject 依赖对齐 requirements（fastapi 0.115 vs 0.141 双真相源）；pre-commit /
+  CI 工具版本对齐；CI 测试并行（`-n auto`）；dev compose PG 对齐生产 15。
+- **死代码清理**：legacy 双调度器、DAG orchestrator、`collect_from_registry`、
+  `_drop_zombies`、虚构 `llm_semaphore_size`（日志事件面 455→429，OBSERVABILITY 同步）。
+- **前端**：`error.tsx` / `global-error.tsx` / `not-found.tsx`（渲染异常白屏兜底 + 中文
+  404）；proxy.ts 鉴权表与后端 parity 测试；错误文案环境中立化。
+- **新守卫**（全部"显式登记"风格）：response_model 覆盖、错误信封、路由连接所有权、
+  前端鉴权表 parity、部署脚本 prod compose 指向、监控端口回环绑定。
+- 测试：4150 → **4212 passed**（每批全量零失败）；空库酸测 121 文件全绿（抓到并修复
+  llm_providers 缓存未随告警去重一起重置的问题）。
+
 ### Added — 项目身份别名映射，改名/赛道差异不再劈裂历史（2026-11-09）
 
 项目身份此前只有 `uuid5(normalize_name(name)::normalize_sector(sector))` 一个来源，
