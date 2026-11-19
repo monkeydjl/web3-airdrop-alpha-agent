@@ -48,28 +48,111 @@ export async function apiFetchEnvelope<T>(path: string, init?: RequestInit): Pro
   return (await request(path, init)) as T;
 }
 
+export const AUTH_CHANGED_EVENT = 'airdrop-auth-changed';
+
+export interface StoredAuthSummary {
+  mode: 'none' | 'api_key' | 'jwt';
+  label: string;
+  role?: string;
+}
+
+function readStorageItem(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage?.getItem(key) || window.sessionStorage?.getItem(key) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 提取浏览器侧存储的管理员 / 登录凭据请求头。
+ * 统一供 `apiFetch`、`downloadFile`（导出）与 `importProjects`（FormData 上传）复用，
+ * 不包含 Content-Type，确保 multipart 上传不会破坏 boundary。
+ */
+export function getClientAuthHeaders(): Record<string, string> {
+  const apiKey = readStorageItem('api_key');
+  if (apiKey) {
+    return { 'X-API-Key': apiKey };
+  }
+  const token = readStorageItem('auth_token');
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+}
+
+export function getStoredAuthSummary(): StoredAuthSummary {
+  const apiKey = readStorageItem('api_key');
+  if (apiKey) {
+    const masked =
+      apiKey.length > 8 ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '已配置密钥';
+    return { mode: 'api_key', label: `密钥 ${masked}`, role: 'admin' };
+  }
+  const token = readStorageItem('auth_token');
+  if (token) {
+    const email = readStorageItem('auth_email') || '已登录账号';
+    const role = readStorageItem('auth_role') || undefined;
+    return { mode: 'jwt', label: email, role };
+  }
+  return { mode: 'none', label: '管理员鉴权' };
+}
+
+function notifyAuthChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+  }
+}
+
+export function saveAdminApiKey(apiKey: string, remember: boolean): void {
+  if (typeof window === 'undefined') return;
+  clearStoredCredentials(false);
+  const store = remember ? window.localStorage : window.sessionStorage;
+  store.setItem('api_key', apiKey.trim());
+  notifyAuthChanged();
+}
+
+export function saveJwtSession(
+  accessToken: string,
+  refreshToken: string | null,
+  email: string,
+  role: string,
+  remember: boolean,
+): void {
+  if (typeof window === 'undefined') return;
+  clearStoredCredentials(false);
+  const store = remember ? window.localStorage : window.sessionStorage;
+  store.setItem('auth_token', accessToken);
+  if (refreshToken) store.setItem('refresh_token', refreshToken);
+  if (email) store.setItem('auth_email', email);
+  if (role) store.setItem('auth_role', role);
+  notifyAuthChanged();
+}
+
+export function getStoredRefreshToken(): string | null {
+  return readStorageItem('refresh_token');
+}
+
+export function clearStoredCredentials(emit = true): void {
+  if (typeof window === 'undefined') return;
+  for (const key of ['api_key', 'auth_token', 'refresh_token', 'auth_email', 'auth_role']) {
+    try {
+      window.localStorage?.removeItem(key);
+      window.sessionStorage?.removeItem(key);
+    } catch {
+      // ignore storage restrictions
+    }
+  }
+  if (emit) notifyAuthChanged();
+}
+
 async function request(path: string, init?: RequestInit): Promise<ApiResponse<unknown> & Record<string, unknown>> {
   const url = `${API_BASE}${path}`;
   let res: Response;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...getClientAuthHeaders(),
   };
-
-  // 管理员凭据的手工注入通道（2026-11-13 审查后保留并写明用途）：
-  // 全前端没有任何代码**写入**这两个键 —— 正常访客的凭据由服务端 proxy.ts
-  // 注入，浏览器不接触任何密钥。这里的存在只为一个场景：管理员在 DevTools
-  // 里手工 `localStorage.setItem('api_key', ...)` 后，浏览器直发的管理动作
-  // （proxy 对管理端点不代签）能带上凭据。若未来补上登录 UI，请同步重构这里；
-  // 若确定不走这条路，删除本块即可 —— 它是唯一的客户端凭据面。
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-    const apiKey = localStorage.getItem('api_key') || sessionStorage.getItem('api_key');
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    } else if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  }
 
   if (init?.headers) {
     if (init.headers instanceof Headers) {

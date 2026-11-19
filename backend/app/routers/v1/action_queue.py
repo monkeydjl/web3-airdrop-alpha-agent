@@ -12,9 +12,10 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.auth import get_current_user, resolve_scoped_user_id
 from app.db import connection_scope
 from app.repository import ProjectRepository
 from app.services.action_queue import build_action_queue
@@ -50,13 +51,20 @@ class ActionQueueResponse(BaseModel):
     ),
 )
 def get_action_queue(
+    req: Request,
     limit: int = Query(5, ge=1, le=50, description="返回条数"),
     per_project_limit: int = Query(2, ge=1, le=10, description="同一项目最多贡献几条"),
     include_engaged: bool = Query(False, description="是否包含已有交互记录的项目"),
-    user_id: str | None = Query(None, max_length=64, description="用户标识（缺省 default）"),
+    user_id: str | None = Query(None, max_length=64, description="用户标识（仅管理员可指定，缺省 default）"),
 ) -> ActionQueueResponse:
     """返回一份有限、有序、可执行的今日行动清单。"""
-    uid = user_id or DEFAULT_USER
+    current_user = get_current_user(req)
+    uid = resolve_scoped_user_id(
+        current_user,
+        user_id,
+        default_user=DEFAULT_USER,
+        admin_default_to_self=False,
+    )
     repo = ProjectRepository()
 
     try:

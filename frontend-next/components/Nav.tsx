@@ -5,10 +5,12 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Radar, SatelliteDish, Droplets, CalendarDays, LineChart, ClipboardCheck, ServerCog,
-  Bell, Archive, Bookmark, Settings, Sun, Moon, CheckCheck, Ban,
+  Bell, Archive, Bookmark, Settings, Sun, Moon, CheckCheck, Ban, KeyRound, ShieldCheck,
 } from 'lucide-react';
-import { fetchHealth } from '@/lib/api';
+import { AUTH_CHANGED_EVENT, fetchHealth, getStoredAuthSummary } from '@/lib/api';
+import type { StoredAuthSummary } from '@/lib/api';
 import type { HealthData } from '@/lib/types';
+import { AdminAuthModal } from './AdminAuthModal';
 import { useTheme } from './ThemeProvider';
 
 /** 导航项：icon 对齐设计稿 data-lucide 属性 */
@@ -32,6 +34,22 @@ export function Nav() {
   const pathname = usePathname();
   const { theme, toggle } = useTheme();
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authSummary, setAuthSummary] = useState<StoredAuthSummary>({
+    mode: 'none',
+    label: '管理员鉴权',
+  });
+
+  useEffect(() => {
+    const syncAuth = () => setAuthSummary(getStoredAuthSummary());
+    syncAuth();
+    window.addEventListener(AUTH_CHANGED_EVENT, syncAuth);
+    window.addEventListener('storage', syncAuth);
+    return () => {
+      window.removeEventListener(AUTH_CHANGED_EVENT, syncAuth);
+      window.removeEventListener('storage', syncAuth);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +104,25 @@ export function Nav() {
         })}
       </nav>
 
+      {/* ── 管理员鉴权入口 ── */}
+      <button
+        type="button"
+        onClick={() => setAuthModalOpen(true)}
+        className="app-sidebar-nav-item relative"
+        aria-label="管理员密钥与账号登录"
+        title={authSummary.mode === 'none' ? '点击配置管理员密钥或登录账号' : `已启用凭据：${authSummary.label}`}
+      >
+        {authSummary.mode === 'none' ? (
+          <KeyRound className="h-5 w-5 shrink-0 text-ink-muted" strokeWidth={1.9} />
+        ) : (
+          <ShieldCheck className="h-5 w-5 shrink-0 text-farm" strokeWidth={2.2} />
+        )}
+        <span className="app-sidebar-nav-label truncate">{authSummary.label}</span>
+        {authSummary.mode !== 'none' && (
+          <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-farm shadow-sm shadow-farm" />
+        )}
+      </button>
+
       {/* ── 主题切换 ── */}
       <button
         type="button"
@@ -99,6 +136,8 @@ export function Nav() {
           : <Moon className="h-5 w-5 shrink-0 text-slate-600" strokeWidth={2} />}
         <span className="app-sidebar-nav-label">{theme === 'dark' ? '浅色模式' : '深色模式'}</span>
       </button>
+
+      <AdminAuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
 
       {/* ── 弹性间隔 ── */}
       <div className="flex-1" />

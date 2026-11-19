@@ -90,7 +90,14 @@ def owned_project_ids_where(
         where = f"{where} AND {extra_condition}"
 
     # 表名来自白名单、条件片段来自调用方字面量，user_id 走绑定参数
+    from app.db import scalar
+
     sql = f"SELECT DISTINCT project_id FROM {table} WHERE {where}"  # noqa: S608
     params = (user_id, DEFAULT_USER) if user_id in (DEFAULT_USER, "anonymous") else (user_id,)
     rows = conn.execute(sql, params).fetchall()
-    return {str(r[0]) for r in rows if r and r[0]}
+    out: set[str] = set()
+    for r in rows:
+        pid = scalar(r, None)
+        if pid:
+            out.add(str(pid))
+    return out

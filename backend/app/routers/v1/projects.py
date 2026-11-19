@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.team import score_to_risk_level
-from app.auth import ROLE_ADMIN, get_current_user
+from app.auth import get_current_user
 from app.db import connection_scope
 from app.openapi import ERROR_RESPONSE_EXAMPLES, PROJECTS_LIST_RESPONSE_EXAMPLE
 from app.repository import ProjectRepository
@@ -266,7 +266,7 @@ def list_projects(
         None,
         description="按资格否决筛选（no_participation_path=缺参与路径、already_launched=已发币）",
     ),
-    user_id: str | None = Query(None, description="用户 ID（匿名时走 default）"),
+    user_id: str | None = Query(None, max_length=64, description="用户 ID（仅管理员可指定，匿名时走 default）"),
     curated: bool = Query(False, description="仅返回满足精选门槛的项目（评分/置信度/近90天活动/参与路径）"),
     zero_cost_only: bool = Query(False, description="仅返回零资金成本/纯测试网项目（保本优先）"),
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
@@ -292,14 +292,10 @@ def list_projects(
     Returns:
         ProjectsResponse 包含项目列表
     """
+    from app.auth import resolve_scoped_user_id
+
     current_user = get_current_user(req)
-    if current_user["role"] == ROLE_ADMIN:
-        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
-    elif current_user["user_id"] != "anonymous":
-        uid = user_id or current_user["user_id"]
-    else:
-        uid = user_id or DEFAULT_USER
-    effective_user_id = uid.strip()
+    effective_user_id = resolve_scoped_user_id(current_user, user_id, default_user=DEFAULT_USER)
 
     logger.info(
         "api.projects.list",
@@ -609,7 +605,7 @@ async def evaluate_project(
     except Exception as e:
         logger.error("api.projects.evaluate_failed", project_id=project_id, error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to evaluate project: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to evaluate project"}
         ) from e
 
 
@@ -646,7 +642,7 @@ def get_project_dossier(
     except Exception as e:
         logger.error("api.projects.dossier_failed", project_id=project_id, error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha dossier: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to generate alpha dossier"}
         ) from e
 
 

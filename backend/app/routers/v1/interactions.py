@@ -17,11 +17,11 @@ import structlog
 from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.auth import ROLE_ADMIN, get_current_user
+from app.auth import ROLE_ADMIN, can_mutate_global_project, get_current_user
 from app.db import connection_scope, dict_from_row, scalar
 from app.repository import ProjectRepository
 from app.services.project_signals import parse_meta, signals_of
-from app.services.user_scope import build_user_scope_filter
+from app.services.user_scope import DEFAULT_USER, build_user_scope_filter
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["interactions"])
@@ -471,11 +471,15 @@ def create_interaction(body: InteractionCreate, req: Request) -> dict[str, Any]:
             if supports_returning:
                 row = cur.fetchone()
             else:
-                iid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                iid = scalar(conn.execute("SELECT last_insert_rowid()").fetchone(), None)
                 row = conn.execute("SELECT * FROM interactions WHERE id = ?", (iid,)).fetchone()
 
-            # 实时联动项目主表状态：真实交互记录证实用户已参与该项目
-            proj_row = conn.execute("SELECT * FROM projects WHERE id = ?", (body.project_id,)).fetchone()
+            # 实时联动项目主表状态：仅管理员/分析师（或本地免鉴权单机模式）可修改全局 projects 表
+            proj_row = (
+                conn.execute("SELECT * FROM projects WHERE id = ?", (body.project_id,)).fetchone()
+                if can_mutate_global_project(current_user)
+                else None
+            )
             if proj_row:
                 p_dict = dict_from_row(proj_row)
                 p_meta = parse_meta(p_dict.get("meta"))
@@ -596,56 +600,108 @@ def list_interactions(
         return {"ok": True, "data": {"items": items, "total": total, "count": len(items)}}
 
 
+def _user_owns_interaction(owner_uid: Any, current_user: dict[str, Any]) -> bool:
+    """检查当前调用者是否拥有该条 interaction 记录（防跨用户篡改/删除及具名用户认领 NULL 记录）。"""
+    if current_user.get("role") == ROLE_ADMIN:
+        return True
+    caller_uid = str(current_user.get("user_id") or "anonymous")
+    normalized_owner = str(owner_uid).strip() if owner_uid is not None else ""
+    if caller_uid in (DEFAULT_USER, "anonymous"):
+        return normalized_owner in ("", DEFAULT_USER, "anonymous")
+    return normalized_owner == caller_uid
+
+
 @router.get("/interactions/summary")
-def interactions_summary() -> dict[str, Any]:
-    """Aggregate stats for calibration / ops."""
+def interactions_summary(
+    req: Request,
+    user_id: str | None = Query(None, max_length=64, description="用户标识过滤（仅管理员可用）"),
+) -> dict[str, Any]:
+    """Aggregate stats for calibration / ops (isolated per user unless admin)."""
     with connection_scope() as conn:
-        total = int(scalar(conn.execute("SELECT COUNT(*) FROM interactions").fetchone()) or 0)
+        current_user = get_current_user(req)
+        scope_clause, scope_params = build_user_scope_filter(
+            user_id=current_user["user_id"],
+            role=current_user["role"],
+            admin_filter_user_id=user_id,
+        )
+        where_all = f"WHERE {scope_clause}" if scope_clause else ""
+        where_labeled = (
+            f"WHERE {scope_clause} AND label_at_start IS NOT NULL"
+            if scope_clause
+            else "WHERE label_at_start IS NOT NULL"
+        )
+        params_tuple = tuple(scope_params)
+
+        total = int(
+            scalar(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM interactions {where_all}",  # noqa: S608
+                    params_tuple,
+                ).fetchone()
+            )
+            or 0
+        )
         by_status = {
             dict_from_row(r).get("status"): dict_from_row(r).get("c")
-            for r in conn.execute("SELECT status, COUNT(*) AS c FROM interactions GROUP BY status").fetchall()
+            for r in conn.execute(
+                f"SELECT status, COUNT(*) AS c FROM interactions {where_all} GROUP BY status",  # noqa: S608
+                params_tuple,
+            ).fetchall()
         }
         by_outcome = {
             dict_from_row(r).get("outcome"): dict_from_row(r).get("c")
-            for r in conn.execute("SELECT outcome, COUNT(*) AS c FROM interactions GROUP BY outcome").fetchall()
+            for r in conn.execute(
+                f"SELECT outcome, COUNT(*) AS c FROM interactions {where_all} GROUP BY outcome",  # noqa: S608
+                params_tuple,
+            ).fetchall()
         }
         # label_at_start vs outcome for simple lift view
         label_outcome = [
             dict_from_row(r)
             for r in conn.execute(
-                """
+                f"""
                 SELECT label_at_start, outcome, COUNT(*) AS c
                 FROM interactions
-                WHERE label_at_start IS NOT NULL
+                {where_labeled}
                 GROUP BY label_at_start, outcome
-                """
+                """,  # noqa: S608
+                params_tuple,
             ).fetchall()
         ]
         sums = conn.execute(
-            """
+            f"""
             SELECT
                 COALESCE(SUM(cost_usd), 0) AS total_cost,
                 COALESCE(SUM(profit_usd), 0) AS total_profit,
                 COALESCE(SUM(hours_spent), 0) AS total_hours
             FROM interactions
-            """
+            {where_all}
+            """,  # noqa: S608
+            params_tuple,
         ).fetchone()
         s = dict_from_row(sums) if sums else {}
+        total_cost = float(s.get("total_cost", 0) or 0)
+        total_profit = float(s.get("total_profit", 0) or 0)
+        total_hours = float(s.get("total_hours", 0) or 0)
+        net_usd = round(total_profit - total_cost, 4)
         return {
             "ok": True,
             "data": {
                 "total": total,
                 "total_interactions": total,
-                "total_cost_usd": s.get("total_cost", 0),
-                "total_profit_usd": s.get("total_profit", 0),
-                "total_hours_spent": s.get("total_hours", 0),
+                "total_cost_usd": total_cost,
+                "total_profit_usd": total_profit,
+                "net_usd": net_usd,
+                "total_hours_spent": total_hours,
+                "total_hours": total_hours,
                 "by_status": by_status,
                 "by_outcome": by_outcome,
                 "label_outcome": label_outcome,
                 "aggregates": {
-                    "total_cost_usd": s.get("total_cost", 0),
-                    "total_profit_usd": s.get("total_profit", 0),
-                    "total_hours_spent": s.get("total_hours", 0),
+                    "total_cost_usd": total_cost,
+                    "total_profit_usd": total_profit,
+                    "net_usd": net_usd,
+                    "total_hours_spent": total_hours,
                 },
             },
         }
@@ -673,6 +729,9 @@ def update_interaction(
             status_code=400,
             detail={"code": "EMPTY", "message": "No fields to update"},
         )
+    current_user = get_current_user(req)
+    if "user_id" in fields and current_user["role"] != ROLE_ADMIN:
+        fields["user_id"] = current_user["user_id"] if current_user["user_id"] != "anonymous" else None
     now = datetime.now(UTC)
     if "outcome_observed_at" not in fields and body.model_fields_set.intersection(
         {"eligibility_result", "survival_result", "reward_received_usd"}
@@ -696,12 +755,7 @@ def update_interaction(
                     detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                 )
             current = dict_from_row(existing)
-            current_user = get_current_user(req)
-            if (
-                current_user["role"] != ROLE_ADMIN
-                and current.get("user_id")
-                and current.get("user_id") != current_user["user_id"]
-            ):
+            if not _user_owns_interaction(current.get("user_id"), current_user):
                 raise HTTPException(
                     status_code=404,
                     detail={"code": "NOT_FOUND", "message": "Interaction not found"},
@@ -773,7 +827,7 @@ def update_interaction(
                     detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                 )
 
-            if fields.get("outcome") == "airdropped":
+            if can_mutate_global_project(current_user) and fields.get("outcome") == "airdropped":
                 proj_id = current.get("project_id")
                 if proj_id:
                     p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
@@ -826,7 +880,8 @@ def delete_interaction(req: Request, interaction_id: int = Path(...)) -> dict[st
                         status_code=404,
                         detail={"code": "NOT_FOUND", "message": "Interaction not found"},
                     )
-                if existing[0] and existing[0] != current_user["user_id"]:
+                owner_uid = scalar(existing, None)
+                if not _user_owns_interaction(owner_uid, current_user):
                     raise HTTPException(
                         status_code=404,
                         detail={"code": "NOT_FOUND", "message": "Interaction not found"},

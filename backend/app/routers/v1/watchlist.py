@@ -215,11 +215,13 @@ def list_watchlist(
     try:
         with connection_scope() as conn:
             # 总数
+            from app.db import scalar
+
             total_row = conn.execute(
                 "SELECT COUNT(*) FROM watchlist WHERE user_id = ?",
                 (uid,),
             ).fetchone()
-            total = int(total_row[0]) if total_row else 0
+            total = int(scalar(total_row, 0) or 0)
 
             # 分页查询，JOIN projects 获取评分信息
             offset = (page - 1) * page_size

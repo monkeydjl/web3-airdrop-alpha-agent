@@ -17,10 +17,10 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.auth import ROLE_ADMIN, get_current_user
+from app.auth import ROLE_ADMIN, can_mutate_global_project, get_current_user
 from app.calibration import MIN_FARM_SAMPLES, MIN_VALID_SAMPLES, check_gate, extract_samples
 from app.config import settings
-from app.db import connection_scope, dict_from_row, insert_returning_id
+from app.db import connection_scope, dict_from_row, insert_returning_id, scalar
 from app.metrics import record_feedback
 from app.services.project_signals import parse_meta, signals_of
 from app.services.user_scope import DEFAULT_USER, build_user_scope_filter, owned_project_ids, owned_project_ids_where
@@ -228,8 +228,9 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                 (request.project_id, uid, request.signal, request.note, request.outcome),
             )
 
-            # 状态同步持久化：当用户人工核验/校准标签时，直接将结果写入 projects 库表
-            if request.signal == "wrong_label" and request.note:
+            # 状态同步持久化：仅管理员/分析师（或本地免鉴权单机模式）可联动修改全局 projects 表
+            allow_global_mutation = can_mutate_global_project(current_user)
+            if allow_global_mutation and request.signal == "wrong_label" and request.note:
                 norm_note = request.note.strip().upper()
                 if norm_note in ("FARM", "WATCH", "IGNORE"):
                     row = conn.execute("SELECT * FROM projects WHERE id = ?", (request.project_id,)).fetchone()
@@ -341,7 +342,7 @@ def submit_feedback(request: FeedbackRequest, req: Request) -> FeedbackResponse:
                         updated_label = target_label
                         updated_veto = new_veto
 
-            if request.outcome == "airdropped":
+            if allow_global_mutation and request.outcome == "airdropped":
                 row = conn.execute("SELECT * FROM projects WHERE id = ?", (request.project_id,)).fetchone()
                 if row:
                     row_dict = dict_from_row(row)
@@ -455,7 +456,7 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
                 f"SELECT id FROM projects WHERE id IN ({placeholders})",  # noqa: S608 — 占位符按数量生成，取值全部绑定
                 tuple(set(project_ids)),
             ).fetchall()
-            known = {str(r[0]) for r in rows}
+            known = {str(scalar(r, "")) for r in rows if scalar(r, None) is not None}
             unknown = sorted(set(project_ids) - known)
             if unknown:
                 raise HTTPException(
@@ -483,38 +484,39 @@ def submit_feedback_batch(request: FeedbackBatchRequest, req: Request) -> Feedba
                 if _record_outcome_in_ledger(conn, item.project_id, uid, item.outcome) is not None:
                     ledger_written += 1
 
-            # 同步更新项目状态：复盘确认已空投的项目自动沉淀为 ended + already_launched
-            for item in request.items:
-                if item.outcome == "airdropped":
-                    row = conn.execute("SELECT * FROM projects WHERE id = ?", (item.project_id,)).fetchone()
-                    if row:
-                        row_dict = dict_from_row(row)
-                        meta = parse_meta(row_dict.get("meta"))
-                        meta["outcome"] = "airdropped"
-                        meta["airdropped_at"] = datetime.now(UTC).isoformat()
-                        meta_json = json.dumps(meta, ensure_ascii=False)
+            # 同步更新项目状态：仅管理员/分析师（或本地免鉴权单机模式）可将全局项目沉淀为 ended
+            if can_mutate_global_project(current_user):
+                for item in request.items:
+                    if item.outcome == "airdropped":
+                        row = conn.execute("SELECT * FROM projects WHERE id = ?", (item.project_id,)).fetchone()
+                        if row:
+                            row_dict = dict_from_row(row)
+                            meta = parse_meta(row_dict.get("meta"))
+                            meta["outcome"] = "airdropped"
+                            meta["airdropped_at"] = datetime.now(UTC).isoformat()
+                            meta_json = json.dumps(meta, ensure_ascii=False)
 
-                        raw_reason = row_dict.get("reason")
-                        reasons_list: list[str] = []
-                        if raw_reason:
-                            try:
-                                parsed = json.loads(raw_reason)
-                                reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
-                            except Exception:
-                                reasons_list = [str(raw_reason)]
-                        outcome_msg = "实际结果复盘：已完成空投"
-                        if outcome_msg not in reasons_list:
-                            reasons_list.insert(0, outcome_msg)
-                        reason_json = json.dumps(reasons_list, ensure_ascii=False)
+                            raw_reason = row_dict.get("reason")
+                            reasons_list: list[str] = []
+                            if raw_reason:
+                                try:
+                                    parsed = json.loads(raw_reason)
+                                    reasons_list = parsed if isinstance(parsed, list) else [str(parsed)]
+                                except Exception:
+                                    reasons_list = [str(raw_reason)]
+                            outcome_msg = "实际结果复盘：已完成空投"
+                            if outcome_msg not in reasons_list:
+                                reasons_list.insert(0, outcome_msg)
+                            reason_json = json.dumps(reasons_list, ensure_ascii=False)
 
-                        conn.execute(
-                            """
-                            UPDATE projects
-                            SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
-                            WHERE id = ?
-                            """,
-                            (meta_json, reason_json, datetime.now(UTC), item.project_id),
-                        )
+                            conn.execute(
+                                """
+                                UPDATE projects
+                                SET stage = 'ended', veto = 'already_launched', meta = ?, reason = ?, updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (meta_json, reason_json, datetime.now(UTC), item.project_id),
+                            )
 
             conn.commit()
 
@@ -569,11 +571,15 @@ def get_pending_review(
     user_id: str | None = Query(None, max_length=64, description="用户标识（仅管理员可指定，缺省 default）"),
 ) -> FeedbackResponse:
     """返回待标记结果的项目列表。"""
+    from app.auth import resolve_scoped_user_id
+
     current_user = get_current_user(req)
-    if current_user["role"] == ROLE_ADMIN:
-        uid = user_id or DEFAULT_USER
-    else:
-        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
+    uid = resolve_scoped_user_id(
+        current_user,
+        user_id,
+        default_user=DEFAULT_USER,
+        admin_default_to_self=False,
+    )
 
     try:
         with connection_scope() as conn:
@@ -819,7 +825,7 @@ def list_events(
                 f"SELECT COUNT(*) FROM events{where_sql}",  # noqa: S608
                 tuple(params),
             ).fetchone()
-            total = int(count_row[0]) if count_row else 0
+            total = int(scalar(count_row, 0) or 0)
 
             query_sql = f"""
                 SELECT id, project_id, user_id, event_type, detail, timestamp
@@ -872,13 +878,13 @@ def get_calibration_status() -> FeedbackResponse:
         with connection_scope() as conn:
             # 反馈总数
             total_row = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()
-            total_feedback = int(total_row[0]) if total_row else 0
+            total_feedback = int(scalar(total_row, 0) or 0)
 
             # 强监督样本数（wrong_label + outcome 非空）
             strong_row = conn.execute(
                 "SELECT COUNT(*) FROM feedback WHERE signal = 'wrong_label' OR outcome IS NOT NULL"
             ).fetchone()
-            strong_samples = int(strong_row[0]) if strong_row else 0
+            strong_samples = int(scalar(strong_row, 0) or 0)
 
             # 信号分布
             signal_rows = conn.execute("SELECT signal, COUNT(*) as cnt FROM feedback GROUP BY signal").fetchall()

@@ -35,7 +35,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.auth import get_current_user
+from app.auth import can_mutate_global_project, get_current_user
 from app.db import connection_scope, dict_from_row
 from app.services.project_signals import parse_meta
 
@@ -223,7 +223,7 @@ def create_roi_outcome(
         ).fetchone()
         outcome_id = int(row["id"])
 
-        if body.event in ("airdrop_received", "token_launched", "campaign_ended"):
+        if can_mutate_global_project(user) and body.event in ("airdrop_received", "token_launched", "campaign_ended"):
             p_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
             if p_row:
                 p_dict = dict_from_row(p_row)

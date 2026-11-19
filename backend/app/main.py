@@ -13,6 +13,8 @@ Web3 Airdrop Alpha Agent System 主应用入口。
 """
 
 import asyncio
+import contextlib
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -156,45 +158,59 @@ def create_app(
                         error=str(exc)[:200],
                     )
 
+                persist_lock = threading.Lock()
+
                 async def on_collection(source_id: str, result: CollectorResult) -> None:
                     def _persist_and_economic() -> None:
-                        repo.persist_collection_result(
-                            result,
-                            source_type="api",
-                            source_name=source_id,
-                        )
-
-                        # Economic path after successful persist only; failures must not
-                        # propagate（与 collections.trigger 的 _persist_and_economic 同一口径）。
-                        if economic_writer is not None and economic_emitter is not None:
+                        # 多个采集源可同时在线程池触发回调，app_conn 为单一连接实例，
+                        # 必须串行化访问以防止跨线程事务混写与 psycopg3 游标并发错误。
+                        with persist_lock:
                             try:
-                                from app.opportunity.economic_integration import (
-                                    daily_run_id,
-                                    process_persisted_collection,
-                                )
-
-                                # CollectorResult.finished_at is optional on the type;
-                                # production collectors set it. Fall back to UTC now so
-                                # daily_run_id never receives None (contract requires datetime).
-                                finished = result.finished_at
-                                if finished is None:
-                                    from datetime import UTC, datetime
-
-                                    finished = datetime.now(UTC)
-                                process_persisted_collection(
+                                repo.persist_collection_result(
                                     result,
-                                    run_id=daily_run_id(result.source_id, finished),
-                                    writer=economic_writer,
-                                    emitter=economic_emitter,
-                                    settings_obj=settings,
+                                    source_type="api",
+                                    source_name=source_id,
                                 )
-                            except Exception as exc:
-                                logger.warning(
-                                    "app.collection_economic_failed",
-                                    source_id=source_id,
-                                    error_type=type(exc).__name__,
-                                    error=str(exc)[:200],
-                                )
+                            except Exception:
+                                if hasattr(app_conn, "rollback"):
+                                    with contextlib.suppress(Exception):
+                                        app_conn.rollback()
+                                raise
+
+                            # Economic path after successful persist only; failures must not
+                            # propagate（与 collections.trigger 的 _persist_and_economic 同一口径）。
+                            if economic_writer is not None and economic_emitter is not None:
+                                try:
+                                    from app.opportunity.economic_integration import (
+                                        daily_run_id,
+                                        process_persisted_collection,
+                                    )
+
+                                    # CollectorResult.finished_at is optional on the type;
+                                    # production collectors set it. Fall back to UTC now so
+                                    # daily_run_id never receives None (contract requires datetime).
+                                    finished = result.finished_at
+                                    if finished is None:
+                                        from datetime import UTC, datetime
+
+                                        finished = datetime.now(UTC)
+                                    process_persisted_collection(
+                                        result,
+                                        run_id=daily_run_id(result.source_id, finished),
+                                        writer=economic_writer,
+                                        emitter=economic_emitter,
+                                        settings_obj=settings,
+                                    )
+                                except Exception as exc:
+                                    if hasattr(app_conn, "rollback"):
+                                        with contextlib.suppress(Exception):
+                                            app_conn.rollback()
+                                    logger.warning(
+                                        "app.collection_economic_failed",
+                                        source_id=source_id,
+                                        error_type=type(exc).__name__,
+                                        error=str(exc)[:200],
+                                    )
 
                     # P1-4: 同步 DB 写移出主事件循环（与 routers/v1/collections.py 同一修复）。
                     try:

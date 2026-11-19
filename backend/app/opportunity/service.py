@@ -204,6 +204,8 @@ class OpportunityService:
             fatigue_index=decision.fatigue_index,
             capital_friction_tier=decision.capital_friction_tier,
             exit_advisory=decision.exit_advisory,
+            viability_tier=decision.viability_tier,
+            viability_advisory=decision.viability_advisory,
         )
         if persist:
             return self.opportunity_repo.save_assessment(assessment)

@@ -3,7 +3,7 @@
 import { EmptyState, Switch, Toast } from '@/components/ui';
 import { AnomalyDetectionPanel } from '@/components/AnomalyDetectionPanel';
 import { TopBar } from '@/components/TopBar';
-import { apiFetch, fetchHealth, apiFetchEnvelope } from '@/lib/api';
+import { apiFetch, fetchHealth, apiFetchEnvelope, getClientAuthHeaders } from '@/lib/api';
 import { relativeTime, sourceZh } from '@/lib/format';
 import { normalizeCollectionSource } from '@/lib/types';
 import type { CollectionSource, CollectionSourceApi, CollectionTriggerData, HealthData, SourceVerdict } from '@/lib/types';
@@ -556,8 +556,12 @@ export default function OpsPage() {
     try {
       const form = new FormData();
       form.append('file', file);
-      // 注意：不要设 Content-Type，交给浏览器生成带 boundary 的 multipart 头
-      const res = await fetch(`${API_PREFIX}/import/projects`, { method: 'POST', body: form });
+      // 注意：不要设 Content-Type，交给浏览器生成带 boundary 的 multipart 头；仅附带管理员凭据头
+      const res = await fetch(`${API_PREFIX}/import/projects`, {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: form,
+      });
       const text = await res.text();
 
       if (!res.ok) {

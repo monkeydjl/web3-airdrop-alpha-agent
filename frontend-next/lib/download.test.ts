@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { errorMessageFromBody, filenameFromDisposition, validateUploadFile } from './download.ts';
+import { clearStoredCredentials, getClientAuthHeaders, saveAdminApiKey, saveJwtSession } from './api.ts';
 
 describe('filenameFromDisposition', () => {
   it('认后端 export/projects 的带引号 + filename* 写法', () => {
@@ -96,11 +97,11 @@ describe('errorMessageFromBody', () => {
   });
 
   it('401 换成中文并指明去哪配密钥，不透后端英文原文', () => {
-    // 实测后端未配密钥时返回：{"ok":false,"error":{"code":"UNAUTHORIZED",
-    // "message":"Missing API key or token"}} —— 用户看不懂，也不知道去哪改
+    // 实测后端未带凭据时返回：{"ok":false,"error":{"code":"UNAUTHORIZED",
+    // "message":"Missing API key or token"}} —— 指引用户在左侧导航栏打开「管理员鉴权」
     const body = '{"ok":false,"error":{"code":"UNAUTHORIZED","message":"Missing API key or token"}}';
     const msg = errorMessageFromBody(body, 401, '导出');
-    assert.match(msg, /BACKEND_API_KEY/);
+    assert.match(msg, /管理员鉴权/);
     assert.doesNotMatch(msg, /Missing API key/);
   });
 
@@ -139,5 +140,49 @@ describe('validateUploadFile', () => {
   it('拒绝 0 字节文件', () => {
     // 后端会当成"没有有效项目数据"返回 400，前端先挡掉省一次上传
     assert.match(String(validateUploadFile('a.csv', 0)), /文件为空/);
+  });
+});
+
+describe('getClientAuthHeaders (导出/导入客户端凭据注入)', () => {
+  function installFakeWindow() {
+    const local = new Map<string, string>();
+    const session = new Map<string, string>();
+    const makeStore = (m: Map<string, string>) => ({
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        m.set(k, v);
+      },
+      removeItem: (k: string) => {
+        m.delete(k);
+      },
+    });
+    const prev = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = {
+      localStorage: makeStore(local),
+      sessionStorage: makeStore(session),
+      dispatchEvent: () => true,
+    };
+    return () => {
+      (globalThis as { window?: unknown }).window = prev;
+    };
+  }
+
+  it('优先携带 X-API-Key，退回 Bearer JWT，清除后为空且不含 Content-Type', () => {
+    const restore = installFakeWindow();
+    try {
+      assert.deepEqual(getClientAuthHeaders(), {});
+
+      saveAdminApiKey('  secret-admin-key-1234  ', true);
+      assert.deepEqual(getClientAuthHeaders(), { 'X-API-Key': 'secret-admin-key-1234' });
+      assert.equal('Content-Type' in getClientAuthHeaders(), false);
+
+      saveJwtSession('jwt-access-token', 'jwt-refresh', 'ops@example.com', 'admin', false);
+      assert.deepEqual(getClientAuthHeaders(), { Authorization: 'Bearer jwt-access-token' });
+
+      clearStoredCredentials();
+      assert.deepEqual(getClientAuthHeaders(), {});
+    } finally {
+      restore();
+    }
   });
 });

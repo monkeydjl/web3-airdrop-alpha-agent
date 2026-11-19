@@ -13,7 +13,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.auth import ROLE_ADMIN, get_current_user
+from app.auth import get_current_user, resolve_scoped_user_id
 from app.services.user_memory import UserProfileMemoryService
 from app.services.user_scope import DEFAULT_USER
 
@@ -60,17 +60,11 @@ class UserProfileResponse(BaseModel):
 )
 def get_user_profile(
     req: Request,
-    user_id: str | None = Query(None, description="用户标识（可选，默认匿名用户）"),
+    user_id: str | None = Query(None, max_length=64, description="用户标识（仅管理员可指定，缺省绑定当前身份）"),
 ) -> UserProfileResponse:
-    """获取当前用户偏好画像（匿名 token 可读）."""
+    """获取当前用户偏好画像（匿名 token 可读，严格绑定当前身份）."""
     current_user = get_current_user(req)
-    if current_user["role"] == ROLE_ADMIN:
-        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
-    elif current_user["user_id"] != "anonymous":
-        uid = user_id or current_user["user_id"]
-    else:
-        uid = user_id or DEFAULT_USER
-    uid = uid.strip()
+    uid = resolve_scoped_user_id(current_user, user_id, default_user=DEFAULT_USER)
 
     try:
         svc = UserProfileMemoryService()
@@ -92,17 +86,11 @@ def get_user_profile(
 )
 def clear_user_profile(
     req: Request,
-    user_id: str | None = Query(None, description="用户标识（可选，默认匿名用户）"),
+    user_id: str | None = Query(None, max_length=64, description="用户标识（仅管理员可指定，缺省绑定当前身份）"),
 ) -> UserProfileResponse:
-    """清除当前用户偏好画像记忆（匿名 token 可写）."""
+    """清除当前用户偏好画像记忆（匿名 token 可写，严格绑定当前身份）."""
     current_user = get_current_user(req)
-    if current_user["role"] == ROLE_ADMIN:
-        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
-    elif current_user["user_id"] != "anonymous":
-        uid = user_id or current_user["user_id"]
-    else:
-        uid = user_id or DEFAULT_USER
-    uid = uid.strip()
+    uid = resolve_scoped_user_id(current_user, user_id, default_user=DEFAULT_USER)
 
     try:
         svc = UserProfileMemoryService()
