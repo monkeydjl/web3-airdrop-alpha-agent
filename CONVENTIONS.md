@@ -634,6 +634,21 @@ def init_db(conn: sqlite3.Connection) -> None:
 > `with self.conn_factory() as conn:`，lifespan 退出后共享连接已被关闭，
 > 经济栈全部失效。verifier 17.1.26 的 `close_s == 1` 断言捕获了它。
 
+### 13.3.1 SQLite 连接池（close 语义 = 归还，2026-11-16）
+
+SQLite 默认后端在 `get_connection()` 之下挂了一个进程内连接池
+（`_sqlite_pool`，每 db_path 独立、封顶 4 条）。对消费方**完全透明**：
+`connection_scope` 的 own 契约不变，只是池化连接的 `close()` 语义从
+"真关"变成"回滚遗留事务 → 归还池"。
+
+- **门禁**：`APP_ENV=test` 时整体关闭。测试环境 db_path 被 per-test
+  monkeypatch、库文件被会话级删除重建，池化会把"句柄指向已删除文件"
+  的竞态引进来——生产/开发的 db_path 稳定，才是受益场景。
+- **借用/归还两侧校验库文件仍存在**：删库重建场景不接幽灵句柄。
+- **PG 后端不池化**（psycopg_pool 是标准解，引入依赖需单独评估）。
+- 行为契约由 `tests/test_connection_pool.py` 钉住（复用同一 raw 连接、
+  归还回滚、封顶、键控、测试环境关闭）。
+
 ### 13.4 测试数据纪律（建库与播种）
 
 测试文件对默认库（`DB_PATH`）的使用由 `scripts/check_test_db_bootstrap.py`
