@@ -94,10 +94,15 @@ def has_participation_path(project: RawProject) -> bool:
 def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDecision:
     """Apply ADR-015 vetoes without changing the underlying weighted score.
 
-    Only FARM can be downgraded.  A pre-existing WATCH/IGNORE is already no more
-    permissive than either rule and must never be promoted or otherwise rewritten.
+    Monotonicity rules:
+    - Hard disqualifiers (`already_launched` without follow-on path, `explicit_no_airdrop`)
+      downgrade both `FARM` and `WATCH` to `IGNORE` and record `veto`, preventing a lower-score
+      disqualified project (`WATCH`, 50–64) from ranking above a higher-score disqualified
+      project (`FARM` -> `IGNORE`, >=65).
+    - `no_participation_path` caps only `FARM` at `WATCH`; a pre-existing `WATCH`/`IGNORE`
+      is never promoted or rewritten.
     """
-    if label != "FARM":
+    if label == "IGNORE":
         return EligibilityDecision(label=label)
 
     if is_already_launched_without_airdrop_path(project):
@@ -114,7 +119,7 @@ def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDeci
             reason="team or official source explicitly disclaimed airdrop / token incentives",
         )
 
-    if not has_participation_path(project):
+    if label == "FARM" and not has_participation_path(project):
         return EligibilityDecision(
             label="WATCH",
             veto=VETO_NO_PARTICIPATION_PATH,

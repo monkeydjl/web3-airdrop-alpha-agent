@@ -8,7 +8,7 @@ personalized project ranking and privacy-preserving preference management.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -20,8 +20,9 @@ from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
-# Global registry of cleared users (for GDPR / privacy-preserving reset)
-_CLEARED_USERS: set[str] = set()
+# Global bounded registry of cleared users (for GDPR / privacy-preserving reset)
+_MAX_CLEARED_USERS = 4096
+_CLEARED_USERS: OrderedDict[str, None] = OrderedDict()
 
 
 @dataclass
@@ -69,7 +70,10 @@ class UserProfileMemoryService:
     def clear_user_profile(self, user_id: str | None = None) -> bool:
         """Clear inferred user profile memory for GDPR and privacy compliance."""
         uid = (user_id or DEFAULT_USER).strip()
-        _CLEARED_USERS.add(uid)
+        _CLEARED_USERS.pop(uid, None)
+        _CLEARED_USERS[uid] = None
+        while len(_CLEARED_USERS) > _MAX_CLEARED_USERS:
+            _CLEARED_USERS.popitem(last=False)
         logger.info("user_memory.profile_cleared", user_id=uid)
         return True
 

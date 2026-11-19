@@ -93,7 +93,7 @@ subscores → weighted_sum → score(0-100)
 
 | 条件 | 判定 | 动作 | 理由 |
 | --- | --- | --- | --- |
-| `already_launched` | `no_token_yet == False` 且 无 `has_points_program` 且 无 `explicit_airdrop_mention` 且 无 `has_task_portal` | FARM → **IGNORE** | 已发币且无任何追加分配叙事 = 机会窗口已关闭。这与 `airdrop_signal.py:72` 的封顶条件**用同一个布尔表达式**，避免第三份判定漂移 |
+| `already_launched` | `no_token_yet == False` 且 无 `has_points_program` 且 无 `explicit_airdrop_mention` 且 无 `has_task_portal` | FARM / WATCH → **IGNORE** | 已发币且无任何追加分配叙事 = 机会窗口已关闭（FARM 与 WATCH 一致降为 IGNORE 并记 veto，保持分数单调性）。这与 `airdrop_signal.py:72` 的封顶条件**用同一个布尔表达式**，避免第三份判定漂移 |
 | `no_participation_path` | 无 `has_testnet` 且 无 `has_points_program` 且 无 `has_task_portal` | FARM → **WATCH** | 没有任何可参与入口时，「值得关注」是诚实的上限；说 FARM 等于让用户去参与一个不存在的活动 |
 
 **为什么只有两条**：这两条能从实测数据里验证（Chainlink / Worldcoin 命中

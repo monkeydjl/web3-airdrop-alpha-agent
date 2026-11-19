@@ -178,11 +178,12 @@ def test_explicit_no_airdrop_vetoes_farm_to_ignore() -> None:
     # 1. 参与路径判定必须为 False
     assert has_participation_path(project) is False
 
-    # 2. 资格门必须否决为 IGNORE
-    decision = apply_eligibility_gate(project, "FARM")
-    assert decision.label == "IGNORE"
-    assert decision.veto == VETO_EXPLICIT_NO_AIRDROP
-    assert "explicitly disclaimed" in (decision.reason or "")
+    # 2. 资格门必须将 FARM 与 WATCH 一致否决为 IGNORE（消除分数单调性倒挂）
+    for initial_label in ("FARM", "WATCH"):
+        decision = apply_eligibility_gate(project, initial_label)
+        assert decision.label == "IGNORE"
+        assert decision.veto == VETO_EXPLICIT_NO_AIRDROP
+        assert "explicitly disclaimed" in (decision.reason or "")
 
     # 3. 空投信号分被限制在 10.0
     subscore = airdrop_signal_subscore(project)

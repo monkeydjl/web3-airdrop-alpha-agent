@@ -43,6 +43,22 @@ _PATH_FLAGS = ("explicit_points_program", "has_task_portal", "explicit_airdrop_m
 _MERGE_KEYS = ("no_token_yet", "token_launch_confirmed", *_PATH_FLAGS)
 
 
+def _parse_utc_ts(value: Any) -> datetime | None:
+    """将 DB 时间戳（datetime / ISO 字符串）统一解析为 UTC aware datetime。"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
 def _latest_raw_flags_by_project(conn: Any) -> dict[str, list[dict[str, Any]]]:
     """每个项目、每个来源取最新一条原始行，推断成合并用的 flag 记录。
 
@@ -74,6 +90,7 @@ def _latest_raw_flags_by_project(conn: Any) -> dict[str, list[dict[str, Any]]]:
         record = {k: flags.get(k) for k in _MERGE_KEYS}
         record["name"] = raw_data.get("name") or ""
         record["source"] = source_id
+        record["discovered_at"] = r.get("discovered_at")
         out.setdefault(pid, []).append(record)
     return out
 
@@ -83,28 +100,46 @@ def assess_project(
     raw_records: list[dict[str, Any]],
     *,
     registry_hit: bool = False,
+    project_updated_at: Any = None,
 ) -> tuple[bool, bool]:
     """返回 (确认已发币, 有后续空投路径)。
 
     - 有原始行：按采集口径跨源合并（任一源有发币证据即确认，no_token_yet AND 合并）。
-      库内信号若明确写着 ``no_token_yet=True``（人工修正或较新的评分结论），
-      证据冲突，按未知处理——宁可多留一个，也不误藏。
+      库内信号若明确写着 ``no_token_yet=True``：
+      * 无时间戳或库内更新时间晚于/等于最新原始行（人工修正或较新的评分结论），按冲突不藏；
+      * 若原始行是在项目上次入库评分**之后**新采集到的发币记录（例如项目 TGE 发币后被入库门
+        隔离，库内 ``projects.updated_at`` 仍停在发币前），新证据覆盖过期的发币前标记。
     - 没有原始行（已归档 / 早期导入）：只看库内信号，缺 ``token_launch_confirmed``
       即未知。
     - 后续路径：原始行与库内信号任一处看到即算（富化器写进 meta 的证据也作数）。
       积分只看 ``explicit_points_program``；库内信号里的宽松 ``has_points_program``
       不作数 —— 它正是被通用词污染的那个字段。
     - ``registry_hit``：CoinGecko 币表严格命中（``token_registry``）。只把「未知」
-      补成「确认」；任何一处明确写着未发币时不作数。
+      补成「确认」；任何一处当前有效证据明确写着未发币时不作数。
     """
     has_path = any(bool(signals.get(k)) for k in _PATH_FLAGS)
-    explicit_not_launched = signals.get("no_token_yet") is True
+    meta_not_launched = signals.get("no_token_yet") is True
     if raw_records:
         merged = merge_raw_records(raw_records, source_key="source")
         has_path = has_path or any(bool(merged.get(k)) for k in _PATH_FLAGS)
-        explicit_not_launched = explicit_not_launched or bool(merged.get("no_token_yet"))
+        raw_not_launched = bool(merged.get("no_token_yet"))
         confirmed = bool(merged.get("token_launch_confirmed"))
+
+        # 判断原始行是否严格新于项目主表上次评分更新时间
+        proj_ts = _parse_utc_ts(project_updated_at)
+        raw_timestamps = [
+            ts for ts in (_parse_utc_ts(rec.get("discovered_at")) for rec in raw_records) if ts is not None
+        ]
+        newer_post_tge_raw = (
+            proj_ts is not None
+            and bool(raw_timestamps)
+            and max(raw_timestamps) > proj_ts
+            and not raw_not_launched
+            and (confirmed or registry_hit)
+        )
+        explicit_not_launched = raw_not_launched or (meta_not_launched and not newer_post_tge_raw)
     else:
+        explicit_not_launched = meta_not_launched
         confirmed = signals.get("token_launch_confirmed") is True
     if explicit_not_launched:
         return False, has_path
@@ -140,7 +175,7 @@ def _review(db: Any, stats: dict[str, int]) -> None:
         registry = load_registry_index(db)
         rows = db.execute(
             """
-            SELECT id, name, meta, hidden_reason, unhidden_by_user_at
+            SELECT id, name, meta, hidden_reason, unhidden_by_user_at, updated_at
             FROM projects
             WHERE source != 'historical_backfill' OR source IS NULL
             """
@@ -155,10 +190,16 @@ def _review(db: Any, stats: dict[str, int]) -> None:
             stats["reviewed"] += 1
             signals = signals_of(parse_meta(d.get("meta")))
             raw_records = raw_by_project.get(pid, [])
-            confirmed, has_path = assess_project(signals, raw_records)
+            updated_at = d.get("updated_at")
+            confirmed, has_path = assess_project(signals, raw_records, project_updated_at=updated_at)
             if not confirmed:
                 registry_hit = bool(registry) and registry.match(str(d.get("name") or "")) is not None
-                confirmed, _ = assess_project(signals, raw_records, registry_hit=registry_hit)
+                confirmed, _ = assess_project(
+                    signals,
+                    raw_records,
+                    registry_hit=registry_hit,
+                    project_updated_at=updated_at,
+                )
                 if confirmed:
                     stats["registry_confirmed"] += 1
             should_hide = confirmed and not has_path
