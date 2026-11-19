@@ -1,8 +1,9 @@
 """Tests for the Galxe quest collector."""
 
 import json
-import pytest
+
 import httpx
+import pytest
 import respx
 from httpx import Response
 
@@ -86,7 +87,6 @@ class TestGalxeCollector:
         result = await collector.collect()
         assert result.status == "partial"
         assert result.items == []
-
 
     @respx.mock
     async def test_collect_follows_end_cursor(self, galxe_enabled) -> None:

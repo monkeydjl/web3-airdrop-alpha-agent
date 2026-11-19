@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from app.auth import (
     blacklist_token_jti,
     decode_and_verify_jwt,
+    extract_renewable_anonymous_user_id,
     get_current_user,
     hash_password,
     hash_refresh_token,
@@ -74,7 +75,7 @@ def _first_user_role(bootstrap_token: str | None) -> str | None:
         if not hmac.compare_digest(provided, expected):
             return None
         return "admin"
-    if settings.app_env == "production":
+    if settings.is_production:
         logger.warning(
             "auth.first_user_bootstrap_degraded",
             hint="Set REGISTRATION_BOOTSTRAP_TOKEN and register with it to create the admin",
@@ -86,6 +87,16 @@ def _first_user_role(bootstrap_token: str | None) -> str | None:
 # ═══════════════════════════════════════════════════════════════
 # Request / Response Models
 # ═══════════════════════════════════════════════════════════════
+
+
+class AnonymousTokenRequest(BaseModel):
+    """匿名 token 签发/续期请求（可选携带旧签名 token 以续用同一 anon-<id>）。"""
+
+    previous_token: str | None = Field(
+        default=None,
+        max_length=1024,
+        description="上次由服务端签发的匿名 token（过期后验签通过可原样续用 user_id，防止个人数据断链）",
+    )
 
 
 class AnonymousTokenResponse(BaseModel):
@@ -121,11 +132,12 @@ class AuthTokenResponse(BaseModel):
 class RegisterRequest(BaseModel):
     """用户注册请求。"""
 
-    email: str = Field(..., description="用户邮箱")
-    password: str = Field(..., description="密码（长度≥8，包含大小写字母+数字）")
-    display_name: str | None = Field(default=None, description="显示名称（可选）")
+    email: str = Field(..., max_length=256, description="用户邮箱")
+    password: str = Field(..., max_length=1024, description="密码（长度≥8且≤72字节，包含大小写字母+数字）")
+    display_name: str | None = Field(default=None, max_length=128, description="显示名称（可选）")
     bootstrap_token: str | None = Field(
         default=None,
+        max_length=512,
         description="首位 admin 自举令牌（仅当服务端配置了 REGISTRATION_BOOTSTRAP_TOKEN 时需要）",
     )
 
@@ -133,8 +145,8 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     """用户登录请求。"""
 
-    email: str = Field(..., description="用户邮箱")
-    password: str = Field(..., description="密码")
+    email: str = Field(..., max_length=256, description="用户邮箱")
+    password: str = Field(..., max_length=1024, description="密码")
 
 
 class RefreshTokenRequest(BaseModel):
@@ -165,11 +177,12 @@ class MessageResponse(BaseModel):
     "/auth/anonymous",
     response_model=AnonymousTokenResponse,
     summary="签发匿名 token",
-    description="签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证。",
+    description="签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证；携带已过期的合法签名 token 时续用原 user_id。",
 )
-def issue_anonymous() -> AnonymousTokenResponse:
-    """签发匿名 token（V2 兼容）。"""
-    token = issue_anonymous_token()
+def issue_anonymous(body: AnonymousTokenRequest | None = None) -> AnonymousTokenResponse:
+    """签发或续期匿名 token（V2 兼容）。"""
+    preserved_uid = extract_renewable_anonymous_user_id(body.previous_token if body else None)
+    token = issue_anonymous_token(user_id=preserved_uid)
 
     payload = verify_token(token)
     actual_user_id = payload["user_id"] if payload else "anonymous"
