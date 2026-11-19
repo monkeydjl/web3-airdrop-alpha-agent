@@ -63,7 +63,10 @@ def simulate_project_roi(
 
     # Extract funding and TVL
     meta = p.get("meta") or {}
-    funding_val = p.get("funding_total")
+    # 键契约（2026-11-19 深审 P1）：canonical 信号键是 funding_total_usd /
+    # tvl_usd（structured_signals + defillama 写入侧）。旧键 "funding_total" /
+    # "tvl" 不存在于任何写入路径，导致 FDV 公式的 TVL 项恒为 0。
+    funding_val = p.get("funding_total_usd")
     if funding_val is None:
         funding_val = meta.get("funding", {}).get("total_raised")
     funding_usd = float(funding_val or 0.0)
@@ -71,7 +74,7 @@ def simulate_project_roi(
         # Fallback baseline funding estimation based on score & stage
         funding_usd = 15_000_000.0 if score >= 75 else 5_000_000.0
 
-    tvl_usd = float(p.get("tvl") or 0.0)
+    tvl_usd = float(p.get("tvl_usd") or p.get("tvl") or 0.0)
 
     # Valuation (FDV) projection
     fdv_base = max(funding_usd * 8.0, tvl_usd * 1.5, 40_000_000.0)

@@ -33,6 +33,25 @@ class Sender(Protocol):
         ...
 
 
+def _redact(text: str, *secrets: str) -> str:
+    """把异常文本里的凭证替换为 <redacted>（2026-11-19 深审 P1）。
+
+    httpx/fetcher 的异常消息会渲染完整 URL —— Telegram bot token 与
+    Discord webhook key 都在 URL 里，service 层会把 `str(exc)` 原样写进
+    notify_log.last_error（/notify/log 接口回显）与日志。脱敏在 senders
+    出口做一次，下游（入库/日志/回显）天然安全。
+    """
+    message = str(text)
+    for secret in secrets:
+        if secret:
+            message = message.replace(secret, "<redacted>")
+    return message
+
+
+class NotifySendError(RuntimeError):
+    """发送失败（错误文本已脱敏，可安全入库/日志/回显）。"""
+
+
 class TelegramSender:
     """Telegram Bot API（api.telegram.org，白名单已登记）。"""
 
@@ -45,14 +64,17 @@ class TelegramSender:
     async def send(self, title: str, body: str) -> None:
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
         text = f"{title}\n\n{body}"[:_TELEGRAM_MAX_CHARS]
-        await fetcher.post(
-            url,
-            json_body={
-                "chat_id": self._chat_id,
-                "text": text,
-                "disable_web_page_preview": True,
-            },
-        )
+        try:
+            await fetcher.post(
+                url,
+                json_body={
+                    "chat_id": self._chat_id,
+                    "text": text,
+                    "disable_web_page_preview": True,
+                },
+            )
+        except Exception as exc:
+            raise NotifySendError(_redact(str(exc), self._bot_token, url)) from exc
         logger.info("notify.sent", channel=self.channel)
 
 
@@ -67,7 +89,10 @@ class DiscordWebhookSender:
     async def send(self, title: str, body: str) -> None:
         content = f"**{title}**\n{body}"[:_DISCORD_MAX_CHARS]
         # 204 No Content —— fetcher.post 不解析响应体，这正是它存在的理由
-        await fetcher.post(self._webhook_url, json_body={"content": content})
+        try:
+            await fetcher.post(self._webhook_url, json_body={"content": content})
+        except Exception as exc:
+            raise NotifySendError(_redact(str(exc), self._webhook_url)) from exc
         logger.info("notify.sent", channel=self.channel)
 
 

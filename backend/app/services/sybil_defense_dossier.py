@@ -152,20 +152,26 @@ def generate_sybil_defense_dossier(
             "",
             "---",
             "",
-            "## 3. Rebuttal of Sybil Cluster Patterns (对常见女巫模型的逐项辩驳)",
-            "1. **No Centralized Exchange Sub-account Fan-in / Fan-out (无集中式交易所归集拓扑)**:",
-            "   - The funding trace demonstrates zero high-frequency multi-hop transfers to adjacent addresses in the same block.",
-            "2. **Irregular Time-Interval Variance (交易间隔非机械化)**:",
-            "   - Interactions occurred across distinct days and time zones with significant temporal variance, refuting deterministic crontab execution.",
-            "3. **Heterogeneous Contract Calls (多样化合约交互非同质)**:",
-            "   - Transacted with diverse liquidity pools, Bridges, and native governance contracts with variable slippage and custom gas settings.",
+            "## 3. Evidence Scope & Self-Check Checklist (证据边界与自查清单)",
+            "",
+            "> 2026-11-19（深审 P1-7 诚实性修正）：此前本节输出三条**未经测量的**申诉论据"
+            "（零高频多跳转账 / 时间方差 / 合约交互多样性）——探测实际只取了 nonce 与余额，"
+            "用户会拿虚构证据链向项目方申诉。现降级为自查清单，并明确标注哪些是已测项、"
+            "哪些需要用户自行取证：",
+            "",
+            "**已由本工具探测并呈现在上表**：各链 nonce（交易次数代理）、余额、活跃状态。",
+            "",
+            "**未测量，需自行取证后再向项目方主张**：",
+            "1. 资金来源拓扑（是否存在交易所归集/扇出）—— 需导出完整资金流水。",
+            "2. 交易时间间隔方差（是否存在机械化 crontab 节奏）—— 需逐笔时间戳分析。",
+            "3. 合约交互多样性（池/桥/治理合约的种类与滑点差异）—— 需交易明细。",
             "",
             "---",
             "",
             "## 4. Requested Remediation (申诉诉求)",
-            f"We respectfully request the `{project_name}` Foundation and Airdrop Review Board to revoke the sybil flag on `{addr}` and restore the eligible token allocation based on organic contribution.",
+            f"We respectfully request the `{project_name}` Foundation and Airdrop Review Board to review the sybil flag on `{addr}`. "
+            "Please attach your own transfer-level evidence (funding trace, timestamps, contract diversity) before submitting — the tool does not fabricate these claims for you.",
             "",
-            "_Generated cryptographically by Web3 Airdrop Alpha Agent System Defense Toolkit._",
         ]
     )
 

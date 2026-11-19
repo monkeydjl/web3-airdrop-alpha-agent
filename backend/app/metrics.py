@@ -589,10 +589,21 @@ NOTIFY_FAILURES = Counter(
 # 闭合词表：`notify.service.insert_event` 会拒绝表外的 event_type，
 # 否则 Prometheus 里会出现没人定义过的标签值。新增事件类型必须先登记这里。
 #
-# airdrop_candidate 与其它四种不同源：那四种由 evaluator 从项目库定期推导，
-# 这一种由 Alchemy webhook 的链上事件即时触发（F4，ACTION_LOOP_DESIGN §5）。
+# airdrop_candidate 与其它几种不同源：evaluator 从项目库定期推导
+# （daily_digest / score_crossing / new_farm / watchlist_signal /
+#  exit_advisory——止损撤退预警：官网离线或代码停更，ACTION_LOOP_DESIGN §5），
+# 这一种由 Alchemy webhook 的链上事件即时触发（F4）。
+# exit_advisory 于 2026-11-19 补登记：evaluator 早已产出该类型，词表漏登记
+# 导致 insert_event 抛 ValueError，触发日整批事件在 commit 前回滚（深审 P0）。
 NOTIFY_EVENT_TYPES: frozenset[str] = frozenset(
-    {"daily_digest", "score_crossing", "new_farm", "watchlist_signal", "airdrop_candidate"}
+    {
+        "daily_digest",
+        "score_crossing",
+        "new_farm",
+        "watchlist_signal",
+        "exit_advisory",
+        "airdrop_candidate",
+    }
 )
 
 NOTIFY_EVENTS_EVALUATED = Counter(

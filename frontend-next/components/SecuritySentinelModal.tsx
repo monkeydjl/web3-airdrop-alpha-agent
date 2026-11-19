@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 /** `POST /security/approvals` 的 `data`（`app/services/security_sentinel.py::scan_token_approvals`）。 */
 interface ApprovalScan {
@@ -96,6 +97,11 @@ export function SecuritySentinelModal({
   return (
     <Modal onClose={onClose} title="🛡️ 智能合约授权与防钓鱼安全风控雷达" backdropClassName="bg-black/75 backdrop-blur-sm">
       <div className="dash-card w-full max-w-2xl max-h-[90vh] flex flex-col p-6 shadow-2xl border-line bg-surface relative">
+        {/* 授权/下毒扫描尚未接入真实链上数据源（后端已打 simulated 标记）——
+            按「模拟数据必须可见」约定在首屏声明，而不是埋在结果里。 */}
+        <div className="mb-3">
+          <SimulatedDataBadge note="授权与下毒扫描尚未接入真实链上数据源，当前为静态样本演示；请以 Revoke.cash 等工具的实际扫描为准。" />
+        </div>
         <button
           type="button"
           onClick={onClose}

@@ -16,6 +16,7 @@ from app.services.security_sentinel import (
     scan_dust_poison_tokens,
     scan_token_approvals,
 )
+from app.utils.data_quality import mark_simulated
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/security", tags=["security"])
@@ -31,9 +32,17 @@ class DomainCheckRequest(BaseModel):
 
 @router.post("/approvals", summary="扫描钱包授权风险健康度")
 def check_wallet_approvals(req: ApprovalsRequest) -> dict[str, Any]:
-    """扫描钱包代币授权暴露风险并给出 Revoke 建议."""
+    """扫描钱包代币授权暴露风险并给出 Revoke 建议.
+
+    诚实标注（2026-11-19 深审 P1-6）：当前实现没有接真实链上授权数据源，
+    返回的是静态样本结构 —— 按 data_quality 强制约定打 simulated 标记，
+    前端展示「模拟数据」角标。
+    """
     data = scan_token_approvals(req.wallet_address)
-    return {"ok": True, "data": data}
+    return mark_simulated(
+        {"ok": True, "data": data},
+        note="授权扫描尚未接入真实链上数据源，当前返回静态样本结构",
+    )
 
 
 @router.post("/domain-check", summary="检测项目官网防钓鱼与同形异义词安全")
@@ -47,4 +56,7 @@ def check_url(req: DomainCheckRequest) -> dict[str, Any]:
 def check_poison_tokens(req: ApprovalsRequest) -> dict[str, Any]:
     """排查下毒代币."""
     data = scan_dust_poison_tokens(req.wallet_address)
-    return {"ok": True, "data": data}
+    return mark_simulated(
+        {"ok": True, "data": data},
+        note="下毒代币排查尚未接入真实链上数据源，当前返回静态样本结构",
+    )

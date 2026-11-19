@@ -21,4 +21,4 @@ def test_generate_sybil_defense_dossier():
     assert "# Web3 Airdrop Sybil Defense" in md
     assert "LayerZero Foundation" in md
     assert addr in md
-    assert "Rebuttal of Sybil Cluster Patterns" in md
+    assert "Evidence Scope & Self-Check Checklist" in md  # 诚实性修正后替换虚构辩驳节（2026-11-19）
