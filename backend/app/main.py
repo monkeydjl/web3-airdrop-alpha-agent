@@ -500,6 +500,12 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
         """统一请求校验异常格式。"""
+        # 只回显字段路径 / 类型 / 消息 —— pydantic 的 errors() 还带 `input`
+        # （原样回显用户输入）与 `ctx`/`url`（内部实现细节），全部剥除
+        # （2026-11-13 审查 L-5）。
+        details = [
+            {"loc": list(err.get("loc", [])), "type": err.get("type"), "msg": err.get("msg")} for err in exc.errors()
+        ]
         return JSONResponse(
             status_code=422,
             content=jsonable_encoder(
@@ -508,7 +514,7 @@ def create_app(
                     "error": {
                         "code": "VALIDATION_ERROR",
                         "message": "Request validation failed",
-                        "details": exc.errors(),
+                        "details": details,
                     },
                 }
             ),

@@ -54,8 +54,10 @@ async def send_test_notification() -> Any:
     try:
         await sender.send("测试推送", "如果你看到这条消息，决策推送通道已就绪。")
     except Exception as exc:
+        # 细节（可能含通道 URL/密钥）只进日志；响应给通用文案
+        # （2026-11-13 审查 L-9）。
         logger.warning("notify.test_send_failed", channel=sender.channel, error=str(exc)[:200])
-        return _error(502, "NOTIFY_SEND_FAILED", f"测试消息发送失败：{exc}"[:300])
+        return _error(502, "NOTIFY_SEND_FAILED", "测试消息发送失败，请检查通道配置或联系管理员")
 
     return _ok({"sent": True, "channel": sender.channel})
 

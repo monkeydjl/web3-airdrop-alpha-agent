@@ -286,6 +286,31 @@ def register(body: RegisterRequest) -> Any:
     )
 
 
+def _mask_email(email: str) -> str:
+    """日志用邮箱脱敏：保留前两字符与域名，其余以 *** 代替（PII 不落日志管道）。"""
+    local, _, domain = email.partition("@")
+    if not domain:
+        return "***"
+    prefix = local[:2] if local else ""
+    return f"{prefix}***@{domain}"
+
+
+_dummy_hash_cache: str | None = None
+
+
+def _dummy_password_hash() -> str:
+    """惰性生成一次哑 bcrypt 哈希，供"未知邮箱"的登录路径做**时序均衡**。
+
+    未知邮箱直接 return 会跳过 bcrypt（约 200ms 级差异）——响应时间差可被
+    用于枚举已注册邮箱（2026-11-13 审查 L-2）。两条失败路径都必须走一次
+    验证，结果一律丢弃。
+    """
+    global _dummy_hash_cache
+    if _dummy_hash_cache is None:
+        _dummy_hash_cache = hash_password("timing-equalization-dummy-" + uuid.uuid4().hex)
+    return _dummy_hash_cache
+
+
 @router.post(
     "/auth/login",
     response_model=AuthTokenResponse,
@@ -300,11 +325,14 @@ def login(body: LoginRequest) -> Any:
         user = user_repo.get_by_email(email)
 
         if not user or not user.get("is_active"):
-            logger.warning("auth.login_failed", email=email, reason="not_found_or_inactive")
+            # 时序均衡（2026-11-13 审查 L-2）：未命中也走一次 bcrypt，让
+            # "邮箱不存在"与"密码错误"的响应时间同型，邮箱枚举失去时钟。
+            verify_password(body.password, _dummy_password_hash())
+            logger.warning("auth.login_failed", email=_mask_email(email), reason="not_found_or_inactive")
             return _error(401, "INVALID_CREDENTIALS", "Invalid email or password")
 
         if not verify_password(body.password, str(user["password_hash"])):
-            logger.warning("auth.login_failed", email=email, reason="bad_password")
+            logger.warning("auth.login_failed", email=_mask_email(email), reason="bad_password")
             return _error(401, "INVALID_CREDENTIALS", "Invalid email or password")
 
         user_repo.update_last_login(user["id"])
@@ -371,6 +399,18 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
             return _error(401, "USER_INACTIVE", "User account is inactive or deleted")
 
         access_token, _access_jti, expires_in = issue_access_token(user["id"], user["role"])
+        refresh_token, _refresh_jti, refresh_expires_in = issue_refresh_token(user["id"])
+
+        # 轮换（2026-11-13 审查 L-3）：旧 session 即刻吊销、新 refresh 换新
+        # session —— 被偷走的旧 token 在受害者下一次刷新时即失效，而不是
+        # 继续有效 7 天。客户端按标准流程保存响应里的新 refresh token。
+        session_repo.revoke_session(str(session["id"]))
+        session_repo.create_session(
+            session_id=f"ses_{uuid.uuid4().hex[:12]}",
+            user_id=user["id"],
+            refresh_token_hash=hash_refresh_token(refresh_token),
+            expires_at=datetime.fromtimestamp(time.time() + refresh_expires_in, tz=UTC),
+        )
 
     logger.info("auth.token_refreshed", user_id=user["id"])
 
@@ -385,7 +425,7 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
 
     return AuthTokenResponse(
         access_token=access_token,
-        refresh_token=body.refresh_token,
+        refresh_token=refresh_token,
         token_type="Bearer",  # noqa: S106
         expires_in=expires_in,
         user=user_resp,
