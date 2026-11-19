@@ -4,27 +4,12 @@
 提供免 Key 快速体检、安全评分与撤销 (Revoke) 指引。
 """
 
-import re
 import urllib.parse
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
-
-# 常见钓鱼下毒关键词正则
-POISON_TOKEN_REGEX = re.compile(
-    r"(claim|reward|visit|airdrop|free|bonus|gift|http|\.com|\.io|\.org|\.vip)",
-    re.IGNORECASE,
-)
-
-# 常见已知安全的大型协议 Router（白名单参考）
-TRUSTED_SPENDERS = {
-    "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45": "Uniswap V3 Router",
-    "0x1111111254eeb25477b68fb85ed929f73a960582": "1inch Aggregator",
-    "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae": "Li.Fi Diamond Bridge",
-    "0xdef1c0ded9bec7f1a1670819833240f027b25eff": "0x Exchange Proxy",
-}
 
 
 def check_domain_safety(url: str) -> dict[str, Any]:
@@ -45,8 +30,10 @@ def check_domain_safety(url: str) -> dict[str, Any]:
             reasons.append("未使用 HTTPS 加密协议，存在中间人劫持风险")
             risk_level = "suspicious"
 
-        # 2. Punycode / 同形异义词攻击检测
-        if hostname.startswith("xn--") or any(ord(char) > 127 for char in hostname):
+        # 2. Punycode / 同形异义词攻击检测（逐 label：story.xn--xxx.com 这类
+        #    中间 label 混入的 punycode 在整体 startswith 下漏检，深审 P1-6 残留）
+        labels = hostname.split(".")
+        if any(label.startswith("xn--") for label in labels) or any(ord(char) > 127 for char in hostname):
             reasons.append("检测到非 ASCII 或 Punycode 编码，极可能是同形异义词仿冒钓鱼站 (Homograph Attack)")
             risk_level = "dangerous"
 

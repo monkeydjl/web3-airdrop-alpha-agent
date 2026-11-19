@@ -59,6 +59,17 @@ def list_gas_alert_rules() -> dict[str, Any]:
 @router.post("/alerts/rules", summary="新增一条 Gas 阈值告警规则")
 def add_gas_alert_rule(req: CreateGasRuleRequest) -> dict[str, Any]:
     """创建自定义的 Gas 波动监控规则."""
+    # 拼错链名的规则会创建成功但永不触发（深审 P3-5）——创建时校验
+    from app.services.gas_tracker import SUPPORTED_CHAINS
+
+    if req.chain.lower().strip() not in SUPPORTED_CHAINS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "CHAIN_NOT_SUPPORTED",
+                "message": f"Unsupported chain: {req.chain} (supported: {sorted(SUPPORTED_CHAINS)})",
+            },
+        )
     rule = create_rule(
         chain=req.chain,
         condition=req.condition,
@@ -106,4 +117,8 @@ def get_single_chain_gas(
 ) -> dict[str, Any]:
     """返回指定链的当前 Gas 详情."""
     data = get_chain_gas_status(chain.lower().strip(), force_refresh=refresh)
+    if not data.get("ok", True):
+        # 不支持的链：404 而不是 ok:True 包裹内层 ok:False 的双层矛盾
+        # （2026-11-19 深审 P3-4）
+        raise HTTPException(status_code=404, detail={"code": "CHAIN_NOT_SUPPORTED", "message": data.get("error", "")})
     return {"ok": True, "data": data}
