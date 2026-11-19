@@ -110,8 +110,15 @@ def _reset_llm_config_warnings_for_tests() -> None:
     去重是进程级的，所以在同一个 pytest 进程里第二个用例不会再看到同一条
     告警 —— 断言"配置不完整时会告警"的用例会因为**前一个用例已经发过**
     而失败。一个结论取决于执行顺序的断言不是断言。
+
+    2026-11-14：同时重置 llm_providers 的指纹缓存 —— 告警去重只管"发不发"，
+    缓存管"解析不解析"；同一指纹在前一个用例已经解析过的话，本用例会缓存
+    命中而跳过解析，告警随之 0 次（空库酸测实测抓到）。
     """
     _llm_config_warned.clear()
+    global _LLM_PROVIDER_CACHE, _LLM_PROVIDER_FINGERPRINT
+    _LLM_PROVIDER_CACHE = None
+    _LLM_PROVIDER_FINGERPRINT = None
 
 
 # 解析嵌套深度。**必须是计数器而不是布尔**。
