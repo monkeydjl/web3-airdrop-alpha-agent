@@ -35,7 +35,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.collectors.base import CollectorResult
 from app.collectors.metrics import CollectionMetrics
 from app.config import settings
-from app.inflight import QUEUE_DRAIN_KEY, QueueDrainInProgressError, active_runs
+from app.inflight import QUEUE_DRAIN_KEY, QueueDrainInProgressError, active_runs, claim_run, collect_key
 from app.metrics import (
     COLLECTION_DUPLICATES,
     COLLECTION_DURATION,
@@ -87,10 +87,13 @@ class UnifiedScheduler:
             self._logger.info("unified_scheduler.disabled")
             return
 
-        # 复位关停标志（2026-11-13）：HA 场景 demote→promote→再 demote 时，
-        # 若此标志残留自上一次 shutdown，第二次 shutdown 会 early return，
-        # 降级实例继续跑 job 与新旧主双跑。
+        # 复位关停标志（2026-11-13 / P2-4）：HA 场景 demote→promote 时，
+        # 上一次 shutdown() 已安排销毁旧 AsyncIOScheduler 的内部执行器，直接 start() 会失败；
+        # 只要经历过 shutdown，无论旧实例的异步停机回调是否已跑完，都必须重建干净实例。
+        if getattr(self, "_has_been_shutdown", False):
+            self.scheduler = AsyncIOScheduler(timezone=settings.timezone)
         self._is_shutting_down = False
+        self._has_been_shutdown = False
 
         self._register_collection_jobs()
         self._register_analysis_job()
@@ -108,6 +111,7 @@ class UnifiedScheduler:
             return
         if self.scheduler.running:
             self._is_shutting_down = True
+            self._has_been_shutdown = True
             import contextlib
 
             from apscheduler.schedulers.base import SchedulerNotRunningError
@@ -198,62 +202,73 @@ class UnifiedScheduler:
                 error=str(exc)[:160],
             )
 
-        started_at = datetime.now(UTC)
-        self._logger.info(
-            "unified_scheduler.collection_started",
-            source_id=source_id,
-            started_at=started_at.isoformat(),
-        )
+        # 与手动 /collections/{source_id}/trigger 共享同一把源级在飞锁，防定时任务与手动触发并发重入
+        with claim_run(collect_key(source_id)) as acquired:
+            if not acquired:
+                self._logger.info(
+                    "unified_scheduler.skip_disabled",
+                    source_id=source_id,
+                    reason="collection_in_progress",
+                )
+                return
 
-        try:
-            result = await collector.collect()
-        except Exception as e:
-            result = CollectorResult(
+            started_at = datetime.now(UTC)
+            self._logger.info(
+                "unified_scheduler.collection_started",
                 source_id=source_id,
-                status="error",
-                error_message=str(e),
-            )
-            result.started_at = started_at
-            result.finished_at = datetime.now(UTC)
-            self._logger.error(
-                "unified_scheduler.collection_failed",
-                source_id=source_id,
-                error=str(e),
+                started_at=started_at.isoformat(),
             )
 
-        if not result.started_at:
-            result.started_at = started_at
-        if not result.finished_at:
-            result.finished_at = datetime.now(UTC)
-
-        duration = (result.finished_at - result.started_at).total_seconds()
-        COLLECTION_RUNS.labels(source_id=source_id, status=result.status).inc()
-        COLLECTION_DURATION.labels(source_id=source_id).observe(duration)
-        COLLECTION_ITEMS.labels(source_id=source_id).inc(len(result.items))
-
-        if self.on_collection:
             try:
-                await self.on_collection(source_id, result)
+                result = await collector.collect()
             except Exception as e:
+                result = CollectorResult(
+                    source_id=source_id,
+                    status="error",
+                    error_message=str(e),
+                )
+                result.started_at = started_at
+                result.finished_at = datetime.now(UTC)
                 self._logger.error(
-                    "unified_scheduler.collection_callback_failed",
+                    "unified_scheduler.collection_failed",
                     source_id=source_id,
                     error=str(e),
                 )
 
-        COLLECTION_DUPLICATES.labels(source_id=source_id).inc(result.items_duplicate or 0)
+            if not result.started_at:
+                result.started_at = started_at
+            if not result.finished_at:
+                result.finished_at = datetime.now(UTC)
 
-        try:
-            self.metrics.check_alerts(window_hours=24)
-        except Exception as e:
-            self._logger.error("unified_scheduler.metrics_alert_failed", error=str(e))
+            duration = (result.finished_at - result.started_at).total_seconds()
+            COLLECTION_RUNS.labels(source_id=source_id, status=result.status).inc()
+            COLLECTION_DURATION.labels(source_id=source_id).observe(duration)
+            COLLECTION_ITEMS.labels(source_id=source_id).inc(len(result.items))
 
-        self._logger.info(
-            "unified_scheduler.collection_completed",
-            source_id=source_id,
-            status=result.status,
-            items=len(result.items),
-        )
+            if self.on_collection:
+                try:
+                    await self.on_collection(source_id, result)
+                except Exception as e:
+                    self._logger.error(
+                        "unified_scheduler.collection_callback_failed",
+                        source_id=source_id,
+                        error=str(e),
+                    )
+
+            COLLECTION_DUPLICATES.labels(source_id=source_id).inc(result.items_duplicate or 0)
+
+            try:
+                # 告警评估涉及多条聚合查询与 JSON 解析，放线程池避免阻塞事件循环
+                await asyncio.to_thread(self.metrics.check_alerts, window_hours=24)
+            except Exception as e:
+                self._logger.error("unified_scheduler.metrics_alert_failed", error=str(e))
+
+            self._logger.info(
+                "unified_scheduler.collection_completed",
+                source_id=source_id,
+                status=result.status,
+                items=len(result.items),
+            )
 
     async def trigger_collection_now(self, source_id: str) -> dict[str, Any]:
         """手动立即触发一次采集。"""
@@ -549,12 +564,30 @@ class UnifiedScheduler:
         self._logger.info("unified_scheduler.alpha_digest_job_added", cron=cron)
 
     async def _run_alpha_digest_job(self) -> None:
-        """生成每日 Alpha 动态与周报快照。"""
+        """生成每日 Alpha 动态与周报快照，并将摘要落库（logs 表）留痕。"""
         try:
+            from app.repository import LogRepository
             from app.services.alpha_digest import generate_alpha_digest
 
-            generate_alpha_digest(window_days=7, min_score=70.0, limit=15)
-            self._logger.info("unified_scheduler.alpha_digest_completed")
+            digest = await asyncio.to_thread(generate_alpha_digest, window_days=7, min_score=70.0, limit=15)
+            run_id = f"alpha-digest-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
+            summary_payload = {
+                "generated_at": digest.get("generated_at"),
+                "window_days": digest.get("window_days", 7),
+                "total_projects": len(digest.get("top_projects") or digest.get("projects") or []),
+                "headline": digest.get("headline") or digest.get("summary"),
+            }
+            await asyncio.to_thread(
+                LogRepository().log_run,
+                run_id=run_id,
+                agent_name="alpha_digest",
+                output_data=summary_payload,
+            )
+            self._logger.info(
+                "unified_scheduler.alpha_digest_completed",
+                run_id=run_id,
+                total_projects=summary_payload["total_projects"],
+            )
         except Exception as e:
             self._logger.error("unified_scheduler.alpha_digest_failed", error=str(e))
 

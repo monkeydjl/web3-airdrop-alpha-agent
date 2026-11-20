@@ -334,6 +334,9 @@ def create_app(
                         error_type=type(exc).__name__,
                         error=str(exc)[:200],
                     )
+            from app.db import close_pg_pools
+
+            close_pg_pools()
 
     app = FastAPI(
         title="Web3 Airdrop Alpha Agent System",

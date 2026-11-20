@@ -276,7 +276,7 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **15 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **16 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
@@ -288,7 +288,8 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   `0012_api_keys_table`（2026-09-19，V3 可撤销 API Key 表）、
   `0013_project_hidden_reason`（2026-10-08，已发币复查的隐藏标记列）、
   `0014_token_registry_unhide`（2026-10-08，CoinGecko 币表缓存 + 人工恢复显示标记）、
-  `0015_project_aliases`（2026-11-09，`dedup_keys` 增加身份别名列）。
+  `0015_project_aliases`（2026-11-09，`dedup_keys` 增加身份别名列）、
+  `0016_consolidate_runtime_tables_and_indexes`（2026-11-20，统一收口 `leader_election`、5 张运行时业务表与幂等唯一索引）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1

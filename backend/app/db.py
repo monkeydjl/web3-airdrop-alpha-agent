@@ -340,13 +340,132 @@ def _connect_sqlite() -> DbConnection:
     return DbConnection(conn, kind="sqlite")
 
 
+# ── PostgreSQL 连接池（P2-2）────────────────────────────────────
+# 优先使用 psycopg_pool.ConnectionPool（若环境已安装 psycopg_pool），
+# 否则回退到内置的有界线程安全连接池，避免每次 connection_scope() 重新发起
+# TCP/认证握手并在高并发下击穿 PG 默认 max_connections=100。
+_PG_POOL_MAX_SIZE = 20
+_pg_pools: dict[str, Any] = {}
+_pg_fallback_pool: dict[str, list[Any]] = {}
+_pg_pool_lock = threading.Lock()
+
+
+def _pg_pool_enabled() -> bool:
+    """与 SQLite 池一致：test/testing 环境关闭，避免测试 mock 跨用例残留。"""
+    return settings.app_env not in ("test", "testing")
+
+
+def _pool_return_postgres(dsn: str, raw: Any) -> None:
+    if getattr(raw, "closed", False) or getattr(raw, "broken", False):
+        with contextlib.suppress(Exception):
+            raw.close()
+        return
+    try:
+        raw.rollback()
+    except Exception:
+        with contextlib.suppress(Exception):
+            raw.close()
+        return
+    should_close = False
+    with _pg_pool_lock:
+        idle = _pg_fallback_pool.setdefault(dsn, [])
+        if len(idle) >= _PG_POOL_MAX_SIZE:
+            should_close = True
+        else:
+            idle.append(raw)
+    if should_close:
+        with contextlib.suppress(Exception):
+            raw.close()
+
+
+class PooledPostgresDbConnection(DbConnection):
+    """池化 PostgreSQL 连接：close() 语义 = 回滚遗留事务并归还连接池。"""
+
+    def __init__(self, raw: Any, *, dsn: str, pool: Any = None) -> None:
+        super().__init__(raw, kind="postgres")
+        self._dsn = dsn
+        self._pool = pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            try:
+                if not getattr(self._raw, "closed", False):
+                    self._raw.rollback()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._raw.close()
+            try:
+                self._pool.putconn(self._raw)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._raw.close()
+            return
+        if not _pg_pool_enabled():
+            with contextlib.suppress(Exception):
+                self._raw.close()
+            return
+        _pool_return_postgres(self._dsn, self._raw)
+
+
+def close_pg_pools() -> None:
+    """进程关闭时排空并关闭全部 PostgreSQL 连接池（psycopg_pool 与内置回退池）。"""
+    with _pg_pool_lock:
+        pools = list(_pg_pools.values())
+        _pg_pools.clear()
+        fallback_conns = [raw for conns in _pg_fallback_pool.values() for raw in conns]
+        _pg_fallback_pool.clear()
+    for pool in pools:
+        with contextlib.suppress(Exception):
+            pool.close()
+    for raw in fallback_conns:
+        with contextlib.suppress(Exception):
+            raw.close()
+
+
 def _connect_postgres() -> DbConnection:
     import psycopg
     from psycopg.rows import dict_row
 
     dsn = _to_psycopg_dsn(settings.database_url or "")
+    if not _pg_pool_enabled():
+        conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False)
+        return DbConnection(conn, kind="postgres")
+
+    # 1. 优先复用 psycopg_pool.ConnectionPool（若环境中已安装）
+    try:
+        import psycopg_pool  # type: ignore[import-not-found]
+    except ImportError:
+        psycopg_pool = None
+
+    if psycopg_pool is not None:
+        with _pg_pool_lock:
+            pool = _pg_pools.get(dsn)
+            if pool is None:
+                pool = psycopg_pool.ConnectionPool(
+                    dsn,
+                    min_size=1,
+                    max_size=_PG_POOL_MAX_SIZE,
+                    open=True,
+                    kwargs={"row_factory": dict_row, "autocommit": False},
+                )
+                _pg_pools[dsn] = pool
+        raw = pool.getconn()
+        return PooledPostgresDbConnection(raw, dsn=dsn, pool=pool)
+
+    # 2. 内置有界连接池回退（仅依赖 psycopg3，无需额外第三方包）
+    while True:
+        with _pg_pool_lock:
+            idle = _pg_fallback_pool.get(dsn)
+            raw = idle.pop() if idle else None
+        if raw is None:
+            break
+        if not getattr(raw, "closed", False) and not getattr(raw, "broken", False):
+            return PooledPostgresDbConnection(raw, dsn=dsn)
+        with contextlib.suppress(Exception):
+            raw.close()
+
     conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False)
-    return DbConnection(conn, kind="postgres")
+    return PooledPostgresDbConnection(conn, dsn=dsn)
 
 
 def _to_psycopg_dsn(url: str) -> str:
@@ -967,6 +1086,71 @@ def _sqlite_ddl() -> str:
             );
             CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
 
+            -- 收口运行时业务表（迁移 0016）：避免在 HTTP 请求期动态 CREATE TABLE
+            CREATE TABLE IF NOT EXISTS harvest_records (
+                id                TEXT PRIMARY KEY,
+                project_name      TEXT NOT NULL,
+                token_symbol      TEXT NOT NULL,
+                amount_claimed    REAL NOT NULL,
+                ath_price_usd     REAL NOT NULL,
+                current_price_usd REAL NOT NULL,
+                gas_spent_usd     REAL NOT NULL DEFAULT 0,
+                claimed_at        TEXT,
+                notes             TEXT,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_harvest_records_claimed ON harvest_records(claimed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS faucet_claims (
+                claim_id       TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                faucet_id      TEXT NOT NULL,
+                claimed_at     TIMESTAMP NOT NULL,
+                cooldown_hours INTEGER DEFAULT 24
+            );
+            CREATE INDEX IF NOT EXISTS idx_faucet_claims_user ON faucet_claims(user_id, faucet_id);
+
+            CREATE TABLE IF NOT EXISTS gas_alert_rules (
+                rule_id        TEXT PRIMARY KEY,
+                chain          TEXT NOT NULL,
+                condition      TEXT NOT NULL,
+                threshold_gwei REAL NOT NULL,
+                label          TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                created_at     TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_gas_alert_rules_chain ON gas_alert_rules(chain, enabled);
+
+            CREATE TABLE IF NOT EXISTS team_studio_operators (
+                operator_id        TEXT PRIMARY KEY,
+                name               TEXT NOT NULL,
+                role               TEXT NOT NULL DEFAULT 'Operator',
+                assigned_wallets   INTEGER NOT NULL DEFAULT 10,
+                assigned_projects  TEXT NOT NULL DEFAULT '[]',
+                today_completed_tx INTEGER NOT NULL DEFAULT 0,
+                today_target_tx    INTEGER NOT NULL DEFAULT 0,
+                completion_rate    REAL NOT NULL DEFAULT 0.0,
+                gas_spent_usd      REAL NOT NULL DEFAULT 0.0,
+                status             TEXT NOT NULL DEFAULT 'idle',
+                ip_proxy_isolated  INTEGER,
+                last_active        TEXT,
+                updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS team_studio_tasks (
+                task_id             TEXT PRIMARY KEY,
+                title               TEXT NOT NULL,
+                project             TEXT NOT NULL,
+                operator_id         TEXT NOT NULL,
+                target_wallet_count INTEGER NOT NULL DEFAULT 1,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                priority            TEXT NOT NULL DEFAULT 'medium',
+                deadline            TEXT,
+                created_at          INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_studio_tasks_operator ON team_studio_tasks(operator_id, status);
+
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
@@ -1580,6 +1764,71 @@ def _postgres_ddl() -> str:
                 version           INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
+
+            -- 收口运行时业务表（迁移 0016）：避免在 HTTP 请求期动态 CREATE TABLE
+            CREATE TABLE IF NOT EXISTS harvest_records (
+                id                TEXT PRIMARY KEY,
+                project_name      TEXT NOT NULL,
+                token_symbol      TEXT NOT NULL,
+                amount_claimed    DOUBLE PRECISION NOT NULL,
+                ath_price_usd     DOUBLE PRECISION NOT NULL,
+                current_price_usd DOUBLE PRECISION NOT NULL,
+                gas_spent_usd     DOUBLE PRECISION NOT NULL DEFAULT 0,
+                claimed_at        TEXT,
+                notes             TEXT,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_harvest_records_claimed ON harvest_records(claimed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS faucet_claims (
+                claim_id       TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                faucet_id      TEXT NOT NULL,
+                claimed_at     TIMESTAMPTZ NOT NULL,
+                cooldown_hours INTEGER DEFAULT 24
+            );
+            CREATE INDEX IF NOT EXISTS idx_faucet_claims_user ON faucet_claims(user_id, faucet_id);
+
+            CREATE TABLE IF NOT EXISTS gas_alert_rules (
+                rule_id        TEXT PRIMARY KEY,
+                chain          TEXT NOT NULL,
+                condition      TEXT NOT NULL,
+                threshold_gwei DOUBLE PRECISION NOT NULL,
+                label          TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                created_at     TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_gas_alert_rules_chain ON gas_alert_rules(chain, enabled);
+
+            CREATE TABLE IF NOT EXISTS team_studio_operators (
+                operator_id        TEXT PRIMARY KEY,
+                name               TEXT NOT NULL,
+                role               TEXT NOT NULL DEFAULT 'Operator',
+                assigned_wallets   INTEGER NOT NULL DEFAULT 10,
+                assigned_projects  TEXT NOT NULL DEFAULT '[]',
+                today_completed_tx INTEGER NOT NULL DEFAULT 0,
+                today_target_tx    INTEGER NOT NULL DEFAULT 0,
+                completion_rate    DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                gas_spent_usd      DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                status             TEXT NOT NULL DEFAULT 'idle',
+                ip_proxy_isolated  INTEGER,
+                last_active        TEXT,
+                updated_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS team_studio_tasks (
+                task_id             TEXT PRIMARY KEY,
+                title               TEXT NOT NULL,
+                project             TEXT NOT NULL,
+                operator_id         TEXT NOT NULL,
+                target_wallet_count INTEGER NOT NULL DEFAULT 1,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                priority            TEXT NOT NULL DEFAULT 'medium',
+                deadline            TEXT,
+                created_at          BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_studio_tasks_operator ON team_studio_tasks(operator_id, status);
 
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);

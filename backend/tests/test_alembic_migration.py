@@ -66,8 +66,13 @@ _EXPECTED_TABLES = {
     "sessions",
     "blacklisted_jti",
     "api_keys",
-    # HA leader 选举（734f0a7 起在 init_db 建表；alembic 链外，upgrade head 后同样存在）
+    # HA leader 选举与运行时业务表（迁移 0016 统一收口进 Alembic 链）
     "leader_election",
+    "harvest_records",
+    "faucet_claims",
+    "gas_alert_rules",
+    "team_studio_operators",
+    "team_studio_tasks",
     # CoinGecko 全量币表缓存（迁移 0014，发币核实）
     "token_registry",
 }
@@ -91,6 +96,15 @@ _REVISION_TABLES: dict[str, set[str]] = {
     "0014": {"token_registry"},
     # 0015 给 dedup_keys 加别名列（source / confidence / notes / updated_at），不引入新表
     "0015": set(),
+    # 0016 统一收口 leader_election、5 张运行时业务表与幂等唯一索引
+    "0016": {
+        "leader_election",
+        "harvest_records",
+        "faucet_claims",
+        "gas_alert_rules",
+        "team_studio_operators",
+        "team_studio_tasks",
+    },
 }
 _REVISION_ORDER = [
     "0001",
@@ -108,6 +122,7 @@ _REVISION_ORDER = [
     "0013",
     "0014",
     "0015",
+    "0016",
 ]
 
 
@@ -180,16 +195,12 @@ def test_alembic_upgrade_creates_all_tables(tmp_path: Path) -> None:
 
 
 def test_alembic_downgrade_base_drops_all_tables(tmp_path: Path) -> None:
-    """upgrade head 后 downgrade base 删除全部 alembic 链内的用户表。
-
-    leader_election 由 init_db 建表（不在 alembic 链内），downgrade 不会删除它，
-    从预期集合中排除。
-    """
+    """upgrade head 后 downgrade base 删除全部用户表（含 0016 收口的 leader_election 与业务表）。"""
     db_path = tmp_path / "migrate.db"
     _run_alembic("upgrade", "head", db_path=db_path)
     assert _get_user_tables(db_path) == _EXPECTED_TABLES
     _run_alembic("downgrade", "base", db_path=db_path)
-    assert _get_user_tables(db_path) == {"leader_election"}
+    assert _get_user_tables(db_path) == set()
 
 
 def test_alembic_schema_matches_init_db(tmp_path: Path) -> None:
