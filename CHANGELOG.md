@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### Fixed — 工程审计三阶段全量收口（2026-11-20，Phase 1–3：P0 / P1 / P2 清零）
+
+- **Phase 1（P0 上线阻断清零 + ADR-015 单调性）**：修复 PostgreSQL `0002` 迁移与 `db.py` `%` 转义/全仓 `dict_row` 兼容/`migrate_sqlite_to_pg.py` 迁移脚本；重构 `proxy.ts` 为每访客独立 `HttpOnly` Cookie 匿名 Token 并新增导航栏管理员密钥登录弹窗；锁死匿名写接口对全局表的越权副作用；修复 `opportunity/evidence.py` 解包、`launch_review.py` 时序覆盖、`main.py` 共享连接串行锁与 `eligibility.py` 的 `FARM / WATCH → IGNORE` 单调否决。
+- **Phase 2（P1 安全、流水线、前端契约与运维加固）**：收紧 `?user_id=` IDOR、`GLOBAL_UNSCOPED_WRITE_RULES`、`/api/v1/llm` 管理员锁、`ak_` 畸形前缀快速返回与密码 72B 校验；收敛 `docker-compose.prod.yml` 的 `:13002` 暴露、Nginx 日志 `stdout/stderr` 轮转、`.env.example` 与 `backup.sh`/`deploy` 脚本；打通 `collect_from_repository` 3 信号、`persistence.py` 别名解析与材质变化重入队、`defillama` HTTP 百分数→比率归一化与限速、`orchestrator` 防 `score=None` 覆写、`calibration` 否定措辞与 veto/confidence 回放、`llm` 并发预扣预算与空响应计费、`ops_tasks` 读写解耦；修复 `/portfolio`/`/ops`/`/settings` 契约并补齐 11 处 `SimulatedDataBadge` 与生产禁灌 `airdrop_pnl` 假数据。
+- **Phase 3（P2 架构、性能、Schema `0016` 与 CI 门禁）**：
+  - **输入/输出与运行期安全**：`export.py` CSV/Excel 公式注入防转义；`import_utils.py` `.xlsx` ZIP 解压体积/条目数与最大行数校验；`vitals.py` DNS 失败 fail-closed、拦截 NAT64、`trust_env=False`、405 流式 GET 与并发 `Semaphore`；`config.py` 生产强制 `debug=False` 并校验 `AUTH_TOKEN_SECRET`/`JWT_SECRET` 强度；`redact.py` 补全认证密钥与 Telegram/Discord 路径 Token 脱敏；`rate_limit.py` 新增 `/api/v1/auth/login` 防爆破独立窗口隔离；`webhook.py` 验签前 1MB 流式载荷上限；`playbook_orchestrator.py` `json.dumps` 转义用户输入。
+  - **PG 连接池与异步去阻塞**：`db.py` 新增 PostgreSQL 连接池（优先 `psycopg_pool.ConnectionPool`，无包时自动回退内置有界线程安全连接池，停机 `close_pg_pools()` 回收）；`orchestrator_simple.py`、`narrative.py`、`llm/client.py`、`token_registry.py`、`project_evaluation.py`、`leader_election.py`、`scheduler.py` 残留同步 DB 调用移入 `asyncio.to_thread`；`canonical_sector_counts` 排除当前批次与隐藏/历史回填样本消除双重计数。
+  - **Schema 0016、HA 生命周期与 CI/CD**：新增 Alembic `0016_consolidate_runtime_tables_and_indexes` 统一收口 `leader_election`、5 张运行时业务表与唯一索引；修复 `leader_election.py` SQLite 未当选路径 `rollback()`、`scheduler.py` HA 降级后重升重建实例 + `claim_run` 采集合并锁 + `alpha_digest` 落库留痕；`ci.yml` 新增真实 `postgres:15-alpine` 迁移与 API 冒烟 Job、前端 `eslint` 与前端镜像构建；`security.yml` 锁定 `trivy-action@0.28.0` 并扫描前端镜像；`release.yml` 同步构建发布前端镜像；修正 `Makefile`、`TopBar.tsx`、`error.tsx`、`archive/page.tsx` 与文档基线（后端 `4272 passed` / 覆盖率 `89.8%`，前端 `126 passed`）。
+
 ### Fixed — 全量审查收尾：数据完整性 / 安全 / 异步边界 / 业务口径 / 连接池（2026-11-16，分支 fix/review-sweep-2026-11，8 commit）
 
 八批修复的完整脉络见 `HANDOFF.md`「11 月审查修复」一节。要点：

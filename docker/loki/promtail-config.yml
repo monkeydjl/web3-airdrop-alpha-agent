@@ -25,4 +25,4 @@ scrape_configs:
         labels:
           job: airdrop-alpha
           service: nginx
-          __path__: /var/log/nginx/*.log
+          __path__: /var/log/nginx/*.{log,json}

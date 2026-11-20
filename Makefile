@@ -17,7 +17,7 @@ PYTEST := pytest
 RUFF := ruff
 MYPY := mypy
 DOCKER := docker
-COMPOSE := docker-compose
+COMPOSE := docker compose
 
 # ── 帮助 ──────────────────────────────────────
 help: ## 显示所有可用任务
@@ -144,10 +144,10 @@ db-init: ## 初始化数据库
 	cd backend && $(PYTHON) -c "from app.db import init_db; init_db()"
 
 db-migrate: ## 运行数据库迁移（V2+）
-	alembic upgrade head
+	cd backend && $(PYTHON) -m alembic upgrade head
 
 db-rollback: ## 回滚最后一次迁移
-	alembic downgrade -1
+	cd backend && $(PYTHON) -m alembic downgrade -1
 
 # ── 清理 ──────────────────────────────────────
 clean: ## 清理临时文件

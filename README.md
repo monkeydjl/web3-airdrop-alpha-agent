@@ -2,7 +2,7 @@
 
 从自动发现、结构化评分到「今天做什么」的 Web3 空投 Alpha 终端。
 
-[![Tests](https://img.shields.io/badge/tests-4212%20passed-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-4272%20passed-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.4-000000)](https://nextjs.org/)
@@ -174,7 +174,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 > 生产部署必须使用 `docker-compose.prod.yml`，不要用 `docker-compose.yml --profile production`。前者才包含 Next.js 前端与生产 nginx 配置；后者只有裸 API，浏览器请求会绕过前端凭据注入而得到 401。
 >
-> 生产 `.env` 至少需要：`APP_ENV=production`、`API_KEY`、`AUTH_TOKEN_SECRET`、`BACKEND_API_KEY`、`POSTGRES_PASSWORD`、`CORS_ORIGINS`、`TRUSTED_PROXY_COUNT=1`。完整清单见 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md)。
+> 生产 `.env` 至少需要：`APP_ENV=production`、`API_KEY`、`AUTH_TOKEN_SECRET`、`BACKEND_API_KEY`、`POSTGRES_PASSWORD`、`GRAFANA_PASSWORD`、`CORS_ORIGINS`、`TRUSTED_PROXY_COUNT=1`。完整清单见 [GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md)。
 
 ---
 
@@ -235,7 +235,7 @@ curl -X POST http://localhost:8002/api/v1/run \
   -d '{"projects":[{"name":"LayerX","sector":"L2","stage":"testnet","has_testnet":true,"no_token_yet":true}]}'
 
 # 查询项目
-curl "http://localhost:8002/api/v1/projects?sort_by=score&order=desc&limit=10"
+curl "http://localhost:8002/api/v1/projects?sort_by=score&sort_order=desc&page_size=10"
 
 # 今日行动
 curl "http://localhost:8002/api/v1/action-queue?limit=5"
@@ -336,8 +336,8 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── agents/          # 4 个分析 Agent + Scorer + 资格门控 + 编排器
 │   │   ├── collectors/      # 17 个采集器、注册表、持久化、噪声过滤
 │   │   ├── opportunity/     # Shadow 评估、经济快照、校准
-│   │   ├── routers/v1/      # 62 个 API 路由模块
-│   │   ├── services/        # 57 个业务服务
+│   │   ├── routers/v1/      # 63 个 API 路由模块
+│   │   ├── services/        # 58 个业务服务
 │   │   ├── repositories/    # 数据访问层
 │   │   ├── llm/             # 多接口 LLM 客户端与预算
 │   │   ├── config.py        # Pydantic Settings
@@ -345,8 +345,8 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── auth.py          # 鉴权中间件
 │   │   ├── metrics.py       # Prometheus 指标
 │   │   └── main.py          # FastAPI 入口
-│   ├── alembic/             # 14 个数据库迁移
-│   ├── tests/               # 后端测试套件（4079 条用例）
+│   ├── alembic/             # 16 个数据库迁移
+│   ├── tests/               # 后端测试套件（4272 条用例）
 │   ├── scripts/             # 校准、种子、双跑对比等脚本
 │   └── requirements*.txt
 ├── frontend-next/
@@ -413,7 +413,7 @@ pytest tests/opportunity/
 pytest tests/golden/
 ```
 
-2026-11-16 本机全量结果：**4212 passed / 26 skipped**（-n 8 并行约 3.5 分钟，覆盖率 89.0%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
+2026-11-20 本机全量结果：**4272 passed / 26 skipped**（-n 8 并行约 3 分钟，覆盖率 89.8%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
 
 代码质量门：
 

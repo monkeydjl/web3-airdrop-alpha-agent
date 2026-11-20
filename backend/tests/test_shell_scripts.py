@@ -1124,7 +1124,12 @@ class TestDeployPreflightBehavior:
     """
 
     _VALID_PROD_ENV = (
-        "APP_ENV=production\nAPI_KEY=" + "a" * 40 + "\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        "APP_ENV=production\nAPI_KEY="
+        + "a" * 40
+        + "\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        + "BACKEND_API_KEY="
+        + "a" * 40
+        + "\nPOSTGRES_PASSWORD=strong-pg-pass\nGRAFANA_PASSWORD=strong-graf-pass\n"
     )
 
     def _deploy_sandbox(self, tmp_path: Path, env_text: str | None = None) -> str:
@@ -1197,8 +1202,12 @@ class TestDeployPreflightBehavior:
         assert self._compose_actions(tmp_path) == [], "预检失败后 compose 零真实动作。"
 
     def test_prod_short_api_key_fails_even_when_rest_is_valid(self, tmp_path: Path) -> None:
-        """长度门是独立的：API_KEY 8 字符挂、其余三项不得误报。"""
-        env = "APP_ENV=production\nAPI_KEY=shortkey8\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        """长度门是独立的：API_KEY 8 字符挂、其余项不得误报。"""
+        env = (
+            "APP_ENV=production\nAPI_KEY=shortkey8\nAUTH_TOKEN_SECRET=abc\n"
+            "CORS_ORIGINS=https://api.example.com\nBACKEND_API_KEY=shortkey8\n"
+            "POSTGRES_PASSWORD=strong-pg-pass\nGRAFANA_PASSWORD=strong-graf-pass\n"
+        )
         bin_dir = self._deploy_sandbox(tmp_path, env)
         proc = self._run_deploy(tmp_path, bin_dir, "prod")
         assert proc.returncode == 1, proc.stdout[-800:]

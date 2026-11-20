@@ -176,6 +176,27 @@ if [ "$ENVIRONMENT" = "prod" ]; then
             ;;
     esac
 
+    ENV_BACKEND_KEY_LEN="$(grep -E '^BACKEND_API_KEY=' .env | tail -1 | cut -d= -f2- | tr -d '[:space:]' | wc -c)"
+    ENV_BACKEND_KEY_LEN=$((ENV_BACKEND_KEY_LEN - 1))
+    if [ "$ENV_BACKEND_KEY_LEN" -lt 1 ]; then
+        echo "   ❌ BACKEND_API_KEY 为空（docker-compose.prod.yml 要求非空以启用前端匿名代理联动）"
+        PRECHECK_FAILED=1
+    fi
+
+    ENV_PG_PASS_LEN="$(grep -E '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2- | tr -d '[:space:]' | wc -c)"
+    ENV_PG_PASS_LEN=$((ENV_PG_PASS_LEN - 1))
+    if [ "$ENV_PG_PASS_LEN" -lt 1 ]; then
+        echo "   ❌ POSTGRES_PASSWORD 为空（docker-compose.prod.yml 要求必填）"
+        PRECHECK_FAILED=1
+    fi
+
+    ENV_GRAFANA_PASS_LEN="$(grep -E '^GRAFANA_PASSWORD=' .env | tail -1 | cut -d= -f2- | tr -d '[:space:]' | wc -c)"
+    ENV_GRAFANA_PASS_LEN=$((ENV_GRAFANA_PASS_LEN - 1))
+    if [ "$ENV_GRAFANA_PASS_LEN" -lt 1 ]; then
+        echo "   ❌ GRAFANA_PASSWORD 为空（docker-compose.prod.yml 要求必填）"
+        PRECHECK_FAILED=1
+    fi
+
     if [ "$PRECHECK_FAILED" -eq 1 ]; then
         echo ""
         echo "⛔ 预检未通过，已在启动前停下。"
@@ -295,7 +316,11 @@ echo "📋 常用命令:"
 echo "   查看日志: $COMPOSE $COMPOSE_FILES logs -f $BACKEND_SERVICE"
 echo "   查看状态: $COMPOSE $COMPOSE_FILES ps"
 echo "   停止服务: $COMPOSE $COMPOSE_FILES down"
-echo "   健康检查: API_URL=http://localhost:$HOST_PORT ./scripts/health-check.sh"
+if [ "$ENVIRONMENT" = "prod" ]; then
+    echo "   健康检查: API_URL=http://localhost:18080 ./scripts/health-check.sh"
+else
+    echo "   健康检查: API_URL=http://localhost:$HOST_PORT ./scripts/health-check.sh"
+fi
 echo "   备份数据: ./scripts/backup.sh"
 echo ""
 echo "📖 完整文档: docs/DEPLOYMENT.md"

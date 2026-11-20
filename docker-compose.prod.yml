@@ -37,7 +37,8 @@ services:
     networks:
       - frontend
 
-  # Next.js 前端（主前端，宿主机 13002 → 容器 3002）
+  # Next.js 前端（主前端，仅绑宿主机回环 127.0.0.1:13002 → 容器 3002；
+  # 外部流量必须经 nginx :18080 进入，防止直打 :13002 伪造 X-Forwarded-For 绕过限流）
   frontend:
     build:
       context: .
@@ -45,7 +46,7 @@ services:
     container_name: airdrop-frontend
     logging: *default-logging
     ports:
-      - "13002:3002"
+      - "127.0.0.1:13002:3002"
     environment:
       - PORT=3002
       - HOSTNAME=0.0.0.0
@@ -80,9 +81,10 @@ services:
       # 容器照样变绿但运行的并不是生产安全口径。
       - APP_ENV=production
       - PORT=8002
-      # 限流的可信代理跳数（2026-11-13 审查 M-2）：真实拓扑 nginx → Next →
-      # backend，两跳。留 0 时限流键退化成 Next 容器 IP（全站共桶）；
-      # 取值与 .env 里 TRUSTED_PROXY_COUNT 同源，运维可按真实部署改。
+      # 限流的可信代理跳数（2026-11-13 审查 M-2）：
+      # - 客户端直连本 compose 的 airdrop-nginx (:18080) 时：Next 透传 XFF 不追加，跳数为 1（默认）；
+      # - 若在 :18080 前方再前置一层宿主 TLS 反代（Caddy/Nginx/Cloudflare），请在 .env 设为 2，
+      #   否则全站访客会被归并成上游反代单 IP 触发共享限流。
       - TRUSTED_PROXY_COUNT=${TRUSTED_PROXY_COUNT:-1}
       - DATABASE_URL=postgresql://airdrop:${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD（生产必须强密码）}@db:5432/airdrop
       # 用 :? 而非裸 ${API_KEY}：environment 的插值即便展开成空串也会**覆盖**

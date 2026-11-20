@@ -290,6 +290,17 @@ jobs:
           cache-to: type=gha,mode=max
           load: true
 
+      - name: Build Frontend Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend-next
+          file: frontend-next/Dockerfile
+          push: false
+          tags: airdrop-alpha-frontend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
       - name: Smoke test — health check
         run: |
           set -euo pipefail
@@ -365,6 +376,9 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
+      - name: Run lint
+        run: npm run lint
+
       # 前端此前完全没有单测。lib/download.ts 里全是解析别人给的字符串
       # （HTTP 头、错误响应体、文件名），这类代码失败时不抛错，只会静默地
       # 把一个错值当对值用下去 —— 正是必须被测试钉住的地方。
@@ -380,3 +394,98 @@ jobs:
       # 上游出补丁后可改回不带 --omit=dev。
       - name: Run npm audit
         run: npm audit --omit=dev --audit-level=high
+
+  # ── Phase 6: PostgreSQL Migration & API Smoke ──
+  postgres-smoke:
+    name: PostgreSQL Migration & API Smoke
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: airdrop
+          POSTGRES_PASSWORD: ci_smoke_password_123456
+          POSTGRES_DB: airdrop_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://airdrop:ci_smoke_password_123456@127.0.0.1:5432/airdrop_ci
+      APP_ENV: testing
+      SCHEDULER_ENABLED: "false"
+      COLLECTION_SCHEDULER_ENABLED: "false"
+      AUTH_TOKEN_SECRET: ci-pg-smoke-auth-token-secret-32-chars-min
+      JWT_SECRET: ci-pg-smoke-jwt-secret-32-chars-minimum-01
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Alembic upgrade head against PostgreSQL
+        run: python -m alembic upgrade head
+
+      - name: Run PostgreSQL end-to-end API smoke test
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.agents.base import AgentContext, PipelineState, RawProject
+          from app.main import create_app
+          from app.repository import ProjectRepository
+
+          repo = ProjectRepository()
+          repo.save(
+              PipelineState(
+                  project=RawProject(id="pg-smoke-1", name="PgSmokeProto", sector="DeFi", stage="testnet"),
+                  context=AgentContext(run_id="pg-smoke-run"),
+                  score=82,
+                  label="FARM",
+                  confidence=0.85,
+                  reason=["pg smoke ok"],
+              )
+          )
+
+          app = create_app()
+          with TestClient(app) as client:
+              assert client.get("/health").status_code == 200
+              reg = client.post(
+                  "/api/v1/auth/register",
+                  json={"email": "pgsmoke@example.com", "username": "pgsmoke", "password": "StrongPassword123!"},
+              )
+              assert reg.status_code in (200, 201), reg.text
+              login = client.post(
+                  "/api/v1/auth/login",
+                  json={"email": "pgsmoke@example.com", "password": "StrongPassword123!"},
+              )
+              assert login.status_code == 200, login.text
+              token = login.json()["data"]["access_token"]
+              headers = {"Authorization": f"Bearer {token}"}
+              wl = client.post("/api/v1/watchlist", json={"project_id": "pg-smoke-1"}, headers=headers)
+              assert wl.status_code in (200, 201), wl.text
+              notif = client.get("/api/v1/notifications/summary", headers=headers)
+              assert notif.status_code == 200, notif.text
+              projs = client.get("/api/v1/projects", headers=headers)
+              assert projs.status_code == 200 and projs.json()["data"]["total"] >= 1
+          print("PostgreSQL smoke test passed.")
+          PY

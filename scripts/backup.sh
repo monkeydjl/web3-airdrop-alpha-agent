@@ -53,8 +53,8 @@ if docker ps --filter "name=$DB_CONTAINER" --format "{{.Names}}" 2>/dev/null | g
 elif docker ps --filter "name=$WEB_CONTAINER" --format "{{.Names}}" 2>/dev/null | grep -q "$WEB_CONTAINER"; then
     BACKUP_TYPE="sqlite"
     echo "   (SQLite 容器备份)"
-    docker exec "$WEB_CONTAINER" python -c "import sqlite3; c=sqlite3.connect('/app/data/app.db'); c.backup(sqlite3.connect('/tmp/backup.db')); c.close()" 2>/dev/null \
-        || docker exec "$WEB_CONTAINER" sqlite3 /app/data/app.db ".backup /tmp/backup.db"
+    docker exec "$WEB_CONTAINER" python -c "import os, sqlite3; src='/app/backend/data/airdrop.db' if os.path.exists('/app/backend/data/airdrop.db') else ('/app/backend/data/app.db' if os.path.exists('/app/backend/data/app.db') else '/app/data/app.db'); c=sqlite3.connect(src); d=sqlite3.connect('/tmp/backup.db'); c.backup(d); d.close(); c.close()" 2>/dev/null \
+        || docker exec "$WEB_CONTAINER" sqlite3 /app/backend/data/airdrop.db ".backup /tmp/backup.db"
     docker cp "$WEB_CONTAINER:/tmp/backup.db" "$BACKUP_DIR/$BACKUP_NAME/app.db"
     docker exec "$WEB_CONTAINER" rm -f /tmp/backup.db
     echo "✅ SQLite 数据库备份完成"
@@ -113,7 +113,7 @@ if docker ps --filter "name=$WEB_CONTAINER" --format "{{.Names}}" 2>/dev/null | 
     && docker exec "$WEB_CONTAINER" test -d /app/backend/logs 2>/dev/null; then
     docker cp "$WEB_CONTAINER:/app/backend/logs" "$BACKUP_DIR/$BACKUP_NAME/"
     echo "✅ 日志备份完成"
-elif [ -d "logs" ] && [ -z "$(find logs -maxdepth 1 -type f | head -1)" ]; then
+elif [ -d "logs" ] && [ -n "$(find logs -maxdepth 1 -type f | head -1)" ]; then
     cp -r logs "$BACKUP_DIR/$BACKUP_NAME/"
     echo "✅ 日志备份完成"
 else

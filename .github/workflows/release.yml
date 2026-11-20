@@ -22,8 +22,7 @@ jobs:
   # 为什么 release 要自己再跑一遍检查：ci.yml 的 push 触发器只匹配分支
   # （master/main/feat/**/fix/**/docs/**），tag push 不会触发 CI —— 没有这道门，
   # 发布镜像的那个 commit 可能从未通过任何测试（2026-08-30 审核修复）。
-  # 检查项与 ci.yml 对齐（ruff / mypy strict / 全量 pytest）；前端不在列是因为
-  # 下面的 Docker 构建本身就要在前端容器里跑 next build，前端坏了发布直接失败。
+  # 检查项与 ci.yml 对齐（后端 ruff / mypy strict / 全量 pytest；前端同步构建前端镜像并跑 typecheck/lint/test）。
   test-gate:
     name: Release Test Gate
     runs-on: ubuntu-latest
@@ -117,6 +116,26 @@ jobs:
           # 不吃 gha 缓存，与 security.yml 的结论一致：apt 层缓存会把带已知
           # CVE 的旧基础层带进发布镜像（CVE-2026-14456 案例）。发布镜像
           # 生命周期最长，宁可每次全量构建。
+          no-cache: true
+
+      - name: Extract frontend metadata
+        id: frontend-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/tags/{0}', 'v*') }}
+
+      - name: Build and push Frontend Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend-next
+          file: frontend-next/Dockerfile
+          push: true
+          tags: ${{ steps.frontend-meta.outputs.tags }}
+          labels: ${{ steps.frontend-meta.outputs.labels }}
           no-cache: true
 
       - name: Generate SBOM
