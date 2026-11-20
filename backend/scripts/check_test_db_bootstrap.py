@@ -371,8 +371,8 @@ def main() -> int:
         for path, hits in stub_drift:
             rel = path.relative_to(BACKEND_DIR).as_posix()
             print(f"  {rel}")
-            for hit in hits:
-                print(f"    {hit}")
+            for drift_hit in hits:
+                print(f"    {drift_hit}")
         print(
             "\n修复方式：改为 patch 消费点——\n"
             "  - 消费者模块顶部 import connection_scope → patch\n"

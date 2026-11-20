@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn
 
 BACKEND = Path(__file__).resolve().parents[1]
 for path in (BACKEND, BACKEND.parent):
@@ -39,7 +40,7 @@ def _sanitize_message(message: str) -> str:
 
 
 class CalibrationArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         self.exit(2, f"{_sanitize_message(f'argument error: {message}')}\n")
 
 
@@ -128,7 +129,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_sanitize_message(f"argument error: {_public_error(error)}"), file=sys.stderr)
         return 2
     except Exception as error:
-        supplied_url = locals().get("args").database_url if "args" in locals() else None
+        parsed_args = locals().get("args")
+        supplied_url = getattr(parsed_args, "database_url", None) if parsed_args is not None else None
         print(
             _sanitize_message(f"{type(error).__name__}: {_public_error(error, secret=supplied_url)}"), file=sys.stderr
         )
