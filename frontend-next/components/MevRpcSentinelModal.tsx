@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface MevRpcNode {
   id: string;
@@ -53,10 +54,12 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
   const [benchmarking, setBenchmarking] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetchEnvelope<{ data: { nodes: MevRpcNode[] } }>('/mev-rpc/nodes')
+    apiFetchEnvelope<{ data: { nodes: MevRpcNode[] }; data_quality?: DataQualityMeta }>('/mev-rpc/nodes')
       .then((res) => {
         if (res?.data?.nodes) {
           setNodes(res.data.nodes);
@@ -64,6 +67,7 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
             setSelectedNode(res.data.nodes[0]);
           }
         }
+        if (res?.data_quality) setDataQuality(res.data_quality);
       })
       .catch((err) => console.error('Failed to load MEV nodes', err))
       .finally(() => setLoading(false));
@@ -103,7 +107,10 @@ export default function MevRpcSentinelModal({ isOpen, onClose }: MevRpcSentinelM
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🛡️</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">智能防夹 (MEV) 与私有 RPC 路由哨兵</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>智能防夹 (MEV) 与私有 RPC 路由哨兵</span>
+                <SimulatedDataBadge dataQuality={dataQuality} />
+              </h3>
               <p className="text-xs text-ink-muted">
                 直通验证者 Builder 专用通道，防御三明治夹子与抢跑套利，支持最高 90% 利润现金回退
               </p>

@@ -11,6 +11,7 @@ import TeamStudioModal from '@/components/TeamStudioModal';
 import IdentityPassportModal from '@/components/IdentityPassportModal';
 import ImpermanentLossModal from '@/components/ImpermanentLossModal';
 import { TopBar } from '@/components/TopBar';
+import { Modal } from '@/components/Modal';
 import { EmptyState, LabelBadge } from '@/components/ui';
 import { apiFetch } from '@/lib/api';
 import { relativeTime } from '@/lib/format';
@@ -39,10 +40,12 @@ interface Summary {
   total?: number;
   by_status?: Record<string, number>;
   by_outcome?: Record<string, number>;
+  label_outcome?: { label_at_start: string; outcome: string; c: number }[];
   label_outcome_matrix?: { label_at_start: string; outcome: string; c: number }[];
   total_cost_usd?: number;
   total_profit_usd?: number;
   net_usd?: number;
+  total_hours_spent?: number;
   total_hours?: number;
 }
 
@@ -164,6 +167,15 @@ export default function PortfolioPage() {
   const [teamStudioOpen, setTeamStudioOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
   const [ilOpen, setIlOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createProjectId, setCreateProjectId] = useState('');
+  const [createStatus, setCreateStatus] = useState<'planned' | 'active' | 'done' | 'abandoned'>('active');
+  const [createCost, setCreateCost] = useState('');
+  const [createProfit, setCreateProfit] = useState('');
+  const [createHours, setCreateHours] = useState('');
+  const [createNote, setCreateNote] = useState('');
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,12 +185,12 @@ export default function PortfolioPage() {
     try {
       const [sum, list] = await Promise.all([
         apiFetch<Summary>('/interactions/summary'),
-        apiFetch<InteractionsList>('/interactions?limit=5'),
+        apiFetch<InteractionsList>('/interactions?limit=50'),
       ]);
       setSummary(sum ?? null);
       setInteractions(list?.items ?? []);
 
-      // 批量取项目名
+      // 批量取项目名：走单项目详情接口 GET /projects/{id}
       const pids = (list?.items ?? [])
         .map((i) => i.project_id)
         .filter((pid, idx, arr) => pid && arr.indexOf(pid) === idx);
@@ -187,12 +199,11 @@ export default function PortfolioPage() {
         await Promise.all(
           pids.map(async (pid) => {
             try {
-              const p = await apiFetch<{ name?: string } | { data?: { name?: string } }>(
-                `/projects?project_id=${encodeURIComponent(pid)}`,
+              const p = await apiFetch<{ project?: { name?: string }; name?: string }>(
+                `/projects/${encodeURIComponent(pid)}`,
               );
-              const name = (p as { name?: string }).name || (p as { data?: { name?: string } }).data?.name;
-              if (name) names[pid] = name;
-              else names[pid] = pid.slice(0, 8);
+              const name = p?.project?.name || p?.name;
+              names[pid] = name || pid.slice(0, 8);
             } catch {
               names[pid] = pid.slice(0, 8);
             }
@@ -211,10 +222,84 @@ export default function PortfolioPage() {
     void load();
   }, [load]);
 
+  const handleCreateInteraction = async () => {
+    const pid = createProjectId.trim();
+    if (!pid) {
+      setCreateError('请输入项目 ID');
+      return;
+    }
+    setCreateSubmitting(true);
+    setCreateError(null);
+    try {
+      await apiFetch('/interactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: pid,
+          status: createStatus,
+          cost_usd: createCost ? Number(createCost) : undefined,
+          profit_usd: createProfit ? Number(createProfit) : undefined,
+          hours_spent: createHours ? Number(createHours) : undefined,
+          note: createNote.trim() || undefined,
+        }),
+      });
+      setCreateOpen(false);
+      setCreateProjectId('');
+      setCreateCost('');
+      setCreateProfit('');
+      setCreateHours('');
+      setCreateNote('');
+      await load();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : '提交失败');
+    } finally {
+      setCreateSubmitting(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (interactions.length === 0) return;
+    const headers = ['id', 'project_id', 'project_name', 'label_at_start', 'status', 'outcome', 'cost_usd', 'profit_usd', 'net_usd', 'hours_spent', 'started_at'];
+    const escapeCell = (v: unknown): string => {
+      const s = v == null ? '' : String(v);
+      const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const rows = interactions.map((r) => [
+      r.id,
+      r.project_id,
+      projectNames[r.project_id] || r.project_id,
+      r.label_at_start ?? '',
+      r.status ?? '',
+      r.outcome ?? '',
+      r.cost_usd ?? '',
+      r.profit_usd ?? '',
+      r.net_usd ?? '',
+      r.hours_spent ?? '',
+      r.started_at || r.created_at || '',
+    ]);
+    const csv = '\uFEFF' + [headers, ...rows].map((line) => line.map(escapeCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `interactions_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const matrix = useMemo(
-    () => buildMatrix(summary?.label_outcome_matrix ?? []),
+    () => buildMatrix(summary?.label_outcome ?? summary?.label_outcome_matrix ?? []),
     [summary],
   );
+  const matrixTotalSamples = matrix.reduce((acc, r) => acc + r.total, 0);
+  const matrixVerdict =
+    matrixTotalSamples === 0
+      ? '暂无已标注样本'
+      : (matrix[0]?.hitRate ?? 0) > (matrix[1]?.hitRate ?? 0)
+        ? '标签区分度健康'
+        : '样本偏少或区分度待校准';
 
   const outcomes = useMemo(() => {
     const raw = summary?.by_outcome ?? {};
@@ -243,18 +328,136 @@ export default function PortfolioPage() {
   const totalCost = summary?.total_cost_usd ?? 0;
   const totalProfit = summary?.total_profit_usd ?? 0;
   const netUsd = summary?.net_usd ?? totalProfit - totalCost;
-  const totalHours = summary?.total_hours ?? 0;
+  const totalHours = summary?.total_hours_spent ?? summary?.total_hours ?? 0;
   const activeCount = (byStatus.active ?? 0) + (byStatus.planned ?? 0);
   const doneCount = byStatus.done ?? 0;
   const abandonedCount = byStatus.abandoned ?? 0;
   const avgHours = totalInter > 0 ? (totalHours / totalInter).toFixed(1) : '—';
   const roi = totalCost > 0 ? Math.round((netUsd / totalCost) * 100) : 0;
 
+  const createModal = createOpen ? (
+    <Modal
+      onClose={() => setCreateOpen(false)}
+      title="新建参与交互记录"
+      backdropClassName="bg-black/60 backdrop-blur-sm"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-5 shadow-2xl space-y-3">
+        <div className="flex items-center justify-between border-b border-line pb-3">
+          <h3 className="text-sm font-semibold text-ink">新建参与交互记录</h3>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(false)}
+            className="rounded-lg p-1 text-ink-muted hover:bg-surface-2 hover:text-ink"
+            aria-label="关闭"
+          >
+            ✕
+          </button>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-ink-muted">项目 ID</span>
+          <input
+            type="text"
+            value={createProjectId}
+            onChange={(e) => setCreateProjectId(e.target.value)}
+            placeholder="从项目详情页 URL 复制项目 ID"
+            className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-ink-muted">状态</span>
+            <select
+              value={createStatus}
+              onChange={(e) =>
+                setCreateStatus(e.target.value as 'planned' | 'active' | 'done' | 'abandoned')
+              }
+              className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+            >
+              <option value="planned">计划中</option>
+              <option value="active">进行中</option>
+              <option value="done">已完成</option>
+              <option value="abandoned">已放弃</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-ink-muted">投入工时 (h)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={createHours}
+              onChange={(e) => setCreateHours(e.target.value)}
+              placeholder="例如 1.5"
+              className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+            />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-ink-muted">成本 (USD)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={createCost}
+              onChange={(e) => setCreateCost(e.target.value)}
+              placeholder="0"
+              className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-ink-muted">收益 (USD)</span>
+            <input
+              type="number"
+              step="0.01"
+              value={createProfit}
+              onChange={(e) => setCreateProfit(e.target.value)}
+              placeholder="可选"
+              className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+            />
+          </label>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-ink-muted">备注（禁止填写钱包地址）</span>
+          <input
+            type="text"
+            value={createNote}
+            onChange={(e) => setCreateNote(e.target.value)}
+            placeholder="例如：完成测试网跨链与领水"
+            className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink outline-none focus:border-farm"
+          />
+        </label>
+        {createError ? <p className="text-xs text-rose-400">{createError}</p> : null}
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(false)}
+            className="btn-secondary text-xs"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateInteraction}
+            disabled={createSubmitting}
+            className="btn-primary text-xs disabled:opacity-50"
+          >
+            {createSubmitting ? '提交中…' : '保存记录'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
   if (loading) {
     return (
       <>
         <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
-          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
           </button>
@@ -270,7 +473,11 @@ export default function PortfolioPage() {
     return (
       <>
         <TopBar title="参与复盘" subtitle="标签校准 · 收益分析 · 工时统计">
-          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
           </button>
@@ -334,7 +541,11 @@ export default function PortfolioPage() {
             <span>📉</span>
             <span className="hidden sm:inline">无常/清算</span>
           </button>
-          <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="btn-secondary inline-flex items-center gap-1.5"
+          >
             <Plus className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">新建记录</span>
           </button>
@@ -362,6 +573,7 @@ export default function PortfolioPage() {
         <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
         <IdentityPassportModal isOpen={identityOpen} onClose={() => setIdentityOpen(false)} />
         <ImpermanentLossModal isOpen={ilOpen} onClose={() => setIlOpen(false)} />
+        {createModal}
       </>
     );
   }
@@ -417,11 +629,20 @@ export default function PortfolioPage() {
           <span>📉</span>
           <span className="hidden sm:inline">无常/清算</span>
         </button>
-        <button type="button" className="btn-secondary inline-flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={interactions.length === 0}
+          className="btn-secondary inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
           <Download className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">导出记录</span>
         </button>
-        <button type="button" className="btn-primary inline-flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          className="btn-primary inline-flex items-center gap-1.5"
+        >
           <Plus className="h-4 w-4" strokeWidth={2} />
           <span className="hidden sm:inline">新建记录</span>
         </button>
@@ -548,7 +769,7 @@ export default function PortfolioPage() {
               })}
             </div>
             <p className="pf-matrix-foot">
-              <strong>FARM 命中率 {matrix[0]?.hitRate ?? 0}%</strong> · WATCH {matrix[1]?.hitRate ?? 0}% · IGNORE {matrix[2]?.hitRate ?? 0}% — 标签区分度健康
+              <strong>FARM 命中率 {matrix[0]?.hitRate ?? 0}%</strong> · WATCH {matrix[1]?.hitRate ?? 0}% · IGNORE {matrix[2]?.hitRate ?? 0}% — {matrixVerdict}
             </p>
           </div>
         </section>
@@ -692,6 +913,7 @@ export default function PortfolioPage() {
       <TeamStudioModal isOpen={teamStudioOpen} onClose={() => setTeamStudioOpen(false)} />
       <IdentityPassportModal isOpen={identityOpen} onClose={() => setIdentityOpen(false)} />
       <ImpermanentLossModal isOpen={ilOpen} onClose={() => setIlOpen(false)} />
+      {createModal}
     </>
   );
 }

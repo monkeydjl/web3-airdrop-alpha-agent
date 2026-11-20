@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface PassportStamp {
   id: string;
@@ -48,19 +49,21 @@ export default function IdentityPassportModal({
   const [guide, setGuide] = useState<PassportStamp[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'my_stamps' | 'guide'>('my_stamps');
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
 
   const evaluate = async (addr: string) => {
     if (!addr.trim()) return;
     setLoading(true);
     try {
       const [resEval, resGuide] = await Promise.all([
-        apiFetchEnvelope<{ data: IdentityEvaluation }>('/identity/evaluate', {
+        apiFetchEnvelope<{ data: IdentityEvaluation; data_quality?: DataQualityMeta }>('/identity/evaluate', {
           method: 'POST',
           body: JSON.stringify({ wallet_address: addr }),
         }),
         apiFetchEnvelope<{ data: { guide: PassportStamp[] } }>('/identity/stamping-guide'),
       ]);
       if (resEval?.data) setData(resEval.data);
+      if (resEval?.data_quality) setDataQuality(resEval.data_quality);
       if (resGuide?.data?.guide) setGuide(resGuide.data.guide);
     } catch (e) {
       console.error('Failed to evaluate identity', e);
@@ -84,7 +87,10 @@ export default function IdentityPassportModal({
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🪪</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">链上人机身份凭证聚合与 Gitcoin Passport 戳记提升仪</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>链上人机身份凭证聚合与 Gitcoin Passport 戳记提升仪</span>
+                <SimulatedDataBadge dataQuality={dataQuality} note="启发式凭据分估算，非 Gitcoin 官方实时分数" />
+              </h3>
               <p className="text-xs text-ink-muted">
                 聚合 Gitcoin Passport, Linea POH, EAS 与 ENS 凭证，检测 20+ 分防女巫真人及格线
               </p>

@@ -26,7 +26,10 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="flex-1 flex items-center justify-center px-4 py-16">
+    <section
+      role="alert"
+      className="flex-1 flex items-center justify-center px-4 py-16"
+    >
       <div className="card max-w-md w-full p-8 text-center">
         <div className="text-4xl mb-4" aria-hidden>
           ⚠️
@@ -49,6 +52,6 @@ export default function Error({
           </a>
         </div>
       </div>
-    </main>
+    </section>
   );
 }

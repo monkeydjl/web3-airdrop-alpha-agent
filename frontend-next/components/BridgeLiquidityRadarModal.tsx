@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface BridgePool {
   bridge_id: string;
@@ -62,10 +63,15 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
   const [simulation, setSimulation] = useState<RouteSimulation | null>(null);
   const [simulating, setSimulating] = useState(false);
 
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetchEnvelope<{ data: { bridge_pools: BridgePool[]; pegged_assets: PeggedAsset[] } }>(
+    apiFetchEnvelope<{
+      data: { bridge_pools: BridgePool[]; pegged_assets: PeggedAsset[] };
+      data_quality?: DataQualityMeta;
+    }>(
       '/bridge-liquidity/overview'
     )
       .then((res) => {
@@ -73,6 +79,7 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
           setPools(res.data.bridge_pools || []);
           setPeggedAssets(res.data.pegged_assets || []);
         }
+        if (res?.data_quality) setDataQuality(res.data_quality);
       })
       .catch((err) => console.error('Failed to load bridge overview', err))
       .finally(() => setLoading(false));
@@ -114,7 +121,10 @@ export default function BridgeLiquidityRadarModal({ isOpen, onClose }: BridgeLiq
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">💎</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">跨链桥流动性枯竭与脱锚风险雷达</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>跨链桥流动性枯竭与脱锚风险雷达</span>
+                <SimulatedDataBadge dataQuality={dataQuality} />
+              </h3>
               <p className="text-xs text-ink-muted">
                 实时监控目标链储备深度、大额跨链滑点冲击、排队拥堵与 LRT / 稳定币脱锚风险
               </p>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 import { safeExternalUrl } from '@/lib/format';
 import { ArrowRight, ArrowRightLeft, ExternalLink, ShieldCheck, Sparkles } from 'lucide-react';
 
@@ -64,10 +65,16 @@ export function BridgeOptimizerPanel() {
     }
   }, []);
 
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
+
   const calculateRoute = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetchEnvelope<{ ok: boolean; data: BridgeRouteResult }>('/bridge/route', {
+      const res = await apiFetchEnvelope<{
+        ok: boolean;
+        data: BridgeRouteResult;
+        data_quality?: DataQualityMeta;
+      }>('/bridge/route', {
         method: 'POST',
         body: JSON.stringify({
           source_chain: sourceChain,
@@ -78,6 +85,9 @@ export function BridgeOptimizerPanel() {
       });
       if (res?.data) {
         setResult(res.data);
+      }
+      if (res?.data_quality) {
+        setDataQuality(res.data_quality);
       }
     } catch {
       // non-blocking
@@ -102,12 +112,13 @@ export function BridgeOptimizerPanel() {
       {/* 头部标题与省钱横幅 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-line pb-4">
         <div>
-          <h2 className="text-sm font-bold text-ink flex items-center gap-2">
+          <h2 className="text-sm font-bold text-ink flex items-center gap-2 flex-wrap">
             <span className="text-brand-400">🔀</span>
             <span>全链跨链路由与低磨损资金规划器</span>
             <span className="badge bg-brand-500/15 text-brand-400 border border-brand-500/30 text-[10px]">
               省手续费 ~{result?.savings_percentage || 75}%
             </span>
+            <SimulatedDataBadge dataQuality={dataQuality} note="静态费率表估算，非实时链上报价" />
           </h2>
           <p className="text-xs text-ink-muted mt-0.5">
             实时比对 Across、Stargate、Orbiter 等头部跨链桥，计算极低磨损归集路径与防女巫分批打散策略

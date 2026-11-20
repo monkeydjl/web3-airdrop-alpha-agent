@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface PaymasterCampaign {
   campaign_id: string;
@@ -33,14 +34,19 @@ export default function PaymasterSponsorModal({ isOpen, onClose }: PaymasterSpon
   const [testAddress, setTestAddress] = useState('0x71c505ea5815a5bb182f25b290919ea0ff4d3204');
   const [simResult, setSimResult] = useState<string | null>(null);
 
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    apiFetchEnvelope<{ data: { sponsorships: PaymasterCampaign[] } }>('/paymaster/active-sponsorships')
+    apiFetchEnvelope<{ data: { sponsorships: PaymasterCampaign[] }; data_quality?: DataQualityMeta }>(
+      '/paymaster/active-sponsorships',
+    )
       .then((res) => {
         if (res?.data?.sponsorships) {
           setCampaigns(res.data.sponsorships);
         }
+        if (res?.data_quality) setDataQuality(res.data_quality);
       })
       .catch((err) => console.error('Failed to load paymaster sponsorships', err))
       .finally(() => setLoading(false));
@@ -76,7 +82,10 @@ export default function PaymasterSponsorModal({ isOpen, onClose }: PaymasterSpon
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🛰️</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">账户抽象 EIP-4337 全链 Gas 赞助与 Paymaster 零成本雷达</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>账户抽象 EIP-4337 全链 Gas 赞助与 Paymaster 零成本雷达</span>
+                <SimulatedDataBadge dataQuality={dataQuality} note="演示赞助清单与规则模拟，不提交链上交易" />
+              </h3>
               <p className="text-xs text-ink-muted">
                 实时探测全网 100% 免 Gas 交互项目，打卡签到、DEX Swap 与勋章铸造零摩擦执行
               </p>

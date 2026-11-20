@@ -265,6 +265,7 @@ export default function OpsPage() {
     total_cost_usd?: number;
     total_profit_usd?: number;
     net_usd?: number;
+    total_hours_spent?: number;
     total_hours?: number;
   } | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
@@ -361,6 +362,7 @@ export default function OpsPage() {
           total_cost_usd?: number;
           total_profit_usd?: number;
           net_usd?: number;
+          total_hours_spent?: number;
           total_hours?: number;
         }>('/interactions/summary').catch((err: unknown) => {
           setPartialError((prev) => [...prev, '成本汇总加载失败']);
@@ -913,8 +915,14 @@ export default function OpsPage() {
             <Kv k="记录数" v={ixSummary?.total ?? 0} />
             <Kv k="总成本" v={formatUsd(ixSummary?.total_cost_usd)} />
             <Kv k="总收益" v={formatUsd(ixSummary?.total_profit_usd)} />
-            <Kv k="净额" v={formatUsd(ixSummary?.net_usd)} />
-            <Kv k="总工时" v={`${(ixSummary?.total_hours ?? 0).toFixed(1)} h`} />
+            <Kv
+              k="净额"
+              v={formatUsd(
+                ixSummary?.net_usd ??
+                  (ixSummary ? (ixSummary.total_profit_usd ?? 0) - (ixSummary.total_cost_usd ?? 0) : undefined),
+              )}
+            />
+            <Kv k="总工时" v={`${(ixSummary?.total_hours_spent ?? ixSummary?.total_hours ?? 0).toFixed(1)} h`} />
           </section>
 
           <section className="ops-card p-4 sm:p-5">
