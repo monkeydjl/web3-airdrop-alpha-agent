@@ -52,6 +52,13 @@ logger = structlog.get_logger(__name__)
 
 _TIMEOUT = 5.0
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; airdrop-alpha/1.0; site-probe)"}
+_MAX_CONCURRENT_PROBES = 20
+
+# NAT64 转换前缀（RFC 6052 / RFC 8215）可能把 IPv6 地址映射到内网 IPv4，必须显式拦截
+_NAT64_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("64:ff9b:1::/48"),
+)
 
 # 判定 verdict 的三个取值
 _OK = "ok"
@@ -85,24 +92,38 @@ class BlockedTargetError(Exception):
     """探测目标解析到非公网地址（回环/内网/链路本地/云元数据），按 SSRF 拒绝。"""
 
 
+def _is_safe_public_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """严格判定解析后的 IP 是否可安全访问（拦截内网、回环、链路本地、云元数据、NAT64 与映射 IPv4）。"""
+    if not addr.is_global:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address):
+        if any(addr in net for net in _NAT64_NETWORKS):
+            return False
+        if addr.ipv4_mapped is not None and not addr.ipv4_mapped.is_global:
+            return False
+    return True
+
+
 async def _reject_non_public_target(request: httpx.Request) -> None:
     """httpx request hook：每一跳（含 30x 重定向）发出前校验目标解析到公网地址。
 
     vitals 探的是项目官网，URL 来自外部采集数据，无法套用静态域名白名单；
     这里改为按**解析后的 IP**拦截，防止 `http://169.254.169.254/`、
-    `http://localhost:8002/` 或「公网地址 302 跳内网」这类 SSRF。
-    已知边界：解析与连接之间存在 DNS rebinding 窗口，本钩子不覆盖。
+    `http://localhost:8002/`、NAT64 或「公网地址 302 跳内网」这类 SSRF。
+    DNS 解析失败时按 fail-closed 拒绝，避免代理/底层解析器绕过校验。
     """
     host = request.url.host
     if not host:
         raise BlockedTargetError("<empty host>")
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, None)
-    except socket.gaierror:
-        return  # 解析失败交给 httpx 自己报 ConnectError → unknown
+    except socket.gaierror as exc:
+        raise BlockedTargetError(f"{host} (dns_failed)") from exc
+    if not infos:
+        raise BlockedTargetError(f"{host} (no_dns_records)")
     for info in infos:
         addr = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
-        if not addr.is_global:
+        if not _is_safe_public_ip(addr):
             raise BlockedTargetError(host)
 
 
@@ -113,13 +134,20 @@ async def probe_site(url: str) -> tuple[str, int | None]:
         follow_redirects=True,
         timeout=timeout,
         headers=_UA,
+        trust_env=False,
         event_hooks={"request": [_reject_non_public_target]},
     ) as client:
         try:
             resp = await client.head(url)
-            if resp.status_code == 405:
-                resp = await client.get(url)
             code = resp.status_code
+            if code == 405:
+                # 流式只取状态码与响应头，绝不拉取整个响应体（防大体积响应 DoS）
+                if hasattr(client, "stream"):
+                    async with client.stream("GET", url) as get_resp:
+                        code = get_resp.status_code
+                else:
+                    get_resp = await client.get(url)
+                    code = get_resp.status_code
             # 401/403: 拦 bot（Cloudflare 之类），站活着，只是数据源不受欢迎；
             # 429: 被限流 —— 服务器明确回了「在的，但你别太快」，同样不算死
             if code in (401, 403, 429):
@@ -152,16 +180,22 @@ async def run_vitals_probe(repo: ProjectRepository | None = None) -> dict[str, i
     repo = repo or ProjectRepository()
     stats = {"probed": 0, "changed": 0, "down": 0, "skipped_no_url": 0, "inconclusive": 0}
 
-    rows: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        batch, _total = repo.list_projects(page=page, page_size=100)
-        if not batch:
-            break
-        rows.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
+    use_thread = getattr(repo, "_conn", None) is None
+
+    def _load_all_rows() -> list[dict[str, Any]]:
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            batch, _total = repo.list_projects(page=page, page_size=100)
+            if not batch:
+                break
+            collected.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return collected
+
+    rows = await asyncio.to_thread(_load_all_rows) if use_thread else _load_all_rows()
 
     pending: list[tuple[str, str, bool | None]] = []  # (project_id, url, prev alive)
     for row in rows:
@@ -179,14 +213,18 @@ async def run_vitals_probe(repo: ProjectRepository | None = None) -> dict[str, i
                 prev = None
         pending.append((str(row["id"]), str(url), prev))
 
-    async def _one(pid: str, url: str) -> tuple[str, str, int | None]:
-        verdict, status = await probe_site(url)
-        return pid, verdict, status
+    sem = asyncio.Semaphore(_MAX_CONCURRENT_PROBES)
 
-    # 多个探测并行；总数是量级不大的几百，5s 超时 + httpx 贴跑很轻松
+    async def _one(pid: str, url: str) -> tuple[str, str, int | None]:
+        async with sem:
+            verdict, status = await probe_site(url)
+            return pid, verdict, status
+
+    # 多个探测并行，但用信号量限制并发上限，避免大库全量探测耗尽文件描述符
     results = await asyncio.gather(*[_one(pid, url) for pid, url, _ in pending])
 
     now = datetime.now(UTC).isoformat()
+    updates: list[tuple[str, dict[str, Any]]] = []
     for (pid, _url, prev), (_pid, verdict, http_status) in zip(pending, results, strict=True):
         if verdict == _UNKNOWN:
             stats["inconclusive"] += 1
@@ -198,14 +236,26 @@ async def run_vitals_probe(repo: ProjectRepository | None = None) -> dict[str, i
         if prev == alive:
             continue  # 状态没变，忍住不写库
         stats["changed"] += 1
-        repo.update_meta_signals(
-            pid,
-            {
-                "site_alive": alive,
-                "site_http_status": http_status,
-                "site_checked_at": now,
-            },
+        updates.append(
+            (
+                pid,
+                {
+                    "site_alive": alive,
+                    "site_http_status": http_status,
+                    "site_checked_at": now,
+                },
+            )
         )
+
+    def _apply_updates() -> None:
+        for pid, payload in updates:
+            repo.update_meta_signals(pid, payload)
+
+    if updates:
+        if use_thread:
+            await asyncio.to_thread(_apply_updates)
+        else:
+            _apply_updates()
 
     logger.info(
         "vitals.probe_completed",

@@ -891,6 +891,8 @@ class Settings(BaseSettings):
             # 就是真实生效值 —— 不留"配置说开着、实际关着"的落差。
             self.seed_on_startup = False
             self.seed_fallback_enabled = False
+            # 生产环境强制关闭 debug 模式（防止 Swagger/详细堆栈与热重载相关调试路径误开）
+            self.debug = False
 
             errors: list[str] = []
             # 按解析后的列表判断：原先只比较整串是否等于 "*"，于是 "*,*" 或
@@ -912,11 +914,27 @@ class Settings(BaseSettings):
             if self.host == "0.0.0.0" and not api_key:
                 errors.append("生产环境绑定 0.0.0.0 时必须设置 API_KEY")
 
-            # P1-3：生产环境 AUTH_TOKEN_SECRET 必须设置（匿名 token 才稳定）
-            if not self.auth_token_secret:
+            # P1-3 / P2-1：生产环境 AUTH_TOKEN_SECRET 必须设置且达到安全强度（>=32 字符、非弱占位符）
+            auth_secret = (self.auth_token_secret or "").strip()
+            if not auth_secret:
                 errors.append(
                     "生产环境必须设置 AUTH_TOKEN_SECRET（匿名 token 每次重启后失效；"
                     "建议用 secrets.token_urlsafe(48) 生成固定值）"
+                )
+            elif auth_secret.lower() in _WEAK_DB_PASSWORDS or len(auth_secret) < MIN_PRODUCTION_API_KEY_LENGTH:
+                errors.append(
+                    f"生产环境 AUTH_TOKEN_SECRET 长度必须 >= {MIN_PRODUCTION_API_KEY_LENGTH} 且不得为弱占位符"
+                    f"（当前 {len(auth_secret)}）"
+                )
+
+            # 若显式配置了 JWT_SECRET，同样必须满足长度与非弱口令要求
+            jwt_secret = (self.jwt_secret or "").strip()
+            if jwt_secret and (
+                jwt_secret.lower() in _WEAK_DB_PASSWORDS or len(jwt_secret) < MIN_PRODUCTION_API_KEY_LENGTH
+            ):
+                errors.append(
+                    f"生产环境 JWT_SECRET 长度必须 >= {MIN_PRODUCTION_API_KEY_LENGTH} 且不得为弱占位符"
+                    f"（当前 {len(jwt_secret)}）"
                 )
 
             # cors_origins 的默认值是 localhost（见字段定义）。生产忘配就会把真实

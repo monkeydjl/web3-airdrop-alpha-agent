@@ -222,8 +222,37 @@ async def receive_alchemy_webhook(
             },
         )
 
-    # Read raw body for signature verification
-    body = await request.body()
+    # Read raw body with strict size cap (1MB) before signature verification to prevent memory DoS
+    max_body_bytes = 1 * 1024 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > max_body_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "ok": False,
+                "error": {
+                    "code": "PAYLOAD_TOO_LARGE",
+                    "message": "Webhook payload exceeds 1MB limit",
+                },
+            },
+        )
+    body_chunks: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > max_body_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "ok": False,
+                    "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Webhook payload exceeds 1MB limit",
+                    },
+                },
+            )
+        body_chunks.append(chunk)
+    body = b"".join(body_chunks)
 
     # Verify signature
     if not _verify_signature(body, x_alchemy_signature, signing_key):
