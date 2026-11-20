@@ -272,10 +272,12 @@ def calculate_persona_score(
 
     final_score = round(min(100.0, max(0.0, weighted_score + bonus)))
 
-    # 根据重算后的分数推导标签
-    if final_score >= 65:
+    # 根据重算后的分数推导标签（阈值与 scorer.LABEL_THRESHOLDS 同源）
+    from app.agents.scorer import LABEL_THRESHOLDS
+
+    if final_score >= LABEL_THRESHOLDS[0][0]:
         final_label = "FARM"
-    elif final_score >= 50:
+    elif final_score >= LABEL_THRESHOLDS[1][0]:
         final_label = "WATCH"
     else:
         final_label = "IGNORE"

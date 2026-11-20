@@ -7,7 +7,6 @@ reads Settings. Reuses ``observation_from_snapshot`` for reconstruction.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Final
 
 import structlog
@@ -23,7 +22,10 @@ from app.opportunity.economic_models import (
     build_evidence_id,
 )
 from app.opportunity.economic_repository import EconomicSnapshotRepository
-from app.opportunity.economic_writer import observation_from_snapshot
+from app.opportunity.economic_writer import (
+    _ECONOMIC_SNAPSHOT_TTL,
+    observation_from_snapshot,
+)
 from app.opportunity.models import EvidenceRecord
 from app.opportunity.repository import (
     EconomicEvidenceContentConflict,
@@ -32,7 +34,7 @@ from app.opportunity.repository import (
 
 logger = structlog.get_logger(__name__)
 
-_TTL = timedelta(hours=48)
+_TTL = _ECONOMIC_SNAPSHOT_TTL  # 单一出处：economic_writer（写侧权威）
 
 # Closed factor keys per provider (whitelist only; values already canonical).
 _PROVIDER_FACTOR_WHITELIST: Final[dict[str, frozenset[str]]] = {
