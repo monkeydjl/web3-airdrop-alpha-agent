@@ -4,12 +4,27 @@
 提供免 Key 快速体检、安全评分与撤销 (Revoke) 指引。
 """
 
+import re
 import urllib.parse
 from typing import Any
 
 import structlog
 
+from app.collectors.base import safe_collector_client
+from app.config import settings
+
 logger = structlog.get_logger(__name__)
+
+_EVM_ADDR_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+_GOPLUS_BASE_URL = "https://api.gopluslabs.io/api/v1"
+_CHAIN_NAMES = {
+    "1": "Ethereum",
+    "42161": "Arbitrum One",
+    "8453": "Base",
+    "10": "OP Mainnet",
+    "137": "Polygon PoS",
+    "56": "BNB Chain",
+}
 
 
 def check_domain_safety(url: str) -> dict[str, Any]:
@@ -170,3 +185,167 @@ def scan_dust_poison_tokens(wallet_address: str) -> dict[str, Any]:
         "poison_tokens": sample_poison_tokens,
         "warning": "切勿访问此类代币名称中注明的网址，切勿授权任何签名，忽视即可！",
     }
+
+
+def _live_queries_enabled(allow_live: bool | None) -> bool:
+    if allow_live is not None:
+        return allow_live
+    return settings.app_env not in ("test", "testing")
+
+
+async def scan_token_approvals_live(
+    wallet_address: str,
+    chain_id: str = "1",
+    *,
+    allow_live: bool | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """优先调用 GoPlus Security 公开 API 扫描真实链上 ERC-20 授权风险；失败/离线时回退静态样本。"""
+    addr = wallet_address.strip().lower()
+    if not _live_queries_enabled(allow_live) or not _EVM_ADDR_RE.match(addr):
+        return scan_token_approvals(wallet_address), False
+
+    url = f"{_GOPLUS_BASE_URL}/approval_security/{chain_id}"
+    try:
+        async with safe_collector_client(timeout=4.0) as client:
+            resp = await client.get(url, params={"addresses": addr})
+            resp.raise_for_status()
+            payload = resp.json()
+        if not isinstance(payload, dict) or str(payload.get("code")) != "1":
+            return scan_token_approvals(wallet_address), False
+
+        raw_result = payload.get("result")
+        tokens = raw_result if isinstance(raw_result, list) else []
+        network_name = _CHAIN_NAMES.get(str(chain_id), f"Chain {chain_id}")
+        approvals: list[dict[str, Any]] = []
+        for token_entry in tokens:
+            if not isinstance(token_entry, dict):
+                continue
+            token_symbol = str(token_entry.get("token_symbol") or token_entry.get("token_name") or "ERC20")
+            approved_list = token_entry.get("approved_list") or []
+            if not isinstance(approved_list, list):
+                continue
+            for ap in approved_list:
+                if not isinstance(ap, dict):
+                    continue
+                amount_str = str(ap.get("approved_amount") or "")
+                is_unlimited = amount_str.lower() == "unlimited" or (amount_str.isdigit() and len(amount_str) >= 30)
+                raw_addr_info = ap.get("address_info")
+                addr_info: dict[str, Any] = raw_addr_info if isinstance(raw_addr_info, dict) else {}
+                is_malicious = bool(
+                    ap.get("malicious_address") or addr_info.get("malicious_address") or addr_info.get("phishing_site")
+                )
+                is_verified = bool(addr_info.get("is_open_source", 1)) and not is_malicious
+                risk_tier = (
+                    "high"
+                    if is_malicious or (is_unlimited and not is_verified)
+                    else ("medium" if is_unlimited else "low")
+                )
+                approvals.append(
+                    {
+                        "network": network_name,
+                        "token": token_symbol,
+                        "spender_name": str(
+                            addr_info.get("contract_name") or ap.get("approved_contract") or "Unknown Contract"
+                        ),
+                        "spender_address": str(ap.get("approved_contract") or ""),
+                        "allowance": "Unlimited (无限额)" if is_unlimited else (amount_str or "Limited"),
+                        "risk_tier": risk_tier,
+                        "is_unlimited": is_unlimited,
+                        "is_verified_spender": is_verified,
+                    }
+                )
+
+        unlimited_count = sum(1 for a in approvals if a["is_unlimited"])
+        unverified_count = sum(1 for a in approvals if not a["is_verified_spender"])
+        high_risk_count = sum(1 for a in approvals if a["risk_tier"] == "high")
+
+        score = max(15, min(100, 100 - 25 * high_risk_count - 15 * unverified_count - 5 * unlimited_count))
+        if score >= 85:
+            risk_status, risk_status_zh = "healthy", "健康良好"
+        elif score >= 60:
+            risk_status, risk_status_zh = "moderate_risk", "存在风险 (建议撤销未审计授权)"
+        else:
+            risk_status, risk_status_zh = "high_risk", "高危暴露 (存在恶意或未知合约无限授权)"
+
+        return (
+            {
+                "wallet_address": addr,
+                "security_score": score,
+                "risk_status": risk_status,
+                "risk_status_zh": risk_status_zh,
+                "unlimited_allowances_count": unlimited_count,
+                "unverified_spenders_count": unverified_count,
+                "approvals": approvals,
+                "revoke_url": f"https://revoke.cash/address/{addr}",
+                "data_source": "goplus_live",
+                "recommendation": (
+                    "检测到高危或未验证合约无限授权，请立即通过 Revoke.cash 撤销对应授权！"
+                    if high_risk_count > 0 or unverified_count > 0
+                    else "当前链上未发现高危恶意授权，建议保持定期检查 Revoke 习惯。"
+                ),
+            },
+            True,
+        )
+    except Exception:
+        return scan_token_approvals(wallet_address), False
+
+
+async def scan_dust_poison_tokens_live(
+    wallet_address: str,
+    chain_id: str = "1",
+    *,
+    allow_live: bool | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """优先调用 GoPlus Address Security 公开 API 排查恶意/钓鱼关联风险；失败/离线时回退静态样本。"""
+    addr = wallet_address.strip().lower()
+    if not _live_queries_enabled(allow_live) or not _EVM_ADDR_RE.match(addr):
+        return scan_dust_poison_tokens(wallet_address), False
+
+    url = f"{_GOPLUS_BASE_URL}/address_security/{addr}"
+    try:
+        async with safe_collector_client(timeout=4.0) as client:
+            resp = await client.get(url, params={"chain_id": chain_id})
+            resp.raise_for_status()
+            payload = resp.json()
+        if not isinstance(payload, dict) or str(payload.get("code")) != "1":
+            return scan_dust_poison_tokens(wallet_address), False
+
+        raw_addr_result = payload.get("result")
+        result: dict[str, Any] = raw_addr_result if isinstance(raw_addr_result, dict) else {}
+        flag_descriptions = {
+            "phishing_activities": "存在钓鱼攻击关联标记",
+            "stealing_attack": "存在盗币/Drainer 攻击关联标记",
+            "malicious_mining_activities": "存在恶意挖矿关联标记",
+            "blackmail_activities": "存在勒索地址关联标记",
+            "honeypot_related_address": "存在蜜罐合约关联标记",
+            "fake_token": "存在伪造/下毒代币关联标记",
+        }
+        network_name = _CHAIN_NAMES.get(str(chain_id), f"Chain {chain_id}")
+        findings: list[dict[str, Any]] = []
+        for flag, desc in flag_descriptions.items():
+            if str(result.get(flag) or "0") == "1":
+                findings.append(
+                    {
+                        "token_symbol": flag.upper(),
+                        "network": network_name,
+                        "balance": "flagged",
+                        "risk": desc,
+                        "phishing_url": "",
+                    }
+                )
+        return (
+            {
+                "wallet_address": addr,
+                "poison_tokens_detected": len(findings),
+                "poison_tokens": findings,
+                "data_source": "goplus_live",
+                "warning": (
+                    "GoPlus 实时风控检测到高危安全标记，切勿继续授权或向该地址转入大额资产！"
+                    if findings
+                    else "GoPlus 实时风控未发现该地址的已知钓鱼/下毒恶意标记（仍请警惕不明空投代币链接）。"
+                ),
+            },
+            True,
+        )
+    except Exception:
+        return scan_dust_poison_tokens(wallet_address), False

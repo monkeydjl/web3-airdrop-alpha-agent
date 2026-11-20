@@ -58,6 +58,18 @@ def mark_simulated(
     return payload
 
 
+def mark_real(
+    payload: dict[str, Any],
+    note: str | None = None,
+) -> dict[str, Any]:
+    """在响应体顶层写入真实实时数据 ``data_quality`` 标记（in-place 修改并返回）。"""
+    payload["data_quality"] = {
+        "quality": DATA_QUALITY_REAL,
+        "note": note or "来自实时链上或公开 API 查询结果。",
+    }
+    return payload
+
+
 def mark_simulated_list_response(
     items: list[dict[str, Any]] | list[Any],
     note: str | None = None,
