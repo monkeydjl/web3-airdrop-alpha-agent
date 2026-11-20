@@ -104,8 +104,14 @@ def compare_wallet_with_whale(
     r_balance = min(1.0, user_retained_eth / max(0.001, bm["retained_balance_eth_required"]))
 
     # 综合匹配得分 (0 - 100)
+    # 下限钳制（深审 P3-12）：负数直调输入会让 ratio 为负 → 负分；
+    # router 层 ge=0 只保护 HTTP 面，函数直调不在其内。
     composite_score = round(
-        (r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100, 1
+        max(
+            0.0,
+            (r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100,
+        ),
+        1,
     )
 
     gap_details = [

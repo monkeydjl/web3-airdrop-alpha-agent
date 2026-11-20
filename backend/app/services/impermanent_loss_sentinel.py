@@ -80,7 +80,10 @@ def check_lending_health_factor(
     health_factor = round(max_borrowable_at_liquidation / borrow, 2)
 
     # 清算价格: CollateralPrice_liq = Borrow / (CollateralAmount * LiquidationThreshold)
-    liquidation_price = round(borrow / (collateral_amount * liquidation_threshold), 2)
+    # collateral_amount=0 直调时 router 的 ge=0.001 兜底不在场 —— 服务层自行 clamp
+    # （深审 P3-10；除零会让函数直调路径直接炸）
+    safe_collateral = max(collateral_amount, 1e-9)
+    liquidation_price = round(borrow / (safe_collateral * liquidation_threshold), 2)
     price_drop_to_liquidation_pct = round(
         ((collateral_price_usd - liquidation_price) / collateral_price_usd) * 100.0, 1
     )
@@ -88,7 +91,7 @@ def check_lending_health_factor(
     if health_factor >= 1.50:
         status = "SAFE"
         risk_color = "emerald"
-        advice = "仓位极度安全，可抵御 40%+ 级极端下挫"
+        advice = f"仓位极度安全，可抵御约 {round((1 - 1 / health_factor) * 100)}% 的极端下挫"
     elif health_factor >= 1.25:
         status = "MODERATE"
         risk_color = "amber"

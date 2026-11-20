@@ -170,7 +170,10 @@ def get_upcoming_unlocks(
 def get_project_unlock_details(project_id: str) -> dict[str, Any] | None:
     """根据项目 ID 查询其专属代币解锁详情与抛压建议."""
     pid = project_id.lower().strip()
+    # 精确匹配优先；子串匹配仅接受**词边界**（整词起头）——单字母 "t" 此前
+    # 会命中 "celestia"（深审 P3-16）。
     for u in _INITIAL_UNLOCKS:
-        if u["project_id"] == pid or pid in u["project_id"]:
+        upid = u["project_id"].lower()
+        if pid == upid or (pid and upid.startswith(pid) and not pid.isalpha()):
             return u
     return None
