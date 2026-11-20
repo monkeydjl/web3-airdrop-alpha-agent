@@ -191,7 +191,8 @@ class TestRunAutoPath:
                 "name": "MarkMe",
                 "slug": "mark-me",
                 "tvl": 5_000_000,
-                "change_7d": 0.25,
+                # DefiLlama HTTP `/protocols` returns percentage points (25.0 = +25%)
+                "change_7d": 25.0,
                 "category": "L2",
                 "chains": ["Ethereum"],
                 "url": "https://markme.example.com",
@@ -218,7 +219,8 @@ class TestRunAutoPath:
                 "name": "AutoRun",
                 "slug": "auto-run",
                 "tvl": 8_000_000,
-                "change_7d": 0.3,
+                # DefiLlama HTTP `/protocols` returns percentage points (30.0 = +30%)
+                "change_7d": 30.0,
                 "category": "DeFi",
                 "chains": ["Ethereum", "Base"],
                 "url": "https://autorun.example.com",

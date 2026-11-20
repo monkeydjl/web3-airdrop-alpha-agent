@@ -186,8 +186,11 @@ def is_noise_protocol(protocol: dict[str, Any]) -> bool:
 def is_noise_raw_project(name: str, sector: str | None = None, raw_data: dict[str, Any] | None = None) -> bool:
     """Analysis queue helper from name + optional raw_data."""
     raw = raw_data or {}
+    resolved_name = (name or str(raw.get("name") or "")).strip()
+    if resolved_name.lower() in ("", "unknown", "unnamed", "n/a", "none"):
+        return True
     return is_noise_project(
-        name=name or str(raw.get("name") or ""),
+        name=resolved_name,
         slug=str(raw.get("slug") or ""),
         category=str(raw.get("category") or sector or raw.get("sector") or ""),
         parent=str(raw.get("parentProtocol") or raw.get("parent") or ""),

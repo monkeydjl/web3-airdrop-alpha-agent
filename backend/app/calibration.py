@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -91,6 +92,8 @@ class CalibrationSample:
     signal: str  # feedback.signal，或 roi_outcomes 派生时的事件名
     outcome: str | None  # feedback.outcome
     source: SampleSource = SOURCE_LIVE
+    veto: str | None = None
+    confidence: float = 1.0
 
 
 @dataclass
@@ -143,6 +146,46 @@ def _outcome_to_label(outcome: str) -> ScoreLabel | None:
     return mapping.get(outcome)
 
 
+_DIRECTIVE_LABEL_RE = re.compile(
+    r"(?:should\s+be|correct[_\s]*label\s*[:=]?|target\s*[:=]?|->|=>|→|应为|改为|标为|判为)\s*(FARM|WATCH|IGNORE)\b",
+    re.IGNORECASE,
+)
+_STANDALONE_LABEL_RE = re.compile(r"\b(FARM|WATCH|IGNORE)\b", re.IGNORECASE)
+_NEGATION_BEFORE_RE = re.compile(
+    r"(?:\b(?:not|no|never|isn'?t|is\s+not|non)\s+|(?:不是|非|并非|别标)\s*)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_label_from_note(note: str) -> ScoreLabel | None:
+    """从 wrong_label 备注中解析目标真实标签，避免否定措辞（如 'Not FARM, should be IGNORE'）反判。"""
+    if not note:
+        return None
+    directive_matches = list(_DIRECTIVE_LABEL_RE.finditer(note))
+    if directive_matches:
+        token = directive_matches[-1].group(1).upper()
+        if token == LABEL_FARM:
+            return LABEL_FARM
+        if token == LABEL_WATCH:
+            return LABEL_WATCH
+        if token == LABEL_IGNORE:
+            return LABEL_IGNORE
+
+    positive_matches: list[ScoreLabel] = []
+    for match in _STANDALONE_LABEL_RE.finditer(note):
+        prefix = note[max(0, match.start() - 24) : match.start()]
+        if _NEGATION_BEFORE_RE.search(prefix):
+            continue
+        token = match.group(1).upper()
+        if token == LABEL_FARM:
+            positive_matches.append(LABEL_FARM)
+        elif token == LABEL_WATCH:
+            positive_matches.append(LABEL_WATCH)
+        elif token == LABEL_IGNORE:
+            positive_matches.append(LABEL_IGNORE)
+    return positive_matches[-1] if positive_matches else None
+
+
 def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
     """从 DB 提取校准样本。
 
@@ -158,7 +201,7 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
     rows = conn.execute(
         """
         SELECT f.project_id, f.signal, f.outcome, f.note, f.user_id,
-               p.sub_scores, p.label, p.score, p.source
+               p.sub_scores, p.label, p.score, p.source, p.veto, p.confidence
         FROM feedback f
         JOIN projects p ON f.project_id = p.id
         WHERE (f.signal = 'wrong_label' AND f.note IS NOT NULL)
@@ -174,7 +217,6 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
         project_id = row["project_id"]
         if project_id in seen:
             continue
-        seen.add(project_id)
 
         sub_scores_raw = row["sub_scores"]
         if not sub_scores_raw:
@@ -194,13 +236,7 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
         # 确定真实标签
         true_label: Literal["FARM", "WATCH", "IGNORE"] | None = None
         if signal == "wrong_label":
-            # correct_label 存在 note 字段（feedback 表无独立列）
-            # 实际可能从 note 或单独的 correct_label 列读取
-            note = row["note"] or ""
-            for label in (LABEL_FARM, LABEL_WATCH, LABEL_IGNORE):
-                if label.lower() in note.lower():
-                    true_label = label
-                    break
+            true_label = _parse_label_from_note(row["note"] or "")
 
         if true_label is None and outcome:
             true_label = _outcome_to_label(outcome)
@@ -208,10 +244,13 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
         if true_label is None:
             continue
 
+        seen.add(project_id)
+
         # 历史回溯标注是回测样本，不是真实使用留痕（ACTION_LOOP_DESIGN §4.3）。
         # 此前只看 signal/outcome，把 historical_backfill 的 50 条全部算进 live 桶，
         # 等于用历史数据冒充当前分布、白送门禁进度。
         is_backfill = (row["source"] or "") == "historical_backfill" or (row["user_id"] or "") == "historical_backfill"
+        conf_val = row["confidence"]
         samples.append(
             CalibrationSample(
                 project_id=project_id,
@@ -221,6 +260,8 @@ def extract_samples(conn: DbConnection) -> list[CalibrationSample]:
                 signal=signal,
                 outcome=outcome,
                 source=SOURCE_BACKTEST if is_backfill else SOURCE_LIVE,
+                veto=row["veto"],
+                confidence=float(conf_val) if conf_val is not None else 1.0,
             ),
         )
 
@@ -257,7 +298,7 @@ def extract_roi_samples(
     excluded = exclude_project_ids or set()
     rows = conn.execute(
         """
-        SELECT o.project_id, o.event, o.source, p.sub_scores, p.label
+        SELECT o.project_id, o.event, o.source, p.sub_scores, p.label, p.veto, p.confidence
         FROM roi_outcomes o
         JOIN projects p ON o.project_id = p.id
         WHERE o.event IN ('airdrop_received', 'airdrop_missed')
@@ -287,6 +328,7 @@ def extract_roi_samples(
             # 已经有"领到了"的样本，不让"未领到"把它盖掉
             continue
 
+        conf_val = row["confidence"]
         chosen[project_id] = CalibrationSample(
             project_id=project_id,
             subscores=subscores,
@@ -295,6 +337,8 @@ def extract_roi_samples(
             signal=event,
             outcome=event,
             source=SOURCE_BACKTEST if row["source"] == "backtest" else SOURCE_LIVE,
+            veto=row["veto"],
+            confidence=float(conf_val) if conf_val is not None else 1.0,
         )
 
     return list(chosen.values())
@@ -392,13 +436,27 @@ def recompute_score(subscores: dict[str, float], weights: dict[str, float]) -> i
     return round(max(0.0, min(100.0, total)))
 
 
-def recompute_label(subscores: dict[str, float], weights: dict[str, float]) -> str:
-    """用给定权重重算标签。"""
+def recompute_label(
+    subscores: dict[str, float],
+    weights: dict[str, float],
+    *,
+    veto: str | None = None,
+    confidence: float = 1.0,
+) -> str:
+    """用给定权重重算标签（同步重放资格门 veto 与低置信度降级规则）。"""
     score = recompute_score(subscores, weights)
-    for threshold, label in LABEL_THRESHOLDS:
+    label = LABEL_IGNORE
+    for threshold, candidate in LABEL_THRESHOLDS:
         if score >= threshold:
-            return label
-    return LABEL_IGNORE
+            label = candidate
+            break
+    if veto in ("already_launched", "explicit_no_airdrop"):
+        return LABEL_IGNORE
+    if veto == "no_participation_path" and label == LABEL_FARM:
+        label = LABEL_WATCH
+    if confidence < 0.5 and label == LABEL_FARM:
+        label = LABEL_WATCH
+    return label
 
 
 def compute_j(samples: list[CalibrationSample], weights: dict[str, float]) -> dict[str, float]:
@@ -409,7 +467,7 @@ def compute_j(samples: list[CalibrationSample], weights: dict[str, float]) -> di
     tp = fp = fn = tn = 0
 
     for s in samples:
-        predicted = recompute_label(s.subscores, weights)
+        predicted = recompute_label(s.subscores, weights, veto=s.veto, confidence=s.confidence)
         actual = s.true_label
 
         if predicted == LABEL_FARM and actual == LABEL_FARM:

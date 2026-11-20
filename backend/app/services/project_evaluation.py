@@ -11,6 +11,8 @@ Orchestrates full re-evaluation for a single project:
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import Any
 
 import structlog
@@ -18,6 +20,7 @@ import structlog
 from app.agents.base import AgentContext, RawProject
 from app.agents.collector import CollectorAgent
 from app.agents.orchestrator_simple import SimpleOrchestrator, global_sector_counts
+from app.config import settings
 from app.opportunity.service import OpportunityService
 from app.repository import ProjectRepository
 from app.services.project_signals import apply_signals_to_kwargs
@@ -28,7 +31,7 @@ logger = structlog.get_logger(__name__)
 async def evaluate_single_project(project_id: str) -> dict[str, Any]:
     """Perform a full re-evaluation of a single project and persist results."""
     repo = ProjectRepository()
-    row = repo.get_by_id(project_id)
+    row = await asyncio.to_thread(repo.get_by_id, project_id)
     if not row:
         raise ValueError(f"Project not found: {project_id}")
 
@@ -43,8 +46,10 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
         "explicit_airdrop_mention",
         "explicit_no_airdrop",
         "has_points_program",
+        "explicit_points_program",
         "has_testnet",
         "has_task_portal",
+        "token_launch_confirmed",
     }
     input_signals = {
         k: v for k, v in saved.items() if v not in (None, "", [], "unknown") and k not in inferred_signal_keys
@@ -60,7 +65,7 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
         },
     )
     merged = {**saved, **flags}
-    for k in ("has_testnet", "has_points_program", "recent_funding"):
+    for k in ("has_testnet", "has_points_program", "explicit_points_program", "recent_funding"):
         if flags.get(k) is True:
             merged[k] = True
         elif k in flags and flags[k] is not None:
@@ -68,11 +73,13 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
         elif k in saved and saved[k] is not None:
             merged[k] = saved[k]
 
-    # no_token_yet: 既有库内明确标注已发币 (False) 的，必须严格保留，防止已发币项目混入
+    # no_token_yet / token_launch_confirmed: 既有库内明确标注已发币的，必须严格保留
     if saved.get("no_token_yet") is False:
         merged["no_token_yet"] = False
     elif "no_token_yet" in flags:
         merged["no_token_yet"] = flags["no_token_yet"]
+    if saved.get("token_launch_confirmed") is True or flags.get("token_launch_confirmed") is True:
+        merged["token_launch_confirmed"] = True
 
     # 否认一旦写入就保持：重算时正文未必还带那句原话，False 覆盖会把
     # 已否决的项目放回 FARM。文本没再说，不代表官方改口了。
@@ -95,26 +102,28 @@ async def evaluate_single_project(project_id: str) -> dict[str, Any]:
 
     # 2. Run 8-dimension analysis orchestrator
     orch = SimpleOrchestrator()
-    ctx = AgentContext(run_id="single-project-eval")
-    counts = global_sector_counts(fallback=[raw_project])
+    ctx = AgentContext(
+        run_id=f"single-project-eval-{uuid.uuid4().hex[:8]}",
+        enable_llm=settings.is_llm_enabled,
+    )
+    counts = await asyncio.to_thread(global_sector_counts, fallback=[raw_project])
     state = await orch._run_single_project(raw_project, ctx, counts)
 
-    # 3. Persist pipeline state (updates projects table + writes project_history snapshot)
-    repo.save(state)
+    # 3. Persist pipeline state + Opportunity assessment off event loop
+    def _persist_and_reload() -> dict[str, Any] | None:
+        repo.save(state)
+        try:
+            with OpportunityService() as opp_service:
+                opp_service.evaluate(project_id, persist=True)
+        except Exception as exc:
+            logger.warning(
+                "project.evaluation_opportunity_failed",
+                project_id=project_id,
+                error=str(exc),
+            )
+        return repo.get_by_id(project_id)
 
-    # 4. Evaluate Opportunity assessment (Viability Gate, Anti-PUA, Economics)
-    try:
-        with OpportunityService() as opp_service:
-            opp_service.evaluate(project_id, persist=True)
-    except Exception as exc:
-        logger.warning(
-            "project.evaluation_opportunity_failed",
-            project_id=project_id,
-            error=str(exc),
-        )
-
-    # 5. Reload canonical updated row
-    updated_row = repo.get_by_id(project_id)
+    updated_row = await asyncio.to_thread(_persist_and_reload)
     if not updated_row:
         raise RuntimeError(f"Failed to reload updated project: {project_id}")
 

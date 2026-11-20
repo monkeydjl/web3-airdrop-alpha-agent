@@ -234,7 +234,58 @@ def compute_funding_quality(
 
 
 def extract_funding_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
-    """Normalize heterogeneous RootData / CryptoRank / manual funding fields."""
+    """Normalize heterogeneous RootData / CryptoRank / DefiLlama / manual funding fields."""
+    # 解包嵌套的 raw["funding"]（例如 DefiLlama raises 富化结构），仅补齐顶层缺失字段
+    nested = raw.get("funding")
+    if isinstance(nested, dict):
+        merged = dict(raw)
+        if not (
+            merged.get("funding_total_usd")
+            or merged.get("total_funding")
+            or merged.get("raise")
+            or merged.get("amount")
+            or merged.get("raised")
+        ):
+            nested_total = (
+                nested.get("funding_total_usd")
+                or nested.get("total_raised")
+                or nested.get("funding_amount")
+                or nested.get("total_funding")
+                or nested.get("amount")
+            )
+            if nested_total is not None:
+                merged["funding_total_usd"] = nested_total
+        if not (merged.get("funding_rounds") or merged.get("rounds") or merged.get("round_count")):
+            nested_rounds = nested.get("funding_rounds") or nested.get("round_count")
+            if nested_rounds is None and isinstance(nested.get("rounds"), list):
+                nested_rounds = len(nested["rounds"])
+            elif nested_rounds is None:
+                nested_rounds = nested.get("rounds")
+            if nested_rounds:
+                merged["funding_rounds"] = nested_rounds
+        if not (merged.get("funding_investors") or merged.get("investors") or merged.get("investor")):
+            nested_inv = nested.get("funding_investors") or nested.get("investors")
+            if nested_inv:
+                merged["funding_investors"] = nested_inv
+        if not (merged.get("funding_lead_investors") or merged.get("lead_investors") or merged.get("leads")):
+            nested_leads = nested.get("funding_lead_investors") or nested.get("lead_investors") or nested.get("leads")
+            if nested_leads:
+                merged["funding_lead_investors"] = nested_leads
+        if not (
+            merged.get("funding_last_date")
+            or merged.get("last_funding_date")
+            or merged.get("latest_funding_date")
+            or merged.get("announce_date")
+        ):
+            nested_date = (
+                nested.get("funding_last_date") or nested.get("last_round_date") or nested.get("last_funding_date")
+            )
+            if nested_date:
+                merged["funding_last_date"] = nested_date
+        if not merged.get("recent_funding") and nested.get("has_funding"):
+            merged["recent_funding"] = True
+        raw = merged
+
     total = (
         _parse_amount(raw.get("funding_total_usd"))
         or _parse_amount(raw.get("total_funding"))

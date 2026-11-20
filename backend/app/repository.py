@@ -453,7 +453,7 @@ class ProjectRepository:
         owns_conn = self._conn is None
         conn = self._conn if self._conn is not None else get_connection()
         # 绑定到同一连接的作用域仓库：其 _should_close() 为 False，save() 不会关闭它
-        scoped = ProjectRepository(conn) if owns_conn else self
+        scoped = ProjectRepository(conn, economic_replay_enabled=self._economic_replay_enabled) if owns_conn else self
         try:
             for state in states:
                 try:
@@ -533,7 +533,12 @@ class ProjectRepository:
             )
         return result
 
-    def canonical_sector_counts(self) -> dict[str, int]:
+    def canonical_sector_counts(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+        active_only: bool = True,
+    ) -> dict[str, int]:
         """全库 sector 计数，**按规范键折叠**（competition 分组口径）。
 
         为什么不能复用 `global_sector_counts()`：那条路径最终走
@@ -542,20 +547,40 @@ class ProjectRepository:
         每组计数偏小，`COMPETITION_MAP` 就给出虚高的竞争度分 —— 把「赛道很挤」
         错报成「几乎没有竞品」。
 
-        做法是一次 `GROUP BY sector` 拿到全部原始写法的分布，再在 Python 侧按
-        `canonical_sector_key()` 折叠。**这比 ADR-010 担心的 N 次 COUNT 更省**
-        （一条聚合查询 vs 每个 sector 一条），所以不额外过缓存：缓存是按单个
-        sector 键设计的，装不下"折叠后的整张分布"，硬塞会让写时失效
-        （`invalidate_sector_cache(project.sector)` 传的是原始写法）失准。
+        P2-2 修正：
+        - 默认 `active_only=True` 排除 `historical_backfill` 历史校准样本与已隐藏项目
+          （如已发币隐藏项目），避免把历史/淘汰样本算成当前同赛道竞争对手；
+        - 支持 `exclude_ids` 排除当前批次正在重跑的项目 ID，避免 `batch_count + db_count` 双重计数。
         """
         from app.agents.narrative import canonical_sector_key
 
+        conn = self._get_conn()
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if active_only:
+                clauses.append("hidden_reason IS NULL")
+                clauses.append("COALESCE(source, '') != 'historical_backfill'")
+            clean_exclude = sorted({str(pid).strip() for pid in (exclude_ids or set()) if str(pid).strip()})
+            if clean_exclude:
+                placeholders = ",".join("?" for _ in clean_exclude)
+                clauses.append(f"id NOT IN ({placeholders})")
+                params.extend(clean_exclude)
+            where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            # WHERE 条件均为字面量与参数占位符，所有排除 ID 经参数绑定
+            sql = f"SELECT sector AS bucket, COUNT(*) AS n FROM projects{where_sql} GROUP BY sector"
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            if self._should_close():
+                conn.close()
+
         folded: dict[str, int] = {}
-        for raw_sector, count in self.aggregate_counts("sector").items():
-            key = canonical_sector_key(raw_sector)
+        for row in rows:
+            d = dict_from_row(row)
+            key = canonical_sector_key(d.get("bucket"))
             if not key:
                 continue
-            folded[key] = folded.get(key, 0) + count
+            folded[key] = folded.get(key, 0) + int(d.get("n") or 0)
         return folded
 
     def invalidate_sector_cache(self, sector: str | None = None) -> None:

@@ -190,13 +190,14 @@ class RootDataCollector(DataCollector):
             return None
 
         pid = item.get("project_id") or item.get("id") or name
-        sector = normalize_sector(
-            str(item.get("one_liner") or item.get("tag") or item.get("tags") or "DeFi")
-            if not isinstance(item.get("tags"), list)
-            else (item.get("tags") or ["DeFi"])[0]
-        )
-        if isinstance(item.get("tags"), list) and item["tags"]:
-            sector = normalize_sector(str(item["tags"][0]))
+        tags = item.get("tags")
+        if isinstance(tags, list) and tags:
+            raw_sector = str(tags[0])
+        else:
+            raw_sector = str(
+                item.get("tag") or item.get("category") or (tags if isinstance(tags, str) else "") or "DeFi"
+            )
+        sector = normalize_sector(raw_sector)
 
         funding = extract_funding_from_raw(item)
         recent = bool(funding.get("funding_quality", 0) > 0.2) or bool(
@@ -228,7 +229,7 @@ class RootDataCollector(DataCollector):
             "no_token_yet": no_token,
             "has_twitter": bool(item.get("twitter") or item.get("X") or item.get("x")),
             "has_github": bool(item.get("github") or item.get("Github")),
-            "has_docs": bool(item.get("gitbook") or item.get("docs") or item.get("website")),
+            "has_docs": bool(item.get("gitbook") or item.get("docs")),
             "url": item.get("website") or item.get("url") or item.get("rootdata_url"),
             "description": item.get("description") or item.get("one_liner") or item.get("brief"),
             **{k: funding[k] for k in funding},

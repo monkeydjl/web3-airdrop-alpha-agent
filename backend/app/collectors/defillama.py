@@ -85,6 +85,7 @@ class DefiLlamaCollector(DataCollector):
                 for protocol in candidates[:15]:
                     slug = protocol.get("slug")
                     if slug:
+                        await self.rate_limiter.acquire()
                         funding_info = await fetch_protocol_funding(slug, client=client)
                         if funding_info and funding_info.get("has_funding"):
                             protocol["funding"] = funding_info
@@ -116,7 +117,17 @@ class DefiLlamaCollector(DataCollector):
         if not isinstance(data, list):
             raise ValueError(f"Unexpected DefiLlama response type: {type(data)}")
 
-        return data
+        # DefiLlama HTTP `/protocols` 返回的 change_7d 单位是百分数（如 15.4 表示 +15.4%），
+        # 在采集 HTTP 边界统一折算为 ratio（0.154），对齐下游 change_7d_unit="ratio" 契约与
+        # _calculate_discovery_score（0.5 = +50% 满分）。
+        normalized: list[dict[str, Any]] = []
+        for item in data:
+            if isinstance(item, dict) and item.get("change_7d") is not None:
+                c7 = item.get("change_7d")
+                if isinstance(c7, (int, float)) and not isinstance(c7, bool):
+                    item = {**item, "change_7d": round(float(c7) / 100.0, 8)}
+            normalized.append(item)
+        return normalized
 
     def _filter_candidates(self, protocols: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """过滤出高价值未发币协议（排除 CEX/蓝筹噪声与已发币品牌的子条目）。"""

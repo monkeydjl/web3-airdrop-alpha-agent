@@ -19,6 +19,7 @@ RootData 的 token 字段为空时，``token_launch_confirmed`` 只能落到「�
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Iterable
 from contextlib import suppress
@@ -175,14 +176,18 @@ async def refresh_registry(*, force: bool = False, conn: Any = None) -> dict[str
         return {"status": "disabled"}
     try:
         if not force:
-            with connection_scope(conn) as db:
-                last = _last_fetched(db)
+
+            def _get_last() -> datetime | None:
+                with connection_scope(conn) as db:
+                    return _last_fetched(db)
+
+            last = await asyncio.to_thread(_get_last) if conn is None else _get_last()
             if last is not None and datetime.now(UTC) - last < REFRESH_MAX_AGE:
                 return {"status": "fresh", "fetched_at": last.isoformat()}
         coins = await _fetch_coin_list()
         if len(coins) < _MIN_PLAUSIBLE_COINS:
             raise ValueError(f"CoinGecko /coins/list returned only {len(coins)} coins")
-        count = replace_registry(coins, conn=conn)
+        count = await asyncio.to_thread(replace_registry, coins) if conn is None else replace_registry(coins, conn=conn)
     except Exception as e:
         logger.warning("token_registry.refresh_failed", error=str(e))
         return {"status": "failed", "error": str(e)}

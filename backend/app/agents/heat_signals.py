@@ -112,16 +112,19 @@ class HeatSignalProvider:
             # 通过 raw_projects 关联 sector，再 JOIN project_signals
             lookback = self._lookback
 
-            # 1. Twitter 讨论信号：signal_source='twitter' 的信号强度均值
+            # 1. Twitter 讨论信号：signal_source='twitter' 的信号强度均值（按 signal_id 去重，防多源 JOIN 膨胀）
             twitter_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt, AVG(ps.signal_strength) as avg_strength
-                FROM project_signals ps
-                JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
-                    OR rp.project_id = ps.project_id
-                WHERE ps.signal_source = 'twitter'
-                  AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= ?
+                SELECT COUNT(*) as cnt, AVG(signal_strength) as avg_strength
+                FROM (
+                    SELECT DISTINCT ps.signal_id, ps.signal_strength
+                    FROM project_signals ps
+                    JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
+                        OR rp.project_id = ps.project_id
+                    WHERE ps.signal_source = 'twitter'
+                      AND rp.raw_data LIKE ?
+                      AND ps.captured_at >= ?
+                ) deduped
                 """,
                 (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
@@ -131,16 +134,19 @@ class HeatSignalProvider:
                 float(twitter_row["avg_strength"]) if twitter_row and twitter_row["avg_strength"] else 0.0
             )
 
-            # 2. VC 融资信号：signal_type='funding'
+            # 2. VC 融资信号：signal_type='funding'（按 signal_id 去重）
             funding_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt, AVG(ps.signal_strength) as avg_strength
-                FROM project_signals ps
-                JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
-                    OR rp.project_id = ps.project_id
-                WHERE ps.signal_type = 'funding'
-                  AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= ?
+                SELECT COUNT(*) as cnt, AVG(signal_strength) as avg_strength
+                FROM (
+                    SELECT DISTINCT ps.signal_id, ps.signal_strength
+                    FROM project_signals ps
+                    JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
+                        OR rp.project_id = ps.project_id
+                    WHERE ps.signal_type = 'funding'
+                      AND rp.raw_data LIKE ?
+                      AND ps.captured_at >= ?
+                ) deduped
                 """,
                 (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
@@ -150,15 +156,27 @@ class HeatSignalProvider:
                 float(funding_row["avg_strength"]) if funding_row and funding_row["avg_strength"] else 0.0
             )
 
-            # 3. KOL 热度信号：signal_type IN ('airdrop','tge')
+            # 3. KOL 热度信号：兼容 signal_type IN ('airdrop','tge') 与 Twitter 采集器写入的
+            #    signal_type='twitter_mention' + signal_data.signal_type IN ('airdrop','tge')
             kol_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt
+                SELECT COUNT(DISTINCT ps.signal_id) as cnt
                 FROM project_signals ps
                 JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
                     OR rp.project_id = ps.project_id
-                WHERE ps.signal_type IN ('airdrop', 'tge')
-                  AND ps.signal_source = 'twitter'
+                WHERE ps.signal_source = 'twitter'
+                  AND (
+                    ps.signal_type IN ('airdrop', 'tge')
+                    OR (
+                        ps.signal_type = 'twitter_mention'
+                        AND (
+                            ps.signal_data LIKE '%"signal_type": "airdrop"%'
+                            OR ps.signal_data LIKE '%"signal_type":"airdrop"%'
+                            OR ps.signal_data LIKE '%"signal_type": "tge"%'
+                            OR ps.signal_data LIKE '%"signal_type":"tge"%'
+                        )
+                    )
+                  )
                   AND rp.raw_data LIKE ?
                   AND ps.captured_at >= ?
                 """,

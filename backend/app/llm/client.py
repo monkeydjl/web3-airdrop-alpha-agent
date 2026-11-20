@@ -51,6 +51,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -230,12 +231,12 @@ def _get_providers() -> list[LLMProvider]:
 
 
 def _is_connection_error(exc: Exception) -> bool:
-    """是否为连接级错误（应切换接口）。"""
+    """是否为接口级错误（应切换接口、跳过同接口剩余模型并计入熔断器）。"""
     if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
-        # 5xx / 429 视为接口侧问题
-        return exc.response.status_code >= 500 or exc.response.status_code == 429
+        # 5xx / 429 以及 401/402/403（密钥失效/余额耗尽/权限拒绝）均为接口级故障
+        return exc.response.status_code >= 500 or exc.response.status_code in (401, 402, 403, 429)
     return False
 
 
@@ -278,20 +279,7 @@ def _build_combinations(providers: list[LLMProvider]) -> list[tuple[LLMProvider,
 # 要跨节点严格轮询就得用 Redis/DB 原子计数器，那意味着"选一个模型"先做
 # 一次网络往返：为均衡付出可用性代价，而 LLM 本身只是可选增强层。
 _rr_counter = 0
-_rr_lock: asyncio.Lock | None = None
-
-
-def _get_rr_lock() -> asyncio.Lock:
-    """惰性创建锁。
-
-    模块顶层建锁会让它绑到导入时那个 event loop 上。测试里每个 async 用例
-    是一个新 loop，一个绑错 loop 的锁会在 `await acquire()` 上抛
-    "attached to a different loop" —— 而那与被测逻辑毫无关系。
-    """
-    global _rr_lock
-    if _rr_lock is None:
-        _rr_lock = asyncio.Lock()
-    return _rr_lock
+_rr_lock = threading.Lock()
 
 
 async def _next_start_index(total: int) -> int:
@@ -301,14 +289,13 @@ async def _next_start_index(total: int) -> int:
     持续失败的组合会被每次调用都当作起点重试 —— 那等于把轮询退化回固定
     顺序，还额外付出全部失败组合的超时。
 
-    加锁是因为 `llm_chat` 会被并发调用（分析管线 gather 多个项目时）。
-    读改写虽然在单个 await 之间不会被打断，但显式加锁让"两个并发调用不会
-    拿到同一个起点"不依赖于对字节码原子性的假设。
+    使用线程锁而非 event-loop 绑定的 asyncio.Lock：既保护多事件循环 / 多线程
+    安全，又避免跨 loop 复用时的 "attached to a different loop" 异常。
     """
     global _rr_counter
     if total <= 0:
         return 0
-    async with _get_rr_lock():
+    with _rr_lock:
         start = _rr_counter % total
         _rr_counter = (_rr_counter + 1) % total
     return start
@@ -402,6 +389,33 @@ def _extract_usage(
     )
 
 
+class _EmptyLLMResponseError(ValueError):
+    """LLM 返回了空 content（例如推理模型耗尽 max_tokens），但可能仍产生了计费 usage。"""
+
+    def __init__(self, message: str, *, raw_usage: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.raw_usage = raw_usage
+
+
+def _estimate_reservation_usd(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+) -> Decimal:
+    """估算单次调用的在途预扣成本（防并发请求穿透日预算上限）。"""
+    prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+    prompt_tokens, _ = pricing.estimate_tokens_from_text(prompt_chars=prompt_chars, completion_chars=0)
+    est_cost, _ = pricing.estimate_cost_usd(
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=max(int(max_tokens or 0), 1),
+        fallback_price_per_1m_usd=float(getattr(settings, "llm_fallback_price_per_1m_usd", 10.0)),
+        tokens_were_estimated=True,
+    )
+    return est_cost
+
+
 async def _try_single(
     provider: LLMProvider,
     model: str,
@@ -441,13 +455,17 @@ async def _try_single(
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content")
+        raw_usage = data.get("usage") if isinstance(data, dict) else None
+        usage_dict = raw_usage if isinstance(raw_usage, dict) else None
+        choices = data.get("choices") if isinstance(data, dict) else None
+        first_choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        message = first_choice.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
         if not content or not str(content).strip():
-            raise ValueError("Empty LLM response")
-        raw_usage = data.get("usage")
+            raise _EmptyLLMResponseError("Empty LLM response", raw_usage=usage_dict)
         return _RawCompletion(
             text=str(content).strip(),
-            raw_usage=raw_usage if isinstance(raw_usage, dict) else None,
+            raw_usage=usage_dict,
         )
 
 
@@ -485,10 +503,24 @@ async def llm_chat(
         logger.warning("llm.no_models_configured")
         return LLMResult(text=None, provider_used=None, model_used=None, prompt_version=prompt_version)
 
-    # ── 日预算闸门 ──────────────────────────────────────────────
+    temp = temperature if temperature is not None else settings.llm_temperature
+    tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
+
+    # ── 组合级轮询（ADR-016 §3）─────────────────────────────────
+    # 起点每次调用推进一格，遍历顺序是从该起点开始的**旋转序列**。
+    # 全部组合仍会被试到，failover 深度不随请求序号变化。
+    canonical = _build_combinations(providers)
+
+    # ── 日预算闸门（含并发在途预扣）─────────────────────────────
     # 放在故障转移循环之外：预算是"今天还能不能花钱"，与试哪个接口无关。
     # 放在循环里会让一次超预算的调用把每个组合都试一遍再各自拒绝。
-    decision = budget_mod.check_budget(budget_usd=float(settings.llm_daily_budget_usd))
+    reserve_model = canonical[0][1] if canonical else "unknown"
+    reserve_usd = _estimate_reservation_usd(model=reserve_model, messages=messages, max_tokens=tokens)
+
+    def _check_budget_sync() -> budget_mod.BudgetDecision:
+        return budget_mod.check_budget(budget_usd=float(settings.llm_daily_budget_usd), reserve_usd=reserve_usd)
+
+    decision = await asyncio.to_thread(_check_budget_sync)
     metrics.set_llm_budget_state(
         budget_usd=float(decision.budget_usd),
         spent_today_usd=float(decision.spent_usd),
@@ -509,204 +541,208 @@ async def llm_chat(
             refused_reason=decision.reason,
         )
 
-    temp = temperature if temperature is not None else settings.llm_temperature
-    tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
-
-    # ── 组合级轮询（ADR-016 §3）─────────────────────────────────
-    # 起点每次调用推进一格，遍历顺序是从该起点开始的**旋转序列**。
-    # 全部组合仍会被试到，failover 深度不随请求序号变化。
-    canonical = _build_combinations(providers)
-    start_index = await _next_start_index(len(canonical))
-    combinations = _rotate(canonical, start_index)
-    attempts: list[LLMAttempt] = []
-    if combinations:
-        first_provider, first_model = combinations[0]
-        logger.debug(
-            "llm.round_robin_selected",
-            start_index=start_index,
-            candidate_count=len(combinations),
-            provider=first_provider.name,
-            model=first_model,
-        )
-
-    # 连接级失败的 provider 名。命中后跳过它的剩余模型 ——
-    # 接口连不上是**接口的问题**，换一个模型名再连同一个地址不会有别的结果，
-    # 只会再付一个连接超时（默认 10s）。owner 的配置是 6 接口 × 2~3 模型，
-    # 一个挂掉的接口不跳过就要空等 20~30s。
-    #
-    # ⚠️ 这里刻意用 set 而不是原来那种「重建 combinations 列表」的写法：
-    # `for x in combinations` 在进入循环时就取好了迭代器，之后把
-    # `combinations` 这个**名字**指向新列表**完全不影响正在进行的迭代** ——
-    # 原实现的 provider 跳过其实是死代码，一直在逐个模型重试挂掉的接口。
-    # 它没被测出来是因为既有用例里每个 provider 只配了 1 个模型，
-    # 「跳过剩余模型」和「没有剩余模型」看起来一样。
-    failed_providers: set[str] = set()
-
-    for combo_index, (provider, model) in enumerate(combinations):
-        if provider.name in failed_providers:
-            continue
-
-        breaker = get_circuit_breaker(provider.name)
-        if not breaker.allow_request():
-            metrics.record_llm_circuit_breaker_trip(provider=provider.name)
-            logger.warning(
-                "llm.circuit_breaker_open_skipped",
-                provider=provider.name,
-                model=model,
-                state=str(breaker.state),
-                cooldown_remaining=round(
-                    max(0.0, breaker.cooldown_seconds - (time.monotonic() - breaker.last_failure_time)),
-                    1,
-                ),
+    try:
+        start_index = await _next_start_index(len(canonical))
+        combinations = _rotate(canonical, start_index)
+        attempts: list[LLMAttempt] = []
+        if combinations:
+            first_provider, first_model = combinations[0]
+            logger.debug(
+                "llm.round_robin_selected",
+                start_index=start_index,
+                candidate_count=len(combinations),
+                provider=first_provider.name,
+                model=first_model,
             )
-            continue
 
-        attempt = LLMAttempt(
-            provider=provider.name,
-            model=model,
-            success=False,
-        )
-        start = time.monotonic()
+        # 连接/鉴权/额度级失败的 provider 名。命中后跳过它的剩余模型 ——
+        # 接口连不上或 Key 失效是**接口的问题**，换一个模型名再连同一个地址不会有别的结果。
+        failed_providers: set[str] = set()
 
-        try:
-            completion = await _try_single(
-                provider=provider,
-                model=model,
-                messages=messages,
-                temperature=temp,
-                max_tokens=tokens,
-                timeout=timeout,
-            )
-            attempt.success = True
-            breaker.record_success()
-            attempt.elapsed_ms = (time.monotonic() - start) * 1000
-            attempts.append(attempt)
-            metrics.record_llm_attempt(model=model, ok=True, duration_seconds=attempt.elapsed_ms / 1000)
+        for combo_index, (provider, model) in enumerate(combinations):
+            if provider.name in failed_providers:
+                continue
 
-            usage = _extract_usage(
-                model=model,
-                raw_usage=completion.raw_usage,
-                messages=messages,
-                completion_text=completion.text,
-            )
-            metrics.record_llm_cost(
-                model=model,
-                basis=usage.basis,
-                cost_usd=float(usage.cost_usd),
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-            )
-            # 记账失败不影响返回值：钱已经花了，丢掉结果是纯亏损。
-            # 但要让"少记了多少次"可被观测 —— 未记账的花费永远不计入预算。
-            if not budget_mod.record_spend(
-                cost_usd=usage.cost_usd,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-            ):
-                metrics.record_llm_spend_record_failure()
-
-            # ── 输出泄漏过滤（SECURITY §10.5）────────────────────────
-            # 成本在前面的 record_spend 已记账（钱已花，不能因丢弃而漏记，否则
-            # 预算静默失效）。命中则丢弃结果：text=None + leak_detected=True，
-            # 调用方据此回退规则引擎。不重试下一个组合 —— 泄漏是内容问题，
-            # 换接口/模型大概率吐出同样的内容，且丢弃应是 fail-closed。
-            leak_category = detect_secret_leak(completion.text)
-            if leak_category is not None:
-                metrics.record_llm_leak_detected()
-                logger.error(
-                    "llm.secret_leak_detected",
+            breaker = get_circuit_breaker(provider.name)
+            if not breaker.allow_request():
+                metrics.record_llm_circuit_breaker_trip(provider=provider.name)
+                logger.warning(
+                    "llm.circuit_breaker_open_skipped",
                     provider=provider.name,
                     model=model,
-                    prompt_version=prompt_version,
-                    pattern=leak_category,
+                    state=str(breaker.state),
+                    cooldown_remaining=round(
+                        max(0.0, breaker.cooldown_seconds - (time.monotonic() - breaker.last_failure_time)),
+                        1,
+                    ),
                 )
+                continue
+
+            attempt = LLMAttempt(
+                provider=provider.name,
+                model=model,
+                success=False,
+            )
+            start = time.monotonic()
+
+            try:
+                completion = await _try_single(
+                    provider=provider,
+                    model=model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=tokens,
+                    timeout=timeout,
+                )
+                attempt.success = True
+                breaker.record_success()
+                attempt.elapsed_ms = (time.monotonic() - start) * 1000
+                attempts.append(attempt)
+                metrics.record_llm_attempt(model=model, ok=True, duration_seconds=attempt.elapsed_ms / 1000)
+
+                usage = _extract_usage(
+                    model=model,
+                    raw_usage=completion.raw_usage,
+                    messages=messages,
+                    completion_text=completion.text,
+                )
+                metrics.record_llm_cost(
+                    model=model,
+                    basis=usage.basis,
+                    cost_usd=float(usage.cost_usd),
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                )
+                # 记账失败不影响返回值：钱已经花了，丢掉结果是纯亏损。
+                # 但要让"少记了多少次"可被观测 —— 未记账的花费永远不计入预算。
+                if not await asyncio.to_thread(
+                    budget_mod.record_spend,
+                    cost_usd=usage.cost_usd,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                ):
+                    metrics.record_llm_spend_record_failure()
+
+                # ── 输出泄漏过滤（SECURITY §10.5）────────────────────────
+                # 成本在前面的 record_spend 已记账（钱已花，不能因丢弃而漏记，否则
+                # 预算静默失效）。命中则丢弃结果：text=None + leak_detected=True，
+                # 调用方据此回退规则引擎。不重试下一个组合 —— 泄漏是内容问题，
+                # 换接口/模型大概率吐出同样的内容，且丢弃应是 fail-closed。
+                leak_category = detect_secret_leak(completion.text)
+                if leak_category is not None:
+                    metrics.record_llm_leak_detected()
+                    logger.error(
+                        "llm.secret_leak_detected",
+                        provider=provider.name,
+                        model=model,
+                        prompt_version=prompt_version,
+                        pattern=leak_category,
+                    )
+                    return LLMResult(
+                        text=None,
+                        provider_used=provider.name,
+                        model_used=model,
+                        attempts=attempts,
+                        prompt_version=prompt_version,
+                        usage=usage,
+                        leak_detected=True,
+                    )
+
+                logger.info(
+                    "llm.success",
+                    provider=provider.name,
+                    model=model,
+                    elapsed_ms=round(attempt.elapsed_ms, 1),
+                    attempt_count=len(attempts),
+                    prompt_version=prompt_version,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    cost_usd=float(usage.cost_usd),
+                    cost_basis=usage.basis,
+                )
+
                 return LLMResult(
-                    text=None,
+                    text=completion.text,
                     provider_used=provider.name,
                     model_used=model,
                     attempts=attempts,
                     prompt_version=prompt_version,
                     usage=usage,
-                    leak_detected=True,
                 )
 
-            logger.info(
-                "llm.success",
-                provider=provider.name,
-                model=model,
-                elapsed_ms=round(attempt.elapsed_ms, 1),
-                attempt_count=len(attempts),
-                prompt_version=prompt_version,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                cost_usd=float(usage.cost_usd),
-                cost_basis=usage.basis,
-            )
+            except Exception as exc:
+                attempt.elapsed_ms = (time.monotonic() - start) * 1000
+                attempt.error = str(exc)[:200]
+                attempts.append(attempt)
+                metrics.record_llm_attempt(model=model, ok=False, duration_seconds=attempt.elapsed_ms / 1000)
 
-            return LLMResult(
-                text=completion.text,
-                provider_used=provider.name,
-                model_used=model,
-                attempts=attempts,
-                prompt_version=prompt_version,
-                usage=usage,
-            )
+                # 推理模型耗尽 max_tokens 返回空 content 但带真实 usage 账单：仍必须记账！
+                if isinstance(exc, _EmptyLLMResponseError) and isinstance(exc.raw_usage, dict):
+                    billed_usage = _extract_usage(
+                        model=model,
+                        raw_usage=exc.raw_usage,
+                        messages=messages,
+                        completion_text="",
+                    )
+                    metrics.record_llm_cost(
+                        model=model,
+                        basis=billed_usage.basis,
+                        cost_usd=float(billed_usage.cost_usd),
+                        prompt_tokens=billed_usage.prompt_tokens,
+                        completion_tokens=billed_usage.completion_tokens,
+                    )
+                    if not await asyncio.to_thread(
+                        budget_mod.record_spend,
+                        cost_usd=billed_usage.cost_usd,
+                        prompt_tokens=billed_usage.prompt_tokens,
+                        completion_tokens=billed_usage.completion_tokens,
+                    ):
+                        metrics.record_llm_spend_record_failure()
 
-        except Exception as exc:
-            attempt.elapsed_ms = (time.monotonic() - start) * 1000
-            attempt.error = str(exc)[:200]
-            attempts.append(attempt)
-            metrics.record_llm_attempt(model=model, ok=False, duration_seconds=attempt.elapsed_ms / 1000)
+                is_conn = _is_connection_error(exc)
+                is_model = _is_model_error(exc)
 
-            is_conn = _is_connection_error(exc)
-            is_model = _is_model_error(exc)
+                skipped = failed_providers | ({provider.name} if is_conn else set())
+                will_retry = any(p.name not in skipped for p, _ in combinations[combo_index + 1 :])
 
-            # will_retry 必须算「本次失败之后**真的还会被尝试**的组合」，
-            # 不能用 `len(attempts) < len(combinations)`：
-            #   1. 跳过的组合不进 attempts，计数与下标脱钩；
-            #   2. 连接失败会让本 provider 剩余模型全部作废，
-            #      拿总数比较只会朝「还有兜底」的方向错报。
-            # 这个字段是排查降级时第一眼看的东西 —— 报 True 却直接返回
-            # None，会把排查引向「重试为什么没生效」这个不存在的问题。
-            skipped = failed_providers | ({provider.name} if is_conn else set())
-            will_retry = any(p.name not in skipped for p, _ in combinations[combo_index + 1 :])
+                logger.warning(
+                    "llm.attempt_failed",
+                    provider=provider.name,
+                    model=model,
+                    error_type="connection" if is_conn else "model" if is_model else "other",
+                    error=attempt.error,
+                    elapsed_ms=round(attempt.elapsed_ms, 1),
+                    will_retry=will_retry,
+                )
 
-            logger.warning(
-                "llm.attempt_failed",
-                provider=provider.name,
-                model=model,
-                error_type="connection" if is_conn else "model" if is_model else "other",
-                error=attempt.error,
-                elapsed_ms=round(attempt.elapsed_ms, 1),
-                will_retry=will_retry,
-            )
+                # 连接/鉴权/额度错误（timeout / connect / 5xx / 429 / 401 / 402 / 403）：
+                # 整个接口不可用，记录熔断器失败、跳过它的剩余模型，直接进下一个 provider。
+                if is_conn:
+                    breaker.record_failure(is_connection_error=True)
+                    failed_providers.add(provider.name)
+                    continue
 
-            # 连接错误（timeout / connect / 5xx / 429）：整个接口不可用，
-            # 记录熔断器失败、跳过它的剩余模型，直接进下一个 provider。
-            if is_conn:
-                breaker.record_failure(is_connection_error=True)
-                failed_providers.add(provider.name)
+                # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续。
+                # 仍要告知熔断器 —— HALF_OPEN 探针靠它释放（见 record_failure）。
+                breaker.record_failure(is_connection_error=False)
                 continue
 
-            # 模型错误或其他错误：只跳过当前模型，同接口下一个模型继续。
-            # 仍要告知熔断器 —— HALF_OPEN 探针靠它释放（见 record_failure）。
-            breaker.record_failure(is_connection_error=False)
-            continue
+        logger.error(
+            "llm.all_providers_failed",
+            attempts=len(attempts),
+            providers_tried=list({a.provider for a in attempts}),
+            models_tried=list({a.model for a in attempts}),
+        )
 
-    logger.error(
-        "llm.all_providers_failed",
-        attempts=len(attempts),
-        providers_tried=list({a.provider for a in attempts}),
-        models_tried=list({a.model for a in attempts}),
-    )
-
-    return LLMResult(
-        text=None,
-        provider_used=None,
-        model_used=None,
-        attempts=attempts,
-        prompt_version=prompt_version,
-    )
+        return LLMResult(
+            text=None,
+            provider_used=None,
+            model_used=None,
+            attempts=attempts,
+            prompt_version=prompt_version,
+        )
+    finally:
+        budget_mod.release_reservation(decision)
 
 
 async def llm_chat_simple(
