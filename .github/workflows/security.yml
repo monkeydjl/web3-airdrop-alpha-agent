@@ -153,6 +153,13 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           ignore-unfixed: true
+          # trivy-action 默认对 SARIF 跑法 unset 掉 severity（为了让上传
+          # 的报告带全量级别），但 exit-code 是同一次跑算出来的 —— 于是
+          # severity 输入形同虚设：任何可修复的 MEDIUM/LOW 都会把 job
+          # 打红（2026-11-22 实锤：前端镜像 2 个 MEDIUM 把门禁打红，
+          # 表格跑法明明全绿）。true = 判定与上传都按 HIGH,CRITICAL，
+          # 与上面的表格跑法和本工作流声明的门禁策略一致。
+          limit-severities-for-sarif: true
 
       - name: Upload Trivy backend results
         uses: github/codeql-action/upload-sarif@v3
@@ -188,6 +195,8 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           ignore-unfixed: true
+          # 同上：否则 severity 被_unset_，任何 MEDIUM/LOW 都越权打红门禁。
+          limit-severities-for-sarif: true
 
       - name: Upload Trivy frontend results
         uses: github/codeql-action/upload-sarif@v3

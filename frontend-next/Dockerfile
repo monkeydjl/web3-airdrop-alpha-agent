@@ -38,13 +38,16 @@ RUN npx next build --webpack
 FROM node:22-alpine AS runner
 WORKDIR /app
 
-# npm 随 node:22-alpine 基础镜像分发，其 vendored 依赖（brace-expansion 等 6 个包）
-# 带 10 个 HIGH CVE（2026-11-22 CI 扫描）；基础镜像里的 alpine 系统包（musl/zlib）
-# 也会随本地缓存的基础镜像层过时而带上已修复的 CVE。运行时只执行 node server.js，
-# npm 不会被调用，但漏洞件留在镜像层里会被扫描器持续点名且是阻塞门禁 ——
-# apk upgrade 把系统包升到当前 alpine 仓库的修复版，npm install -g npm@latest
-# 直接换掉 vendored 依赖。扫描结果随上游漂移：若新版再引入漏洞件，按扫描报告再升。
-RUN apk upgrade --no-cache && npm install -g npm@latest && npm cache clean --force
+# 运行时只执行 `node server.js`，npm 不会被调用。但 npm 随 node:22-alpine
+# 基础镜像分发，其 vendored 依赖链（brace-expansion、glob、minimatch 等）
+# 持续被扫描器点名（2026-11-22：10 个 HIGH；升级 npm 后又冒出 2 个 MEDIUM，
+# 修复版在上游、npm 未及 vendored —— 扫描门禁追着 npm 版本跑，永无宁日）。
+# 直接把 npm 从运行时镜像里删掉：这一类漏洞件不再进入最终镜像，门禁恢复
+# 稳定；构建期的 deps/builder 阶段不受影响。apk upgrade 同步把系统包
+# （musl/zlib 等）升到当前 alpine 仓库的修复版，避免本地缓存的基础镜像
+# 层过时携带已修复 CVE。
+RUN apk upgrade --no-cache \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
