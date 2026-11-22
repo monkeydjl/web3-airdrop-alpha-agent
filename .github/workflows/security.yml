@@ -136,7 +136,7 @@ jobs:
       # 却没人能说出是哪个 CVE。exit-code: 0 保证它只负责"让人看见"，
       # 判定仍由下面的 SARIF 步骤负责。
       - name: Trivy scan backend (human-readable, non-blocking)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha:scan-${{ github.sha }}
           format: "table"
@@ -145,7 +145,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Run Trivy scan backend
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha:scan-${{ github.sha }}
           format: "sarif"
@@ -171,7 +171,7 @@ jobs:
           load: true
 
       - name: Trivy scan frontend (human-readable, non-blocking)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha-frontend:scan-${{ github.sha }}
           format: "table"
@@ -180,7 +180,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Run Trivy scan frontend
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha-frontend:scan-${{ github.sha }}
           format: "sarif"
