@@ -100,8 +100,10 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run full backend test suite
+        # -n auto：xdist 并行（conftest 已做 per-worker 建库隔离，2026-11-13）
+        # ⚠ 注释不能放在 run: >- 块内 —— YAML 折叠后 # 会让整行变成 bash 注释，
+        # 测试命令不被执行（27 秒空脚本 pass，Coverage Gate 找不到 artifact）。
         run: >-
-          # -n auto：xdist 并行（conftest 已做 per-worker 建库隔离，2026-11-13）
           pytest tests -q -n auto
           --cov=app
           --cov-report=term-missing
