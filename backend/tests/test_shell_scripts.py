@@ -1228,6 +1228,16 @@ class TestDeployPreflightBehavior:
     def test_prod_with_valid_config_runs_the_full_flow(self, tmp_path: Path) -> None:
         """有效配置：预检通过 → 全流程跑完；真实 compose 动作此时才允许出现。"""
         bin_dir = self._deploy_sandbox(tmp_path, self._VALID_PROD_ENV)
+        # prod 健康检查走 docker inspect（2026-11-16 改动）——mock 需要返回 "healthy"
+        # compose ps（容器退出检查）需要返回 "airdrop-web"
+        prod_docker_shim = (
+            "#!/bin/bash\n"
+            'echo "$*" >> "$PWD/docker_calls.log"\n'
+            'if echo "$*" | grep -q "inspect"; then echo "healthy"; exit 0; fi\n'
+            'if echo "$*" | grep -q "compose ps\\|ps --status"; then echo "airdrop-web"; exit 0; fi\n'
+            "exit 0\n"
+        )
+        _write_shims(tmp_path, {"docker": prod_docker_shim})
         proc = self._run_deploy(tmp_path, bin_dir, "prod")
         assert proc.returncode == 0, proc.stdout[-800:]
         assert "生产配置预检通过" in proc.stdout, proc.stdout[-600:]
