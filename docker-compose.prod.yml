@@ -41,8 +41,11 @@ services:
   # 外部流量必须经 nginx :18080 进入，防止直打 :13002 伪造 X-Forwarded-For 绕过限流）
   frontend:
     build:
-      context: .
-      dockerfile: frontend-next/Dockerfile
+      # context 必须是 frontend-next 目录本身：Dockerfile 的 COPY 路径
+      # （package.json、COPY . .）都是相对 context 写的。曾用 repo 根做
+      # context —— 根目录没有 package.json，构建在第一层 COPY 就炸。
+      context: ./frontend-next
+      dockerfile: Dockerfile
     container_name: airdrop-frontend
     logging: *default-logging
     ports:

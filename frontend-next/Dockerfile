@@ -14,7 +14,7 @@ RUN npm ci
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY frontend-next/ .
+COPY . .
 
 # `next.config.js` 的 rewrites 在 **build 时**读取 API_PROXY_TARGET 并写入产物，
 # 不是运行时才解析。生产 nginx 现在将 /api 交给 Next（这样 proxy.ts 才能注入
