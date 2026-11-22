@@ -1176,9 +1176,7 @@ class TestDeployPreflightBehavior:
             return []
         action = re.compile(r"(^|\s)(down|build|up)(\s|$)")
         return [
-            ln
-            for ln in log.read_text(encoding="utf-8").splitlines()
-            if ln.startswith("compose") and action.search(ln)
+            ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.startswith("compose") and action.search(ln)
         ]
 
     def test_prod_without_env_stops_after_creating_the_template(self, tmp_path: Path) -> None:
