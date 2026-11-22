@@ -66,7 +66,7 @@ def _payload_text(payload_json: Any) -> str:
     return canonical_json_bytes(payload_json).decode("utf-8")
 
 
-def _ten_fields_equal(existing: EconomicSnapshotRow, incoming: EconomicSnapshotRow) -> bool:
+def _snapshot_core_fields_equal(existing: EconomicSnapshotRow, incoming: EconomicSnapshotRow) -> bool:
     """Duplicate equivalence for insert-if-absent (no UPDATE semantics).
 
     Compares every frozen contract field except ``collected_at``. Timestamp drift
@@ -204,7 +204,7 @@ class EconomicSnapshotRepository:
             existing = self.get(snapshot.snapshot_id)
             if existing is None:
                 raise
-            if _ten_fields_equal(existing, snapshot):
+            if _snapshot_core_fields_equal(existing, snapshot):
                 return existing, False
             raise EconomicSnapshotContentConflict(
                 f"opportunity_economic_snapshots content conflict for snapshot_id={snapshot.snapshot_id!r}"

@@ -304,6 +304,13 @@ class BaseAgent(ABC):
     async def llm_enhance(self, state: PipelineState, _prompt: str) -> str | None:
         """Optional LLM enhancement.
 
+        ⚠ **staged（未接线）**：当前 orchestrator 不调用本方法——`enable_llm`
+        管道存在（API 参数 → AgentContext）但止步于 context 赋值，没有任何
+        agent 在 run() 里调用它。接线 = 在各 agent 的 run() 尾部追加增强语义
+        （需要产品决策：每个 agent 的 LLM 输出去哪里）。删除 = 删本方法 +
+        预算门测试族改挂 llm_chat 直调。当前状态：fail-closed 语义已测试
+        （test_agent_budget_refusal + test_prompt_version），接线即生效。
+
         Args:
             state: Current pipeline state
             _prompt: LLM prompt (reserved for V2 implementation)

@@ -2,6 +2,10 @@
 
 Pure read path: verified, in-window Evidence → deep-frozen EconomicProxyProjection
 over exactly 12 factor keys. No writes. No generic resolve_factor. No Settings.
+
+⚠ **staged（未接线）**：本模块的读路径（EconomicResolver / project_economics_data）
+无生产消费者——Task 6 的下游（决策面板读取投影）尚未实现。当前仅有测试调用。
+接线 = 在决策/详情路由中注入 resolver 并把投影暴露给前端。
 """
 
 from __future__ import annotations

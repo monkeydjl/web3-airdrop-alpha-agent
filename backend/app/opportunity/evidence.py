@@ -314,11 +314,10 @@ def resolve_factor(
     )
     selected_value = selected[1]
     contradictions = [item for item in candidates if item[1] != selected_value]
-    if any(
-        SOURCE_GRADE_WEIGHT[record.source_grade] >= best_grade
-        or _as_utc(record.observed_at) >= _as_utc(selected[0].observed_at)
-        for record, _ in contradictions
-    ):
+    # 第一段 `grade >= best_grade` 对 contradictions 恒 False（best_grade 是
+    # 全体候选的最大值，而 contradictions 已被过滤为 value != selected_value
+    # —— 同 grade 异值已在上方 return）。保留仅时序比较（深审 P3-1 死条件清理）。
+    if any(_as_utc(record.observed_at) >= _as_utc(selected[0].observed_at) for record, _ in contradictions):
         return FactorResolution(None, None, True, 0.0)
     return FactorResolution(
         selected[0],
