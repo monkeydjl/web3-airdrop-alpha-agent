@@ -1164,14 +1164,21 @@ class TestDeployPreflightBehavior:
 
     @staticmethod
     def _compose_actions(sandbox: Path) -> list[str]:
-        """返回真实 compose 动作（down/build/up）行；`compose version` 探测不算。"""
+        """返回真实 compose 动作（down/build/up）行；`compose version` 探测不算。
+
+        2026-11-22 起 prod 走 `-f docker-compose.prod.yml`，动作动词前可以
+        夹带旗标——不能再锚定 `compose ` 之后的第一个词（曾把三条真实动作
+        行全部漏掉，测试反咬脚本）。判据：行以 compose 开头 **且** 行内
+        出现独立成词的 down/build/up（空白定界，不认子串）。
+        """
         log = sandbox / "docker_calls.log"
         if not log.exists():
             return []
+        action = re.compile(r"(^|\s)(down|build|up)(\s|$)")
         return [
             ln
             for ln in log.read_text(encoding="utf-8").splitlines()
-            if re.match(r"compose (down|build|up|--profile)", ln)
+            if ln.startswith("compose") and action.search(ln)
         ]
 
     def test_prod_without_env_stops_after_creating_the_template(self, tmp_path: Path) -> None:

@@ -483,9 +483,14 @@ jobs:
               assert login.status_code == 200, login.text
               token = login.json()["access_token"]
               headers = {"Authorization": f"Bearer {token}"}
-              wl = client.post("/api/v1/watchlist", json={"project_id": "pg-smoke-1"}, headers=headers)
+              # 实际契约：POST /watchlist/{project_id}（路径参数），body 只收
+              # note/user_id。曾写成 POST /watchlist + project_id 放 body ——
+              # 405 Method Not Allowed（CI 2026-11-22）。
+              wl = client.post("/api/v1/watchlist/pg-smoke-1", json={}, headers=headers)
               assert wl.status_code in (200, 201), wl.text
-              notif = client.get("/api/v1/notifications/summary", headers=headers)
+              # 实际契约：GET /notifications（通知中心聚合）。曾写
+              # /notifications/summary —— 该路由不存在，必 404。
+              notif = client.get("/api/v1/notifications", headers=headers)
               assert notif.status_code == 200, notif.text
               projs = client.get("/api/v1/projects", headers=headers)
               assert projs.status_code == 200 and projs.json()["data"]["total"] >= 1
