@@ -7,7 +7,7 @@
 # Stage 1: 安装依赖（含 devDependencies，构建需要 typescript/tailwind）
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY frontend-next/package.json frontend-next/package-lock.json* ./
+COPY package.json package-lock.json* ./
 RUN npm ci
 
 # Stage 2: 构建
