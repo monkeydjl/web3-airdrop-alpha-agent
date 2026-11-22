@@ -439,7 +439,7 @@ class TestP2PoolCompetitionHaAndSchema:
         assert "frontend-next/Dockerfile" in ci_text
 
         assert "aquasecurity/trivy-action@master" not in sec_text
-        assert "aquasecurity/trivy-action@0.28.0" in sec_text
+        assert "aquasecurity/trivy-action@v0.36.0" in sec_text
         assert "frontend-next/Dockerfile" in sec_text
 
         assert "frontend-next/Dockerfile" in rel_text
