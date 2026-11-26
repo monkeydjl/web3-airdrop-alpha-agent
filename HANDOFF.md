@@ -9,6 +9,8 @@
 >
 > **2026-11-20 工程审计三阶段（Phase 1–3）增量**：已完成全部 P0（6 项 + ADR-015 单调性）、P1（10 项）与 P2（6 组）修复，详见 `CHANGELOG.md`「2026-11-20」条目。
 >
+> **2026-11-27 Phase 5 增量**：在 `/ops` 运维台补齐管理员安全审计日志交互检索面板与全量后台调度器配置视图；将 `identity_passport_radar.py`（ENS 反向记录 + Linea POH + Snapshot 治理投票 + 多链多签字节码 + 用户显式声明）与 `airdrop_calendar.py`（`projects.meta` 真实里程碑抽取 + `?real_only=true`）升级为真实数据驱动；同步锁定 `next@^16.4.6`（`npm audit` 0 漏洞）。
+>
 > **2026-11-26 全栈审核与 P1–P3 全量收口增量**：已完成导入确定性主键解析、前端 JWT 401 单飞自动续期与 `AdminAuthModal` 注册 Tab、项目详情/列表多用户状态隔离、注册/AI 端点独立限流与 `ai-brief` 强制刷新权限锁、`vitals.py` 建连层公网 IP 钉死、异步路由同步 DB 卸载、全路由 AST 级错误信封守卫、双套 `docker-compose` / Nginx / `pyproject.toml` 对齐、`.workbuddy` 索引清理、管理员写操作安全审计日志激活（`audit_logs` + `GET /api/v1/ops/audit-logs`）以及防夹私有 RPC 真实链上毫秒级 `eth_blockNumber` 测速升级；同时已由 Owner 拍板确认「主评分管线保持 100% 确定性规则计算，LLM 专用于项目简报与追问，保留已测试的 `BaseAgent.llm_enhance` 预留钩子」。最新实测基线：后端 **4295 passed / 26 skipped / 0 failed**（`ruff` / `mypy` 230 文件 0 错 / 5 腿卫生守卫全绿），前端 `tsc` / `eslint` / **131 passed（45 suites）** / `next build` 全绿。
 >
 > **2026-11 审查收尾增量**：见「11 月审查修复（8 commit）」一节。

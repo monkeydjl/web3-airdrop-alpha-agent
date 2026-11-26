@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### Added & Fixed — Phase 5 运维台审计可视化、人机身份与里程碑实测化及依赖加固（2026-11-27）
+
+- **前端运维台闭环与安全依赖升级**：
+  - `frontend-next/app/ops/page.tsx` & `routers/v1/settings.py`：在 `/ops` 运维台新增「管理员安全审计日志」交互检索面板（支持按 `action` / `user` 过滤、运维动作完成后自动刷新展示脱敏上下文），并在 `/settings/config` 与运维台补齐官网活性探测、已发币复查、Alpha 周报、决策推送摘要等完整后台调度配置视图。
+  - `frontend-next/package.json`：锁定 `next@^16.4.6`（`>= 16.4.5`），消除旧声明遗留的 Next.js 缓存投毒告警范围（`npm audit` 0 漏洞）。
+- **链上人机身份与空投日历真实数据驱动升级**：
+  - `services/identity_passport_radar.py` & `routers/v1/identity.py`：新增 `evaluate_wallet_identity_live()`，并发实测 Ethereum Mainnet ENS `ReverseRecords.getNames`、Linea 官方 POH API、Snapshot GraphQL 治理投票与三链合约多签字节码，并结合用户显式声明的 `declared_stamps` 输出真实核验分（`mark_real`；离线测试诚实回退 `mark_simulated`），替代原 `ord(c) % 3` 纯哈希伪造。
+  - `services/airdrop_calendar.py` & `routers/v1/calendar.py`：优先抽取 `projects.meta`（`milestones` / `signals` / `tge_date` / `snapshot_date` 等）中已登记的真实未来截止时间（支持 `?real_only=true` 纯真实节点模式与动态 `real` / `simulated` 标注）。
+
 ### Fixed — 全栈工程审计全量收口（2026-11-26：P1 / P2 / P3 清零）
 
 - **P1 数据完整性、鉴权续期与配额防刷**：
