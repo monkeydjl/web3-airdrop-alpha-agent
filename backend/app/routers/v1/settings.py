@@ -254,6 +254,14 @@ def get_settings_config() -> SettingsConfigResponse:
         "SIGNALS_ARCHIVE_RETENTION_DAYS": settings.signals_archive_retention_days,
         "ARCHIVE_SCHEDULER_ENABLED": settings.archive_scheduler_enabled,
         "ARCHIVE_CRON": settings.archive_cron,
+        "VITALS_SCHEDULER_ENABLED": settings.vitals_scheduler_enabled,
+        "VITALS_CRON": settings.vitals_cron,
+        "LAUNCH_REVIEW_SCHEDULER_ENABLED": settings.launch_review_scheduler_enabled,
+        "LAUNCH_REVIEW_CRON": settings.launch_review_cron,
+        "ALPHA_DIGEST_SCHEDULER_ENABLED": settings.alpha_digest_scheduler_enabled,
+        "ALPHA_DIGEST_CRON": settings.alpha_digest_cron,
+        "NOTIFY_ENABLED": settings.notify_enabled,
+        "NOTIFY_DIGEST_CRON": settings.notify_digest_cron,
         "SCHEDULER_MISFIRE_GRACE_SECONDS": settings.scheduler_misfire_grace_seconds,
     }
 

@@ -28,6 +28,23 @@ interface AutomationConfig {
   SCHEDULER_MISFIRE_GRACE_SECONDS?: number;
   ARCHIVE_SCHEDULER_ENABLED?: boolean;
   ARCHIVE_CRON?: string;
+  VITALS_SCHEDULER_ENABLED?: boolean;
+  VITALS_CRON?: string;
+  LAUNCH_REVIEW_SCHEDULER_ENABLED?: boolean;
+  LAUNCH_REVIEW_CRON?: string;
+  ALPHA_DIGEST_SCHEDULER_ENABLED?: boolean;
+  ALPHA_DIGEST_CRON?: string;
+  NOTIFY_ENABLED?: boolean;
+  NOTIFY_DIGEST_CRON?: string;
+}
+
+interface AuditLogItem {
+  id: number;
+  action: string;
+  user: string;
+  detail?: string | null;
+  ip?: string | null;
+  created_at?: string | null;
 }
 
 interface SettingsConfig {
@@ -286,6 +303,30 @@ export default function OpsPage() {
   const [opsDryRun, setOpsDryRun] = useState<boolean>(true);
   const [opsSummary, setOpsSummary] = useState<{ title: string; data: OpsTaskResult } | null>(null);
 
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [auditActionFilter, setAuditActionFilter] = useState('');
+  const [auditUserFilter, setAuditUserFilter] = useState('');
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditAuthHint, setAuditAuthHint] = useState('');
+
+  const loadAuditLogs = useCallback(async (actionVal = '', userVal = '') => {
+    setAuditBusy(true);
+    setAuditAuthHint('');
+    try {
+      const qs = new URLSearchParams({ limit: '30' });
+      if (actionVal.trim()) qs.set('action', actionVal.trim());
+      if (userVal.trim()) qs.set('user', userVal.trim());
+      const res = await apiFetch<{ items: AuditLogItem[]; total: number }>(`/ops/audit-logs?${qs.toString()}`);
+      setAuditLogs(res.items || []);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '审计日志读取失败';
+      setAuditAuthHint(msg);
+      setAuditLogs([]);
+    } finally {
+      setAuditBusy(false);
+    }
+  }, []);
+
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -309,6 +350,7 @@ export default function OpsPage() {
           title: opsDryRun ? 'DefiLlama 融资同步 (仅预览诊断)' : 'DefiLlama 融资同步 (已Commit落地)',
           data: res.data,
         });
+        void loadAuditLogs(auditActionFilter, auditUserFilter);
       }
     } catch (e: unknown) {
       showToast((e instanceof Error && e.message) || 'DefiLlama 融资同步失败', 'error');
@@ -335,6 +377,7 @@ export default function OpsPage() {
           title: opsDryRun ? '全库存活率与跑道硬检验审计 (仅预览报告)' : '全库存活率与跑道硬检验审计 (已更新落地)',
           data: res.data,
         });
+        void loadAuditLogs(auditActionFilter, auditUserFilter);
       }
     } catch (e: unknown) {
       showToast((e instanceof Error && e.message) || '全库存活率审计失败', 'error');
@@ -389,12 +432,13 @@ export default function OpsPage() {
       setAutomation(cfg?.automation ?? null);
       setRuntimeSources(cfg?.sources);
       setSchedJobs(sj);
+      void loadAuditLogs();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadAuditLogs]);
 
   useEffect(() => {
     load();
@@ -1154,6 +1198,103 @@ export default function OpsPage() {
         </div>
       </section>
 
+      {/* 管理员写操作安全审计日志（GET /api/v1/ops/audit-logs） */}
+      <section className="mt-4 ops-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">管理员安全审计日志</h2>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              自动记录全部受保护管理写操作（已强制密钥脱敏 · 保留期 365 天）
+            </p>
+          </div>
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void loadAuditLogs(auditActionFilter, auditUserFilter);
+            }}
+          >
+            <input
+              type="text"
+              value={auditActionFilter}
+              onChange={(e) => setAuditActionFilter(e.target.value)}
+              placeholder="按动作过滤（如 POST /api/v1/ops/audit-viability）"
+              className="rounded border border-line bg-surface-1 px-2.5 py-1 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none sm:w-64"
+            />
+            <input
+              type="text"
+              value={auditUserFilter}
+              onChange={(e) => setAuditUserFilter(e.target.value)}
+              placeholder="按操作者过滤"
+              className="w-32 rounded border border-line bg-surface-1 px-2.5 py-1 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={auditBusy}
+              className="btn-secondary inline-flex items-center gap-1 !px-2.5 !py-1 !text-xs"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${auditBusy ? 'animate-spin' : ''}`} strokeWidth={2} />
+              <span>查询</span>
+            </button>
+            {(auditActionFilter || auditUserFilter) && (
+              <button
+                type="button"
+                className="text-xs text-ink-muted hover:text-ink"
+                onClick={() => {
+                  setAuditActionFilter('');
+                  setAuditUserFilter('');
+                  void loadAuditLogs('', '');
+                }}
+              >
+                重置
+              </button>
+            )}
+          </form>
+        </div>
+
+        {auditAuthHint ? (
+          <div className="px-4 py-3.5 text-xs text-ink-muted sm:px-5">
+            审计日志暂不可读：{auditAuthHint}（如已开启 API_KEY，请先在右上角登录管理员凭据）
+          </div>
+        ) : auditLogs.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead className="border-b border-line bg-surface-2/80">
+                <tr className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-muted">
+                  <th className="px-4 py-2.5 font-semibold sm:px-5">时间</th>
+                  <th className="px-3 py-2.5 font-semibold">动作</th>
+                  <th className="px-3 py-2.5 font-semibold">操作者 / IP</th>
+                  <th className="px-4 py-2.5 font-semibold sm:px-5">脱敏上下文</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.map((entry) => (
+                  <tr key={entry.id} className="border-b border-line last:border-b-0">
+                    <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-ink-muted sm:px-5">
+                      {formatNextRun(entry.created_at ?? null)}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs font-medium text-ink">
+                      {entry.action}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-ink-muted">
+                      <span>{entry.user}</span>
+                      {entry.ip ? <span className="ml-1.5 text-[11px] text-ink-faint">({entry.ip})</span> : null}
+                    </td>
+                    <td className="max-w-md truncate px-4 py-2.5 font-mono text-[11px] text-ink-faint sm:px-5" title={entry.detail ?? ''}>
+                      {entry.detail || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="px-4 py-4 text-sm text-ink-muted sm:px-5">
+            {auditBusy ? '审计日志加载中…' : '暂无匹配的管理员写操作审计记录'}
+          </div>
+        )}
+      </section>
+
       {/* 调度器任务表（GET /api/v1/scheduler/jobs）。
           此前整个运维台看不到"哪些定时任务真的注册上了"，而归档功能从上线到
           2026-08-24 一次都没被触发过 —— 靠翻数据库才发现。
@@ -1282,6 +1423,14 @@ export default function OpsPage() {
                 // 每天凌晨有个作业在删数据。
                 { name: '归档调度器', env: 'ARCHIVE_SCHEDULER_ENABLED', value: boolZh(automation?.ARCHIVE_SCHEDULER_ENABLED) },
                 { name: '归档 cron', env: 'ARCHIVE_CRON', value: automation?.ARCHIVE_CRON ?? '—' },
+                { name: '官网活性探测', env: 'VITALS_SCHEDULER_ENABLED', value: boolZh(automation?.VITALS_SCHEDULER_ENABLED) },
+                { name: '官网活性 cron', env: 'VITALS_CRON', value: automation?.VITALS_CRON ?? '—' },
+                { name: '已发币复查调度', env: 'LAUNCH_REVIEW_SCHEDULER_ENABLED', value: boolZh(automation?.LAUNCH_REVIEW_SCHEDULER_ENABLED) },
+                { name: '已发币复查 cron', env: 'LAUNCH_REVIEW_CRON', value: automation?.LAUNCH_REVIEW_CRON ?? '—' },
+                { name: 'Alpha 周报调度', env: 'ALPHA_DIGEST_SCHEDULER_ENABLED', value: boolZh(automation?.ALPHA_DIGEST_SCHEDULER_ENABLED) },
+                { name: 'Alpha 周报 cron', env: 'ALPHA_DIGEST_CRON', value: automation?.ALPHA_DIGEST_CRON ?? '—' },
+                { name: '决策推送开关', env: 'NOTIFY_ENABLED', value: boolZh(automation?.NOTIFY_ENABLED) },
+                { name: '决策推送摘要 cron', env: 'NOTIFY_DIGEST_CRON', value: automation?.NOTIFY_DIGEST_CRON ?? '—' },
               ].map((row) => (
                 <tr key={row.env} className="border-b border-line last:border-b-0">
                   <td className="px-4 py-3 font-medium text-ink sm:px-5">{row.name}</td>
