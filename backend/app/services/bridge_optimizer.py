@@ -195,3 +195,118 @@ def calculate_bridge_routes(
         "savings_percentage": savings_pct,
         "sybil_safe_tips": sybil_tips,
     }
+
+
+_LIFI_CHAIN_IDS: dict[str, int] = {
+    "ethereum": 1,
+    "arbitrum": 42161,
+    "base": 8453,
+    "optimism": 10,
+    "polygon": 137,
+    "linea": 59144,
+    "scroll": 534352,
+    "zksync": 324,
+    "blast": 81457,
+}
+_LIFI_QUOTE_URL = "https://li.quest/v1/quote"
+# LI.FI 公开报价仅需占位 EVM 地址用于估算 Gas/路径，不会发起任何签名或交易
+_LIFI_QUOTE_DUMMY_ADDR = "0x000000000000000000000000000000000000dEaD"
+
+
+async def calculate_bridge_routes_live(
+    source_chain: str,
+    target_chain: str,
+    asset: str = "ETH",
+    amount: float = 1.0,
+    *,
+    allow_live: bool | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """优先向 LI.FI 公开报价 API 获取真实跨链路由与费用；失败/离线时回退静态估算。"""
+    from app.collectors.base import safe_collector_client
+    from app.config import settings
+
+    fallback = calculate_bridge_routes(
+        source_chain=source_chain,
+        target_chain=target_chain,
+        asset=asset,
+        amount=amount,
+    )
+    live_enabled = allow_live if allow_live is not None else settings.app_env not in ("test", "testing")
+    src = source_chain.lower().strip()
+    dst = target_chain.lower().strip()
+    if not live_enabled or src == dst or src not in _LIFI_CHAIN_IDS or dst not in _LIFI_CHAIN_IDS:
+        return fallback, False
+
+    token_upper = asset.upper().strip()
+    decimals = 6 if "USD" in token_upper else 18
+    from_amount_wei = str(max(1, int(amount * (10**decimals))))
+
+    try:
+        async with safe_collector_client(timeout=4.5) as client:
+            resp = await client.get(
+                _LIFI_QUOTE_URL,
+                params={
+                    "fromChain": str(_LIFI_CHAIN_IDS[src]),
+                    "toChain": str(_LIFI_CHAIN_IDS[dst]),
+                    "fromToken": token_upper,
+                    "toToken": token_upper,
+                    "fromAmount": from_amount_wei,
+                    "fromAddress": _LIFI_QUOTE_DUMMY_ADDR,
+                },
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("estimate"), dict):
+            return fallback, False
+
+        est = payload["estimate"]
+        raw_tool_details = payload.get("toolDetails")
+        tool_details: dict[str, Any] = raw_tool_details if isinstance(raw_tool_details, dict) else {}
+        tool_key = str(payload.get("tool") or tool_details.get("key") or "lifi")
+        tool_name = str(tool_details.get("name") or tool_key)
+
+        gas_costs = est.get("gasCosts") if isinstance(est.get("gasCosts"), list) else []
+        fee_costs = est.get("feeCosts") if isinstance(est.get("feeCosts"), list) else []
+        gas_usd = round(sum(float(g.get("amountUSD") or 0.0) for g in gas_costs if isinstance(g, dict)), 2)
+        fee_usd = round(sum(float(f.get("amountUSD") or 0.0) for f in fee_costs if isinstance(f, dict)), 2)
+        total_cost_usd = round(gas_usd + fee_usd, 2)
+        exec_seconds = float(est.get("executionDuration") or 90.0)
+        duration_min = round(max(0.2, exec_seconds / 60.0), 1)
+        from_usd = float(est.get("fromAmountUSD") or fallback["transfer_value_usd"])
+
+        live_route = {
+            "protocol_id": tool_key,
+            "protocol_name": f"{tool_name} (LI.FI 实时报价)",
+            "type": "lifi_aggregated_live",
+            "security_score": "A+",
+            "url": "https://jumper.exchange/",
+            "bridge_fee_usd": fee_usd,
+            "gas_cost_usd": gas_usd,
+            "total_cost_usd": total_cost_usd,
+            "duration_min": duration_min,
+            "duration_human": f"{duration_min} 分钟",
+            "token": token_upper,
+            "amount": amount,
+            "is_live": True,
+        }
+
+        merged_routes = [live_route, *[r for r in fallback["routes"] if r["protocol_id"] != tool_key]]
+        baseline_cost = max(4.5, from_usd * 0.002 + 8.5 if (src == "ethereum" or dst == "ethereum") else 2.5)
+        saved_usd = max(0.0, round(baseline_cost - total_cost_usd, 2))
+        savings_pct = min(95, max(0, int((saved_usd / baseline_cost) * 100))) if baseline_cost > 0 else 0
+
+        return (
+            {
+                **fallback,
+                "transfer_value_usd": round(from_usd, 2),
+                "routes": merged_routes,
+                "cheapest_route": live_route,
+                "fastest_route": min(merged_routes, key=lambda r: r["duration_min"]),
+                "estimated_savings_usd": saved_usd,
+                "savings_percentage": savings_pct,
+                "data_source": "lifi_live",
+            },
+            True,
+        )
+    except Exception:
+        return fallback, False

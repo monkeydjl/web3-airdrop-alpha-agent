@@ -6,12 +6,35 @@
 """
 
 import io
+import zipfile
 from typing import Any
 
 import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# 解压炸弹与行数上限防御（P2-1）：.xlsx 本质是 ZIP，限制解压总字节与读取行数
+MAX_XLSX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_XLSX_ZIP_ENTRIES = 500
+MAX_IMPORT_ROWS = 5_000
+
+
+def _validate_xlsx_zip_bounds(file_content: bytes) -> None:
+    """在交给 openpyxl 解析前校验 .xlsx ZIP 的条目数与解压总字节，防止解压炸弹。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_content)) as zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_XLSX_ZIP_ENTRIES:
+                raise ValueError(f"Excel 压缩包条目数过多（{len(infos)} > {MAX_XLSX_ZIP_ENTRIES}）")
+            total_uncompressed = sum(max(0, int(info.file_size)) for info in infos)
+            if total_uncompressed > MAX_XLSX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"Excel 解压后体积超限（{total_uncompressed // (1024 * 1024)}MB > "
+                    f"{MAX_XLSX_UNCOMPRESSED_BYTES // (1024 * 1024)}MB）"
+                )
+    except zipfile.BadZipFile as exc:
+        raise ValueError("无效的 Excel (.xlsx) 压缩格式") from exc
 
 
 def import_projects_from_excel(file_content: bytes) -> list[dict[str, Any]]:
@@ -27,8 +50,11 @@ def import_projects_from_excel(file_content: bytes) -> list[dict[str, Any]]:
         ValueError: 文件格式错误或必填字段缺失
     """
     try:
-        # 读取 Excel
-        df = pd.read_excel(io.BytesIO(file_content))
+        _validate_xlsx_zip_bounds(file_content)
+        # 读取 Excel（设 nrows 上限，避免超长工作表耗尽内存）
+        df = pd.read_excel(io.BytesIO(file_content), nrows=MAX_IMPORT_ROWS + 1)
+        if len(df) > MAX_IMPORT_ROWS:
+            raise ValueError(f"Excel 行数超过上限（最多 {MAX_IMPORT_ROWS} 行）")
 
         # 验证必填列
         required_columns = ["项目名称", "name"]
@@ -118,8 +144,10 @@ def import_projects_from_csv(file_content: str) -> list[dict[str, Any]]:
         ValueError: 文件格式错误或必填字段缺失
     """
     try:
-        # 读取 CSV
-        df = pd.read_csv(io.StringIO(file_content))
+        # 读取 CSV（设 nrows 上限，避免超大行文件耗尽内存）
+        df = pd.read_csv(io.StringIO(file_content), nrows=MAX_IMPORT_ROWS + 1)
+        if len(df) > MAX_IMPORT_ROWS:
+            raise ValueError(f"CSV 行数超过上限（最多 {MAX_IMPORT_ROWS} 行）")
 
         # 验证必填列
         required_columns = ["项目名称", "name"]

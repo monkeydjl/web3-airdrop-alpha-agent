@@ -166,7 +166,9 @@ class LeaderElector:
                     self._is_leader = False
                     return False
 
-                # 4. Another leader holds active lease
+                # 4. Another leader holds active lease — explicitly roll back
+                # BEGIN IMMEDIATE transaction so SQLite write lock / transaction is never left open.
+                conn.rollback()
                 self._is_leader = False
                 return False
             except Exception as exc:
@@ -287,7 +289,10 @@ class LeaderElector:
         # callback — the app owner performs its own graceful shutdown
         # (e.g. lifespan closes the scheduler with wait=True exactly once).
         if self._is_leader and self.enabled:
-            self.step_down()
+            if self.owns_connections:
+                await asyncio.to_thread(self.step_down)
+            else:
+                self.step_down()
             if self.on_demoted:
                 res = self.on_demoted()
                 if asyncio.iscoroutine(res):
@@ -297,7 +302,7 @@ class LeaderElector:
         """Single heartbeat/election iteration."""
         was_leader = self._is_leader
         try:
-            won = self.acquire_or_renew()
+            won = await asyncio.to_thread(self.acquire_or_renew) if self.owns_connections else self.acquire_or_renew()
             if won and not was_leader:
                 self._is_leader = True
                 self._logger.info(

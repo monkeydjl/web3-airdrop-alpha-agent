@@ -7,13 +7,14 @@ Provides database-level batch tasks:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 
+from app.collectors.base import safe_collector_client
 from app.db import connection_scope, dict_from_row
 from app.opportunity.decision import LOW_RUNWAY_RISK
 from app.services.defillama_raises import (
@@ -29,8 +30,38 @@ from app.services.viability_gate import (
     UNBACKED_POINTS_MACHINE,
     evaluate_project_viability,
 )
+from app.utils.points import signals_have_points_program
 
 logger = structlog.get_logger(__name__)
+
+
+def _load_projects_for_funding_sync(limit: int) -> list[dict[str, Any]]:
+    """在工作线程中读取待同步项目列表，避免在外部 HTTP 抓取期间长时间占用 DB 连接。"""
+    with connection_scope() as conn:
+        cursor = conn.execute(
+            "SELECT id, name, sector, stage, score, label, reason, meta FROM projects ORDER BY score DESC"
+        )
+        rows = cursor.fetchall()
+        if limit > 0:
+            rows = rows[:limit]
+        return [dict_from_row(r) for r in rows]
+
+
+def _apply_funding_updates(updates: list[tuple[str, str, str]]) -> None:
+    """在单一短事务内批量写入融资富化结果，不阻塞事件循环。"""
+    if not updates:
+        return
+    with connection_scope() as conn:
+        try:
+            for meta_json, updated_at, project_id in updates:
+                conn.execute(
+                    "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
+                    (meta_json, updated_at, project_id),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 async def sync_database_defillama_raises(
@@ -51,168 +82,182 @@ async def sync_database_defillama_raises(
 
     logger.info("ops.sync_funding.started", apply_changes=apply_changes, limit=limit)
 
-    # 连接作用域覆盖 httpx 抓取与 DB 写入（存量行为保留：一条连接一次 commit）。
-    with connection_scope() as conn:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            protocols = await fetch_all_protocols(client=client)
-            if not protocols:
-                logger.error("ops.sync_funding.protocols_fetch_failed")
-                return {"ok": False, "error": "protocols_fetch_failed"}
+    # 1. 先获取 DefiLlama 全量协议索引与待检项目列表（DB 连接不跨外部 HTTP 持有）
+    async with safe_collector_client(timeout=15.0) as client:
+        protocols = await fetch_all_protocols(client=client)
+        if not protocols:
+            logger.error("ops.sync_funding.protocols_fetch_failed")
+            return {"ok": False, "error": "protocols_fetch_failed"}
 
-            slug_map = build_protocols_slug_map(protocols)
+        slug_map = build_protocols_slug_map(protocols)
+        projects = await asyncio.to_thread(_load_projects_for_funding_sync, limit)
 
-            cursor = conn.execute(
-                "SELECT id, name, sector, stage, score, label, reason, meta FROM projects ORDER BY score DESC"
+        matched_entries: list[tuple[dict[str, Any], str]] = []
+        for p in projects:
+            name = str(p.get("name") or p["id"])
+            matched_slug = match_protocol_slug(name, slug_map)
+            if matched_slug:
+                matched_entries.append((p, matched_slug))
+
+        # 2. 有界并发抓取协议 raises，避免串行 N*15s 阻塞
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_one(slug: str) -> dict[str, Any] | None:
+            async with sem:
+                return await fetch_protocol_funding(slug, client=client)
+
+        funding_results = await asyncio.gather(
+            *(_fetch_one(slug) for _, slug in matched_entries),
+            return_exceptions=False,
+        )
+
+    matched_protocols = len(matched_entries)
+    enriched_funding_count = 0
+    viability_upgraded_count = 0
+    details: list[dict[str, Any]] = []
+    pending_updates: list[tuple[str, str, str]] = []
+
+    for (p, matched_slug), proto_funding in zip(matched_entries, funding_results, strict=True):
+        if not proto_funding or not proto_funding.get("has_funding"):
+            continue
+
+        project_id = str(p["id"])
+        name = str(p.get("name") or project_id)
+        meta = parse_meta(p.get("meta"))
+        existing_funding = funding_public_view(meta)
+        raw_nested_funding = meta.get("funding")
+        nested_funding: dict[str, Any] = raw_nested_funding if isinstance(raw_nested_funding, dict) else {}
+
+        new_amount = proto_funding.get("funding_amount", 0.0)
+        existing_amount = float(
+            existing_funding.get("funding_total_usd")
+            or nested_funding.get("funding_total_usd")
+            or nested_funding.get("funding_amount")
+            or 0.0
+        )
+        new_investors = proto_funding.get("investors") or []
+        new_tier = proto_funding.get("funding_tier", "unknown")
+        existing_tier = existing_funding.get("funding_tier") or nested_funding.get("funding_tier")
+        existing_investors = existing_funding.get("funding_investors") or nested_funding.get("funding_investors") or []
+        existing_leads = (
+            existing_funding.get("funding_lead_investors") or nested_funding.get("funding_lead_investors") or []
+        )
+
+        is_improvement = (
+            (new_amount > existing_amount)
+            or (not existing_investors and bool(new_investors))
+            or (existing_tier in (None, "none", "unknown") and new_tier in ("tier1", "tier2", "tier3"))
+        )
+
+        if not is_improvement:
+            continue
+
+        enriched_funding_count += 1
+
+        final_amount = max(new_amount, existing_amount)
+        final_rounds = max(
+            proto_funding.get("round_count", 0),
+            int(existing_funding.get("funding_rounds") or nested_funding.get("funding_rounds") or 0),
+        )
+        final_last_date = (
+            proto_funding.get("last_round_date")
+            or existing_funding.get("funding_last_date")
+            or nested_funding.get("funding_last_date")
+        )
+        final_investors = list(dict.fromkeys([*existing_investors, *new_investors]))
+        final_leads = list(dict.fromkeys([*existing_leads, *proto_funding.get("lead_investors", [])]))
+        final_tier = (
+            "tier1"
+            if "tier1" in (new_tier, existing_tier)
+            else (
+                "tier2"
+                if "tier2" in (new_tier, existing_tier)
+                else (new_tier if new_tier != "unknown" else existing_tier or "unknown")
             )
-            rows = cursor.fetchall()
-            if limit > 0:
-                rows = rows[:limit]
+        )
 
-            matched_protocols = 0
-            enriched_funding_count = 0
-            viability_upgraded_count = 0
-            details: list[dict[str, Any]] = []
+        enriched_funding = {
+            "funding_amount": final_amount,
+            "funding_total_usd": final_amount,
+            "funding_tier": final_tier,
+            "funding_quality": proto_funding.get("funding_quality", 0.0),
+            "round_count": final_rounds,
+            "funding_rounds": final_rounds,
+            "rounds": proto_funding.get("rounds", []),
+            "lead_investors": final_leads,
+            "funding_lead_investors": final_leads,
+            "investors": final_investors,
+            "funding_investors": final_investors,
+            "last_round_date": final_last_date,
+            "funding_last_date": final_last_date,
+            "valuation": proto_funding.get("valuation") or existing_funding.get("valuation"),
+            "source": "defillama",
+            "synced_at": now.isoformat(),
+        }
 
-            for row in rows:
-                p = dict_from_row(row)
-                project_id = str(p["id"])
-                name = str(p.get("name") or project_id)
-                meta = parse_meta(p.get("meta"))
-                existing_funding = funding_public_view(meta)
+        signals = signals_of(meta)
+        old_viability = meta.get("viability_tier") or "unknown"
+        # 用合并后的最终融资指标评估存活率（避免 DefiLlama 仅补投资人时被低额 new_amount 误判）
+        viability_eval = evaluate_project_viability(
+            funding_total_usd=final_amount,
+            funding_tier=final_tier,
+            funding_rounds=final_rounds,
+            funding_last_date=final_last_date,
+            funding_investors=final_investors,
+            funding_lead_investors=final_leads,
+            github_inactive_days=signals.get("github_recent_push_days"),
+            tvl_usd=signals.get("tvl_usd"),
+            has_points_program=signals_have_points_program(signals),
+            stage=str(p.get("stage") or "ideation"),
+            now=now,
+        )
+        new_viability = viability_eval.get("tier", "viable")
+        if old_viability == "unviable" and new_viability in ("viable", "borderline"):
+            viability_upgraded_count += 1
 
-                matched_slug = match_protocol_slug(name, slug_map)
-                if not matched_slug:
-                    continue
+        detail_entry = {
+            "id": project_id,
+            "name": name,
+            "slug": matched_slug,
+            "old_amount": existing_amount,
+            "new_amount": final_amount,
+            "old_tier": existing_funding.get("funding_tier"),
+            "new_tier": final_tier,
+            "investors": final_investors[:5],
+            "old_viability": old_viability,
+            "new_viability": new_viability,
+        }
+        details.append(detail_entry)
 
-                matched_protocols += 1
-                proto_funding = await fetch_protocol_funding(matched_slug, client=client)
-                if not proto_funding or not proto_funding.get("has_funding"):
-                    continue
+        if apply_changes:
+            meta["funding"] = enriched_funding
+            meta["signals"] = {**signals, **enriched_funding}
+            meta["viability_tier"] = new_viability
+            # 与 audit_database_viability 保持一致：存完整结构化 viability_eval 字典
+            meta["viability_advisory"] = viability_eval
+            meta_json = json.dumps(meta, ensure_ascii=False)
+            pending_updates.append((meta_json, now.isoformat(), project_id))
 
-                new_amount = proto_funding.get("funding_amount", 0.0)
-                existing_amount = existing_funding.get("funding_total_usd") or 0.0
-                new_investors = proto_funding.get("investors") or []
-                new_tier = proto_funding.get("funding_tier", "unknown")
+    if apply_changes and pending_updates:
+        await asyncio.to_thread(_apply_funding_updates, pending_updates)
 
-                is_improvement = (
-                    (new_amount > existing_amount)
-                    or (not existing_funding.get("funding_investors") and bool(new_investors))
-                    or (
-                        existing_funding.get("funding_tier") in (None, "none", "unknown")
-                        and new_tier in ("tier1", "tier2", "tier3")
-                    )
-                )
-
-                if not is_improvement:
-                    continue
-
-                enriched_funding_count += 1
-
-                final_amount = max(new_amount, existing_amount)
-                final_investors = list(dict.fromkeys([*existing_funding.get("funding_investors", []), *new_investors]))
-                final_leads = list(
-                    dict.fromkeys(
-                        [*existing_funding.get("funding_lead_investors", []), *proto_funding.get("lead_investors", [])]
-                    )
-                )
-                final_tier = (
-                    "tier1"
-                    if "tier1" in (new_tier, existing_funding.get("funding_tier"))
-                    else (
-                        "tier2"
-                        if "tier2" in (new_tier, existing_funding.get("funding_tier"))
-                        else (new_tier if new_tier != "unknown" else existing_funding.get("funding_tier") or "unknown")
-                    )
-                )
-
-                enriched_funding = {
-                    "funding_amount": final_amount,
-                    "funding_total_usd": final_amount,
-                    "funding_tier": final_tier,
-                    "funding_quality": proto_funding.get("funding_quality", 0.0),
-                    "round_count": max(
-                        proto_funding.get("round_count", 0), existing_funding.get("funding_rounds") or 0
-                    ),
-                    "funding_rounds": max(
-                        proto_funding.get("round_count", 0), existing_funding.get("funding_rounds") or 0
-                    ),
-                    "rounds": proto_funding.get("rounds", []),
-                    "lead_investors": final_leads,
-                    "funding_lead_investors": final_leads,
-                    "investors": final_investors,
-                    "funding_investors": final_investors,
-                    "last_round_date": proto_funding.get("last_round_date")
-                    or existing_funding.get("funding_last_date"),
-                    "funding_last_date": proto_funding.get("last_round_date")
-                    or existing_funding.get("funding_last_date"),
-                    "valuation": proto_funding.get("valuation") or existing_funding.get("valuation"),
-                    "source": "defillama",
-                    "synced_at": now.isoformat(),
-                }
-
-                signals = signals_of(meta)
-                old_viability = meta.get("viability_tier") or "unknown"
-                viability_eval = evaluate_project_viability(
-                    funding_total_usd=new_amount,
-                    funding_tier=new_tier,
-                    funding_rounds=proto_funding.get("round_count", 0),
-                    funding_last_date=proto_funding.get("last_round_date"),
-                    funding_investors=new_investors,
-                    funding_lead_investors=proto_funding.get("lead_investors", []),
-                    github_inactive_days=signals.get("github_recent_push_days"),
-                    tvl_usd=signals.get("tvl_usd"),
-                    has_points_program=bool(signals.get("has_points_program")),
-                )
-                new_viability = viability_eval.get("tier", "viable")
-                if old_viability == "unviable" and new_viability in ("viable", "borderline"):
-                    viability_upgraded_count += 1
-
-                detail_entry = {
-                    "id": project_id,
-                    "name": name,
-                    "slug": matched_slug,
-                    "old_amount": existing_amount,
-                    "new_amount": new_amount,
-                    "old_tier": existing_funding.get("funding_tier"),
-                    "new_tier": new_tier,
-                    "investors": new_investors[:5],
-                    "old_viability": old_viability,
-                    "new_viability": new_viability,
-                }
-                details.append(detail_entry)
-
-                if apply_changes:
-                    meta["funding"] = enriched_funding
-                    meta["signals"] = {**signals, **enriched_funding}
-                    meta["viability_tier"] = new_viability
-                    meta["viability_advisory"] = viability_eval.get("recommendation_zh")
-                    meta_json = json.dumps(meta, ensure_ascii=False)
-
-                    conn.execute(
-                        "UPDATE projects SET meta = ?, updated_at = ? WHERE id = ?",
-                        (meta_json, now.isoformat(), project_id),
-                    )
-
-            if apply_changes:
-                conn.commit()
-
-            result = {
-                "ok": True,
-                "total_scanned": len(rows),
-                "matched_protocols": matched_protocols,
-                "enriched_funding_count": enriched_funding_count,
-                "viability_upgraded_count": viability_upgraded_count,
-                "details": details,
-                "applied": apply_changes,
-            }
-            logger.info(
-                "ops.sync_funding.completed",
-                total_scanned=len(rows),
-                enriched=enriched_funding_count,
-                upgraded=viability_upgraded_count,
-                applied=apply_changes,
-            )
-            return result
+    result = {
+        "ok": True,
+        "total_scanned": len(projects),
+        "matched_protocols": matched_protocols,
+        "enriched_funding_count": enriched_funding_count,
+        "viability_upgraded_count": viability_upgraded_count,
+        "details": details,
+        "applied": apply_changes,
+    }
+    logger.info(
+        "ops.sync_funding.completed",
+        total_scanned=len(projects),
+        enriched=enriched_funding_count,
+        upgraded=viability_upgraded_count,
+        applied=apply_changes,
+    )
+    return result
 
 
 def audit_database_viability(*, apply_changes: bool = False) -> dict[str, Any]:
@@ -270,7 +315,7 @@ def audit_database_viability(*, apply_changes: bool = False) -> dict[str, Any]:
                 )
                 github_inactive_days = signals.get("github_recent_push_days")
                 tvl_usd = signals.get("tvl_usd")
-                has_points_program = bool(signals.get("has_points_program"))
+                has_points_program = signals_have_points_program(signals)
                 stage = str(p.get("stage") or "ideation")
 
                 res = evaluate_project_viability(

@@ -56,6 +56,8 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "api.telegram.org",  # Telegram Bot API（决策推送 sendMessage，ACTION_LOOP_DESIGN §2）
         "raw.githubusercontent.com",  # GitHub Curated lists (github_curated)
         "api.openai.com",  # LLM 单接口默认 endpoint
+        "api.gopluslabs.io",  # GoPlus Security 公开授权/地址风控 API（services/security_sentinel.py）
+        "li.quest",  # LI.FI 公开跨链桥实时报价 API（services/bridge_optimizer.py）
     }
 )
 

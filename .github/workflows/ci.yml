@@ -30,10 +30,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
@@ -81,10 +81,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
@@ -100,8 +100,11 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run full backend test suite
+        # -n auto：xdist 并行（conftest 已做 per-worker 建库隔离，2026-11-13）
+        # ⚠ 注释不能放在 run: >- 块内 —— YAML 折叠后 # 会让整行变成 bash 注释，
+        # 测试命令不被执行（27 秒空脚本 pass，Coverage Gate 找不到 artifact）。
         run: >-
-          pytest tests -q
+          pytest tests -q -n auto
           --cov=app
           --cov-report=term-missing
           --cov-report=xml
@@ -112,7 +115,7 @@ jobs:
         continue-on-error: false
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: coverage-report
@@ -138,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download coverage report
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: coverage-report
 
@@ -201,7 +204,7 @@ jobs:
     steps:
       # fetch-depth: 0：关键路径判定要对 base 做三路 git diff，浅克隆里
       # 没有 PR base 的历史，merge-base 求不出来。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -245,7 +248,7 @@ jobs:
 
       - name: Setup Python ${{ env.PYTHON_VERSION }}
         if: steps.detect.outputs.relevant == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
@@ -273,18 +276,29 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
           push: false
           tags: airdrop-alpha:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Build Frontend Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend-next
+          file: frontend-next/Dockerfile
+          push: false
+          tags: airdrop-alpha-frontend:ci-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
@@ -314,10 +328,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
@@ -345,10 +359,10 @@ jobs:
       run:
         working-directory: frontend-next
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           # 与本地开发机对齐（node v24.18.1）。此前写 "22"，而前端单测靠
           # Node 原生执行 TypeScript（类型擦除）来跑 `.ts` 源文件 —— 这个能力
@@ -363,6 +377,9 @@ jobs:
 
       - name: Run typecheck
         run: npm run typecheck
+
+      - name: Run lint
+        run: npm run lint
 
       # 前端此前完全没有单测。lib/download.ts 里全是解析别人给的字符串
       # （HTTP 头、错误响应体、文件名），这类代码失败时不抛错，只会静默地
@@ -379,3 +396,103 @@ jobs:
       # 上游出补丁后可改回不带 --omit=dev。
       - name: Run npm audit
         run: npm audit --omit=dev --audit-level=high
+
+  # ── Phase 6: PostgreSQL Migration & API Smoke ──
+  postgres-smoke:
+    name: PostgreSQL Migration & API Smoke
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: airdrop
+          POSTGRES_PASSWORD: ci_smoke_password_123456
+          POSTGRES_DB: airdrop_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://airdrop:ci_smoke_password_123456@127.0.0.1:5432/airdrop_ci
+      APP_ENV: testing
+      SCHEDULER_ENABLED: "false"
+      COLLECTION_SCHEDULER_ENABLED: "false"
+      AUTH_TOKEN_SECRET: ci-pg-smoke-auth-token-secret-32-chars-min
+      JWT_SECRET: ci-pg-smoke-jwt-secret-32-chars-minimum-01
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Alembic upgrade head against PostgreSQL
+        run: python -m alembic upgrade head
+
+      - name: Run PostgreSQL end-to-end API smoke test
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.agents.base import AgentContext, PipelineState, RawProject
+          from app.main import create_app
+          from app.repository import ProjectRepository
+
+          repo = ProjectRepository()
+          repo.save(
+              PipelineState(
+                  project=RawProject(id="pg-smoke-1", name="PgSmokeProto", sector="DeFi", stage="testnet"),
+                  context=AgentContext(run_id="pg-smoke-run"),
+                  score=82,
+                  label="FARM",
+                  confidence=0.85,
+                  reason=["pg smoke ok"],
+              )
+          )
+
+          app = create_app()
+          with TestClient(app) as client:
+              assert client.get("/health").status_code == 200
+              reg = client.post(
+                  "/api/v1/auth/register",
+                  json={"email": "pgsmoke@example.com", "username": "pgsmoke", "password": "StrongPassword123!"},
+              )
+              assert reg.status_code in (200, 201), reg.text
+              login = client.post(
+                  "/api/v1/auth/login",
+                  json={"email": "pgsmoke@example.com", "password": "StrongPassword123!"},
+              )
+              assert login.status_code == 200, login.text
+              token = login.json()["access_token"]
+              headers = {"Authorization": f"Bearer {token}"}
+              # 实际契约：POST /watchlist/{project_id}（路径参数），body 只收
+              # note/user_id。曾写成 POST /watchlist + project_id 放 body ——
+              # 405 Method Not Allowed（CI 2026-11-22）。
+              wl = client.post("/api/v1/watchlist/pg-smoke-1", json={}, headers=headers)
+              assert wl.status_code in (200, 201), wl.text
+              # 实际契约：GET /notifications（通知中心聚合）。曾写
+              # /notifications/summary —— 该路由不存在，必 404。
+              notif = client.get("/api/v1/notifications", headers=headers)
+              assert notif.status_code == 200, notif.text
+              projs = client.get("/api/v1/projects", headers=headers)
+              assert projs.status_code == 200 and projs.json()["data"]["total"] >= 1
+          print("PostgreSQL smoke test passed.")
+          PY

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from app.utils.points import project_has_points_program
+
 if TYPE_CHECKING:
     from app.agents.base import RawProject
 
@@ -32,11 +34,11 @@ class EligibilityDecision:
 def has_post_launch_airdrop_path(project: RawProject) -> bool:
     """Whether a launched token still has explicit evidence of a campaign path.
 
-    积分只认严格证据 ``explicit_points_program``（2026-10-08）：restaking / incentive
-    之类通用词不构成已发币项目的后续路径。旧调用方不传（None）时回退宽松字段。
+    积分判定统一走 `app.utils.points.project_has_points_program`（2026-11-09）：
+    字段级 `explicit_points_program` 是权威，缺失时才用已归一化的
+    `has_points_program`。restaking / incentive 之类通用词在任何一层都不再算数。
     """
-    strict_points = getattr(project, "explicit_points_program", None)
-    points = project.has_points_program if strict_points is None else strict_points
+    points = project_has_points_program(project)
     return bool(
         points or getattr(project, "explicit_airdrop_mention", False) or getattr(project, "has_task_portal", False)
     )
@@ -83,7 +85,7 @@ def has_participation_path(project: RawProject) -> bool:
 
     return bool(
         project.has_testnet
-        or project.has_points_program
+        or project_has_points_program(project)
         or getattr(project, "has_task_portal", False)
         or getattr(project, "explicit_airdrop_mention", False)
     )
@@ -92,10 +94,15 @@ def has_participation_path(project: RawProject) -> bool:
 def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDecision:
     """Apply ADR-015 vetoes without changing the underlying weighted score.
 
-    Only FARM can be downgraded.  A pre-existing WATCH/IGNORE is already no more
-    permissive than either rule and must never be promoted or otherwise rewritten.
+    Monotonicity rules:
+    - Hard disqualifiers (`already_launched` without follow-on path, `explicit_no_airdrop`)
+      downgrade both `FARM` and `WATCH` to `IGNORE` and record `veto`, preventing a lower-score
+      disqualified project (`WATCH`, 50–64) from ranking above a higher-score disqualified
+      project (`FARM` -> `IGNORE`, >=65).
+    - `no_participation_path` caps only `FARM` at `WATCH`; a pre-existing `WATCH`/`IGNORE`
+      is never promoted or rewritten.
     """
-    if label != "FARM":
+    if label == "IGNORE":
         return EligibilityDecision(label=label)
 
     if is_already_launched_without_airdrop_path(project):
@@ -112,7 +119,7 @@ def apply_eligibility_gate(project: RawProject, label: Label) -> EligibilityDeci
             reason="team or official source explicitly disclaimed airdrop / token incentives",
         )
 
-    if not has_participation_path(project):
+    if label == "FARM" and not has_participation_path(project):
         return EligibilityDecision(
             label="WATCH",
             veto=VETO_NO_PARTICIPATION_PATH,

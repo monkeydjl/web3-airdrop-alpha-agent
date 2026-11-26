@@ -8,6 +8,7 @@ Reference:
 - DATA_SCORING_DICT.md §3.1 NarrativeResult
 """
 
+import asyncio
 import time
 from typing import Any
 
@@ -354,7 +355,11 @@ class NarrativeAgent(BaseAgent):
             # V2 (C3): Apply dynamic heat signal multiplier
             # 失败时 multiplier=1.0，不影响静态 heat_score（降级路径）
             try:
-                multiplier = self._get_heat_provider().get_multiplier(sector)
+                heat_provider = self._get_heat_provider()
+                if getattr(heat_provider, "_conn", None) is None:
+                    multiplier = await asyncio.to_thread(heat_provider.get_multiplier, sector)
+                else:
+                    multiplier = heat_provider.get_multiplier(sector)
                 heat_score = min(1.0, max(0.0, static_heat * multiplier))
             except Exception as e:
                 self.logger.warning(

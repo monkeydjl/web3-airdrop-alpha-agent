@@ -19,6 +19,7 @@ from app.agents.eligibility import apply_eligibility_gate
 from app.agents.narrative import canonical_sector_key
 from app.config import settings
 from app.models import ScoreResult
+from app.utils.points import project_has_points_program
 
 logger = structlog.get_logger(__name__)
 
@@ -139,7 +140,7 @@ class ScorerAgent(BaseAgent):
                 confidence=confidence,
                 reason=reasons,
                 sub_scores=subscores,
-                weight_version=WEIGHT_VERSION,
+                weight_version=settings.weight_version,
                 veto=eligibility.veto,
             )
 
@@ -335,7 +336,7 @@ class ScorerAgent(BaseAgent):
             bool(getattr(p, "has_github", False)),
             bool(getattr(p, "has_twitter", False) or getattr(p, "has_discord", False)),
             bool(
-                p.has_points_program
+                project_has_points_program(p)
                 or getattr(p, "has_task_portal", False)
                 or getattr(p, "explicit_airdrop_mention", False)
             ),
@@ -469,7 +470,8 @@ class ScorerAgent(BaseAgent):
 
     def _calculate_total_score(self, subscores: dict[str, float]) -> int:
         """Calculate weighted total score."""
-        total = sum(subscores[key] * WEIGHTS[key] for key in WEIGHTS)
+        weights = _load_weights()
+        total = sum(subscores[key] * weights[key] for key in weights)
 
         # Round using banker's rounding (Python default)
         return round(self._clamp(total, 0, 100))
@@ -597,10 +599,16 @@ class ScorerAgent(BaseAgent):
         # sector_counts 里"（即无数据，_calc_competition 返回中性 50）当作
         # count=0 从而宣称"低竞争"——子分说"我们不知道"，理由却说"竞争很低"。
         comp_score = subscores["competition"]
-        sector = state.project.sector
+        # 查表口径与 _calc_competition 一致：先规范键，miss 后回退原始写法
+        # （兼容调用方直接以原始写法构造 sector_counts 的老路径）。
+        sector_key = canonical_sector_key(state.project.sector)
+        if sector_key and sector_key not in self.sector_counts:
+            raw = state.project.sector
+            if raw and raw in self.sector_counts:
+                sector_key = raw
 
-        if sector and sector in self.sector_counts:
-            count = self.sector_counts[sector]
+        if sector_key and sector_key in self.sector_counts:
+            count = self.sector_counts[sector_key]
             if count <= 3:
                 candidates.append(("low competition", abs(comp_score - 50), False))
             elif count > 15:

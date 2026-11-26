@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 
 import structlog
 
@@ -25,6 +26,18 @@ from app.config import settings
 from app.db import connection_scope
 
 logger = structlog.get_logger(__name__)
+
+
+def _cutoff_iso(hours: int) -> str:
+    """窗口截止时间，格式与列的写入格式（isoformat，T 分隔）对齐。
+
+    此前用 SQL `datetime('now', ?)` 生成**空格**格式的 cutoff 去比 T 格式的
+    captured_at —— SQLite 的 TEXT 比较里 'T'(0x54) > ' '(0x20)，同日期的行
+    无论几点都判成"在窗口内"，边界日最多多算一天
+    （archive.py::_cutoff_db_default 的 docstring 实测记录过同一个坑）。
+    cutoff 改在应用层按写入同款格式生成。
+    """
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 class HeatSignalProvider:
@@ -99,18 +112,21 @@ class HeatSignalProvider:
             # 通过 raw_projects 关联 sector，再 JOIN project_signals
             lookback = self._lookback
 
-            # 1. Twitter 讨论信号：signal_source='twitter' 的信号强度均值
+            # 1. Twitter 讨论信号：signal_source='twitter' 的信号强度均值（按 signal_id 去重，防多源 JOIN 膨胀）
             twitter_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt, AVG(ps.signal_strength) as avg_strength
-                FROM project_signals ps
-                JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
-                    OR rp.project_id = ps.project_id
-                WHERE ps.signal_source = 'twitter'
-                  AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                SELECT COUNT(*) as cnt, AVG(signal_strength) as avg_strength
+                FROM (
+                    SELECT DISTINCT ps.signal_id, ps.signal_strength
+                    FROM project_signals ps
+                    JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
+                        OR rp.project_id = ps.project_id
+                    WHERE ps.signal_source = 'twitter'
+                      AND rp.raw_data LIKE ?
+                      AND ps.captured_at >= ?
+                ) deduped
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             twitter_count = int(twitter_row["cnt"]) if twitter_row and twitter_row["cnt"] else 0
@@ -118,18 +134,21 @@ class HeatSignalProvider:
                 float(twitter_row["avg_strength"]) if twitter_row and twitter_row["avg_strength"] else 0.0
             )
 
-            # 2. VC 融资信号：signal_type='funding'
+            # 2. VC 融资信号：signal_type='funding'（按 signal_id 去重）
             funding_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt, AVG(ps.signal_strength) as avg_strength
-                FROM project_signals ps
-                JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
-                    OR rp.project_id = ps.project_id
-                WHERE ps.signal_type = 'funding'
-                  AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                SELECT COUNT(*) as cnt, AVG(signal_strength) as avg_strength
+                FROM (
+                    SELECT DISTINCT ps.signal_id, ps.signal_strength
+                    FROM project_signals ps
+                    JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
+                        OR rp.project_id = ps.project_id
+                    WHERE ps.signal_type = 'funding'
+                      AND rp.raw_data LIKE ?
+                      AND ps.captured_at >= ?
+                ) deduped
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             funding_count = int(funding_row["cnt"]) if funding_row and funding_row["cnt"] else 0
@@ -137,19 +156,31 @@ class HeatSignalProvider:
                 float(funding_row["avg_strength"]) if funding_row and funding_row["avg_strength"] else 0.0
             )
 
-            # 3. KOL 热度信号：signal_type IN ('airdrop','tge')
+            # 3. KOL 热度信号：兼容 signal_type IN ('airdrop','tge') 与 Twitter 采集器写入的
+            #    signal_type='twitter_mention' + signal_data.signal_type IN ('airdrop','tge')
             kol_row = conn.execute(
                 """
-                SELECT COUNT(*) as cnt
+                SELECT COUNT(DISTINCT ps.signal_id) as cnt
                 FROM project_signals ps
                 JOIN raw_projects rp ON rp.dedup_key = ps.dedup_key
                     OR rp.project_id = ps.project_id
-                WHERE ps.signal_type IN ('airdrop', 'tge')
-                  AND ps.signal_source = 'twitter'
+                WHERE ps.signal_source = 'twitter'
+                  AND (
+                    ps.signal_type IN ('airdrop', 'tge')
+                    OR (
+                        ps.signal_type = 'twitter_mention'
+                        AND (
+                            ps.signal_data LIKE '%"signal_type": "airdrop"%'
+                            OR ps.signal_data LIKE '%"signal_type":"airdrop"%'
+                            OR ps.signal_data LIKE '%"signal_type": "tge"%'
+                            OR ps.signal_data LIKE '%"signal_type":"tge"%'
+                        )
+                    )
+                  )
                   AND rp.raw_data LIKE ?
-                  AND ps.captured_at >= datetime('now', ?)
+                  AND ps.captured_at >= ?
                 """,
-                (f'%"{sector}"%', f"-{lookback} hours"),
+                (f'%"{sector}"%', _cutoff_iso(lookback)),
             ).fetchone()
 
             kol_count = int(kol_row["cnt"]) if kol_row and kol_row["cnt"] else 0

@@ -50,6 +50,7 @@ from app.services.defillama_raises import (
 )
 from app.services.project_signals import funding_public_view, parse_meta
 from app.services.viability_gate import evaluate_project_viability
+from app.utils.points import signals_have_points_program
 
 
 async def run_sync_defillama_raises(
@@ -174,7 +175,7 @@ async def run_sync_defillama_raises(
                 funding_lead_investors=proto_funding.get("lead_investors", []),
                 github_inactive_days=signals.get("github_recent_push_days"),
                 tvl_usd=signals.get("tvl_usd"),
-                has_points_program=bool(signals.get("has_points_program")),
+                has_points_program=signals_have_points_program(signals),
             )
             new_viability = viability_eval.get("tier", "viable")
             if old_viability == "unviable" and new_viability in ("viable", "borderline"):

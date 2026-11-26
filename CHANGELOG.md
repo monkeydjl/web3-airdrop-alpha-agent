@@ -8,6 +8,165 @@
 
 ## [Unreleased]
 
+### Fixed — 全栈工程审计全量收口（2026-11-26：P1 / P2 / P3 清零）
+
+- **P1 数据完整性、鉴权续期与配额防刷**：
+  - `routers/v1/export_import.py`：批量导入接入 `ProjectIdentityResolver` 解析确定性/别名主键，消除 `import-001`..`import-100` 固定序号二次导入覆写历史项目与串接子表台账的缺陷。
+  - `frontend-next/lib/api.ts` & `components/AdminAuthModal.tsx`：新增 `tryRefreshAccessToken()` 单飞 401 自动续期（轮换双 Token 并重试一次；`refresh_token` 失效时自动清空死凭据平滑回退匿名态，防止整站 401 锁死），并在 `AdminAuthModal` 增加「注册账号」Tab（支持可选 `bootstrap_token` 自举首位管理员）。
+  - `repository.py` & `routers/v1/projects.py`：`get_by_id` 与详情路由接入当前用户作用域（`resolve_scoped_user_id`），隔离 `skipped` 与 `watchlisted` 状态；列表路由补齐 `watchlisted` 序列化输出。
+  - `rate_limit.py` & `routers/v1/ai_brief.py`：为 `/api/v1/auth/register` 与 `POST /api/v1/projects/{id}/ai-(brief|chat)` 补齐独立滑动窗口配额；限制 `anonymous` / `viewer` 角色调用 `ai-brief` 的 `force=true` 覆写全局简报缓存。
+- **P2 安全边界、异步卫生、AST 错误信封门禁与配置编排**：
+  - `services/vitals.py`：新增 `_PinnedPublicIPBackend` 在 `httpcore` TCP 建连层单次解析并绑定公网 IP，闭合 DNS 重绑定（TOCTOU）窗口；`routers/v1/auth.py` & `repositories/user.py` 拦截 `anon-*` 令牌登出并按归属用户限定 `refresh_token` 会话吊销。
+  - `routers/v1/{webhook,ai_brief,ai_chat}.py` & `main.py`：剥离异步路由中的同步 DB I/O 至 `asyncio.to_thread`，并按数据库目标指纹消除同库启动时的重复 `init_db()`。
+  - `tests/api/test_error_detail_envelope.py`：升级为全路由 AST 静态守卫（覆盖 63 个路由模块），清零 `projects.py`、`comparison.py`、`bot.py`、`export_import.py`、`opportunity.py`、`project_identity.py`、`unlocks.py` 中全部非结构化/缺码 `detail` 及 500 内部异常原文回显。
+  - `agents/scorer.py`、`llm/client.py` & 前后端理由字典：支持运行时动态读取评分权重与版本、按本轮轮询首试模型估算 LLM 预扣成本、补齐 `VETO_NO_PARTICIPATION_PATH` 中文映射，并在文档与 `.env.example` 明确评分管线 100% 确定性规则计算口径。
+  - 依赖与编排：统一双份 `pyproject.toml` 与 `Start.bat` 依赖声明；修复 `docker/nginx/nginx-http.conf` 子块安全响应头继承与 `/_next/static/` 缓存范围；修正 `docker-compose.prod.yml`（锁定监控镜像版本、接入 Docker Socket 供 Promtail 采集 Nginx 日志、移除废弃 `CRON_HOUR`/`CRON_MINUTE`）与 `docker-compose.yml`；在 `config.py` / `scheduler.py` / `.env.example` 正式声明 `GITHUB_CURATED_CRON`、`ALPHA_DIGEST_SCHEDULER_ENABLED`、`ALPHA_DIGEST_CRON`。
+- **安全审计表激活与实时 RPC 测速升级**：
+  - `services/audit_log.py`、`main.py` & `routers/v1/ops.py`：激活 `audit_logs` 表生产写入链路（请求中间件对全部命中 `requires_admin` 的成功写操作自动异步脱敏落库），新增管理员查询端点 `GET /api/v1/ops/audit-logs`，并同步移出 `docs/OPERATIONS.md` §11 / §12.14 死表清单。
+  - `services/mev_rpc_sentinel.py` & `routers/v1/mev_rpc.py`：新增 `benchmark_rpc_node_live()`，通过公网 IP 钉死传输层发起真实 JSON-RPC `eth_blockNumber` 毫秒级往返测速与最新区块高度解析（拦截非 `https://` 与内网/云元数据 SSRF 自定义节点，实测连通标 `real`，离线/超时诚实回退 `simulated`）。
+- **P3 仓库卫生与测试基线**：从 Git 索引移除 `.workbuddy/` 本地目录、消除 `test_collector_registry.py` 异步标记告警、同步 `README.md`、`docs/API_SPEC.md`、`docs/OPERATIONS.md` 与 `docs/OBSERVABILITY.md` 统计。最新全栈基线：后端 **4295 passed / 26 skipped / 0 failed**，前端 **131 passed（45 suites）** + `next build` 全绿。
+
+### Fixed — 工程审计三阶段全量收口（2026-11-20，Phase 1–3：P0 / P1 / P2 清零）
+
+- **Phase 1（P0 上线阻断清零 + ADR-015 单调性）**：修复 PostgreSQL `0002` 迁移与 `db.py` `%` 转义/全仓 `dict_row` 兼容/`migrate_sqlite_to_pg.py` 迁移脚本；重构 `proxy.ts` 为每访客独立 `HttpOnly` Cookie 匿名 Token 并新增导航栏管理员密钥登录弹窗；锁死匿名写接口对全局表的越权副作用；修复 `opportunity/evidence.py` 解包、`launch_review.py` 时序覆盖、`main.py` 共享连接串行锁与 `eligibility.py` 的 `FARM / WATCH → IGNORE` 单调否决。
+- **Phase 2（P1 安全、流水线、前端契约与运维加固）**：收紧 `?user_id=` IDOR、`GLOBAL_UNSCOPED_WRITE_RULES`、`/api/v1/llm` 管理员锁、`ak_` 畸形前缀快速返回与密码 72B 校验；收敛 `docker-compose.prod.yml` 的 `:13002` 暴露、Nginx 日志 `stdout/stderr` 轮转、`.env.example` 与 `backup.sh`/`deploy` 脚本；打通 `collect_from_repository` 3 信号、`persistence.py` 别名解析与材质变化重入队、`defillama` HTTP 百分数→比率归一化与限速、`orchestrator` 防 `score=None` 覆写、`calibration` 否定措辞与 veto/confidence 回放、`llm` 并发预扣预算与空响应计费、`ops_tasks` 读写解耦；修复 `/portfolio`/`/ops`/`/settings` 契约并补齐 11 处 `SimulatedDataBadge` 与生产禁灌 `airdrop_pnl` 假数据。
+- **Phase 3（P2 架构、性能、Schema `0016` 与 CI 门禁）**：
+  - **输入/输出与运行期安全**：`export.py` CSV/Excel 公式注入防转义；`import_utils.py` `.xlsx` ZIP 解压体积/条目数与最大行数校验；`vitals.py` DNS 失败 fail-closed、拦截 NAT64、`trust_env=False`、405 流式 GET 与并发 `Semaphore`；`config.py` 生产强制 `debug=False` 并校验 `AUTH_TOKEN_SECRET`/`JWT_SECRET` 强度；`redact.py` 补全认证密钥与 Telegram/Discord 路径 Token 脱敏；`rate_limit.py` 新增 `/api/v1/auth/login` 防爆破独立窗口隔离；`webhook.py` 验签前 1MB 流式载荷上限；`playbook_orchestrator.py` `json.dumps` 转义用户输入。
+  - **PG 连接池与异步去阻塞**：`db.py` 新增 PostgreSQL 连接池（优先 `psycopg_pool.ConnectionPool`，无包时自动回退内置有界线程安全连接池，停机 `close_pg_pools()` 回收）；`orchestrator_simple.py`、`narrative.py`、`llm/client.py`、`token_registry.py`、`project_evaluation.py`、`leader_election.py`、`scheduler.py` 残留同步 DB 调用移入 `asyncio.to_thread`；`canonical_sector_counts` 排除当前批次与隐藏/历史回填样本消除双重计数。
+  - **Schema 0016、HA 生命周期与 CI/CD**：新增 Alembic `0016_consolidate_runtime_tables_and_indexes` 统一收口 `leader_election`、5 张运行时业务表与唯一索引；修复 `leader_election.py` SQLite 未当选路径 `rollback()`、`scheduler.py` HA 降级后重升重建实例 + `claim_run` 采集合并锁 + `alpha_digest` 落库留痕；`ci.yml` 新增真实 `postgres:15-alpine` 迁移与 API 冒烟 Job、前端 `eslint` 与前端镜像构建；`security.yml` 锁定 `trivy-action@0.28.0` 并扫描前端镜像；`release.yml` 同步构建发布前端镜像；修正 `Makefile`、`TopBar.tsx`、`error.tsx`、`archive/page.tsx` 与文档基线（后端 `4272 passed` / 覆盖率 `89.8%`，前端 `126 passed`）。
+
+### Fixed — 全量审查收尾：数据完整性 / 安全 / 异步边界 / 业务口径 / 连接池（2026-11-16，分支 fix/review-sweep-2026-11，8 commit）
+
+八批修复的完整脉络见 `HANDOFF.md`「11 月审查修复」一节。要点：
+
+- **PG 后端启用即崩（P0）**：8 处 `cursor.lastrowid`（psycopg3 已删除该属性）改走
+  `insert_returning_id`——审计日志 / metrics / 隔离区 / 项目历史 / prompt 版本 / 校准
+  changelog / 归档运行记录在 `DB_BACKEND=postgres` 下全部 AttributeError。
+- **数据完整性**：`raw_projects` 补 `UNIQUE(source_id, dedup_key)`（存量去重保留 processed
+  行）+ 写路径 `ON CONFLICT`；`project_signals` 加 `external_id` 幂等键 + 唯一索引 +
+  存量回填去重（同一条推文每 15 分钟重复计数、captured_at 永远"新鲜"两个问题同修）；
+  采集错误信息入库统一 redact（批量路径已有，单条路径漏了）。
+- **安全**：`/bot/test-send` 出站白名单旁路关闭 + 管理员锁 + 凭据日志脱敏；注册自举
+  admin 防抢注（`ALLOW_REGISTRATION` / `REGISTRATION_BOOTSTRAP_TOKEN`，生产无 token
+  降级 viewer）；api_key 未知 key_id 提前返回（全表 bcrypt 扫描放大 DoS）；JTI 吊销
+  缓存带过期淘汰 + DB 故障 fail-open 改 error 告警；公开端点不再回显内部 webhook URL；
+  10 处字符串错误 detail → 语义化错误码（静态守卫）；生产 compose 监控端口绑回环。
+- **异步边界**：采集回调与排空路径的同步 DB 调用移入 `to_thread`（500 条队列冻结全站
+  HTTP 2.8s+）；路由未处理异常计入 5xx 指标 / 日志 / 免责声明头（实测
+  BaseHTTPMiddleware.call_next 原样上抛，此前 5xx 完全隐形）；调度器降级→提升→再降级
+  时第二次 shutdown 生效（`_is_shutting_down` 在 start() 复位）；`begin_serialized_write`
+  失败不再被静默吞掉（嵌套事务分支保持静默）。
+- **业务口径**：校准 baseline/搜索只吃 live 桶（与门禁口径一致，changelog 可审计）；
+  竞争度基线在重算路径与理由生成统一为规范键折叠（此前同项目批量/重算分数不同）；
+  `list_projects` 信号一致性改批量查询（N+1×500）；`SIGNAL_KEYWORDS` 单一真相源。
+- **采集器**：twitter（next_token）/ etherscan（page/offset）/ farcaster（nextPageCursor）
+  分页补齐，页数封顶；**galxe 迁移到 `campaigns` schema**——旧 `campaignList` 查询已被
+  生产 schema 下线（实测 GRAPHQL_VALIDATION_FAILED，源静默死亡），新查询与 Relay 分页
+  语义经生产端点内省确认；per-item 容错下沉基类（单条脏数据不拖垮整轮）；重试加抖动；
+  噪声匹配词边界（`Curvegrid` / `OndoXyz` 误杀修复）；galxe/etherscan/farcaster 各自
+  的快赢修复（合约名全地址、URL 编码、非对象响应清晰报错、零速率除零）。
+- **性能**：SQLite 连接池（每连接 64MB PRAGMA cache 不再每请求重付；APP_ENV=test 关闭；
+  按 db_path 键控、封顶 4、归还回滚、幽灵句柄两侧校验）；`llm_providers` 指纹缓存
+  （每条日志约 240 次 environ 查找消除；reset 钩子同步清缓存——空库酸测实测抓到）。
+- **路由契约**：response_model 覆盖率守卫（173 操作全覆盖；文件/文本下载端点豁免
+  登记），3 个 JSON 端点补模型；路由层私有连接访问收口到 `connection_scope`，
+  collect 期间不再持有库连接。
+- **对账**：`deploy.sh prod` 指向真正的生产 compose（此前部署开发栈）；Makefile 假目标
+  清理；pyproject 依赖对齐 requirements（fastapi 0.115 vs 0.141 双真相源）；pre-commit /
+  CI 工具版本对齐；CI 测试并行（`-n auto`）；dev compose PG 对齐生产 15。
+- **死代码清理**：legacy 双调度器、DAG orchestrator、`collect_from_registry`、
+  `_drop_zombies`、虚构 `llm_semaphore_size`（日志事件面 455→429，OBSERVABILITY 同步）。
+- **前端**：`error.tsx` / `global-error.tsx` / `not-found.tsx`（渲染异常白屏兜底 + 中文
+  404）；proxy.ts 鉴权表与后端 parity 测试；错误文案环境中立化。
+- **新守卫**（全部"显式登记"风格）：response_model 覆盖、错误信封、路由连接所有权、
+  前端鉴权表 parity、部署脚本 prod compose 指向、监控端口回环绑定。
+- 测试：4150 → **4212 passed**（每批全量零失败）；空库酸测 121 文件全绿（抓到并修复
+  llm_providers 缓存未随告警去重一起重置的问题）。
+
+### Added — 项目身份别名映射，改名/赛道差异不再劈裂历史（2026-11-09）
+
+项目身份此前只有 `uuid5(normalize_name(name)::normalize_sector(sector))` 一个来源，
+项目改名、赛道写法变化或跨源命名差异都会生成第二个 `project_id`，`project_history`
+与历史评分被劈成两条记录。
+
+- 新模块 `app/identity.py`：复用既有的 `dedup_keys` 表作为别名表（新增 `source` /
+  `confidence` / `notes` / `updated_at` 列），统一解析入口 `ProjectIdentityResolver`。
+  优先级：手工精确 → 手工名称级 → 回填精确 → 自动精确 → 历史自动名称级 → 旧 uuid5。
+- **ID 不漂移**：未命中任何别名时结果与改造前逐字节一致；`backfill` 别名把既有
+  `projects` 行钉在原 ID 上，历史记录不会变孤儿。
+- **同名多赛道不误合并**：只有手工别名可以写名称级（`name::*`），回填/自动一律精确键。
+  自动别名只在「多个分组已解析到同一 project_id」时学习，失败不阻断采集。
+- 采集接入：`_dedup_records` 改为「源内 dedup_key 分组 → 按解析后的 project_id 二次归并」，
+  折叠的 `name::Unknown` 键会学成 `auto` 别名，下一轮直接命中。
+- 新 API（管理员写、只读开放）：`GET/POST /api/v1/project-identity/aliases`、
+  `DELETE /api/v1/project-identity/aliases/{alias_id}`、`POST /api/v1/project-identity/resolve`、
+  `POST /api/v1/project-identity/aliases/backfill`（默认 dry-run）。
+- 新脚本 `backend/scripts/backfill_project_aliases.py`（默认 dry-run、`--apply` 写库、
+  `--json` 报告），冲突只报告不合并。
+- 新配置 `PROJECT_ALIAS_FILE`：启动时把 JSON 手工别名同步进库，优先级最高。
+- 迁移：Alembic `0015_project_aliases`；SQLite/PostgreSQL DDL 与 `init_db` 兼容存量库。
+
+### Changed — 积分计划判定统一为单一真源，通用词不再豁免否决（2026-11-09）
+
+`has_points_program` 此前有宽松 / 严格两套口径：采集侧把 restaking、incentive、vaults、
+liquidity mining 这类通用词也算成积分计划，而资格门与已发币复查只认
+`explicit_points_program`。同一份数据在 `airdrop_signal` 里算积分、在 `already_launched`
+否决里不算，已发币项目可借通用词同时拿到积分台阶并绕过资格否决。
+
+- 新增 `app/utils/points.py`：`resolve_points_program` / `project_has_points_program` /
+  `signals_have_points_program`，全仓唯一判定入口。字段级证据
+  `explicit_points_program` 优先；缺失时才采信已归一化的 `has_points_program`。
+- 收紧采集侧（`app/agents/collector.py`）：删除通用词推断块；DefiLlama 的关键词拼接字段
+  （`app/collectors/defillama.py`）改为 `None` 并不再采信；`_raw_to_record` 只认归一化结果，
+  不再透传 raw 的宽松字段。重新扫描存量项目即按新口径重算，无需迁移脚本
+  （`project_evaluation` 与 `collectors` 都会重跑 `_infer_airdrop_flags`）。
+- 下游统一：`eligibility`（后续路径 / 参与路径）、`airdrop_signal` 阶梯、`noise` 入库门、
+  `risk`、`scorer`、`alpha_dossier`、`ops_tasks`、`participation_tasks`、
+  `multi_wallet_strategy`、`opportunity/evidence` 全部改走同一入口。
+- `scripts/rescore_all.py` 重算时不再把存量 meta 的宽松 `has_points_program` 当输入或覆盖结果。
+- 测试：更新 2 个依赖旧口径的断言，新增 `tests/agents/test_points_program_unified.py`
+  覆盖"已发币 + 仅通用词"在采集归一化、入库隔离、资格门、信号阶梯四处均不通过；
+  字段级积分证据仍正常豁免。文档同步 `GLOSSARY.md`、`DATA_SCORING_DICT.md`。
+
+
+
+### Added — 采集源评分卡（2026-10-30）
+
+`GET /api/v1/collections/sources` 每行新增 `scorecard`：产量、分析率、隔离率、平均发现分、
+最近同步与 verdict（healthy / noisy / stale / idle），运维台按徽标展示并给出处置建议，
+取代过去只能看「开 / 关」的盲区。实现见 `app/services/source_scorecard.py`。
+
+### Changed — 校准门禁改按样本来源分桶，一键回填同时写收益台账（2026-10-30）
+
+校准进度此前用「反馈总条数」计算，把 50 条 `historical_backfill` 历史样本当成真实使用
+留痕，门禁显示 53/200 的虚高进度。现在 `extract_samples` 按 `p.source` / `f.user_id` 分桶，
+`check_gate` 只数 live；`GET /api/v1/feedback/calibration/status` 新增 `gate`
+（live / FARM 样本、还差多少、按来源分布）与 `roi_ledger`，旧字段保留兼容。`/review`
+改为双进度条 + 台账来源说明，真实进度回落到 live 3 / FARM 2。
+
+同时把结果标记接进台账：`POST /api/v1/feedback` 与 `/feedback/batch` 在同一事务内写
+`roi_outcomes(source='manual')`（`airdropped → airdrop_received`、`not_airdropped →
+airdrop_missed`，`dumped` 不写），同一 `(user, project)` 幂等，项目不存在时不写孤儿行。
+
+### Fixed — 历史回溯脚本重复灌入 + 全仓格式欠账（2026-10-30）
+
+`feedback` 表没有唯一键，脚本里的 `INSERT OR REPLACE` 实际是纯插入 —— 重跑一次就把同一批
+历史样本翻倍。改为 `INSERT ... WHERE NOT EXISTS`，并在启动时清理已重复的行（只动
+`historical_backfill`）。另补 `--roi-only` 幂等补录收益台账，50 条 `backtest` 记录的
+`amount_usd` 留 NULL（数据集没有金额，不编造）。
+
+顺带修掉仓库里 8 个文件的 `ruff format` 欠账，`test_ci_parity` 的格式腿恢复绿色。
+
+### Changed — GitHub Actions 升到 Node 24 运行时（2026-10-08）
+
+每次 CI 都报「Node.js 20 is deprecated … forced to run on Node.js 24」。各 action 升到
+**首个**以 `node24` 运行的大版本（取最小跨度，跳过的大版本只有 node24 升级与已不用的
+输入项移除）：checkout v5、setup-node v5、setup-python v6、upload-artifact v6、
+download-artifact v7（与 upload 同一套 v4+ 后端，跨版本互通）、dependency-review v5、
+build-push v7、setup-buildx v4、login v4、metadata v6。`anchore/sbom-action@v0` 已是 node24；
+trivy-action / markdown-link-check 是 composite / docker action，不在此列。docs 里的示例
+workflow 同步。
+
 ### Security — next 升到 16.4.2（2026-10-08）
 
 `next` 16.0.0–16.4.0 新公布三条通告：GHSA-2464-fhr4-w9xw（critical，SVG 走 Image

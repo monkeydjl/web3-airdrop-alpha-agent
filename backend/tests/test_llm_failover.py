@@ -727,7 +727,7 @@ class TestRoundRobin:
     async def test_concurrent_calls_get_distinct_start_points(self, monkeypatch):
         """并发调用不能拿到同一个起点。
 
-        `llm_chat` 本来就会被并发调用（LLM_SEMAPHORE_SIZE 默认 5）。
+        `llm_chat` 本来就会被并发调用（分析管线 gather 多个项目时）。
         起点重复意味着并发流量全砸在同一个接口上 —— 正是轮询要解决的问题。
         """
         monkeypatch.setattr("app.llm.client.settings", _rr_settings())

@@ -12,8 +12,10 @@ Reference:
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import sqlite3
+import threading
 from collections.abc import Callable, Iterable, Iterator
 from datetime import date, datetime
 from pathlib import Path
@@ -111,6 +113,9 @@ class DbConnection:
 
     def _normalize(self, sql: str, params: Iterable[Any] | None) -> tuple[str, tuple[Any, ...] | None]:
         if self.kind == "postgres":
+            # psycopg3 将 SQL 中的单 `%` 解析为占位符（仅允许 %s/%b/%t）。
+            # 先把字面量 `%`（如 LIKE '%foo%'）统一转义为 `%%`，再将 `?` 改写为 `%s`。
+            sql = re.sub(r"%%|%", "%%", sql)
             # datetime('now', ?)  must become interval cast before `?` rewrite
             # SQLite datetime('now') 语义为 UTC。Postgres NOW() 返回带时区的
             # timestamptz，写入 naive TIMESTAMP 列时按会话时区截断，非 UTC 服务器
@@ -154,6 +159,74 @@ class DbConnection:
 
 # 已确认存在的 SQLite 数据目录，避免每次建连重复 mkdir
 _ENSURED_SQLITE_DIRS: set[str] = set()
+
+# ── SQLite 连接池（2026-11-13 审查 P2-1）────────────────────────
+# 每次建连都执行一整套 PRAGMA（cache_size=-64000 即 64MB 页缓存是**每连接**
+# 的）+ WAL 模式设置 —— 每请求新建连接的成本远不止一次 open。
+#
+# 安全设计：
+# - **APP_ENV=test 时整体关闭** —— 测试环境 db_path 被 per-test monkeypatch
+#   （tmp_path）、库文件被会话级删除重建，池化会把"句柄指向已删除文件"
+#   这类竞态引进测试；生产/开发的 db_path 稳定，才是池的受益场景。
+# - close 归还前先 rollback（清掉遗留事务，不给下一个借用者接半截事务）；
+# - 借用与归还两侧都校验库文件仍存在（删库重建场景不接幽灵句柄）；
+# - 每个 db_path 独立成池（键控），永不跨路径复用；池满真关。
+# - PG 后端不池化（psycopg_pool 是标准解，引入依赖需单独评估）。
+#
+# 对消费方完全透明：connection_scope 的 own 契约（close 恰一次）语义不变，
+# 只是池化连接的"close"含义 = 归还池（回滚 + 入池）。
+_SQLITE_POOL_MAX_PER_PATH = 4
+_sqlite_pool: dict[str, list[Any]] = {}
+_sqlite_pool_lock = threading.Lock()
+
+
+def _sqlite_pool_enabled() -> bool:
+    """测试环境关闭（理由见上）；池仅对 SQLite 默认后端生效。"""
+    return settings.app_env not in ("test", "testing")
+
+
+def _pool_return_sqlite(pool_key: str, raw: Any) -> None:
+    try:
+        raw.rollback()  # 清掉遗留事务，防止下一个借用者接上半截事务
+    except Exception:
+        # 连接已损坏（如库文件被删）：真关且不入池
+        with contextlib.suppress(Exception):
+            raw.close()
+        return
+    should_close = False
+    with _sqlite_pool_lock:
+        idle = _sqlite_pool.setdefault(pool_key, [])
+        if len(idle) >= _SQLITE_POOL_MAX_PER_PATH:
+            should_close = True
+        else:
+            idle.append(raw)
+    if should_close:
+        with contextlib.suppress(Exception):
+            raw.close()
+
+
+class PooledDbConnection(DbConnection):
+    """池化 SQLite 连接：close() 语义 = 归还连接池（回滚遗留事务）。
+
+    除 close 外与普通 DbConnection 完全一致；借用侧/归还侧都会校验库文件
+    仍存在，会话级删库重建场景不接幽灵句柄。
+    """
+
+    def __init__(self, raw: Any, *, pool_key: str) -> None:
+        super().__init__(raw, kind="sqlite")
+        self._pool_key = pool_key
+
+    def close(self) -> None:
+        if not _sqlite_pool_enabled():
+            # 测试中可能中途改 app_env —— 直接真关，不留在池里
+            self._raw.close()
+            return
+        if not os.path.exists(self._pool_key):
+            # 归还侧校验：库文件已删（重建场景）→ 真关不入池
+            with contextlib.suppress(Exception):
+                self._raw.close()
+            return
+        _pool_return_sqlite(self._pool_key, self._raw)
 
 
 def get_connection() -> DbConnection:
@@ -220,11 +293,28 @@ def connection_scope(
 
 def _connect_sqlite() -> DbConnection:
     db_path = Path(settings.db_path)
+    pool_key = os.path.abspath(str(db_path)) if _sqlite_pool_enabled() else None
+    if pool_key is not None:
+        while True:
+            with _sqlite_pool_lock:
+                idle = _sqlite_pool.get(pool_key)
+                raw = idle.pop() if idle else None
+            if raw is None:
+                break
+            # 借用侧校验：库文件可能已被会话级删除重建（test-db-isolation 等），
+            # 句柄指向已删除文件会写进"幽灵文件"——丢弃并新建。
+            if os.path.exists(pool_key):
+                return PooledDbConnection(raw, pool_key=pool_key)
+            with contextlib.suppress(Exception):
+                raw.close()
     parent = db_path.parent
     # mkdir 是 syscall，每次建连都做在热路径上是浪费；目录只需确认一次
-    if str(parent) not in _ENSURED_SQLITE_DIRS:
-        parent.mkdir(parents=True, exist_ok=True)
-        _ENSURED_SQLITE_DIRS.add(str(parent))
+    parent_key = str(parent)
+    if parent_key not in _ENSURED_SQLITE_DIRS:
+        with _sqlite_pool_lock:
+            if parent_key not in _ENSURED_SQLITE_DIRS:
+                parent.mkdir(parents=True, exist_ok=True)
+                _ENSURED_SQLITE_DIRS.add(parent_key)
     # 路由处理器现由线程池并发执行，SQLite 写锁竞争是真实存在的；
     # 显式 busy_timeout 让并发写等待而不是直接抛 "database is locked"。
     # check_same_thread=False：同步生成器依赖（如 get_opportunity_workflow_service）
@@ -245,7 +335,91 @@ def _connect_sqlite() -> DbConnection:
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=268435456")
     conn.row_factory = sqlite3.Row
+    if pool_key is not None:
+        return PooledDbConnection(conn, pool_key=pool_key)
     return DbConnection(conn, kind="sqlite")
+
+
+# ── PostgreSQL 连接池（P2-2）────────────────────────────────────
+# 优先使用 psycopg_pool.ConnectionPool（若环境已安装 psycopg_pool），
+# 否则回退到内置的有界线程安全连接池，避免每次 connection_scope() 重新发起
+# TCP/认证握手并在高并发下击穿 PG 默认 max_connections=100。
+_PG_POOL_MAX_SIZE = 20
+_pg_pools: dict[str, Any] = {}
+_pg_fallback_pool: dict[str, list[Any]] = {}
+_pg_pool_lock = threading.Lock()
+
+
+def _pg_pool_enabled() -> bool:
+    """与 SQLite 池一致：test/testing 环境关闭，避免测试 mock 跨用例残留。"""
+    return settings.app_env not in ("test", "testing")
+
+
+def _pool_return_postgres(dsn: str, raw: Any) -> None:
+    if getattr(raw, "closed", False) or getattr(raw, "broken", False):
+        with contextlib.suppress(Exception):
+            raw.close()
+        return
+    try:
+        raw.rollback()
+    except Exception:
+        with contextlib.suppress(Exception):
+            raw.close()
+        return
+    should_close = False
+    with _pg_pool_lock:
+        idle = _pg_fallback_pool.setdefault(dsn, [])
+        if len(idle) >= _PG_POOL_MAX_SIZE:
+            should_close = True
+        else:
+            idle.append(raw)
+    if should_close:
+        with contextlib.suppress(Exception):
+            raw.close()
+
+
+class PooledPostgresDbConnection(DbConnection):
+    """池化 PostgreSQL 连接：close() 语义 = 回滚遗留事务并归还连接池。"""
+
+    def __init__(self, raw: Any, *, dsn: str, pool: Any = None) -> None:
+        super().__init__(raw, kind="postgres")
+        self._dsn = dsn
+        self._pool = pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            try:
+                if not getattr(self._raw, "closed", False):
+                    self._raw.rollback()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._raw.close()
+            try:
+                self._pool.putconn(self._raw)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._raw.close()
+            return
+        if not _pg_pool_enabled():
+            with contextlib.suppress(Exception):
+                self._raw.close()
+            return
+        _pool_return_postgres(self._dsn, self._raw)
+
+
+def close_pg_pools() -> None:
+    """进程关闭时排空并关闭全部 PostgreSQL 连接池（psycopg_pool 与内置回退池）。"""
+    with _pg_pool_lock:
+        pools = list(_pg_pools.values())
+        _pg_pools.clear()
+        fallback_conns = [raw for conns in _pg_fallback_pool.values() for raw in conns]
+        _pg_fallback_pool.clear()
+    for pool in pools:
+        with contextlib.suppress(Exception):
+            pool.close()
+    for raw in fallback_conns:
+        with contextlib.suppress(Exception):
+            raw.close()
 
 
 def _connect_postgres() -> DbConnection:
@@ -253,8 +427,45 @@ def _connect_postgres() -> DbConnection:
     from psycopg.rows import dict_row
 
     dsn = _to_psycopg_dsn(settings.database_url or "")
+    if not _pg_pool_enabled():
+        conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False)
+        return DbConnection(conn, kind="postgres")
+
+    # 1. 优先复用 psycopg_pool.ConnectionPool（若环境中已安装）
+    try:
+        import psycopg_pool  # type: ignore[import-not-found]
+    except ImportError:
+        psycopg_pool = None
+
+    if psycopg_pool is not None:
+        with _pg_pool_lock:
+            pool = _pg_pools.get(dsn)
+            if pool is None:
+                pool = psycopg_pool.ConnectionPool(
+                    dsn,
+                    min_size=1,
+                    max_size=_PG_POOL_MAX_SIZE,
+                    open=True,
+                    kwargs={"row_factory": dict_row, "autocommit": False},
+                )
+                _pg_pools[dsn] = pool
+        raw = pool.getconn()
+        return PooledPostgresDbConnection(raw, dsn=dsn, pool=pool)
+
+    # 2. 内置有界连接池回退（仅依赖 psycopg3，无需额外第三方包）
+    while True:
+        with _pg_pool_lock:
+            idle = _pg_fallback_pool.get(dsn)
+            raw = idle.pop() if idle else None
+        if raw is None:
+            break
+        if not getattr(raw, "closed", False) and not getattr(raw, "broken", False):
+            return PooledPostgresDbConnection(raw, dsn=dsn)
+        with contextlib.suppress(Exception):
+            raw.close()
+
     conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False)
-    return DbConnection(conn, kind="postgres")
+    return PooledPostgresDbConnection(conn, dsn=dsn)
 
 
 def _to_psycopg_dsn(url: str) -> str:
@@ -383,7 +594,8 @@ def _sqlite_ddl() -> str:
                 signal_source   TEXT NOT NULL,
                 signal_data     TEXT NOT NULL,
                 signal_strength REAL DEFAULT 0.0,
-                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                external_id     TEXT
             );
 
             CREATE TABLE IF NOT EXISTS collection_logs (
@@ -782,7 +994,12 @@ def _sqlite_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 name_raw    TEXT NOT NULL,
                 sector_raw  TEXT NOT NULL,
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                -- 别名来源（manual / backfill / auto）。NULL = 改造前的历史行，不参与解析。
+                source      TEXT,
+                confidence  REAL,
+                notes       TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -868,6 +1085,71 @@ def _sqlite_ddl() -> str:
                 version           INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
+
+            -- 收口运行时业务表（迁移 0016）：避免在 HTTP 请求期动态 CREATE TABLE
+            CREATE TABLE IF NOT EXISTS harvest_records (
+                id                TEXT PRIMARY KEY,
+                project_name      TEXT NOT NULL,
+                token_symbol      TEXT NOT NULL,
+                amount_claimed    REAL NOT NULL,
+                ath_price_usd     REAL NOT NULL,
+                current_price_usd REAL NOT NULL,
+                gas_spent_usd     REAL NOT NULL DEFAULT 0,
+                claimed_at        TEXT,
+                notes             TEXT,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_harvest_records_claimed ON harvest_records(claimed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS faucet_claims (
+                claim_id       TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                faucet_id      TEXT NOT NULL,
+                claimed_at     TIMESTAMP NOT NULL,
+                cooldown_hours INTEGER DEFAULT 24
+            );
+            CREATE INDEX IF NOT EXISTS idx_faucet_claims_user ON faucet_claims(user_id, faucet_id);
+
+            CREATE TABLE IF NOT EXISTS gas_alert_rules (
+                rule_id        TEXT PRIMARY KEY,
+                chain          TEXT NOT NULL,
+                condition      TEXT NOT NULL,
+                threshold_gwei REAL NOT NULL,
+                label          TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                created_at     TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_gas_alert_rules_chain ON gas_alert_rules(chain, enabled);
+
+            CREATE TABLE IF NOT EXISTS team_studio_operators (
+                operator_id        TEXT PRIMARY KEY,
+                name               TEXT NOT NULL,
+                role               TEXT NOT NULL DEFAULT 'Operator',
+                assigned_wallets   INTEGER NOT NULL DEFAULT 10,
+                assigned_projects  TEXT NOT NULL DEFAULT '[]',
+                today_completed_tx INTEGER NOT NULL DEFAULT 0,
+                today_target_tx    INTEGER NOT NULL DEFAULT 0,
+                completion_rate    REAL NOT NULL DEFAULT 0.0,
+                gas_spent_usd      REAL NOT NULL DEFAULT 0.0,
+                status             TEXT NOT NULL DEFAULT 'idle',
+                ip_proxy_isolated  INTEGER,
+                last_active        TEXT,
+                updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS team_studio_tasks (
+                task_id             TEXT PRIMARY KEY,
+                title               TEXT NOT NULL,
+                project             TEXT NOT NULL,
+                operator_id         TEXT NOT NULL,
+                target_wallet_count INTEGER NOT NULL DEFAULT 1,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                priority            TEXT NOT NULL DEFAULT 'medium',
+                deadline            TEXT,
+                created_at          INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_studio_tasks_operator ON team_studio_tasks(operator_id, status);
 
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -1022,7 +1304,8 @@ def _postgres_ddl() -> str:
                 signal_source   TEXT NOT NULL,
                 signal_data     TEXT NOT NULL,
                 signal_strength DOUBLE PRECISION DEFAULT 0.0,
-                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                captured_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                external_id     TEXT
             );
 
             CREATE TABLE IF NOT EXISTS collection_logs (
@@ -1392,7 +1675,12 @@ def _postgres_ddl() -> str:
                 project_id  TEXT NOT NULL,
                 name_raw    TEXT NOT NULL,
                 sector_raw  TEXT NOT NULL,
-                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                -- 别名来源（manual / backfill / auto）。NULL = 改造前的历史行，不参与解析。
+                source      TEXT,
+                confidence  REAL,
+                notes       TEXT,
+                created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -1476,6 +1764,71 @@ def _postgres_ddl() -> str:
                 version           INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_leader_election_expires ON leader_election(lease_expires_at);
+
+            -- 收口运行时业务表（迁移 0016）：避免在 HTTP 请求期动态 CREATE TABLE
+            CREATE TABLE IF NOT EXISTS harvest_records (
+                id                TEXT PRIMARY KEY,
+                project_name      TEXT NOT NULL,
+                token_symbol      TEXT NOT NULL,
+                amount_claimed    DOUBLE PRECISION NOT NULL,
+                ath_price_usd     DOUBLE PRECISION NOT NULL,
+                current_price_usd DOUBLE PRECISION NOT NULL,
+                gas_spent_usd     DOUBLE PRECISION NOT NULL DEFAULT 0,
+                claimed_at        TEXT,
+                notes             TEXT,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_harvest_records_claimed ON harvest_records(claimed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS faucet_claims (
+                claim_id       TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                faucet_id      TEXT NOT NULL,
+                claimed_at     TIMESTAMPTZ NOT NULL,
+                cooldown_hours INTEGER DEFAULT 24
+            );
+            CREATE INDEX IF NOT EXISTS idx_faucet_claims_user ON faucet_claims(user_id, faucet_id);
+
+            CREATE TABLE IF NOT EXISTS gas_alert_rules (
+                rule_id        TEXT PRIMARY KEY,
+                chain          TEXT NOT NULL,
+                condition      TEXT NOT NULL,
+                threshold_gwei DOUBLE PRECISION NOT NULL,
+                label          TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                created_at     TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_gas_alert_rules_chain ON gas_alert_rules(chain, enabled);
+
+            CREATE TABLE IF NOT EXISTS team_studio_operators (
+                operator_id        TEXT PRIMARY KEY,
+                name               TEXT NOT NULL,
+                role               TEXT NOT NULL DEFAULT 'Operator',
+                assigned_wallets   INTEGER NOT NULL DEFAULT 10,
+                assigned_projects  TEXT NOT NULL DEFAULT '[]',
+                today_completed_tx INTEGER NOT NULL DEFAULT 0,
+                today_target_tx    INTEGER NOT NULL DEFAULT 0,
+                completion_rate    DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                gas_spent_usd      DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                status             TEXT NOT NULL DEFAULT 'idle',
+                ip_proxy_isolated  INTEGER,
+                last_active        TEXT,
+                updated_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS team_studio_tasks (
+                task_id             TEXT PRIMARY KEY,
+                title               TEXT NOT NULL,
+                project             TEXT NOT NULL,
+                operator_id         TEXT NOT NULL,
+                target_wallet_count INTEGER NOT NULL DEFAULT 1,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                priority            TEXT NOT NULL DEFAULT 'medium',
+                deadline            TEXT,
+                created_at          BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_studio_tasks_operator ON team_studio_tasks(operator_id, status);
 
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -1570,6 +1923,117 @@ def _as_db_connection(conn: Any) -> tuple[DbConnection, bool]:
     raise TypeError(f"Unsupported connection type: {type(conn)}")
 
 
+# project_signals.signal_data 里承载稳定外部 ID 的键（写入与回填共用）。
+# 带 ID 的信号参与幂等去重；无 ID 的信号（如 discord 作者级）不参与。
+_SIGNAL_EXTERNAL_ID_KEYS = ("tweet_id", "post_id", "message_id")
+
+
+def _backfill_project_signal_external_ids(db: Any) -> None:
+    """从存量行 signal_data 回填 external_id（SQLite json_extract / PG json 提取）。"""
+    for key in _SIGNAL_EXTERNAL_ID_KEYS:
+        expr = f"signal_data::json->>'{key}'" if db.kind == "postgres" else f"json_extract(signal_data, '$.{key}')"
+        # 表达式为内部常量拼接，无用户输入
+        db.execute(
+            f"UPDATE project_signals SET external_id = {expr} "  # noqa: S608
+            f"WHERE external_id IS NULL AND {expr} IS NOT NULL"
+        )
+
+
+def _dedupe_project_signals(db: Any) -> int:
+    """同 identity（dedup_key+type+source+external_id）的存量重复保留最新一条。
+
+    唯一索引 ux_project_signals_identity 的前置步骤。captured_at 是双格式
+    TEXT（datetime('now') 空格 vs isoformat T），字典序排序对混合格式不可靠 ——
+    这里取近似"最新"即可，正确性只要求每组恰好剩一行。
+    """
+    dup = db.execute(
+        """
+        SELECT 1 FROM project_signals
+        WHERE external_id IS NOT NULL
+        GROUP BY dedup_key, signal_type, signal_source, external_id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """
+    ).fetchone()
+    if not dup:
+        return 0
+
+    rows = db.execute(
+        """
+        SELECT signal_id, dedup_key, signal_type, signal_source, external_id, captured_at
+        FROM project_signals
+        WHERE external_id IS NOT NULL
+        ORDER BY captured_at DESC
+        """
+    ).fetchall()
+    keep: dict[tuple[str, str, str, str], bool] = {}
+    drop: list[str] = []
+    for row in rows:
+        rec = dict_from_row(row)
+        key = (
+            str(rec["dedup_key"]),
+            str(rec["signal_type"]),
+            str(rec["signal_source"]),
+            str(rec["external_id"]),
+        )
+        if key not in keep:
+            keep[key] = True
+        else:
+            drop.append(str(rec["signal_id"]))
+    for sid in drop:
+        db.execute("DELETE FROM project_signals WHERE signal_id = ?", (sid,))
+    return len(drop)
+
+
+def _dedupe_raw_projects(db: Any) -> int:
+    """清掉 raw_projects 里 (source_id, dedup_key) 重复的存量行，返回删除数。
+
+    唯一索引（ux_raw_projects_source_dedup）的前置步骤：CREATE UNIQUE INDEX
+    遇到存量重复行会直接失败，所以必须先清重。保留规则：
+
+    - 优先保留 processed=1 的行 —— 出队状态不能丢，否则重复采集的历史会让
+      已分析的项目重新回到分析队列；
+    - 同状态保留最早写入的一行（SQLite 用 rowid=插入序；PG 用 discovered_at
+      首见时间近似 —— raw_id 是随机 uuid，没有时序语义）。
+
+    带上唯一索引后，重复行不可能再产生，本函数在干净库上是一次廉价空扫。
+    """
+    if db.kind == "postgres":
+        rows = db.execute(
+            """
+            SELECT raw_id AS rid, source_id, dedup_key, processed
+            FROM raw_projects
+            ORDER BY discovered_at ASC
+            """
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT raw_id AS rid, source_id, dedup_key, processed FROM raw_projects ORDER BY rowid"
+        ).fetchall()
+
+    keep: dict[tuple[str, str], str] = {}
+    kept_processed: dict[tuple[str, str], int] = {}
+    drop: list[str] = []
+    for row in rows:
+        rec = dict_from_row(row)
+        key = (str(rec["source_id"]), str(rec["dedup_key"]))
+        if key not in keep:
+            keep[key] = str(rec["rid"])
+            kept_processed[key] = int(rec["processed"] or 0)
+            continue
+        if int(rec["processed"] or 0) == 1 and kept_processed[key] != 1:
+            # 当前这组还保留着未处理行，而来的是已处理行 —— 换它当代表
+            drop.append(keep[key])
+            keep[key] = str(rec["rid"])
+            kept_processed[key] = 1
+        else:
+            drop.append(str(rec["rid"]))
+
+    for rid in drop:
+        db.execute("DELETE FROM raw_projects WHERE raw_id = ?", (rid,))
+    return len(drop)
+
+
 def init_db(conn: Any = None) -> None:
     """Idempotent schema init for SQLite or PostgreSQL."""
     db, should_close = _as_db_connection(conn)
@@ -1607,6 +2071,17 @@ def init_db(conn: Any = None) -> None:
         )
         _add_column_if_not_exists(db, "raw_projects", "quarantined", "INTEGER DEFAULT 0")
         _add_column_if_not_exists(db, "raw_projects", "quarantine_reason", "TEXT")
+        # 项目身份别名（app/identity.py）：dedup_keys 从"未使用的映射表"升级为别名表。
+        # CREATE TABLE IF NOT EXISTS 不会给存量库补列，必须逐列登记。
+        _add_column_if_not_exists(db, "dedup_keys", "source", "TEXT")
+        _add_column_if_not_exists(db, "dedup_keys", "confidence", "REAL")
+        _add_column_if_not_exists(db, "dedup_keys", "notes", "TEXT")
+        _add_column_if_not_exists(
+            db,
+            "dedup_keys",
+            "updated_at",
+            "TIMESTAMPTZ" if db.kind == "postgres" else "TIMESTAMP",
+        )
 
         interaction_columns = {
             "wallet_cohort_id": "TEXT",
@@ -1627,11 +2102,35 @@ def init_db(conn: Any = None) -> None:
             _add_column_if_not_exists(db, "interactions", column, definition)
         _add_column_if_not_exists(db, "opportunity_evidence", "supersedes_evidence_id", "TEXT")
 
+        # ── raw_projects 唯一约束（2026-11-13）──────────────────────
+        # 此前去重幂等只靠"先 SELECT 后 INSERT"：定时采集（不 claim_run）与
+        # 手动触发可在同一源上并发，各自用独立连接持久化，同一 dedup_key 会
+        # 插重。先清存量重复，再建唯一索引 —— 把这类竞态从"数据失真"降级为
+        # "被数据库拒绝/合并"（写入路径配 ON CONFLICT，见 collectors/persistence.py）。
+        _dedupe_raw_projects(db)
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_raw_projects_source_dedup ON raw_projects(source_id, dedup_key)"
+        )
+
+        # ── project_signals 幂等键（2026-11-13）────────────────────
+        # 同一条推文/帖子每轮采集都会重新落一行信号，heat_signals 的 COUNT(*)
+        # 在 lookback 窗口内被灌水、captured_at 每轮刷新让旧内容永远"新鲜"。
+        # 带 external_id 的信号按 identity 去重；无 external_id 的行不受唯一
+        # 索引约束（唯一索引把 NULL 视为互异），行为不变。
+        _add_column_if_not_exists(db, "project_signals", "external_id", "TEXT")
+        _backfill_project_signal_external_ids(db)
+        _dedupe_project_signals(db)
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_project_signals_identity "
+            "ON project_signals(dedup_key, signal_type, signal_source, external_id)"
+        )
+
         db.executescript("""
             CREATE INDEX IF NOT EXISTS idx_projects_auto_discovered ON projects(auto_discovered);
             CREATE INDEX IF NOT EXISTS idx_projects_discovery_source ON projects(discovery_source);
             CREATE INDEX IF NOT EXISTS idx_projects_discovered_at ON projects(discovered_at DESC);
             CREATE INDEX IF NOT EXISTS idx_raw_quarantined ON raw_projects(quarantined);
+            CREATE INDEX IF NOT EXISTS idx_dedup_source ON dedup_keys(source);
         """)
         db.commit()
     except Exception:

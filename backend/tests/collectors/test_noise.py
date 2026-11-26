@@ -288,3 +288,37 @@ class TestRootDataNonProject:
         assert not is_rootdata_non_project({"name": "Odd", "type": None})
         assert not is_rootdata_non_project({"name": "Odd", "type": "project"})
         assert not is_rootdata_non_project({"name": "Odd", "type": True})
+
+
+# ── 词边界匹配回归（2026-11-14 审查 P2-9）──────────────────────
+#
+# 裸子串/裸前缀匹配会误杀共享前缀的无关品牌：
+# - "Curvegrid"（基建公司）包含 "curve" → 被当成 Curve 子条目杀掉；
+# - defillama facet 前缀规则里，上市条目 "Ondo" 会杀掉任何 "OndoXyz" 的
+#   pre-TGE 新项目 —— 余下部分必须是分词边界（空格/横线/数字起头）才算子条目。
+
+
+class TestDenyWordsRequireWordBoundaries:
+    def test_shared_prefix_brand_is_not_noise(self):
+        assert not is_noise_project(name="Curvegrid", slug="curvegrid", category="Infra"), (
+            "Curvegrid 是独立基建公司，不是 Curve 的子条目"
+        )
+        assert not is_noise_project(name="WrappedVault Protocol", slug="wrappedvault", category="Yield"), (
+            "WrappedVault 与 wrapped BTC 凭据无关，裸子串把无关项目拒之门外"
+        )
+
+    def test_intentional_facet_kills_survive(self):
+        """既有意图性击杀不得回退（与既有钉子同口径）。"""
+        assert is_noise_project(name="Uniswap V4", slug="uniswap-v4")
+        assert is_noise_project(name="Curve Stableswap", slug="curve-stableswap", category="Dexes")
+        assert is_noise_project(name="Wrapped BTC", slug="wbtc")
+        assert is_noise_project(name="Crypto.com Liquid Staking", category="Liquid Staking")
+
+    def test_contains_word_like_helper(self):
+        from app.collectors.noise import _contains_word_like
+
+        assert _contains_word_like("curve stableswap dex", "curve")
+        assert _contains_word_like("curvegrid infra", "curve") is False
+        assert _contains_word_like("mycurve xyz", "curve") is False
+        assert _contains_word_like("wrapped btc", "wrapped")
+        assert _contains_word_like("wrappedvault protocol", "wrapped") is False

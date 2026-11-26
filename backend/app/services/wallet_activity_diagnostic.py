@@ -201,3 +201,95 @@ def diagnose_wallet_health(
         "vulnerabilities": vulnerabilities,
         "actionable_guide": actionable_guide,
     }
+
+
+_MAINNET_PUBLIC_RPCS: dict[str, tuple[str, float]] = {
+    # chain_key -> (public free JSON-RPC endpoint, avg ETH gas per tx estimate)
+    "ethereum": ("https://ethereum-rpc.publicnode.com", 0.0018),
+    "arbitrum": ("https://arbitrum-one-rpc.publicnode.com", 0.00008),
+    "base": ("https://base-rpc.publicnode.com", 0.00005),
+    "optimism": ("https://optimism-rpc.publicnode.com", 0.00007),
+    "polygon": ("https://polygon-bor-rpc.publicnode.com", 0.00003),
+}
+
+
+async def _probe_single_chain_rpc(
+    client: Any,
+    chain: str,
+    rpc_url: str,
+    wallet_address: str,
+) -> tuple[str, int, float] | None:
+    """Query eth_getTransactionCount + eth_getBalance via JSON-RPC batch on one chain."""
+    batch = [
+        {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionCount", "params": [wallet_address, "latest"]},
+        {"jsonrpc": "2.0", "id": 2, "method": "eth_getBalance", "params": [wallet_address, "latest"]},
+    ]
+    try:
+        resp = await client.post(rpc_url, json=batch)
+        resp.raise_for_status()
+        items = resp.json()
+        if not isinstance(items, list):
+            return None
+        by_id = {item.get("id"): item.get("result") for item in items if isinstance(item, dict)}
+        tx_hex = by_id.get(1)
+        bal_hex = by_id.get(2)
+        if not isinstance(tx_hex, str) or not isinstance(bal_hex, str):
+            return None
+        tx_count = int(tx_hex, 16)
+        balance_eth = int(bal_hex, 16) / 1e18
+        return chain, tx_count, balance_eth
+    except Exception:
+        return None
+
+
+async def fetch_live_wallet_rpc_metrics(
+    wallet_address: str,
+    *,
+    allow_live: bool | None = None,
+) -> dict[str, Any] | None:
+    """通过免费公共主网 RPC 并发拉取钱包真实多链 tx 计数与余额（零 Key，失败静默返回 None）。"""
+    import asyncio
+    import re
+
+    import httpx
+
+    from app.config import settings
+
+    addr = wallet_address.strip().lower()
+    live_enabled = allow_live if allow_live is not None else settings.app_env not in ("test", "testing")
+    if not live_enabled or not re.match(r"^0x[a-f0-9]{40}$", addr):
+        return None
+
+    async with httpx.AsyncClient(timeout=3.0, trust_env=False) as client:
+        probes = await asyncio.gather(
+            *(
+                _probe_single_chain_rpc(client, chain, rpc_url, addr)
+                for chain, (rpc_url, _) in _MAINNET_PUBLIC_RPCS.items()
+            )
+        )
+
+    valid = [p for p in probes if p is not None]
+    if not valid:
+        return None
+
+    total_tx = 0
+    total_balance_eth = 0.0
+    est_gas_eth = 0.0
+    active_chains: list[str] = []
+    per_chain: dict[str, dict[str, Any]] = {}
+    for chain, tx_count, balance_eth in valid:
+        total_tx += tx_count
+        total_balance_eth += balance_eth
+        est_gas_eth += tx_count * _MAINNET_PUBLIC_RPCS[chain][1]
+        if tx_count > 0 or balance_eth > 0.0:
+            active_chains.append(chain)
+        per_chain[chain] = {"tx_count": tx_count, "balance_eth": round(balance_eth, 6)}
+
+    return {
+        "tx_count": total_tx,
+        "chains_active": active_chains or ["ethereum"],
+        "estimated_gas_eth": round(est_gas_eth, 5),
+        "total_balance_eth": round(total_balance_eth, 6),
+        "probed_chains": len(valid),
+        "per_chain": per_chain,
+    }

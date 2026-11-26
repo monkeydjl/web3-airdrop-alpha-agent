@@ -10,7 +10,7 @@
 import asyncio
 import re
 import unicodedata
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 import structlog
@@ -97,7 +97,7 @@ def export_projects(
         )
 
         if not db_projects:
-            raise HTTPException(status_code=404, detail="没有找到符合条件的项目")
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "没有找到符合条件的项目"})
 
         # 转换为导出格式
         projects = [
@@ -169,7 +169,10 @@ def export_project_detail(
         project = repo.get_by_id(project_id)
 
         if not project:
-            raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "NOT_FOUND", "message": f"项目 {project_id} 不存在"},
+            )
 
         # 解析 JSON 字段
         import json
@@ -310,7 +313,10 @@ async def import_projects(
         elif (file.filename or "").endswith(".csv") or file.content_type == "text/csv":
             projects_data = await asyncio.to_thread(import_projects_from_csv, content.decode("utf-8"))
         else:
-            raise HTTPException(status_code=400, detail="不支持的文件格式，请上传 .xlsx 或 .csv 文件")
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": "不支持的文件格式，请上传 .xlsx 或 .csv 文件"},
+            )
 
         # 验证数据
         valid_projects, errors = validate_imported_projects(projects_data)
@@ -323,28 +329,46 @@ async def import_projects(
             )
 
         if not valid_projects:
-            raise HTTPException(status_code=400, detail={"message": "没有有效的项目数据", "errors": errors})
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": "没有有效的项目数据", "errors": errors},
+            )
 
         # 限制数量
         if len(valid_projects) > 100:
-            raise HTTPException(status_code=400, detail=f"导入项目数量过多（{len(valid_projects)}），最多100个")
-
-        # 转换为 RawProject
-        raw_projects = []
-        for i, p in enumerate(valid_projects):
-            raw_project = RawProject(
-                id=f"import-{i + 1:03d}",  # 生成导入 ID
-                name=p["name"],
-                url=p.get("url"),
-                sector=p.get("sector"),
-                stage=p.get("stage"),
-                has_testnet=p.get("has_testnet", False),
-                has_points_program=p.get("has_points_program", False),
-                no_token_yet=p.get("no_token_yet", False),
-                recent_funding=p.get("recent_funding", False),
-                source="import",
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "VALIDATION_ERROR",
+                    "message": f"导入项目数量过多（{len(valid_projects)}），最多100个",
+                },
             )
-            raw_projects.append(raw_project)
+
+        # 转换为 RawProject（走统一身份别名/确定性 ID 解析，避免硬编码序号覆写历史记录）
+        from app.identity import ProjectIdentityResolver
+
+        def _build_raw_projects(rows: list[dict[str, Any]]) -> list[RawProject]:
+            resolver = ProjectIdentityResolver()
+            built: list[RawProject] = []
+            for item in rows:
+                resolved = resolver.resolve(item["name"], item.get("sector"))
+                built.append(
+                    RawProject(
+                        id=resolved.project_id,
+                        name=item["name"],
+                        url=item.get("url"),
+                        sector=item.get("sector"),
+                        stage=item.get("stage"),
+                        has_testnet=item.get("has_testnet", False),
+                        has_points_program=item.get("has_points_program", False),
+                        no_token_yet=item.get("no_token_yet", False),
+                        recent_funding=item.get("recent_funding", False),
+                        source="import",
+                    )
+                )
+            return built
+
+        raw_projects = await asyncio.to_thread(_build_raw_projects, valid_projects)
 
         # 运行评分 Pipeline
         logger.info(

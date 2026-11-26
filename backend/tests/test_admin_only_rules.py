@@ -141,8 +141,12 @@ ANON_WRITABLE: dict[tuple[str, str], str] = {
     # 全部为纯计算/模拟/模板渲染端点：不触外部付费 API、不改共享系统状态，
     # 响应体一律带 mark_simulated 诚实标注；受 LLM 预算门与限流器统一约束，
     # 与 ai-brief 同口径（锁角色挡不住管理员自己刷额度）。
+    #
+    # `/bot/test-send` 原本也登记在这里（理由"需 BOT_TOKEN"），2026-11-13
+    # 收回：它的目标 URL 来自请求体、是对第三方服务的出站发送动作，服务端
+    # 并不要求任何预配置 —— 已改为管理员专属 + 出站域名白名单双重防护
+    # （app/auth.py::ADMIN_ONLY_METHOD_RULES、app/services/bot_notifier.py）。
     ("POST", "/api/v1/bot/command"): "Bot 指令路由（需 BOT_TOKEN，未配置返 503），只读指令文本渲染。",
-    ("POST", "/api/v1/bot/test-send"): "Bot 测试消息发送（需 BOT_TOKEN），运维自检用途。",
     ("POST", "/api/v1/bridge/route"): "跨链路线推荐，静态费率表计算，标注 simulated。",
     ("POST", "/api/v1/bridge-liquidity/simulate-route"): "桥路线流动性模拟，读真实 DefiLlama 池子，只读计算。",
     ("POST", "/api/v1/calldata/decode"): "交易 calldata 解码，4byte 目录匹配，纯计算。",
@@ -402,6 +406,9 @@ class TestMiddlewareActuallyEnforcesTheRules:
         ("POST", "/api/v1/collections/defillama/trigger", {}),
         ("PATCH", "/api/v1/collections/defillama", {"enabled": False}),
         ("PATCH", "/api/v1/projects/sample-id/funding", {"total_funding_usd": 1}),
+        # 2026-11-13：出站发送动作（目标 URL 来自请求体）。body 刻意缺
+        # webhook_url —— 管理员 case 走 400 参数校验，避免 CI 真的出站。
+        ("POST", "/api/v1/bot/test-send", {"channel": "discord"}),
     )
 
     @pytest.mark.parametrize(("method", "path", "body"), CLOSED_HOLES)

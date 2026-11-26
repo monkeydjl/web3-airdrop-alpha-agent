@@ -92,8 +92,6 @@ class RunRequest(BaseModel):
 
     enable_llm: bool = Field(False, description="是否启用 LLM（默认 False，使用启发式规则）")
 
-    llm_model: str = Field("gpt-4o-mini", description="LLM 模型名称（仅当 enable_llm=True 时生效）")
-
 
 class ProjectResult(BaseModel):
     """单个项目评分结果。"""

@@ -18,7 +18,7 @@ Reference:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -99,9 +99,12 @@ class CollectionMetrics:
                 finished_at,
                 status
             FROM collection_logs
-            WHERE started_at >= datetime('now', ?)
+            WHERE started_at >= ?
         """
-        params.append(f"-{window_hours} hours")
+        # cutoff 与列的写入格式（isoformat，T 分隔）对齐 —— SQL `datetime('now', ?)`
+        # 产出空格格式，SQLite TEXT 比较里同日期的行永远"大于"它，
+        # 边界日窗口最多多算一天（见 archive.py::_cutoff_db_default 的实测记录）。
+        params.append((datetime.now(UTC) - timedelta(hours=window_hours)).isoformat())
 
         if source_id:
             query += " AND source_id = ?"

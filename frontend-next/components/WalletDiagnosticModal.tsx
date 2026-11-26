@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
 import { apiFetchEnvelope } from "@/lib/api";
+import { SimulatedDataBadge, type DataQualityMeta } from "@/components/SimulatedDataBadge";
 
 interface DimensionInfo {
   score: number;
@@ -75,7 +76,7 @@ export default function WalletDiagnosticModal({
       if (uniqueContracts) body.unique_contracts = parseInt(uniqueContracts, 10);
       if (gasEth) body.total_gas_spent_eth = parseFloat(gasEth);
 
-      const json = await apiFetchEnvelope<DiagnosticResult>('/diagnostic/wallet', {
+      const json = await apiFetchEnvelope<DiagnosticResult & { data_quality?: DataQualityMeta }>('/diagnostic/wallet', {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -110,7 +111,13 @@ export default function WalletDiagnosticModal({
           <div className="flex items-center gap-3">
             <span className="text-2xl">🩺</span>
             <div>
-              <h3 className="text-lg font-bold text-slate-100">钱包交互广度与链上履历健康度诊断仪</h3>
+              <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                <span>钱包交互广度与链上履历健康度诊断仪</span>
+                <SimulatedDataBadge
+                  dataQuality={(result as (DiagnosticResult & { data_quality?: DataQualityMeta }) | null)?.data_quality}
+                  note="基于公共 RPC / 启发式画像估算，非官方空投资格判定"
+                />
+              </h3>
               <p className="text-xs text-slate-400">
                 按 LayerZero / Celestia / ZKsync 严苛反女巫标准，5 维体检链上画像并提供补刀方案
               </p>

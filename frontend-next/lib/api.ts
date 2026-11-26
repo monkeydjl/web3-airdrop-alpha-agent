@@ -48,23 +48,204 @@ export async function apiFetchEnvelope<T>(path: string, init?: RequestInit): Pro
   return (await request(path, init)) as T;
 }
 
-async function request(path: string, init?: RequestInit): Promise<ApiResponse<unknown> & Record<string, unknown>> {
-  const url = `${API_BASE}${path}`;
-  let res: Response;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+export const AUTH_CHANGED_EVENT = 'airdrop-auth-changed';
 
-  // 客户端凭据自动附加（支持 localStorage / sessionStorage）
+export interface StoredAuthSummary {
+  mode: 'none' | 'api_key' | 'jwt';
+  label: string;
+  role?: string;
+}
+
+function readStorageItem(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage?.getItem(key) || window.sessionStorage?.getItem(key) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 提取浏览器侧存储的管理员 / 登录凭据请求头。
+ * 统一供 `apiFetch`、`downloadFile`（导出）与 `importProjects`（FormData 上传）复用，
+ * 不包含 Content-Type，确保 multipart 上传不会破坏 boundary。
+ */
+export function getClientAuthHeaders(): Record<string, string> {
+  const apiKey = readStorageItem('api_key');
+  if (apiKey) {
+    return { 'X-API-Key': apiKey };
+  }
+  const token = readStorageItem('auth_token');
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+}
+
+export function getStoredAuthSummary(): StoredAuthSummary {
+  const apiKey = readStorageItem('api_key');
+  if (apiKey) {
+    const masked =
+      apiKey.length > 8 ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '已配置密钥';
+    return { mode: 'api_key', label: `密钥 ${masked}`, role: 'admin' };
+  }
+  const token = readStorageItem('auth_token');
+  if (token) {
+    const email = readStorageItem('auth_email') || '已登录账号';
+    const role = readStorageItem('auth_role') || undefined;
+    return { mode: 'jwt', label: email, role };
+  }
+  return { mode: 'none', label: '管理员鉴权' };
+}
+
+function notifyAuthChanged(): void {
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-    const apiKey = localStorage.getItem('api_key') || sessionStorage.getItem('api_key');
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    } else if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+  }
+}
+
+export function saveAdminApiKey(apiKey: string, remember: boolean): void {
+  if (typeof window === 'undefined') return;
+  clearStoredCredentials(false);
+  const store = remember ? window.localStorage : window.sessionStorage;
+  store.setItem('api_key', apiKey.trim());
+  notifyAuthChanged();
+}
+
+export function saveJwtSession(
+  accessToken: string,
+  refreshToken: string | null,
+  email: string,
+  role: string,
+  remember: boolean,
+): void {
+  if (typeof window === 'undefined') return;
+  clearStoredCredentials(false);
+  const store = remember ? window.localStorage : window.sessionStorage;
+  store.setItem('auth_token', accessToken);
+  if (refreshToken) store.setItem('refresh_token', refreshToken);
+  if (email) store.setItem('auth_email', email);
+  if (role) store.setItem('auth_role', role);
+  notifyAuthChanged();
+}
+
+export function getStoredRefreshToken(): string | null {
+  return readStorageItem('refresh_token');
+}
+
+export function clearStoredCredentials(emit = true): void {
+  if (typeof window === 'undefined') return;
+  for (const key of ['api_key', 'auth_token', 'refresh_token', 'auth_email', 'auth_role']) {
+    try {
+      window.localStorage?.removeItem(key);
+      window.sessionStorage?.removeItem(key);
+    } catch {
+      // ignore storage restrictions
     }
   }
+  if (emit) notifyAuthChanged();
+}
+
+let refreshInFlight: Promise<'refreshed' | 'cleared' | 'failed'> | null = null;
+
+function isAuthBootstrapPath(path: string): boolean {
+  return (
+    path.startsWith('/auth/login') ||
+    path.startsWith('/auth/register') ||
+    path.startsWith('/auth/refresh') ||
+    path.startsWith('/auth/anonymous')
+  );
+}
+
+/**
+ * 单飞刷新 JWT Access Token。
+ * - 成功返回 'refreshed' 并原位更新存储中的 access_token 与轮换后的 refresh_token；
+ * - 若 refresh_token 缺失或服务端明确拒绝（401/403），清除本地过期凭据并返回 'cleared'，
+ *   让后续请求通过服务端 proxy.ts 平滑回退到匿名令牌，避免整站锁死在 401；
+ * - 网络瞬断等非鉴权错误返回 'failed'，保留本地凭据不误删。
+ */
+export async function tryRefreshAccessToken(): Promise<'refreshed' | 'cleared' | 'failed'> {
+  if (typeof window === 'undefined') return 'failed';
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async (): Promise<'refreshed' | 'cleared' | 'failed'> => {
+    const refreshToken = getStoredRefreshToken();
+    if (!refreshToken) {
+      if (readStorageItem('auth_token')) {
+        clearStoredCredentials(true);
+        return 'cleared';
+      }
+      return 'failed';
+    }
+
+    const remember = Boolean(
+      (() => {
+        try {
+          return (
+            window.localStorage?.getItem('refresh_token') ||
+            window.localStorage?.getItem('auth_token')
+          );
+        } catch {
+          return false;
+        }
+      })(),
+    );
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as {
+          access_token?: string;
+          refresh_token?: string;
+          user?: { email?: string; role?: string };
+        };
+        if (data.access_token) {
+          saveJwtSession(
+            data.access_token,
+            data.refresh_token ?? refreshToken,
+            data.user?.email || readStorageItem('auth_email') || '',
+            data.user?.role || readStorageItem('auth_role') || '',
+            remember,
+          );
+          return 'refreshed';
+        }
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        clearStoredCredentials(true);
+        return 'cleared';
+      }
+      return 'failed';
+    } catch {
+      return 'failed';
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+}
+
+async function request(
+  path: string,
+  init?: RequestInit,
+  isRetry = false,
+): Promise<ApiResponse<unknown> & Record<string, unknown>> {
+  const url = `${API_BASE}${path}`;
+  let res: Response;
+  const usedJwtAuth = !readStorageItem('api_key') && Boolean(readStorageItem('auth_token'));
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...getClientAuthHeaders(),
+  };
 
   if (init?.headers) {
     if (init.headers instanceof Headers) {
@@ -88,11 +269,16 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
   } catch (cause) {
     // 主动取消不是故障，原样抛出让调用方识别
     if (isAbortError(cause)) throw cause;
-    // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"
-    throw new Error(
-      `无法连接 API（${url}）。请确认后端已在 8002 启动，前端 3002 的 rewrite 指向 127.0.0.1:8002。`,
-      { cause },
-    );
+    // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"。
+    // 文案对生产用户保持环境中立（2026-11-13 审查：此前硬编码"8002 / 127.0.0.1"）。
+    throw new Error(`无法连接 API（${url}）。请确认后端服务是否在线。`, { cause });
+  }
+
+  if (res.status === 401 && !isRetry && usedJwtAuth && !isAuthBootstrapPath(path)) {
+    const refreshOutcome = await tryRefreshAccessToken();
+    if (refreshOutcome === 'refreshed' || refreshOutcome === 'cleared') {
+      return request(path, init, true);
+    }
   }
 
   const text = await res.text();
@@ -104,7 +290,7 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
     // Next rewrite 失败或后端崩溃时常见 HTML 500
     if (res.status >= 500) {
       throw new Error(
-        `后端错误 HTTP ${res.status}（非 JSON）。请确认 uvicorn 在 8002 正常运行，并查看后端终端日志。${snippet ? ` 摘要: ${snippet}` : ''}`,
+        `后端错误 HTTP ${res.status}（非 JSON）。请稍后重试，若持续出现请联系管理员查看服务日志。${snippet ? ` 摘要: ${snippet}` : ''}`,
       );
     }
     throw new Error(

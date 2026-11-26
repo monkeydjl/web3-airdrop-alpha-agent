@@ -19,7 +19,7 @@ from typing import Any
 
 import structlog
 
-from app.db import DbConnection, dict_from_row
+from app.db import DbConnection, dict_from_row, insert_returning_id
 
 logger = structlog.get_logger(__name__)
 
@@ -66,7 +66,8 @@ class ArchiveRunRepository:
             raise ValueError(f"Unknown trigger {trigger!r}, expected one of {sorted(VALID_TRIGGERS)}")
 
         finished = finished_at or datetime.now(UTC)
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO archive_runs (
                 started_at, finished_at, duration_ms, trigger, dry_run, status,
@@ -91,7 +92,7 @@ class ArchiveRunRepository:
             ),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def list_recent(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """按开始时间倒序列出最近的运行记录。

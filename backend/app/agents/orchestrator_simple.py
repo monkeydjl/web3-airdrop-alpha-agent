@@ -100,10 +100,20 @@ class SimpleOrchestrator:
         sector_counts = self._calculate_sector_counts(projects)
         if save_to_db:
             try:
+                batch_ids = {p.id for p in projects if p.id}
                 repo = ProjectRepository()
-                # 用折叠后的全库分布，而不是按规范键去查 `WHERE sector = ?`：
-                # 库里存的是原始写法，拿 "DEX" 查不到存成 "Dexes" 的行。
-                global_counts = repo.canonical_sector_counts()
+                # 用折叠后的全库分布，排除当前批次自身（避免重跑双重计数）与历史/已隐藏项目
+                if getattr(repo, "_conn", None) is None:
+                    global_counts = await asyncio.to_thread(
+                        repo.canonical_sector_counts,
+                        exclude_ids=batch_ids,
+                        active_only=True,
+                    )
+                else:
+                    global_counts = repo.canonical_sector_counts(
+                        exclude_ids=batch_ids,
+                        active_only=True,
+                    )
                 wanted = {s for s in sector_counts if s}
                 # 合并：DB 全库计数 + 当前批次 = 竞争度基准
                 for sector, db_count in global_counts.items():
@@ -172,10 +182,15 @@ class SimpleOrchestrator:
         # 重试，而 DB 与 metrics 里都查不到任何痕迹。
         persisted_project_rows: list[dict[str, Any]] = []
         persist_failed = False
-        if save_to_db and states:
+        # 仅持久化评分成功的 state，禁止用 score=None 的失败状态把既有 projects 有效评分覆盖成 NULL
+        states_to_save = [s for s in states if s.score is not None]
+        if save_to_db and states_to_save:
             try:
                 repo = ProjectRepository(economic_replay_enabled=settings.opportunity_economic_evidence_emit_enabled)
-                persisted_project_rows = repo.save_batch_with_rows(states)
+                if getattr(repo, "_conn", None) is None:
+                    persisted_project_rows = await asyncio.to_thread(repo.save_batch_with_rows, states_to_save)
+                else:
+                    persisted_project_rows = repo.save_batch_with_rows(states_to_save)
             except Exception as e:
                 persist_failed = True
                 errors.append({"stage": "persist", "error": str(e)})
@@ -187,15 +202,17 @@ class SimpleOrchestrator:
                 )
             else:
                 # save_batch_with_rows 会逐条吞掉单行异常，只有行数差额能暴露它们
-                missing = len(states) - len(persisted_project_rows)
+                missing = len(states_to_save) - len(persisted_project_rows)
                 if missing > 0:
                     persist_failed = True
-                    errors.append({"stage": "persist", "error": f"{missing} of {len(states)} rows were not persisted"})
+                    errors.append(
+                        {"stage": "persist", "error": f"{missing} of {len(states_to_save)} rows were not persisted"}
+                    )
                 logger.info(
                     "orchestrator.db_save_complete",
                     run_id=context.run_id,
                     saved_count=len(persisted_project_rows),
-                    total_count=len(states),
+                    total_count=len(states_to_save),
                 )
 
         status: Literal["completed", "failed", "partial"]
@@ -244,21 +261,27 @@ class SimpleOrchestrator:
         project_id: str,
         coro: Awaitable[Any],
         output_ready: Callable[[], bool],
+        state: PipelineState | None = None,
     ) -> Any:
         """Run an agent with per-agent metrics (duration + outcome).
 
         outcome（`app.metrics.record_agent_run`）三态：
-        - error   = agent 抛异常（span 仍记 error，异常继续向上交给 gather 收集）
+        - error   = agent 抛异常或内部捕获异常写入了 state.errors
         - skipped = 正常返回但产出字段为 None（跑了但没有可输出结果）
         - success = 正常返回且产出非 None
         """
         start = time.time()
+        errors_before = sum(1 for e in state.errors if e.agent_name == agent_name) if state is not None else 0
         try:
             result = await self._run_agent_span(agent_name, project_id, coro)
         except Exception:
             metrics.record_agent_run(agent=agent_name, result="error", duration_seconds=time.time() - start)
             raise
-        outcome = "success" if output_ready() else "skipped"
+        errors_after = sum(1 for e in state.errors if e.agent_name == agent_name) if state is not None else 0
+        if errors_after > errors_before and not output_ready():
+            outcome = "error"
+        else:
+            outcome = "success" if output_ready() else "skipped"
         metrics.record_agent_run(agent=agent_name, result=outcome, duration_seconds=time.time() - start)
         return result
 
@@ -307,17 +330,29 @@ class SimpleOrchestrator:
                 # Stage 1a: 独立 agent 并行执行（Risk 依赖 Tokenomics 结果，故拆到 1b）
                 stage1_results = await asyncio.gather(
                     self._run_agent(
-                        "narrative", project.id, self.narrative.run(state), lambda: state.narrative is not None
+                        "narrative",
+                        project.id,
+                        self.narrative.run(state),
+                        lambda: state.narrative is not None,
+                        state=state,
                     ),
-                    self._run_agent("team", project.id, self.team.run(state), lambda: state.team is not None),
                     self._run_agent(
-                        "tokenomics", project.id, self.tokenomics.run(state), lambda: state.tokenomics is not None
+                        "team", project.id, self.team.run(state), lambda: state.team is not None, state=state
+                    ),
+                    self._run_agent(
+                        "tokenomics",
+                        project.id,
+                        self.tokenomics.run(state),
+                        lambda: state.tokenomics is not None,
+                        state=state,
                     ),
                     return_exceptions=True,
                 )
                 # Stage 1b: Tokenomics 就绪后再跑 Risk，保证 token_risk 用真实解锁数据
                 risk_result = await asyncio.gather(
-                    self._run_agent("risk", project.id, self.risk.run(state), lambda: state.risk is not None),
+                    self._run_agent(
+                        "risk", project.id, self.risk.run(state), lambda: state.risk is not None, state=state
+                    ),
                     return_exceptions=True,
                 )
 
@@ -349,6 +384,7 @@ class SimpleOrchestrator:
                 # Stage 2: Run Scorer
                 scorer = ScorerAgent(sector_counts=sector_counts)
                 scorer_start = time.time()
+                scorer_errors_before = sum(1 for e in state.errors if e.agent_name == "scorer")
                 with _tracing.tracer.start_as_current_span("airdrop.agent.scorer") as scorer_span:
                     scorer_span.set_attribute("project_id", project.id)
                     try:
@@ -359,9 +395,17 @@ class SimpleOrchestrator:
                             agent="scorer", result="error", duration_seconds=time.time() - scorer_start
                         )
                         raise
+                    scorer_errors_after = sum(1 for e in state.errors if e.agent_name == "scorer")
+                    scorer_outcome = (
+                        "success"
+                        if state.score is not None
+                        else "error"
+                        if scorer_errors_after > scorer_errors_before
+                        else "skipped"
+                    )
                     metrics.record_agent_run(
                         agent="scorer",
-                        result="success" if state.score is not None else "skipped",
+                        result=scorer_outcome,
                         duration_seconds=time.time() - scorer_start,
                     )
                     if state.score is not None:
@@ -449,11 +493,15 @@ def global_sector_counts(fallback: list[RawProject] | None = None) -> dict[str, 
     一个合理的样本，但单项目重算（如改完融资后触发 rescore）只会得到 {sector: 1}
     → 竞争度 100 分，而同一项目在 20 个项目的批次里只有 40 分——6.0 个加权分
     完全由"以什么方式触发重算"决定。此函数让重算路径与批量路径口径一致。
+
+    分组口径必须与批量路径一致：用 `canonical_sector_counts()`（规范键折叠）。
+    此前直接用原始写法的 `aggregate_counts("sector")`，同一项目在"批量评分"
+    与"单项目重算"两条路径上会得到不同的 competition 子分。
     """
     try:
         from app.repository import ProjectRepository
 
-        counts = {str(sector): int(n) for sector, n in ProjectRepository().aggregate_counts("sector").items() if sector}
+        counts = ProjectRepository().canonical_sector_counts()
         if counts:
             return counts
     except Exception as exc:  # pragma: no cover - 冷启动/无库时回落
@@ -461,8 +509,9 @@ def global_sector_counts(fallback: list[RawProject] | None = None) -> dict[str, 
 
     counts = {}
     for project in fallback or []:
-        if project.sector:
-            counts[project.sector] = counts.get(project.sector, 0) + 1
+        key = canonical_sector_key(project.sector)
+        if key:
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 

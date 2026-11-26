@@ -62,9 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **442 个不同事件名**、
-**88 个命名空间**（2026-10-08 随币表核实 `token_registry.*` 与人工恢复显示事件更新）；
-段数分布：2 段 351 个、3 段 84 个、4 段 5 个、1 段 2 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **434 个不同事件名**、
+**88 个命名空间**（2026-11-26：新增 `unified_scheduler.alpha_digest_disabled`、`api.audit_log_failed`、`mev_rpc.benchmark_live_failed`）；
+段数分布：2 段 343 个、3 段 83 个、4 段 5 个、1 段 2 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -79,13 +79,12 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 | 命名空间 | 事件数 | 例 |
 | --- | --- | --- |
-| `unified_scheduler` | 40 | `unified_scheduler.started` |
+| `unified_scheduler` | 41 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
 | `llm` | 21 | `llm.budget.exceeded` |
 | `collector` | 20 | `collector.noise_quarantined` |
 | `orchestrator` | 20 | `orchestrator.pipeline_start` |
 | `pipeline` | 13 | `pipeline.completed` |
-| `collection_scheduler` | 12 | `collection_scheduler.metrics_alert_failed` |
 | `archive` | 10 | `archive.raw_projects.archived` |
 
 多实例 HA 选主与调度者租约（W12-03，ADR-005）落五个 `ha.*` 事件：
@@ -628,8 +627,7 @@ tracer 退化为 no-op。这是刻意的：本地开发与测试不需要装 OTe
 | `duplicate_rate` | 0.5 | 高于 | warning |
 
 每条告警日志带 `source_id` / `metric` / `value` / `threshold` / `severity`。
-调度器调用失败记 `unified_scheduler.metrics_alert_failed` /
-`collection_scheduler.metrics_alert_failed`。
+调度器调用失败记 `unified_scheduler.metrics_alert_failed`。
 
 **这套阈值写在代码里，不可配置**，也不经 Alertmanager ——
 要接告警通道，得靠 Loki 对 `collection.alert` 事件做日志告警。

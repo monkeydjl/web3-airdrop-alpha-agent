@@ -133,4 +133,4 @@ def test_clear_user_profile(memory_db):
     assert prof_after.engagement_summary["total_signals"] == 0
 
     # Cleanup global
-    _CLEARED_USERS.discard(uid)
+    _CLEARED_USERS.pop(uid, None)

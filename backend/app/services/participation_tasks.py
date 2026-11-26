@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.utils.points import signals_have_points_program
+
 
 def _truthy(project: dict[str, Any], *keys: str) -> bool:
     for k in keys:
@@ -46,7 +48,7 @@ def generate_participation_tasks(project: dict[str, Any]) -> dict[str, Any]:
     label = str(project.get("label") or "WATCH").upper()
 
     has_testnet = bool(project.get("has_testnet")) or stage == "testnet"
-    has_points = bool(project.get("has_points_program"))
+    has_points = signals_have_points_program(project)
     no_token = bool(project.get("no_token_yet"))
     has_task_portal = bool(project.get("has_task_portal"))
     has_docs = bool(project.get("has_docs") or project.get("has_whitepaper"))

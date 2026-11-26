@@ -104,7 +104,10 @@ def ensure_harvest_records_table(conn: DbConnection) -> None:
     conn.execute(f"CREATE INDEX IF NOT EXISTS idx_harvest_records_claimed ON {_HARVEST_TABLE}(claimed_at DESC);")
     seed_cursor = conn.execute(f"SELECT COUNT(*) FROM {_HARVEST_TABLE}")  # noqa: S608 — 表名为内部字面量
     seed_count = _first_int(seed_cursor.fetchone())
-    if seed_count == 0:
+    # 生产环境严禁自动往真实库灌入示例假记录；仅在开发/测试空表时灌入默认演示样本
+    from app.config import settings
+
+    if seed_count == 0 and not settings.is_production:
         for rec in DEFAULT_HARVEST_RECORDS:
             conn.execute(
                 f"""

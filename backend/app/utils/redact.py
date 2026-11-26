@@ -34,11 +34,21 @@ _SECRET_ATTRS = (
     # Discord 频道 Webhook URL 的路径本身就含 secret —— 整串当密钥脱敏
     "discord_notify_webhook_url",
     "api_key",
+    "auth_token_secret",
+    "jwt_secret",
+    "postgres_password",
+    "registration_bootstrap_token",
     "database_url",
 )
 
 # query 中形如 apikey=xxx / api_key=xxx / token=xxx 的兜底脱敏
 _QUERY_SECRET_RE = re.compile(r"(?i)([?&](?:api[_-]?key|apikey|token|access[_-]?token|key)=)[^&\s'\"]+")
+# URL 路径型密钥（Telegram Bot API `/bot<id>:<token>` 与 Discord Webhook URL）
+_TELEGRAM_BOT_PATH_RE = re.compile(r"(/bot\d{5,}:)[A-Za-z0-9_-]{10,}")
+_DISCORD_WEBHOOK_URL_RE = re.compile(
+    r"(https?://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/)[^\s/'\"&]+",
+    re.IGNORECASE,
+)
 
 
 def _known_secrets() -> list[str]:
@@ -62,7 +72,10 @@ def _mask(text: str, secrets: list[str]) -> str:
     out = text
     for secret in secrets:
         out = out.replace(secret, "***")
-    return _QUERY_SECRET_RE.sub(r"\1***", out)
+    out = _QUERY_SECRET_RE.sub(r"\1***", out)
+    out = _TELEGRAM_BOT_PATH_RE.sub(r"\1***", out)
+    out = _DISCORD_WEBHOOK_URL_RE.sub(r"\1***", out)
+    return out
 
 
 def redact(text: str) -> str:

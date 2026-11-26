@@ -35,10 +35,10 @@ jobs:
     name: pip-audit (CVE Scan)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -76,10 +76,10 @@ jobs:
     name: Detect Secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install detect-secrets
-        run: pip install detect-secrets
+        run: pip install detect-secrets==1.5.0
 
       - name: Scan for secrets
         run: |
@@ -108,13 +108,13 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
@@ -135,8 +135,8 @@ jobs:
       # `exit code 1`，没有任何漏洞明细 —— 这个 job 从 08-09 起就一直红着，
       # 却没人能说出是哪个 CVE。exit-code: 0 保证它只负责"让人看见"，
       # 判定仍由下面的 SARIF 步骤负责。
-      - name: Trivy scan (human-readable, non-blocking)
-        uses: aquasecurity/trivy-action@master
+      - name: Trivy scan backend (human-readable, non-blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha:scan-${{ github.sha }}
           format: "table"
@@ -144,8 +144,8 @@ jobs:
           exit-code: "0"
           ignore-unfixed: true
 
-      - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@master
+      - name: Run Trivy scan backend
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: airdrop-alpha:scan-${{ github.sha }}
           format: "sarif"
@@ -153,12 +153,57 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           ignore-unfixed: true
+          # trivy-action 默认对 SARIF 跑法 unset 掉 severity（为了让上传
+          # 的报告带全量级别），但 exit-code 是同一次跑算出来的 —— 于是
+          # severity 输入形同虚设：任何可修复的 MEDIUM/LOW 都会把 job
+          # 打红（2026-11-22 实锤：前端镜像 2 个 MEDIUM 把门禁打红，
+          # 表格跑法明明全绿）。true = 判定与上传都按 HIGH,CRITICAL，
+          # 与上面的表格跑法和本工作流声明的门禁策略一致。
+          limit-severities-for-sarif: true
 
-      - name: Upload Trivy results
+      - name: Upload Trivy backend results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend-next
+          file: frontend-next/Dockerfile
+          push: false
+          tags: airdrop-alpha-frontend:scan-${{ github.sha }}
+          no-cache: true
+          load: true
+
+      - name: Trivy scan frontend (human-readable, non-blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: airdrop-alpha-frontend:scan-${{ github.sha }}
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Run Trivy scan frontend
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: airdrop-alpha-frontend:scan-${{ github.sha }}
+          format: "sarif"
+          output: "trivy-frontend-results.sarif"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          # 同上：否则 severity 被_unset_，任何 MEDIUM/LOW 都越权打红门禁。
+          limit-severities-for-sarif: true
+
+      - name: Upload Trivy frontend results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-frontend-results.sarif"
+          category: "trivy-frontend"
 
   # ── Dependency Review (PR only) ──────────
   dependency-review:
@@ -166,9 +211,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high

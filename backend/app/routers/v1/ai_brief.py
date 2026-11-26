@@ -15,12 +15,14 @@ URL 可能带 ?api_key=...）或 DB 路径（异常可能带连接串），回�
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from typing import Any, cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Request
 from pydantic import BaseModel
 
+from app.auth import can_mutate_global_project, get_current_user
 from app.config import settings
 from app.repository import ProjectRepository
 from app.services.ai_brief import (
@@ -31,6 +33,7 @@ from app.services.ai_brief import (
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["ai"])
+_NO_REQUEST: Request = cast(Request, None)
 
 # 响应里透传的简报字段（缓存 payload 与新生成结果同构，走同一份白名单）。
 _BRIEF_FIELDS = (
@@ -82,14 +85,27 @@ def _get_project_or_404(project_id: str) -> dict[str, Any]:
 async def project_ai_brief(
     req: AiBriefRequest | None = None,
     project_id: str = Path(..., description="项目 ID"),
+    request: Request = _NO_REQUEST,
 ) -> dict[str, Any]:
     """生成（或读缓存）项目的自然语言简报。
 
     Uses rule-based synthesis always; upgrades to LLM when OPENAI_API_KEY is set.
     """
-    project = _get_project_or_404(project_id)
-
     force = bool(req.force) if req is not None else False
+    maybe_req: Any = request
+    if force and isinstance(maybe_req, Request):
+        current_user = get_current_user(maybe_req)
+        if not can_mutate_global_project(current_user):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "FORBIDDEN",
+                    "message": "Current role is not authorized to force-regenerate cached project brief",
+                },
+            )
+
+    project = await asyncio.to_thread(_get_project_or_404, project_id)
+
     stale = False
     if not force:
         cached_payload, stale = get_cached_brief(project)
@@ -105,7 +121,7 @@ async def project_ai_brief(
             detail={"code": "BRIEF_FAILED", "message": "Failed to generate project brief"},
         ) from e
 
-    store_brief_cache(project_id, brief)
+    await asyncio.to_thread(store_brief_cache, project_id, brief)
     return {"ok": True, "data": _payload(project, brief, cached=False, stale=stale)}
 
 

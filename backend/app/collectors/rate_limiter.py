@@ -100,6 +100,10 @@ class TokenBucketRateLimiter:
             self._last_update = now
 
             if self._tokens < 1.0:
+                if self.config.requests_per_second <= 0:
+                    # 0 速率 = 桶永不回填：burst 耗尽即确定性失败，
+                    # 而不是除零崩溃（2026-11-13 审查 P3-20）。
+                    raise RateLimitExceededError(f"{self.source_id} rate limit is 0 rps (bucket never refills)")
                 wait = (1.0 - self._tokens) / self.config.requests_per_second
                 self._logger.debug("rate_limit.wait", wait_seconds=wait)
                 await asyncio.sleep(wait)

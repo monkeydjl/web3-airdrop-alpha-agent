@@ -125,18 +125,41 @@ def correlate_signals_for_project(
 def batch_correlate_signals(
     conn: DbConnection | None = None,
     window_days: int = 14,
+    project_ids: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Batch correlate all project signals within the window in a single query."""
+    """Batch correlate project signals within the window in a single query.
+
+    Args:
+        conn: 注入连接（None 时自建）。
+        window_days: 一致性统计窗口（天）。
+        project_ids: 可选限定项目集合（list_projects 分页用）——None = 全库；
+            空列表 = 直接返回空表（不发查询）。
+
+    列表路径**必须**走这里，而不是逐行 `correlate_signals_for_project`
+    （page_size 上限 500 即 500 次查询/请求，2026-11-13 审查 P2-2）。
+    """
+    if project_ids is not None and not project_ids:
+        return {}
+
     with connection_scope(conn) as c:
         since_dt = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
-        cursor = c.execute(
+        if project_ids is not None:
+            # 占位符由内部常量拼接，id 值全走绑定参数
+            placeholders = ",".join("?" for _ in project_ids)
+            sql = f"""
+                SELECT project_id, signal_source, signal_type, signal_strength, captured_at, signal_data
+                FROM project_signals
+                WHERE project_id IN ({placeholders}) AND captured_at >= ?
+            """  # noqa: S608
+            params: list[Any] = [*project_ids, since_dt]
+        else:
+            sql = """
+                SELECT project_id, signal_source, signal_type, signal_strength, captured_at, signal_data
+                FROM project_signals
+                WHERE project_id IS NOT NULL AND project_id != '' AND captured_at >= ?
             """
-            SELECT project_id, signal_source, signal_type, signal_strength, captured_at, signal_data
-            FROM project_signals
-            WHERE project_id IS NOT NULL AND project_id != '' AND captured_at >= ?
-            """,
-            (since_dt,),
-        )
+            params = [since_dt]
+        cursor = c.execute(sql, params)
         rows = cursor.fetchall()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for r in rows:

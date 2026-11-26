@@ -13,6 +13,7 @@ from app.opportunity.models import (
     RiskSet,
 )
 from app.services.project_signals import parse_meta
+from app.utils.points import signals_have_points_program
 
 SOURCE_GRADE_WEIGHT = {"A": 1.0, "B": 0.8, "C": 0.5, "D": 0.2, "U": 0.0}
 
@@ -313,11 +314,10 @@ def resolve_factor(
     )
     selected_value = selected[1]
     contradictions = [item for item in candidates if item[1] != selected_value]
-    if any(
-        SOURCE_GRADE_WEIGHT[record.source_grade] >= best_grade
-        or _as_utc(record.observed_at) >= _as_utc(selected[0].observed_at)
-        for record, _ in contradictions
-    ):
+    # 第一段 `grade >= best_grade` 对 contradictions 恒 False（best_grade 是
+    # 全体候选的最大值，而 contradictions 已被过滤为 value != selected_value
+    # —— 同 grade 异值已在上方 return）。保留仅时序比较（深审 P3-1 死条件清理）。
+    if any(_as_utc(record.observed_at) >= _as_utc(selected[0].observed_at) for record, _ in contradictions):
         return FactorResolution(None, None, True, 0.0)
     return FactorResolution(
         selected[0],
@@ -603,14 +603,39 @@ def build_inputs(
         classify_capital_friction_tier,
         evaluate_exit_advisory,
     )
+    from app.services.project_signals import funding_public_view, parse_meta
     from app.services.viability_gate import evaluate_project_viability
 
-    has_points = bool(project_row.get("has_points_program"))
+    structured = _structured_signals(project_row)
+    funding_view = funding_public_view(parse_meta(project_row.get("meta")))
+
+    def _pick_signal(key: str) -> Any:
+        val = project_row.get(key)
+        if val is not None:
+            return val
+        val = structured.get(key)
+        if val is not None:
+            return val
+        return funding_view.get(key)
+
+    # 积分判定统一走 app.utils.points（2026-11-09）：行上的 has_points_program
+    # 可能是扁平化的归一化信号，meta["signals"] 里也可能有一份；显式字段优先，
+    # 且无论来自哪里，explicit_points_program 为 False 时都不算积分计划。
+    explicit_points = structured.get("explicit_points_program")
+    if explicit_points is None:
+        explicit_points = project_row.get("explicit_points_program")
+    has_points = signals_have_points_program(
+        {
+            "has_points_program": bool(project_row.get("has_points_program"))
+            or bool(structured.get("has_points_program")),
+            "explicit_points_program": explicit_points,
+        }
+    )
     # fatigue/friction 的结构化输入走 meta["signals"]（services.project_signals 的
     # SIGNAL_KEYS 词表），不再对 description/sector 做文本匹配——"s3x 含 s3"、
     # "perplexity 含 perp" 这类子串误判从根上消除。读取只经 _structured_signals
     # 统一校验：脏类型一律视为"未观测"，回退到保守默认档，与缺失等价。
-    signals = _structured_signals(project_row)
+    signals = structured
     season_count = _signal_season_count(signals)
     tge_clarity = _signal_tge_clarity(signals)
     is_perp = _signal_is_perp(signals)
@@ -620,7 +645,7 @@ def build_inputs(
     cap_risk_base = cap_risk_val.base if cap_risk_val else None
 
     friction_tier = classify_capital_friction_tier(
-        has_testnet=bool(project_row.get("has_testnet")),
+        has_testnet=bool(project_row.get("has_testnet")) or bool(structured.get("has_testnet")),
         hard_cost_usd=hard_cost_base,
         capital_at_risk_usd=cap_risk_base,
         is_perp=is_perp,
@@ -637,19 +662,38 @@ def build_inputs(
         else 0.10
     )
 
+    raw_inactive = _pick_signal("github_recent_push_days")
+    github_inactive_days = (
+        int(raw_inactive) if isinstance(raw_inactive, (int, float)) and not isinstance(raw_inactive, bool) else None
+    )
+    raw_site_alive = _pick_signal("site_alive")
+    site_alive = raw_site_alive if isinstance(raw_site_alive, bool) else None
+
     exit_adv = evaluate_exit_advisory(
-        github_inactive_days=project_row.get("github_recent_push_days"),
-        site_alive=project_row.get("site_alive"),
+        github_inactive_days=github_inactive_days,
+        site_alive=site_alive,
     )
 
+    raw_funding_usd = _pick_signal("funding_total_usd")
+    raw_tvl_usd = _pick_signal("tvl_usd")
+    raw_investors = _pick_signal("funding_investors")
+    raw_leads = _pick_signal("funding_lead_investors")
+
     viability_adv = evaluate_project_viability(
-        funding_total_usd=project_row.get("funding_total_usd"),
-        funding_tier=project_row.get("funding_tier"),
-        funding_rounds=int(project_row.get("funding_rounds") or 0),
-        funding_last_date=project_row.get("funding_last_date"),
-        funding_lead_investors=list(project_row.get("funding_lead_investors") or []),
-        github_inactive_days=project_row.get("github_recent_push_days"),
-        tvl_usd=project_row.get("tvl_usd"),
+        funding_total_usd=float(raw_funding_usd)
+        if isinstance(raw_funding_usd, (int, float)) and not isinstance(raw_funding_usd, bool)
+        else None,
+        funding_tier=str(_pick_signal("funding_tier")) if _pick_signal("funding_tier") is not None else None,
+        funding_rounds=int(_pick_signal("funding_rounds") or 0),
+        funding_last_date=str(_pick_signal("funding_last_date"))
+        if _pick_signal("funding_last_date") is not None
+        else None,
+        funding_investors=list(raw_investors) if isinstance(raw_investors, (list, tuple)) else [],
+        funding_lead_investors=list(raw_leads) if isinstance(raw_leads, (list, tuple)) else [],
+        github_inactive_days=github_inactive_days,
+        tvl_usd=float(raw_tvl_usd)
+        if isinstance(raw_tvl_usd, (int, float)) and not isinstance(raw_tvl_usd, bool)
+        else None,
         has_points_program=has_points,
         stage=str(project_row.get("stage") or "ideation"),
         now=now,

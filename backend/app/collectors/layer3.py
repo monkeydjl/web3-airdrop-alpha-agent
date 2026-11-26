@@ -62,10 +62,8 @@ class Layer3Collector(DataCollector):
                 task_count=len(tasks),
             )
 
-            for task in tasks:
-                discovery = self._build_discovery(task)
-                if discovery.discovery_score > 0:
-                    result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(tasks, result, keep=lambda d: d.discovery_score > 0)
 
             result.status = "success" if result.items else "partial"
 
@@ -101,10 +99,9 @@ class Layer3Collector(DataCollector):
 
         params: dict[str, str | int | float | bool | None] = {"limit": limit, "status": "active"}
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url, params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected Layer3 response type: {type(data)}")

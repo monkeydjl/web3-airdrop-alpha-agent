@@ -195,6 +195,49 @@ def get_settings_config() -> SettingsConfigResponse:
             "timeout": settings.layer3_timeout,
             "cron": settings.layer3_cron,
         },
+        "github_curated": {
+            "enabled": settings.github_enabled,
+            "has_api_key": _mask_key(settings.github_token),
+            "timeout": settings.github_timeout,
+            "cron": getattr(settings, "github_curated_cron", "30 3 * * *"),
+        },
+        "telegram": {
+            "enabled": settings.telegram_enabled,
+            "has_api_key": _mask_key(settings.telegram_bot_token),
+            "timeout": settings.telegram_timeout,
+            "cron": settings.telegram_cron,
+        },
+        "farcaster": {
+            "enabled": settings.farcaster_enabled,
+            "has_api_key": False,
+            "base_url": settings.farcaster_hub_url,
+            "timeout": settings.farcaster_timeout,
+            "cron": settings.farcaster_cron,
+        },
+        "discord": {
+            "enabled": settings.discord_enabled,
+            "has_api_key": _mask_key(settings.discord_bot_token),
+            "timeout": settings.discord_timeout,
+            "cron": settings.discord_cron,
+        },
+        "reddit": {
+            "enabled": settings.reddit_enabled,
+            "has_api_key": _mask_key(settings.reddit_client_id) and _mask_key(settings.reddit_client_secret),
+            "timeout": settings.reddit_timeout,
+            "cron": settings.reddit_cron,
+        },
+        "medium": {
+            "enabled": settings.medium_enabled,
+            "has_api_key": False,
+            "timeout": settings.medium_timeout,
+            "cron": settings.medium_cron,
+        },
+        "mirror": {
+            "enabled": settings.mirror_enabled,
+            "has_api_key": False,
+            "timeout": settings.mirror_timeout,
+            "cron": settings.mirror_cron,
+        },
     }
 
     automation: dict[str, Any] = {

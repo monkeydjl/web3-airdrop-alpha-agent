@@ -282,3 +282,81 @@ class TestRepositoryFoldsGlobalCounts:
             assert repo.canonical_sector_counts()["DEX"] == 4
         finally:
             conn.close()
+
+
+class TestGlobalSectorCountsFoldsRawWritings:
+    """单项目重算路径的全库基准也必须按规范键折叠（orchestrator_simple.global_sector_counts）。
+
+    批量路径已经用 `canonical_sector_counts()`，但重算路径（funding.py /
+    project_evaluation.py）走的模块函数还在用原始写法的 `aggregate_counts`：
+    同一个项目在"批量评分"与"单项目重算"两条路径上会得到不同的 competition
+    子分 —— 这正是 `_calculate_sector_counts` 注释里花大力气修掉的同一个坑
+    在另一条路径上的复现（2026-11-13 审查 P1）。
+    """
+
+    def test_module_global_sector_counts_folds(self, monkeypatch) -> None:
+        import sqlite3
+
+        import app.repository as repo_mod
+        from app.agents.orchestrator_simple import global_sector_counts
+        from app.db import init_db
+        from app.repository import ProjectRepository
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        try:
+            init_db(conn)
+            rows = ["Dexes"] * 4 + ["DEX"] * 3 + ["Rollup"] * 5
+            for i, sector in enumerate(rows):
+                conn.execute(
+                    "INSERT INTO projects (id, name, sector, source) VALUES (?, ?, ?, ?)",
+                    (f"g-{i}", f"G{i}", sector, "seed"),
+                )
+            conn.commit()
+            # global_sector_counts 内部 `from app.repository import ProjectRepository`
+            # 构造默认库仓储 —— 注入到本内存库。
+            monkeypatch.setattr(repo_mod, "ProjectRepository", lambda: ProjectRepository(conn))
+
+            counts = global_sector_counts()
+        finally:
+            conn.close()
+
+        assert counts == {"DEX": 7, "L2": 5}, f"重算路径的全库基准没有按规范键折叠：{counts} —— 与批量路径口径分叉"
+
+    def test_fallback_counts_fold_too(self, monkeypatch) -> None:
+        """DB 不可用时的 fallback 也按规范键折叠，别让两条路径的口径再分叉。"""
+        import app.repository as repo_mod
+        from app.agents.orchestrator_simple import global_sector_counts
+
+        def _boom() -> None:
+            raise RuntimeError("no db")
+
+        monkeypatch.setattr(repo_mod, "ProjectRepository", _boom)
+        counts = global_sector_counts(
+            fallback=[_project("p-1", "Dexes"), _project("p-2", "DEX"), _project("p-3", "RWA")]
+        )
+        assert counts == {"DEX": 2, "RWA": 1}
+
+
+class TestScorerReasonUsesCanonicalKey:
+    """理由生成必须与 _calc_competition 同口径查 counts。
+
+    `_calc_competition` 修了规范键查表后，`_generate_reasons` 还在拿原始写法
+    `project.sector` 查 —— counts 键是规范键时 "low/high competition" 理由
+    会静默消失（子分 55 分、理由却一个字不提竞争度）。
+    """
+
+    @pytest.mark.parametrize("writing", ["Dexes", "DEX", "dex"])
+    def test_competition_reason_survives_raw_spelling(self, writing: str) -> None:
+        agent = ScorerAgent(sector_counts={"DEX": 20})  # n>15 → high competition
+        state = PipelineState(
+            project=_project("p-1", writing),
+            context=AgentContext(run_id="run-reason"),
+        )
+
+        subscores = agent._calculate_subscores(state)
+        reasons = agent._generate_reasons(state, subscores, confidence=0.9, label="FARM")
+
+        assert any("high competition" in r for r in reasons), (
+            f"sector={writing!r} 时 'high competition' 理由消失 —— 理由生成与子分口径不一致"
+        )

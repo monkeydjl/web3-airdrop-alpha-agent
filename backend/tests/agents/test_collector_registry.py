@@ -14,7 +14,6 @@ import pytest
 from app.agents.collector import CollectorAgent
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery
 from app.collectors.persistence import CollectionRepository
-from app.collectors.registry import CollectorRegistry
 from app.db import init_db
 
 
@@ -73,108 +72,6 @@ def discovery(
 @pytest.fixture
 def collector():
     return CollectorAgent()
-
-
-@pytest.mark.asyncio
-class TestCollectFromRegistry:
-    async def test_registry_collects_enabled_collectors(self, collector):
-        fake = FakeCollector(
-            "defillama",
-            items=[discovery("defillama", "NovaLayer")],
-        )
-        registry = CollectorRegistry()
-        registry.register(fake)
-
-        projects = await collector.collect_from_registry(registry)
-
-        assert len(projects) == 1
-        assert projects[0].name == "NovaLayer"
-        assert projects[0].source == "defillama"
-        assert projects[0].auto_discovered is True
-
-    async def test_registry_skips_disabled_collectors(self, collector):
-        enabled = FakeCollector(
-            "defillama",
-            items=[discovery("defillama", "NovaLayer")],
-        )
-        disabled = FakeCollector(
-            "github",
-            items=[discovery("github", "NovaLayer")],
-        )
-        disabled._enabled = False
-
-        registry = CollectorRegistry()
-        registry.register(enabled)
-        registry.register(disabled)
-
-        projects = await collector.collect_from_registry(registry)
-        assert len(projects) == 1
-        assert projects[0].source == "defillama"
-
-    async def test_registry_dedupes_across_sources(self, collector):
-        defi = FakeCollector(
-            "defillama",
-            items=[discovery("defillama", "NovaLayer", sector="L2")],
-        )
-        github = FakeCollector(
-            "github",
-            items=[discovery("github", "NovaLayer", sector="L2")],
-        )
-
-        registry = CollectorRegistry()
-        registry.register(defi)
-        registry.register(github)
-
-        projects = await collector.collect_from_registry(registry)
-        assert len(projects) == 1
-        assert "defillama" in projects[0].source
-        assert "github" in projects[0].source
-
-    async def test_registry_persists_to_repository(self, collector):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        init_db(conn)
-        repo = CollectionRepository(conn)
-
-        fake = FakeCollector(
-            "defillama",
-            items=[discovery("defillama", "NovaLayer")],
-        )
-        registry = CollectorRegistry()
-        registry.register(fake)
-
-        projects = await collector.collect_from_registry(registry, repo=repo)
-
-        assert len(projects) == 1
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM raw_projects WHERE source_id = ?",
-            ("defillama",),
-        )
-        assert cursor.fetchone()[0] == 1
-        conn.close()
-
-    async def test_registry_ignores_collector_error(self, collector):
-        class ErrorCollector(DataCollector):
-            def __init__(self):
-                super().__init__("error", "error")
-
-            @property
-            def source_type(self) -> str:
-                return "api"
-
-            async def collect(self) -> CollectorResult:
-                raise RuntimeError("API down")
-
-        good = FakeCollector(
-            "defillama",
-            items=[discovery("defillama", "NovaLayer")],
-        )
-        registry = CollectorRegistry()
-        registry.register(good)
-        registry.register(ErrorCollector())
-
-        projects = await collector.collect_from_registry(registry)
-        assert len(projects) == 1
 
 
 class TestCollectFromRepository:

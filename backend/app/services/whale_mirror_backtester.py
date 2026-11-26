@@ -89,7 +89,12 @@ def compare_wallet_with_whale(
     target_project: str = "Monad",
 ) -> dict[str, Any]:
     """对比用户当前钱包数据与顶级巨鲸基准，计算匹配度与补刀清单 (O(1) 哈希快速比对)."""
-    bm = _BENCHMARK_MAP.get(benchmark_id, HISTORICAL_WHALE_BENCHMARKS[0])
+    bm = _BENCHMARK_MAP.get(benchmark_id)
+    if bm is None:
+        # 未知 benchmark_id 显式报错（2026-11-19 深审 P2-6 同型）：静默回落
+        # 第一个基准会让用户以为在复盘 A 实际在跑 B。
+        known = sorted(b["airdrop_id"] for b in HISTORICAL_WHALE_BENCHMARKS)
+        raise ValueError(f"Unknown benchmark_id: {benchmark_id!r} (known: {known})")
 
     # 计算各项达标百分比
     r_months = min(1.0, user_active_months / max(1, bm["active_months_required"]))
@@ -99,8 +104,14 @@ def compare_wallet_with_whale(
     r_balance = min(1.0, user_retained_eth / max(0.001, bm["retained_balance_eth_required"]))
 
     # 综合匹配得分 (0 - 100)
+    # 下限钳制（深审 P3-12）：负数直调输入会让 ratio 为负 → 负分；
+    # router 层 ge=0 只保护 HTTP 面，函数直调不在其内。
     composite_score = round(
-        (r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100, 1
+        max(
+            0.0,
+            (r_months * 0.25 + r_txs * 0.20 + r_contracts * 0.25 + r_volume * 0.15 + r_balance * 0.15) * 100,
+        ),
+        1,
     )
 
     gap_details = [

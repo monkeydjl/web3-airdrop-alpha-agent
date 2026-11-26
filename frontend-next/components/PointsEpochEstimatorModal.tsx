@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
 import { apiFetchEnvelope } from "@/lib/api";
+import { SimulatedDataBadge, type DataQualityMeta } from "@/components/SimulatedDataBadge";
 
 interface BoostPool {
   pool: string;
@@ -71,7 +72,7 @@ export default function PointsEpochEstimatorModal({
     setLoading(true);
     setError(null);
     try {
-      const json = await apiFetchEnvelope<PointsResult>("/points/estimate", {
+      const json = await apiFetchEnvelope<PointsResult & { data_quality?: DataQualityMeta }>("/points/estimate", {
         method: "POST",
         body: JSON.stringify({
           protocol_id: targetPid,
@@ -106,8 +107,12 @@ export default function PointsEpochEstimatorModal({
           <div className="flex items-center gap-3">
             <span className="text-2xl">⏳</span>
             <div>
-              <h3 className="text-lg font-bold text-slate-100">
-                空投阶段积分估值与快照倍数推演器
+              <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                <span>空投阶段积分估值与快照倍数推演器</span>
+                <SimulatedDataBadge
+                  dataQuality={(result as (PointsResult & { data_quality?: DataQualityMeta }) | null)?.data_quality}
+                  note="基于假设 FDV 与空投池比例的公式推演，非官方兑换价"
+                />
               </h3>
               <p className="text-xs text-slate-400">
                 对标主流 Season 积分发行模型，推演全网位次排位、代币折算值与高倍加速池推荐

@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import threading
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -55,6 +56,11 @@ import structlog
 from app.db import dict_from_row
 
 logger = structlog.get_logger(__name__)
+
+# 进程内并发调用的在途预算预扣账本（按 UTC 日期分桶），防止 N 个并发请求在
+# check_budget → HTTP 响应 → record_spend 窗口期同时放行造成 N 倍超支。
+_budget_lock = threading.Lock()
+_in_flight_nano: dict[str, int] = {}
 
 
 def today_utc() -> str:
@@ -115,6 +121,8 @@ class BudgetDecision:
     reason: str
     budget_usd: Decimal
     spent_usd: Decimal
+    reserved_date: str | None = None
+    reserved_nano: int = 0
 
     @property
     def remaining_usd(self) -> Decimal:
@@ -217,8 +225,21 @@ def get_daily_spend(spend_date: str | None = None) -> DailySpend:
         return LLMSpendRepository(conn).get(day)
 
 
-def check_budget(*, budget_usd: float) -> BudgetDecision:
-    """调用前的预算判定。
+def release_reservation(decision: BudgetDecision) -> None:
+    """释放并发调用的在途预扣额度（应在 record_spend 后或异常退出时于 finally 中调用）。"""
+    if not decision.reserved_date or decision.reserved_nano <= 0:
+        return
+    with _budget_lock:
+        current = _in_flight_nano.get(decision.reserved_date, 0)
+        remaining = current - decision.reserved_nano
+        if remaining > 0:
+            _in_flight_nano[decision.reserved_date] = remaining
+        else:
+            _in_flight_nano.pop(decision.reserved_date, None)
+
+
+def check_budget(*, budget_usd: float, reserve_usd: Decimal | None = None) -> BudgetDecision:
+    """调用前的预算判定（支持原子化在途预扣，防止并发超支）。
 
     `budget_usd <= 0` 视为**不限额**（而不是"全部拒绝"）：0 是"没配"的
     自然表达，把它解释成"一律禁止 LLM"会让一个漏填的配置直接关掉功能，
@@ -229,34 +250,53 @@ def check_budget(*, budget_usd: float) -> BudgetDecision:
     if budget <= 0:
         return BudgetDecision(allowed=True, reason=REASON_DISABLED, budget_usd=budget, spent_usd=Decimal("0"))
 
-    try:
-        spend = get_daily_spend()
-    except Exception as exc:
-        # fail closed —— 理由见模块 docstring：降级回规则引擎的代价远小于账单。
-        logger.error("llm.budget.ledger_unavailable", error=str(exc)[:200])
-        return BudgetDecision(
-            allowed=False,
-            reason=REASON_LEDGER_UNAVAILABLE,
-            budget_usd=budget,
-            spent_usd=Decimal("0"),
-        )
+    with _budget_lock:
+        try:
+            spend = get_daily_spend()
+        except Exception as exc:
+            # fail closed —— 理由见模块 docstring：降级回规则引擎的代价远小于账单。
+            logger.error("llm.budget.ledger_unavailable", error=str(exc)[:200])
+            return BudgetDecision(
+                allowed=False,
+                reason=REASON_LEDGER_UNAVAILABLE,
+                budget_usd=budget,
+                spent_usd=Decimal("0"),
+            )
 
-    if spend.cost_usd >= budget:
-        logger.warning(
-            "llm.budget.exceeded",
-            spend_date=spend.spend_date,
-            spent_usd=float(spend.cost_usd),
-            budget_usd=float(budget),
-            calls_today=spend.calls,
-        )
-        return BudgetDecision(
-            allowed=False,
-            reason=REASON_BUDGET_EXCEEDED,
-            budget_usd=budget,
-            spent_usd=spend.cost_usd,
-        )
+        day = spend.spend_date
+        in_flight_usd = nano_to_usd(_in_flight_nano.get(day, 0))
+        effective_spent = spend.cost_usd + in_flight_usd
+        if effective_spent >= budget:
+            logger.warning(
+                "llm.budget.exceeded",
+                spend_date=day,
+                spent_usd=float(spend.cost_usd),
+                in_flight_usd=float(in_flight_usd),
+                budget_usd=float(budget),
+                calls_today=spend.calls,
+            )
+            return BudgetDecision(
+                allowed=False,
+                reason=REASON_BUDGET_EXCEEDED,
+                budget_usd=budget,
+                spent_usd=effective_spent,
+            )
 
-    return BudgetDecision(allowed=True, reason=REASON_OK, budget_usd=budget, spent_usd=spend.cost_usd)
+        reserved_nano = 0
+        reserved_date: str | None = None
+        if reserve_usd is not None and reserve_usd > 0:
+            reserved_nano = usd_to_nano(reserve_usd)
+            _in_flight_nano[day] = _in_flight_nano.get(day, 0) + reserved_nano
+            reserved_date = day
+
+        return BudgetDecision(
+            allowed=True,
+            reason=REASON_OK,
+            budget_usd=budget,
+            spent_usd=effective_spent,
+            reserved_date=reserved_date,
+            reserved_nano=reserved_nano,
+        )
 
 
 def record_spend(*, cost_usd: Decimal, prompt_tokens: int, completion_tokens: int) -> bool:

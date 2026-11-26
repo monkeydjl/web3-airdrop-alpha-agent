@@ -276,7 +276,7 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
 
 - **应用回滚**：重新部署上一版本镜像 tag（生产 compose 才有意义）。
 - **配置回滚**：改回 `.env`，重启容器。配置只在启动时读，改完必须重启。
-- **数据库回滚**：Alembic 迁移目前有 **14 个版本**（`backend/alembic/versions/`）：
+- **数据库回滚**：Alembic 迁移目前有 **16 个版本**（`backend/alembic/versions/`）：
   `0001_baseline_schema`、`0002_v2_new_tables`、`0003_archive_runs`、
   `0004_llm_spend_daily`、`0005_notify_log`（2026-08-31，决策推送）、
   `0006_participation`（2026-08-31，参与流水）、
@@ -287,7 +287,9 @@ API_KEY=<管理员密钥> ./scripts/health-check.sh   # 带 key 才会检查 LLM
   `0011_user_auth_tables`（2026-09-19，V3 用户认证系统表）、
   `0012_api_keys_table`（2026-09-19，V3 可撤销 API Key 表）、
   `0013_project_hidden_reason`（2026-10-08，已发币复查的隐藏标记列）、
-  `0014_token_registry_unhide`（2026-10-08，CoinGecko 币表缓存 + 人工恢复显示标记）。
+  `0014_token_registry_unhide`（2026-10-08，CoinGecko 币表缓存 + 人工恢复显示标记）、
+  `0015_project_aliases`（2026-11-09，`dedup_keys` 增加身份别名列）、
+  `0016_consolidate_runtime_tables_and_indexes`（2026-11-20，统一收口 `leader_election`、5 张运行时业务表与幂等唯一索引）。
   ```powershell
   cd backend
   & ".\venv\Scripts\python.exe" -m alembic downgrade -1
@@ -501,7 +503,7 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 |---|---|---|
 | `defillama` | `DEFILLAMA_ENABLED` | ❌ 免费无 Key |
 | `coingecko` | `COINGECKO_ENABLED` | ❌ 免费额度够用 |
-| `github` | `GITHUB_ENABLED` | ❌ 无 token 时走未认证公开搜索（限流 1 rps；配置 `GITHUB_TOKEN` 可提升配额） |
+| `github` | `GITHUB_ENABLED` | ❌ 无 token 时走未认证公开搜索（限流 1 rps；配置 `GITHUB_TOKEN` 可提升配额；网络错误/5xx/429 按 `GITHUB_RETRY` 退避重试，403 不重试） |
 | `github_curated` | `GITHUB_ENABLED` | ❌ 抓公开 curated 列表无需 Key（与 `github` 共用同一开关） |
 | `cryptorank` | `CRYPTORANK_ENABLED` | ✅ `CRYPTORANK_API_KEY` |
 | `etherscan` | `ETHERSCAN_ENABLED` | ✅ `ETHERSCAN_API_KEY` |
@@ -517,6 +519,11 @@ execution / competition / transparency 各 100、team 85~95 把总分抬起来�
 | `telegram` | `TELEGRAM_ENABLED` | ❌ 网页预览免费无需 Key |
 | `farcaster` | `FARCASTER_ENABLED` | ❌ Hub 公开 API 免费无需 Key |
 <!-- collection-ready:end -->
+
+> 所有采集源的 HTTP 请求共用同一套重试实现（`DataCollector.request_with_retry`）：
+> 各自的 `*_RETRY` 是重试次数（总尝试 = 1 + n）；只重试网络错误 / 429 / 5xx，
+> 其余 4xx 不重试；退避 1s、2s、4s…（尊重 `Retry-After`，单次最长 60s），
+> 每次尝试都重新通过本地令牌桶。
 
 > 注意两个 twitter 源**共用同一个开关** `TWITTER_ENABLED`：关掉它会同时停掉
 > KOL 轮询和关键词搜索，没法只留一个。
@@ -718,6 +725,7 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 - `/api/v1/notify`
 - `/api/v1/watched-wallets`
 - `/api/v1/ops`
+- `/api/v1/llm`
 <!-- admin-prefixes:end -->
 
 匿名 token 打这些前缀下的路径拿 **403**。
@@ -736,6 +744,8 @@ confidence ≥0.8 的项目只有 9 个。这不是缺陷，是数据源覆盖�
 | `/api/v1/collections/*` | POST / PATCH / PUT / DELETE | GET / HEAD | trigger 会**真的跑采集**并消耗第三方 API 配额；PATCH 能改采集源开关与 cron。但 `/collections/sources` 是只读就绪状态，首页和 `/discoveries` 页在用，整前缀锁会让匿名角色页面直接空掉。 |
 | `/api/v1/projects/{project_id}/funding` | POST / PATCH / PUT / DELETE | GET / HEAD | PATCH 改融资数据并触发重算。通配段在路径**中间**，前缀匹配写不出来；同一路径的 GET 是普通只读明细。 |
 | `/api/v1/projects/{project_id}/unhide` | POST / PATCH / PUT / DELETE | GET / HEAD | 恢复显示改的是**全局**默认列表，并让每日已发币复查从此跳过该项目（2026-10-08）。 |
+| `/api/v1/project-identity/*` | POST / PATCH / PUT / DELETE | GET / HEAD | 别名决定项目解析到哪个 `project_id`（见 API_SPEC §54-§58）。改错会让所有项目的历史评分、反馈与参与记录挂到错误的项目上；`GET /aliases` 与调试查询保持开放。 |
+| `/api/v1/bot/test-send` | POST / PATCH / PUT / DELETE | — | 出站发送动作，目标 URL 来自请求体（2026-11-13）。发送函数已强制出站域名白名单，角色锁挡住"用任意 webhook 地址做消息中继"的滥用面；`/bot/command` 只读渲染，保持匿名。 |
 <!-- admin-method-rules:end -->
 
 `/collections/` 用的是**方法白名单取反**（GET/HEAD 之外全锁），
@@ -1448,7 +1458,7 @@ CI 跑 pytest 时加了：
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
-| **7 张死表**（不只 `metrics`） | ❌ `metrics`、`audit_logs`、`llm_eval_changelog`、`narratives`、`dedup_keys`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14 |
+| **5 张死表**（不只 `metrics`） | ❌ `metrics`、`llm_eval_changelog`、`narratives`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14（`dedup_keys` 已在 2026-11-09 接上身份别名解析，`audit_logs` 已在 2026-11-26 接上管理员写操作审计，均不再算死表） |
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ✅ 已在跑（2026-10-01 实测：`archive_runs` 19 行全 success，首次 2026-09-04，每日 UTC 03:00 触发；当前待归档 0 行属真实「无事可做」，首次真实归档预计 2026-10-03 前后 —— §7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
@@ -1779,7 +1789,7 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 
 ---
 
-### 12.14 死表不止 `metrics` 一张，是 7 张
+### 12.14 死表不止 `metrics` 一张，是 5 张
 
 此前 §11 只点了 `metrics`。2026-08-25 在**线上库**（`D:\app\data\app.db`，
 28 张表）上逐表实测行数 + 逐文件搜写入方，结果如下。
@@ -1791,12 +1801,19 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 | 表 | 行数 | 写入方 |
 |---|---|---|
 | `metrics` | 0 | 仅 repository |
-| `audit_logs` | 0 | 仅 repository |
 | `llm_eval_changelog` | 0 | 仅 repository |
 | `narratives` | 0 | 仅 repository |
-| `dedup_keys` | 0 | 仅 repository |
 | `prompt_versions` | 0 | 仅 repository |
 | `quarantine` | 0 | 仅 repository（**但隔离功能是真的，见下**） |
+
+> `dedup_keys` 已移出死表清单（2026-11-09）：身份别名解析把它作为别名表复用，
+> `backend/app/identity.py` 会写 `source` / `confidence` / `notes`，
+> 见任务一的 `/api/v1/project-identity/*` 与回填脚本。
+>
+> `audit_logs` 已移出死表清单（2026-11-26）：`backend/app/main.py` 请求中间件对所有命中
+> `requires_admin(method, path)` 的成功写操作（POST/PUT/PATCH/DELETE 且 2xx/3xx）自动经由
+> `backend/app/services/audit_log.py` 脱敏落库，支持通过管理员端点 `GET /api/v1/ops/audit-logs`
+> 按动作与操作者检索，并由归档任务按 365 天保留期定时清理。
 
 对照组（**不是**死表，用来证明这个判据不是恒真）：
 
@@ -1808,15 +1825,11 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 | `feedback` | 0 | `routers/v1/feedback.py` —— 同上 |
 | `notification_reads` | 0 | `routers/v1/notifications.py` —— 同上 |
 
-#### `audit_logs` 是这批里最需要注意的一张
+#### `audit_logs` 已于 2026-11-26 接上真实生产审计链路
 
-审计日志会被**直接算进合规与安全评估**。一张有 schema、有 repository、
-有单元测试的空审计表，比一张不存在的表更容易被当成"这个能力有"。
-和 SECURITY.md §6.3 那个"固定 digest"是同一类错：
-**声称存在的保护，比缺少保护更危险，因为它会被算进防护面。**
-
-（注：SECURITY.md §4.3 把审计日志列在「V3 前瞻」里，那是诚实的表述 ——
-它说的是"将来要做"，没有声称现在有。）
+审计日志会被**直接算进合规与安全评估**。此前它是「有 schema、有 repository、有单元测试但无生产写入方」
+的空表；2026-11-26 起已通过请求中间件统一接管全仓管理员写操作（无需逐路由手工埋点防漏），
+落库前经 `app.utils.redact.redact` 强制脱敏，并通过 `GET /api/v1/ops/audit-logs` 对管理员开放审计查询。
 
 #### `quarantine` 是一次差点搞错的诊断
 
@@ -1833,9 +1846,10 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 
 #### 处置
 
-需所有者决定：接上还是删掉（待决清单第 4 条已扩展为这 7 张）。
+需所有者决定：接上还是删掉（待决清单第 4 条已扩展为这 7 张；
+`dedup_keys` 已于 2026-11-09 接上身份别名解析，不再是待决项）。
 本轮只做实测与记录，**没有删任何表** —— 删表是不可逆操作，
-而且其中几张（`prompt_versions`、`dedup_keys`）看得出是为未来功能预留的。
+而且其中几张（如 `prompt_versions`）看得出是为未来功能预留的。
 
 另注：`SEED_ON_STARTUP` 与 `SEED_DATA_PATH` **全仓 0 处读取**
 （启动灌种子靠手动跑 `python scripts/seed.py`）。

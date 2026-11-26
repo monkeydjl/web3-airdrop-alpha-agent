@@ -11,6 +11,7 @@ Reference:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -20,6 +21,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.collectors.base import CollectorResult, RawDiscovery, RawSignal
 from app.collectors.etherscan import _KNOWN_NOISE_CONTRACTS
@@ -167,7 +169,35 @@ def _process_claim_watch(payload: dict[str, Any]) -> bool:
         return False
 
 
-@router.post("/webhook/alchemy")
+class AlchemyWebhookData(BaseModel):
+    """webhook 处理结果（多个 200 分支的并集；未触发的字段缺省）。"""
+
+    event_id: str | None = None
+    processed: bool
+    claim_matched: bool | None = None
+
+
+class AlchemyWebhookResponse(BaseModel):
+    """Alchemy webhook 的统一信封（200 即受理；业务失败也在 200 里表达）。"""
+
+    ok: bool
+    data: AlchemyWebhookData
+
+
+class AlchemyStatusData(BaseModel):
+    """GET /webhook/alchemy/status 的健康信息（不回显内部 webhook URL）。"""
+
+    source_id: str
+    source_type: str
+    configured: bool
+
+
+class AlchemyStatusResponse(BaseModel):
+    ok: bool
+    data: AlchemyStatusData
+
+
+@router.post("/webhook/alchemy", response_model=AlchemyWebhookResponse)
 async def receive_alchemy_webhook(
     request: Request,
     x_alchemy_signature: str | None = Header(None, alias="x-alchemy-signature"),
@@ -193,8 +223,37 @@ async def receive_alchemy_webhook(
             },
         )
 
-    # Read raw body for signature verification
-    body = await request.body()
+    # Read raw body with strict size cap (1MB) before signature verification to prevent memory DoS
+    max_body_bytes = 1 * 1024 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > max_body_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "ok": False,
+                "error": {
+                    "code": "PAYLOAD_TOO_LARGE",
+                    "message": "Webhook payload exceeds 1MB limit",
+                },
+            },
+        )
+    body_chunks: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > max_body_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "ok": False,
+                    "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Webhook payload exceeds 1MB limit",
+                    },
+                },
+            )
+        body_chunks.append(chunk)
+    body = b"".join(body_chunks)
 
     # Verify signature
     if not _verify_signature(body, x_alchemy_signature, signing_key):
@@ -228,7 +287,7 @@ async def receive_alchemy_webhook(
     # payload 可能只满足其中一个（自有地址收到代币时 address 多半在 noise
     # denylist 里、discovery 会被跳过），把它们串成一条链会让先失败的那个
     # 把后面的一起吃掉。
-    claim_matched = _process_claim_watch(payload)
+    claim_matched = await asyncio.to_thread(_process_claim_watch, payload)
 
     try:
         discovery = _build_discovery(payload)
@@ -255,12 +314,15 @@ async def receive_alchemy_webhook(
         result.started_at = datetime.now(UTC)
         result.finished_at = datetime.now(UTC)
 
-        repo = CollectionRepository()
-        repo.persist_collection_result(
-            result,
-            source_type="webhook",
-            source_name="Alchemy Webhook",
-        )
+        def _persist_discovery() -> None:
+            repo = CollectionRepository()
+            repo.persist_collection_result(
+                result,
+                source_type="webhook",
+                source_name="Alchemy Webhook",
+            )
+
+        await asyncio.to_thread(_persist_discovery)
 
         # 地址只记前 10 位。这里的 address 多数是别人的合约（discovery 的
         # 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于
@@ -299,9 +361,13 @@ async def receive_alchemy_webhook(
         )
 
 
-@router.get("/webhook/alchemy/status")
+@router.get("/webhook/alchemy/status", response_model=AlchemyStatusResponse)
 def alchemy_webhook_status() -> JSONResponse:
-    """Health check for the Alchemy webhook endpoint."""
+    """Health check for the Alchemy webhook endpoint.
+
+    只回 `configured` 布尔（2026-11-13 审查 L-1）：端点在 PUBLIC_PREFIXES，
+    回显内部 webhook URL 等于把回调地址免费送给匿名抓取者。
+    """
     configured = bool(settings.alchemy_webhook_signing_key)
     return JSONResponse(
         status_code=200,
@@ -311,7 +377,6 @@ def alchemy_webhook_status() -> JSONResponse:
                 "source_id": "alchemy_webhook",
                 "source_type": "webhook",
                 "configured": configured,
-                "webhook_url": settings.alchemy_webhook_url or None,
             },
         },
     )

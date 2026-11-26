@@ -193,6 +193,7 @@ async def test_start_disabled_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(settings, "notify_enabled", False)
     monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
     monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "alpha_digest_scheduler_enabled", False)
 
     sched = UnifiedScheduler(registry)
     sched.start()
@@ -206,6 +207,36 @@ async def test_shutdown_is_noop_when_not_started():
     registry = _make_fake_registry()
     sched = UnifiedScheduler(registry)
     sched.shutdown()  # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_shutdown_resets_flag_so_restart_can_stop_again(monkeypatch):
+    """HA 降级→提升→再降级：shutdown 必须可重入（2026-11-13 P1）。
+
+    修复前 `_is_shutting_down` 一旦置位永不复位（start() 也不清零）：
+    第二次 demote 调 shutdown() 直接 early return，降级实例继续跑采集/分析
+    job，与新旧主双跑 —— 选主本身有租约，但降级后 job 停不掉等于白选。
+    """
+    registry = _make_fake_registry()
+    monkeypatch.setattr(settings, "scheduler_enabled", True)
+    monkeypatch.setattr(settings, "collection_scheduler_enabled", True)
+
+    sched = UnifiedScheduler(registry)
+    sched.start()
+    sched.shutdown(wait=False)
+    # APScheduler 3.11 的 AsyncIOScheduler._shutdown 经 call_soon_threadsafe
+    # 延迟到下一轮事件循环 —— 让出一次循环再断言。
+    await asyncio.sleep(0)
+    assert not sched.scheduler.running
+
+    sched.start()  # demote → promote：重新注册并启动
+    assert sched.scheduler.running
+
+    sched.shutdown(wait=False)  # 第二次 demote：修复前是 no-op
+    await asyncio.sleep(0)
+    assert not sched.scheduler.running, (
+        "restart 后第二次 shutdown 未生效 —— 关停标志被首次 shutdown 永久置位，降级实例会继续跑 job 与新主双跑"
+    )
 
 
 # ── Analysis execution ─────────────────────────

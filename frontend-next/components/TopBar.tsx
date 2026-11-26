@@ -38,9 +38,7 @@ async function loadProjects(): Promise<Project[]> {
     })
     .catch((err) => {
       cachePromise = null;
-      // 无论何种失败原因都缓存空数组，使后续搜索能展示
-      // "无匹配项目" 而非一直不发下拉面板
-      projectCache = [];
+      // 失败时不把 projectCache 永久钉死为 []，下次聚焦/输入允许自动重试拉取
       if (isAbortError(err)) return [];
       // 静默失败：搜索是辅助功能，不应阻断页面
       return [];

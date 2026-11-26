@@ -26,7 +26,7 @@ from typing import Any
 
 import structlog
 
-from app.db import DbConnection, dict_from_row
+from app.db import DbConnection, dict_from_row, insert_returning_id
 
 logger = structlog.get_logger(__name__)
 
@@ -48,7 +48,9 @@ class AuditLogRepository:
         detail: str | None = None,
         ip: str | None = None,
     ) -> int:
-        cursor = self.conn.execute(
+        # psycopg3 没有 cursor.lastrowid（ADR-004 双后端），统一走 RETURNING。
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO audit_logs (action, "user", detail, ip)
             VALUES (?, ?, ?, ?)
@@ -56,7 +58,7 @@ class AuditLogRepository:
             (action, user, detail, ip),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def query(
         self,
@@ -107,7 +109,8 @@ class MetricsRepository:
         metric_value: float,
         detail: str | None = None,
     ) -> int:
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO metrics (run_id, metric_name, metric_value, detail)
             VALUES (?, ?, ?, ?)
@@ -115,7 +118,7 @@ class MetricsRepository:
             (run_id, metric_name, metric_value, detail),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def query_by_run(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -152,7 +155,8 @@ class LLMEvalRepository:
         decision: str,
         detail: str | None = None,
     ) -> int:
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO llm_eval_changelog
                 (eval_date, sample_count, rule_accuracy, llm_accuracy,
@@ -162,7 +166,7 @@ class LLMEvalRepository:
             (eval_date, sample_count, rule_accuracy, llm_accuracy, llm_cost_usd, decision, detail),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def get_latest(self) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM llm_eval_changelog ORDER BY eval_date DESC LIMIT 1").fetchone()
@@ -193,7 +197,8 @@ class QuarantineRepository:
         failure_reason: str,
         severity: str = "warning",
     ) -> int:
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO quarantine
                 (project_id, raw_data, failure_reason, severity, status)
@@ -202,7 +207,7 @@ class QuarantineRepository:
             (project_id, raw_data, failure_reason, severity),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def resolve(self, quarantine_id: int, *, status: str = "resolved") -> bool:
         cursor = self.conn.execute(
@@ -251,7 +256,8 @@ class ProjectHistoryRepository:
         weight_version: str | None = None,
         snapshot: str,
     ) -> int:
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO project_history
                 (project_id, run_id, score, label, stage, weight_version, snapshot)
@@ -260,7 +266,7 @@ class ProjectHistoryRepository:
             (project_id, run_id, score, label, stage, weight_version, snapshot),
         )
         self.conn.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def query_by_project(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -375,6 +381,54 @@ class DedupKeysRepository:
         ).fetchall()
         return [dict_from_row(r) for r in rows]
 
+    def list_aliases(self, project_id: str | None = None, source: str | None = None) -> list[dict[str, Any]]:
+        """列出参与身份解析的别名（source 为 NULL 的历史行不算）。"""
+        sql = "SELECT * FROM dedup_keys WHERE source IS NOT NULL"
+        params: list[Any] = []
+        if project_id:
+            sql += " AND project_id = ?"
+            params.append(project_id)
+        if source:
+            sql += " AND source = ?"
+            params.append(source)
+        sql += " ORDER BY project_id, dedup_key"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict_from_row(r) for r in rows]
+
+    def upsert_alias(
+        self,
+        *,
+        dedup_key: str,
+        project_id: str,
+        source: str,
+        confidence: float,
+        notes: str | None = None,
+        name_raw: str = "",
+        sector_raw: str = "",
+    ) -> None:
+        """写入/更新一条别名。
+
+        与 `app.identity.ProjectIdentityResolver.upsert_alias` 共用同一张表；
+        需要"降级保护"语义时请走解析器（这里只做纯 SQL 写入）。
+        """
+        self.conn.execute(
+            """
+            INSERT INTO dedup_keys
+                (dedup_key, project_id, name_raw, sector_raw, source, confidence, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(dedup_key) DO UPDATE SET
+                project_id = excluded.project_id,
+                name_raw = excluded.name_raw,
+                sector_raw = excluded.sector_raw,
+                source = excluded.source,
+                confidence = excluded.confidence,
+                notes = excluded.notes,
+                updated_at = datetime('now')
+            """,
+            (dedup_key, project_id, name_raw, sector_raw, source, confidence, notes),
+        )
+        self.conn.commit()
+
 
 # ── PromptVersionsRepository ────────────────────
 
@@ -395,7 +449,8 @@ class PromptVersionsRepository:
         created_by: str,
         is_default: bool = False,
     ) -> int:
-        cursor = self.conn.execute(
+        new_id = insert_returning_id(
+            self.conn,
             """
             INSERT INTO prompt_versions
                 (agent_name, prompt_key, version, content, is_default, created_by)
@@ -406,9 +461,9 @@ class PromptVersionsRepository:
         self.conn.commit()
 
         if is_default:
-            self._clear_other_defaults(agent_name, prompt_key, exclude_id=cursor.lastrowid)
+            self._clear_other_defaults(agent_name, prompt_key, exclude_id=new_id or 0)
 
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     def _clear_other_defaults(self, agent_name: str, prompt_key: str, *, exclude_id: int) -> None:
         self.conn.execute(

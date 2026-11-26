@@ -64,10 +64,8 @@ class GalxeCollector(DataCollector):
                 campaign_count=len(campaigns),
             )
 
-            for campaign in campaigns:
-                discovery = self._build_discovery(campaign)
-                if discovery.discovery_score > 0:
-                    result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(campaigns, result, keep=lambda d: d.discovery_score > 0)
 
             result.status = "success" if result.items else "partial"
 
@@ -91,32 +89,23 @@ class GalxeCollector(DataCollector):
         except Exception as e:
             return {"source_id": self.source_id, "status": "unhealthy", "error": str(e)}
 
+    # campaigns 单页最多 first 条（上限 100）；Relay cursor 翻页封顶防失控
+    MAX_CURSOR_PAGES = 3
+    PAGE_SIZE = 100
+
     async def _fetch_campaigns(self, limit: int = 100) -> list[dict[str, Any]]:
-        """获取 Galxe campaign 列表。"""
-        query = {
-            "operationName": "CampaignList",
-            "query": (
-                "query CampaignList {"
-                "  campaignList(listInput: {limit: " + str(limit) + ", order: "
-                '["createdAt"]}) {'
-                "    list {"
-                "      id"
-                "      name"
-                "      description"
-                "      status"
-                "      rewardType"
-                "      thumbnail"
-                "      space {"
-                "        id"
-                "        name"
-                "        alias"
-                "      }"
-                "    }"
-                "  }"
-                "}"
-            ),
-            "variables": {},
-        }
+        """获取 Galxe campaign 列表（campaigns + Relay cursor 翻页）。
+
+        2026-11-16：生产 schema 已下线 `campaignList(listInput:)` —— 旧查询
+        实测返回 GRAPHQL_VALIDATION_FAILED，**整个源在产线静默死亡**。
+        迁移到 `campaigns(input: {first, after})`（ListCampaignInput 为
+        Relay 式分页：first/after + pageInfo {hasNextPage, endCursor}，
+        生产端点内省确认，ListCampaignInput 无 order 字段）。页数封顶
+        `MAX_CURSOR_PAGES`。
+        """
+        first = min(max(limit, 1), 100)
+        campaigns: list[dict[str, Any]] = []
+        cursor: str | None = None
 
         headers = {
             "Content-Type": "application/json",
@@ -124,23 +113,68 @@ class GalxeCollector(DataCollector):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.post(
-                GALXE_GRAPHQL_URL,
-                json=query,
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
+        async with self.http_client(timeout=self.timeout) as client:
+            for _page in range(self.MAX_CURSOR_PAGES):
+                query = {
+                    "operationName": "CampaignList",
+                    "query": (
+                        "query CampaignList($first: Int!, $after: String) {"
+                        "  campaigns(input: {first: $first, after: $after}) {"
+                        "    totalCount"
+                        "    list {"
+                        "      id"
+                        "      name"
+                        "      description"
+                        "      status"
+                        "      rewardType"
+                        "      thumbnail"
+                        "      space {"
+                        "        id"
+                        "        name"
+                        "        alias"
+                        "      }"
+                        "    }"
+                        "    pageInfo {"
+                        "      hasNextPage"
+                        "      endCursor"
+                        "    }"
+                        "  }"
+                        "}"
+                    ),
+                    "variables": {"first": first, "after": cursor},
+                }
 
-        if "errors" in data:
-            raise ValueError(f"Galxe GraphQL error: {data['errors']}")
+                response = await self.request_with_retry(
+                    "POST",
+                    GALXE_GRAPHQL_URL,
+                    json=query,
+                    headers=headers,
+                    client=client,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-        # GraphQL 部分失败时 data / campaignList 可能为 null 且无顶层 errors，
-        # 用 `or {}` 逐层兜底，避免 None.get 抛 AttributeError。
-        payload = data.get("data") or {}
-        campaign_list = payload.get("campaignList") or {}
-        return campaign_list.get("list") or []
+                if not isinstance(data, dict):
+                    # `"errors" in data` 对 str 做的是**子串匹配**、对 list 做的是成员匹配，
+                    # 语义都不对 —— 非对象响应给清晰的 ValueError（2026-11-14 审查 P3-20）。
+                    raise ValueError(f"Galxe GraphQL 返回非对象 payload（{type(data).__name__}）")
+
+                if data.get("errors"):
+                    raise ValueError(f"Galxe GraphQL error: {data['errors']}")
+
+                # GraphQL 部分失败时 data / campaigns 可能为 null 且无顶层 errors，
+                # 用 `or {}` 逐层兜底，避免 None.get 抛 AttributeError。
+                payload = data.get("data") or {}
+                connection = payload.get("campaigns") or {}
+                page_items = connection.get("list") or []
+                campaigns.extend(page_items)
+
+                page_info = connection.get("pageInfo") or {}
+                cursor = page_info.get("endCursor") or None
+                if not cursor or not page_items:
+                    break
+
+        return campaigns
 
     def _build_discovery(self, campaign: dict[str, Any]) -> RawDiscovery:
         """将 Galxe campaign 转换为 RawDiscovery。"""

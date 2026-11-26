@@ -184,7 +184,9 @@ class TestAlchemyWebhook:
         assert data["data"]["source_id"] == "alchemy_webhook"
         assert data["data"]["source_type"] == "webhook"
         assert data["data"]["configured"] is True
-        assert data["data"]["webhook_url"] == "https://example.com/webhook"
+        # 2026-11-13 审查 L-1：端点是**公开**的（PUBLIC_PREFIXES），回显内部
+        # webhook URL 等于把回调地址免费送给匿名抓取者 —— 只返回 configured 布尔。
+        assert "webhook_url" not in data["data"], "公开端点不得回显内部 webhook URL"
 
     def test_webhook_error_resilience(self, client: TestClient, monkeypatch) -> None:
         """Returns 200 even on internal errors (Alchemy expects 200)."""

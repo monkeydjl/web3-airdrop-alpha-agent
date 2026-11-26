@@ -640,14 +640,20 @@ class TestSchedulerHonoursConfiguredTimezone:
 
     @pytest.mark.asyncio
     async def test_analysis_job_uses_configured_timezone_and_grace(self, monkeypatch):
-        from app.analysis_scheduler import AnalysisScheduler
+        """契约随 legacy AnalysisScheduler 删除改钉 UnifiedScheduler（同 job id 同参数）。"""
+        from unittest.mock import MagicMock
+
         from app.config import settings
+        from app.scheduler import UnifiedScheduler
+
+        registry = MagicMock()
+        registry.list_enabled.return_value = []
 
         monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
         monkeypatch.setattr(settings, "scheduler_enabled", True)
         monkeypatch.setattr(settings, "cron_expression", "0 8 * * *")
 
-        sched = AnalysisScheduler()
+        sched = UnifiedScheduler(registry)
         sched.start()
         try:
             job = sched.scheduler.get_job("analysis_run_queue")
@@ -661,17 +667,28 @@ class TestSchedulerHonoursConfiguredTimezone:
 
     @pytest.mark.asyncio
     async def test_collection_jobs_use_configured_timezone(self, monkeypatch):
-        from app.collectors.factory import build_default_registry
-        from app.collectors.scheduler import CollectionScheduler
+        """契约随 legacy CollectionScheduler 删除改钉 UnifiedScheduler。"""
+        from unittest.mock import MagicMock
+
         from app.config import settings
+        from app.scheduler import UnifiedScheduler
+
+        fake_collector = MagicMock()
+        fake_collector.is_enabled.return_value = True
+        fake_collector.source_id = "defillama"
+        registry = MagicMock()
+        registry.list_enabled.return_value = [fake_collector]
+        registry.get.return_value = fake_collector
 
         monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
+        monkeypatch.setattr(settings, "scheduler_enabled", True)
         monkeypatch.setattr(settings, "collection_scheduler_enabled", True)
 
-        sched = CollectionScheduler(build_default_registry())
+        sched = UnifiedScheduler(registry)
         sched.start()
         try:
             jobs = [j for j in sched.scheduler.get_jobs() if j.id.startswith("collect_")]
+            assert jobs, "UnifiedScheduler 没有注册任何采集 job —— 测试已失效"
             for job in jobs:
                 assert str(job.trigger.timezone) == "Asia/Shanghai", job.id
                 assert job.misfire_grace_time > 1, job.id

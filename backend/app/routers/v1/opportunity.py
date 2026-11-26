@@ -101,9 +101,17 @@ def _require_project(project_id: str, repository: ProjectRepository) -> None:
         )
 
 
+class OpportunityEvidenceResponse(BaseModel):
+    """POST evidence 的信封：data 即存储后的 EvidenceRecord。"""
+
+    ok: bool
+    data: EvidenceRecord
+
+
 @router.post(
     "/projects/{project_id}/opportunity/evidence",
     status_code=status.HTTP_201_CREATED,
+    response_model=OpportunityEvidenceResponse,
 )
 def add_evidence(
     project_id: str,
@@ -116,7 +124,10 @@ def add_evidence(
     try:
         stored = opportunity_repository.add_evidence(record)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_ERROR", "message": str(exc)},
+        ) from exc
     return {"ok": True, "data": stored.model_dump(mode="json")}
 
 

@@ -26,6 +26,24 @@ from app.services.user_scope import DEFAULT_USER
 
 logger = structlog.get_logger(__name__)
 
+# "已在事务中" 是嵌套调用 save/update 的预期情形（SQLite BEGIN IMMEDIATE 的
+# 原话报错）；其余失败（database is locked 等）意味着"先拿写锁再读旧 meta"
+# 的防丢更新窗口没有关上 —— 不能与预期分支一起被静默吞掉。
+_EXPECTED_NESTED_TX_MARKERS = ("within a transaction",)
+
+
+def _begin_serialized_write(conn: Any) -> None:
+    """尽力开启序列化写事务：嵌套调用静默跳过，真实失败记 warning。"""
+    try:
+        if hasattr(conn, "begin_serialized_write"):
+            conn.begin_serialized_write()
+    except Exception as exc:
+        if not any(marker in str(exc) for marker in _EXPECTED_NESTED_TX_MARKERS):
+            logger.warning(
+                "repository.serialized_write_begin_failed",
+                error=str(exc)[:200],
+            )
+
 
 def _sub_scores_json(state: PipelineState) -> str | None:
     """子分快照序列化；无子分时返回 None（交由 UPSERT 的 COALESCE 保留旧值）。
@@ -109,9 +127,7 @@ class ProjectRepository:
 
             # Preserve + merge extended signals into meta.
             # 先开写事务/行锁再读旧 meta，关闭并发保存时的 read-modify-write 丢更新窗口。
-            with suppress(Exception):  # 已有事务打开时尽力而为
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_meta_sql = "SELECT meta FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_meta_sql += " FOR UPDATE"
@@ -353,9 +369,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            with suppress(Exception):
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_sql = "SELECT * FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_sql += " FOR UPDATE"
@@ -395,9 +409,7 @@ class ProjectRepository:
         """
         conn = self._get_conn()
         try:
-            with suppress(Exception):
-                if hasattr(conn, "begin_serialized_write"):
-                    conn.begin_serialized_write()
+            _begin_serialized_write(conn)
             select_sql = "SELECT * FROM projects WHERE id = ?"
             if getattr(conn, "kind", None) == "postgres":
                 select_sql += " FOR UPDATE"
@@ -441,7 +453,7 @@ class ProjectRepository:
         owns_conn = self._conn is None
         conn = self._conn if self._conn is not None else get_connection()
         # 绑定到同一连接的作用域仓库：其 _should_close() 为 False，save() 不会关闭它
-        scoped = ProjectRepository(conn) if owns_conn else self
+        scoped = ProjectRepository(conn, economic_replay_enabled=self._economic_replay_enabled) if owns_conn else self
         try:
             for state in states:
                 try:
@@ -521,7 +533,12 @@ class ProjectRepository:
             )
         return result
 
-    def canonical_sector_counts(self) -> dict[str, int]:
+    def canonical_sector_counts(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+        active_only: bool = True,
+    ) -> dict[str, int]:
         """全库 sector 计数，**按规范键折叠**（competition 分组口径）。
 
         为什么不能复用 `global_sector_counts()`：那条路径最终走
@@ -530,20 +547,40 @@ class ProjectRepository:
         每组计数偏小，`COMPETITION_MAP` 就给出虚高的竞争度分 —— 把「赛道很挤」
         错报成「几乎没有竞品」。
 
-        做法是一次 `GROUP BY sector` 拿到全部原始写法的分布，再在 Python 侧按
-        `canonical_sector_key()` 折叠。**这比 ADR-010 担心的 N 次 COUNT 更省**
-        （一条聚合查询 vs 每个 sector 一条），所以不额外过缓存：缓存是按单个
-        sector 键设计的，装不下"折叠后的整张分布"，硬塞会让写时失效
-        （`invalidate_sector_cache(project.sector)` 传的是原始写法）失准。
+        P2-2 修正：
+        - 默认 `active_only=True` 排除 `historical_backfill` 历史校准样本与已隐藏项目
+          （如已发币隐藏项目），避免把历史/淘汰样本算成当前同赛道竞争对手；
+        - 支持 `exclude_ids` 排除当前批次正在重跑的项目 ID，避免 `batch_count + db_count` 双重计数。
         """
         from app.agents.narrative import canonical_sector_key
 
+        conn = self._get_conn()
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if active_only:
+                clauses.append("hidden_reason IS NULL")
+                clauses.append("COALESCE(source, '') != 'historical_backfill'")
+            clean_exclude = sorted({str(pid).strip() for pid in (exclude_ids or set()) if str(pid).strip()})
+            if clean_exclude:
+                placeholders = ",".join("?" for _ in clean_exclude)
+                clauses.append(f"id NOT IN ({placeholders})")
+                params.extend(clean_exclude)
+            where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            # WHERE 条件均为字面量与参数占位符，所有排除 ID 经参数绑定
+            sql = f"SELECT sector AS bucket, COUNT(*) AS n FROM projects{where_sql} GROUP BY sector"
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            if self._should_close():
+                conn.close()
+
         folded: dict[str, int] = {}
-        for raw_sector, count in self.aggregate_counts("sector").items():
-            key = canonical_sector_key(raw_sector)
+        for row in rows:
+            d = dict_from_row(row)
+            key = canonical_sector_key(d.get("bucket"))
             if not key:
                 continue
-            folded[key] = folded.get(key, 0) + count
+            folded[key] = folded.get(key, 0) + int(d.get("n") or 0)
         return folded
 
     def invalidate_sector_cache(self, sector: str | None = None) -> None:
@@ -570,33 +607,39 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
-    def get_by_id(self, project_id: str) -> dict[str, Any] | None:
+    def get_by_id(self, project_id: str, user_id: str | None = None) -> dict[str, Any] | None:
         """根据 ID 查询项目。
 
         Args:
             project_id: 项目 ID
+            user_id: 可选用户 ID（缺省按 DEFAULT_USER 口径计算 skipped 与 watchlisted）
 
         Returns:
-            项目字典，不存在返回 None。字段里带 `skipped`（默认用户「不参与」标记，
-            由 project_skips 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
+            项目字典，不存在返回 None。字段里带 `skipped` 与 `watchlisted`（按当前用户作用域
+            由 project_skips / watchlist 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
         """
-        # 与 list_projects 同一个 skipped 口径：LEFT JOIN project_skips，
-        # 按 default 用户（或未标注归属的 NULL 行）—— 单用户 MVP 的归属规则。
+        effective_user = user_id or DEFAULT_USER
+        ps_scope = (
+            "AND (ps.user_id = ? OR ps.user_id IS NULL)" if effective_user == DEFAULT_USER else "AND ps.user_id = ?"
+        )
+        wl_scope = (
+            "AND (wl.user_id = ? OR wl.user_id IS NULL)" if effective_user == DEFAULT_USER else "AND wl.user_id = ?"
+        )
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT p.*,
                        CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped,
                        CASE WHEN wl.id IS NULL THEN 0 ELSE 1 END AS watchlisted
                 FROM projects p
                 LEFT JOIN project_skips ps
-                  ON ps.project_id = p.id AND (ps.user_id = ? OR ps.user_id IS NULL)
+                  ON ps.project_id = p.id {ps_scope}
                 LEFT JOIN watchlist wl
-                  ON wl.project_id = p.id AND (wl.user_id = ? OR wl.user_id IS NULL)
+                  ON wl.project_id = p.id {wl_scope}
                 WHERE p.id = ?
                 """,
-                (DEFAULT_USER, DEFAULT_USER, project_id),
+                (effective_user, effective_user, project_id),
             )
             row = cursor.fetchone()
             if not row:
@@ -796,10 +839,14 @@ class ProjectRepository:
                 offset = (page - 1) * page_size
                 projects = all_records[offset : offset + page_size]
 
-                from app.services.signal_correlation import correlate_signals_for_project
+                # 批量取回信号一致性（2026-11-13 审查 P2-2）：此前逐行
+                # correlate_signals_for_project，page_size 上限 500 即 500 次查询/请求。
+                from app.services.signal_correlation import batch_correlate_signals, calculate_consensus
 
+                consensus_by_id = batch_correlate_signals(conn, project_ids=[str(p.get("id") or "") for p in projects])
+                empty_consensus = calculate_consensus([])
                 for p in projects:
-                    p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+                    p["signal_consensus"] = consensus_by_id.get(str(p.get("id") or ""), empty_consensus)
 
                 logger.info(
                     "repository.project.listed_persona",
@@ -828,10 +875,15 @@ class ProjectRepository:
             rows = cursor.fetchall()
 
             projects = [dict_from_row(row) for row in rows]
-            from app.services.signal_correlation import correlate_signals_for_project
 
+            # 批量取回信号一致性（2026-11-13 审查 P2-2）：此前逐行 correlate，
+            # page_size 上限 500 即 500 次查询/请求。
+            from app.services.signal_correlation import batch_correlate_signals, calculate_consensus
+
+            consensus_by_id = batch_correlate_signals(conn, project_ids=[str(p.get("id") or "") for p in projects])
+            empty_consensus = calculate_consensus([])
             for p in projects:
-                p["signal_consensus"] = correlate_signals_for_project(conn, str(p.get("id") or ""))
+                p["signal_consensus"] = consensus_by_id.get(str(p.get("id") or ""), empty_consensus)
                 p["persona_applied"] = "balanced"
                 p["base_score"] = p.get("score")
                 p["persona_score"] = p.get("score")

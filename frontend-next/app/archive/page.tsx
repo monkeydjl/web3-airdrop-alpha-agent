@@ -99,7 +99,7 @@ export default function ArchivePage() {
   const schedule = data?.schedule;
 
   return (
-    <div className="app-content space-y-5 animate-fade-in">
+    <>
       <TopBar title="归档与保留策略" subtitle="保留期配置、待清理规模与归档运行历史">
         <button
           type="button"
@@ -111,6 +111,7 @@ export default function ArchivePage() {
           <span className="hidden sm:inline">{loading ? '加载中…' : '刷新'}</span>
         </button>
       </TopBar>
+      <div className="app-content space-y-5 animate-fade-in">
 
       {error && (
         <div className="arc-policy-card p-4 text-sm text-red-500">
@@ -263,6 +264,7 @@ export default function ArchivePage() {
           <code className="font-mono">.env</code> 并重启服务。
         </div>
       </section>
-    </div>
+      </div>
+    </>
   );
 }

@@ -10,6 +10,7 @@ Reference:
 """
 
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -588,10 +589,21 @@ NOTIFY_FAILURES = Counter(
 # 闭合词表：`notify.service.insert_event` 会拒绝表外的 event_type，
 # 否则 Prometheus 里会出现没人定义过的标签值。新增事件类型必须先登记这里。
 #
-# airdrop_candidate 与其它四种不同源：那四种由 evaluator 从项目库定期推导，
-# 这一种由 Alchemy webhook 的链上事件即时触发（F4，ACTION_LOOP_DESIGN §5）。
+# airdrop_candidate 与其它几种不同源：evaluator 从项目库定期推导
+# （daily_digest / score_crossing / new_farm / watchlist_signal /
+#  exit_advisory——止损撤退预警：官网离线或代码停更，ACTION_LOOP_DESIGN §5），
+# 这一种由 Alchemy webhook 的链上事件即时触发（F4）。
+# exit_advisory 于 2026-11-19 补登记：evaluator 早已产出该类型，词表漏登记
+# 导致 insert_event 抛 ValueError，触发日整批事件在 commit 前回滚（深审 P0）。
 NOTIFY_EVENT_TYPES: frozenset[str] = frozenset(
-    {"daily_digest", "score_crossing", "new_farm", "watchlist_signal", "airdrop_candidate"}
+    {
+        "daily_digest",
+        "score_crossing",
+        "new_farm",
+        "watchlist_signal",
+        "exit_advisory",
+        "airdrop_candidate",
+    }
 )
 
 NOTIFY_EVENTS_EVALUATED = Counter(
@@ -692,13 +704,17 @@ def update_db_gauges(conn: DbConnection) -> None:
         project_count = scalar(conn.execute("SELECT COUNT(*) FROM projects").fetchone())
         DB_PROJECTS.set(project_count)
 
-        raw_count = scalar(conn.execute("SELECT COUNT(*) FROM raw_projects WHERE processed_at IS NULL").fetchone())
+        # 未处理判据与 persistence/archive 同一口径（processed = 0）——
+        # 此前用 processed_at IS NULL，两种口径在不一致的历史行上会分叉。
+        raw_count = scalar(conn.execute("SELECT COUNT(*) FROM raw_projects WHERE processed = 0").fetchone())
         DB_RAW_PROJECTS.set(raw_count)
 
+        # cutoff 与 started_at 的写入格式（isoformat，T 分隔）对齐：
+        # SQL datetime('now') 产空格格式，TEXT 比较里同日期行永远"大于"它
+        # （见 archive.py::_cutoff_db_default 的实测记录）。
+        day_cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
         log_count = scalar(
-            conn.execute(
-                "SELECT COUNT(*) FROM collection_logs WHERE started_at >= datetime('now', '-1 day')"
-            ).fetchone()
+            conn.execute("SELECT COUNT(*) FROM collection_logs WHERE started_at >= ?", (day_cutoff,)).fetchone()
         )
         DB_COLLECTION_LOGS_24H.set(log_count)
     except Exception:

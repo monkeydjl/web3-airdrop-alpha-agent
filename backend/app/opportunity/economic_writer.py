@@ -49,6 +49,8 @@ from app.opportunity.economic_repository import (
 logger = structlog.get_logger(__name__)
 
 _TTL = timedelta(hours=48)
+# evidence/replay 侧共用同一 TTL（2026-11-19 去重）
+_ECONOMIC_SNAPSHOT_TTL = _TTL
 
 
 def utc_now() -> datetime:

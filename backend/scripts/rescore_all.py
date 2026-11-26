@@ -48,6 +48,10 @@ async def main() -> int:
         source = d.get("source") or "unknown"
         # Restore saved signals first, then fill gaps via inference
         saved = apply_signals_to_kwargs(d.get("meta"))
+        # 积分计划按统一口径重算（2026-11-09）：存量 meta 里的 has_points_program
+        # 可能是旧宽松推断写的，既不能当字段级证据喂给推断，也不能覆盖重算结果，
+        # 否则 defillama 那类关键词字段会一直留着。
+        saved_for_inference = {k: v for k, v in saved.items() if k != "has_points_program"}
         flags = CollectorAgent._infer_airdrop_flags(
             source.split(",")[0] if source else "defillama",
             {
@@ -55,16 +59,19 @@ async def main() -> int:
                 "sector": sector,
                 "stage": stage,
                 "url": d.get("url"),
-                **{k: v for k, v in saved.items() if v not in (None, "", [], "unknown")},
+                **{k: v for k, v in saved_for_inference.items() if v not in (None, "", [], "unknown")},
             },
         )
         # Prefer explicit saved funding/signals over pure inference
         merged = {**flags, **saved}
-        for k in ("has_testnet", "has_points_program", "no_token_yet", "recent_funding"):
+        for k in ("has_testnet", "no_token_yet", "recent_funding"):
             if k in saved:
                 merged[k] = saved[k]
             elif k in flags:
                 merged[k] = flags[k]
+        merged["has_points_program"] = bool(flags.get("has_points_program", False))
+        if flags.get("explicit_points_program") is not None:
+            merged["explicit_points_program"] = bool(flags["explicit_points_program"])
 
         kwargs = {
             "id": d["id"],

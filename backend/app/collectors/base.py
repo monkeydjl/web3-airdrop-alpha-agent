@@ -11,9 +11,11 @@ v2.0 方向：从手动输入项目反转为系统自动扫描全网项目。
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import random
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -21,8 +23,10 @@ from typing import Any, Protocol
 import httpx
 import structlog
 
+from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.utils.domain_allowlist import assert_url_allowed
 from app.utils.normalize import create_dedup_key, generate_deterministic_id
+from app.utils.redact import redact
 
 logger = structlog.get_logger(__name__)
 
@@ -129,7 +133,19 @@ class DataCollector(ABC):
     """外部数据源采集器抽象基类。
 
     所有外部采集源（DefiLlama/GitHub/CoinGecko/Twitter）都必须继承此类。
+
+    统一的 HTTP 重试策略由 :meth:`request_with_retry` 提供：各源用自己的
+    ``*_RETRY`` 配置设置 ``self.retry``（重试次数，总尝试数 = 1 + retry），
+    只重试网络错误 / 429 / 5xx，其余 4xx 立即返回由调用方处理。
     """
+
+    # 统一退避：1s、2s、4s…；429/5xx 带 Retry-After 时取两者较大值，单次等待封顶。
+    RETRY_BASE_DELAY: float = 1.0
+    RETRY_MAX_DELAY: float = 60.0
+    # 子类用各自的 *_RETRY 覆盖；未单独配置的源沿用 3 次。
+    retry: int = 3
+    timeout: float = 10.0
+    rate_limiter: TokenBucketRateLimiter
 
     def __init__(self, source_id: str, source_name: str) -> None:
         self.source_id = source_id
@@ -157,6 +173,159 @@ class DataCollector(ABC):
     def is_enabled(self) -> bool:
         """该源是否在当前配置下启用。子类可覆盖。"""
         return True
+
+    def _build_items(
+        self,
+        raw_items: Iterable[dict[str, Any]],
+        result: CollectorResult,
+        *,
+        keep: Callable[[RawDiscovery], bool] | None = None,
+    ) -> tuple[int, int]:
+        """批量把原始条目转成 discovery：**单条失败只丢该条**，不拖垮整轮。
+
+        此前多个采集器裸循环 `result.items.append(self._build_discovery(item))`
+        对脏数据无防护 —— 一条畸形行（无法解析的时间戳、缺失字段）抛异常后
+        整轮 status=error，已转好的条目全部丢弃。telegram/farcaster 的
+        "单通道失败只丢该批"是成熟模式，这里把同款容错下沉到基类
+        （2026-11-13 审查 P2-5）。
+
+        Args:
+            raw_items: 源返回的原始条目。
+            result: 目标采集结果（条目追加到 ``result.items``）。
+            keep: 可选保留谓词（如 layer3/galxe 的 ``discovery_score > 0``）。
+
+        Returns:
+            (built, failed)：成功条数与失败条数（失败已记 warning 日志）。
+        """
+        built = 0
+        failed = 0
+        total = 0
+        for index, item in enumerate(raw_items):
+            total += 1
+            try:
+                discovery = self._build_discovery(item)
+            except Exception as exc:
+                failed += 1
+                self.logger.warning(
+                    "collector.item_failed",
+                    index=index,
+                    error_type=type(exc).__name__,
+                    error=redact(str(exc))[:200],
+                )
+                continue
+            if discovery is not None and (keep is None or keep(discovery)):
+                result.items.append(discovery)
+                built += 1
+        if failed:
+            self.logger.warning(
+                "collector.items_partial",
+                total=total,
+                built=built,
+                failed=failed,
+            )
+        return built, failed
+
+    def _build_discovery(self, item: dict[str, Any]) -> RawDiscovery | None:
+        """把一条源侧原始条目转成 discovery；返回 None 表示丢弃该条。
+
+        子类必须实现（`_build_items` 依赖它做批量容错转换）。
+        """
+        raise NotImplementedError
+
+    async def request_with_retry(
+        self,
+        method: str,
+        url: str,
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        follow_redirects: bool = False,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """发送一次 HTTP 请求，按 ``self.retry`` 对可恢复失败退避重试。
+
+        只重试网络错误（含超时）、429 和 5xx；其余 4xx 立即返回，交给调用方
+        ``raise_for_status()`` 或按状态码分支处理。可重试状态在重试耗尽后
+        返回最后一次响应（调用方照常 raise），网络错误耗尽后抛出最后一次异常。
+
+        每次尝试都会重新通过本地令牌桶；``client`` 为空时每次尝试新建受
+        白名单保护的客户端，传入 ``client`` 则复用调用方的连接（由调用方关闭）。
+        """
+        max_attempts = 1 + max(0, int(self.retry or 0))
+        last_transport_error: httpx.TransportError | None = None
+        response: httpx.Response | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            retry_after: float | None = None
+            try:
+                if client is None:
+                    async with (
+                        self.rate_limiter,
+                        self.http_client(timeout=timeout, follow_redirects=follow_redirects) as owned,
+                    ):
+                        response = await owned.request(method, url, **kwargs)
+                else:
+                    async with self.rate_limiter:
+                        response = await client.request(method, url, **kwargs)
+            except httpx.TransportError as exc:
+                last_transport_error = exc
+                response = None
+            else:
+                last_transport_error = None
+                if not self._is_retryable_status(response.status_code):
+                    return response
+                retry_after = self._retry_after_seconds(response)
+
+            if attempt >= max_attempts:
+                break
+
+            delay = self._retry_delay(attempt, retry_after)
+            self.logger.warning(
+                "collector.retry",
+                method=method,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                delay_seconds=round(delay, 2),
+                status_code=response.status_code if response is not None else None,
+                error_type=type(last_transport_error).__name__ if last_transport_error is not None else None,
+                error=redact(str(last_transport_error))[:200] if last_transport_error is not None else None,
+            )
+            await asyncio.sleep(delay)
+
+        if last_transport_error is not None:
+            raise last_transport_error
+
+        assert response is not None
+        return response
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        """429 与 5xx 可重试；403 常是权限或硬限流，重试只会放大配额压力。"""
+        return status_code == 429 or 500 <= status_code < 600
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> float | None:
+        """解析 Retry-After 的秒数形式；HTTP-date 形式不解析，退回指数退避。"""
+        raw = response.headers.get("Retry-After")
+        if not raw:
+            return None
+        try:
+            return max(0.0, float(raw.strip()))
+        except ValueError:
+            return None
+
+    def _retry_delay(self, attempt: int, retry_after: float | None) -> float:
+        """指数退避 + Retry-After 取大，网络退避加抖动，并限制单次等待上限。
+
+        抖动 [0, 0.5d)：纯确定性退避在多任务同时失败时会把重试**同步化**
+        （同一秒齐射重试，把上游打成二次风暴）—— 2026-11-13 审查 P2-4。
+        Retry-After 是上游明确指令：取大后原样等待，不打折扣也不抖动。
+        """
+        # 用 2.0 而非 2：mypy 把 int ** int 视作 Any（负指数时结果可能是 float）。
+        backoff: float = self.RETRY_BASE_DELAY * (2.0 ** (attempt - 1))
+        if retry_after is not None:
+            return min(self.RETRY_MAX_DELAY, max(backoff, retry_after))
+        return min(self.RETRY_MAX_DELAY, backoff + random.uniform(0, backoff * 0.5))  # noqa: S311 - 退避抖动非密码学用途
 
     @contextlib.asynccontextmanager
     async def http_client(

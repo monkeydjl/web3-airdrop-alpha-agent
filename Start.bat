@@ -13,7 +13,7 @@ REM Check Python
 echo [1/6] Checking Python environment...
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python not found. Please install Python 3.10+
+    echo [ERROR] Python not found. Please install Python 3.11+
     echo Download: https://www.python.org/downloads/
     pause
     exit /b 1
@@ -46,7 +46,7 @@ pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
     echo [INFO] Trying alternative installation method...
-    pip install fastapi uvicorn[standard] pydantic pydantic-settings structlog apscheduler httpx prometheus-client pandas openpyxl python-multipart pytest pytest-asyncio pytest-cov
+    pip install fastapi uvicorn[standard] python-multipart anyio starlette pydantic pydantic-settings structlog apscheduler httpx defusedxml pandas openpyxl psycopg[binary] alembic bcrypt pyjwt prometheus-client pytest pytest-asyncio pytest-cov
     if errorlevel 1 (
         echo [ERROR] Dependency installation failed
         pause
@@ -67,7 +67,10 @@ echo.
 
 REM Start backend
 echo [4/6] Starting backend service...
-start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 0.0.0.0 --port 8002"
+REM Bind 127.0.0.1 instead of 0.0.0.0: this script is for local development.
+REM With MVP no-auth mode, 0.0.0.0 would expose admin endpoints (/run, /settings,
+REM /import) to the whole LAN.
+start "Backend API" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && echo [OK] Backend starting... && uvicorn app.main:app --reload --host 127.0.0.1 --port 8002"
 
 echo [INFO] Waiting for backend to start...
 timeout /t 3 /nobreak >nul
@@ -77,7 +80,7 @@ echo.
 REM Check Node.js
 where node >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js not found. Please install Node.js 18+ to run the Next.js dashboard.
+    echo [ERROR] Node.js not found. Please install Node.js 20.9+ to run the Next.js dashboard.
     echo Download: https://nodejs.org/
     pause
     exit /b 1

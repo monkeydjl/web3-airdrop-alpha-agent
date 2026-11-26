@@ -127,6 +127,7 @@ const WEIGHTS: WeightRow[] = [
 ];
 
 interface SourceConfig {
+  key: string;
   name: string;
   tier: string;
   env: string;
@@ -136,28 +137,34 @@ interface SourceConfig {
 
 const SOURCES: SourceConfig[] = [
   {
-    name: 'DefiLlama', tier: 'P0 · 免费', env: 'DEFILLAMA_ENABLED', enabled: true,
+    key: 'defillama', name: 'DefiLlama', tier: 'P0 · 免费', env: 'DEFILLAMA_ENABLED', enabled: true,
     fields: [
       { label: 'Base URL', env: 'DEFILLAMA_BASE_URL', value: 'https://api.llama.fi', mono: true },
       { label: '超时（秒）', env: 'DEFILLAMA_TIMEOUT', value: '30' },
     ],
   },
   {
-    name: 'GitHub', tier: 'P0 · Token 5000 req/h', env: 'GITHUB_ENABLED', enabled: true,
+    key: 'github', name: 'GitHub', tier: 'P0 · Token 5000 req/h', env: 'GITHUB_ENABLED', enabled: true,
     fields: [
       { label: 'API Token', env: 'GITHUB_TOKEN', value: '', mono: true, password: true, placeholder: 'ghp_…（未设置，限 60 req/h）' },
       { label: 'Base URL', env: 'GITHUB_API_BASE_URL', value: 'https://api.github.com', mono: true },
     ],
   },
   {
-    name: 'CoinGecko', tier: 'P0 · 10-30 calls/min', env: 'COINGECKO_ENABLED', enabled: true,
+    key: 'github_curated', name: 'GitHub Curated', tier: 'P0 · 精选清单', env: 'GITHUB_ENABLED', enabled: true,
+    fields: [
+      { label: 'API Token', env: 'GITHUB_TOKEN', value: '', mono: true, password: true, placeholder: '复用 GITHUB_TOKEN' },
+    ],
+  },
+  {
+    key: 'coingecko', name: 'CoinGecko', tier: 'P0 · 10-30 calls/min', env: 'COINGECKO_ENABLED', enabled: true,
     fields: [
       { label: 'API Key', env: 'COINGECKO_API_KEY', value: '', mono: true, password: true, placeholder: 'CG-…（未设置，走免费额度）' },
       { label: 'Base URL', env: 'COINGECKO_API_BASE_URL', value: 'https://api.coingecko.com/api/v3', mono: true },
     ],
   },
   {
-    name: 'Twitter / X', tier: 'P0 · 付费 Basic', env: 'TWITTER_ENABLED', enabled: false,
+    key: 'twitter', name: 'Twitter / X', tier: 'P0 · 付费 Basic', env: 'TWITTER_ENABLED', enabled: false,
     fields: [
       { label: 'Bearer Token', env: 'TWITTER_BEARER_TOKEN', value: '', mono: true, password: true, placeholder: '未设置' },
       { label: 'KOL 账号列表', env: 'TWITTER_KOL_ACCOUNTS', value: 'a16z,paradigm,VitalikButerin,…', mono: true },
@@ -165,16 +172,71 @@ const SOURCES: SourceConfig[] = [
     ],
   },
   {
-    name: 'Etherscan', tier: 'P1 · 链上数据', env: 'ETHERSCAN_ENABLED', enabled: false,
+    key: 'etherscan', name: 'Etherscan', tier: 'P1 · 链上数据', env: 'ETHERSCAN_ENABLED', enabled: false,
     fields: [
       { label: 'API Key', env: 'ETHERSCAN_API_KEY', value: '', mono: true, password: true, placeholder: '未设置' },
     ],
   },
   {
-    name: 'RootData', tier: '可选 · 融资/项目库', env: 'ROOTDATA_ENABLED', enabled: false,
+    key: 'rootdata', name: 'RootData', tier: '可选 · 融资/项目库', env: 'ROOTDATA_ENABLED', enabled: false,
     fields: [
       { label: 'API Key', env: 'ROOTDATA_API_KEY', value: '', mono: true, password: true, placeholder: '未设置' },
       { label: 'Base URL', env: 'ROOTDATA_BASE_URL', value: 'https://api.rootdata.com', mono: true },
+    ],
+  },
+  {
+    key: 'cryptorank', name: 'CryptoRank', tier: '可选 · 市场与融资', env: 'CRYPTORANK_ENABLED', enabled: false,
+    fields: [
+      { label: 'API Key', env: 'CRYPTORANK_API_KEY', value: '', mono: true, password: true, placeholder: '未设置' },
+      { label: 'Base URL', env: 'CRYPTORANK_BASE_URL', value: 'https://api.cryptorank.io/v1', mono: true },
+    ],
+  },
+  {
+    key: 'galxe', name: 'Galxe', tier: 'P1 · 任务平台', env: 'GALXE_ENABLED', enabled: false,
+    fields: [
+      { label: 'API Key', env: 'GALXE_API_KEY', value: '', mono: true, password: true, placeholder: '可选' },
+    ],
+  },
+  {
+    key: 'layer3', name: 'Layer3', tier: 'P1 · 任务平台', env: 'LAYER3_ENABLED', enabled: false,
+    fields: [
+      { label: 'API Key', env: 'LAYER3_API_KEY', value: '', mono: true, password: true, placeholder: '可选' },
+    ],
+  },
+  {
+    key: 'telegram', name: 'Telegram', tier: 'P1 · 社群频道', env: 'TELEGRAM_ENABLED', enabled: false,
+    fields: [
+      { label: 'Bot Token', env: 'TELEGRAM_BOT_TOKEN', value: '', mono: true, password: true, placeholder: '可选' },
+    ],
+  },
+  {
+    key: 'farcaster', name: 'Farcaster', tier: 'P1 · 去中心化社交', env: 'FARCASTER_ENABLED', enabled: false,
+    fields: [
+      { label: 'Hub URL', env: 'FARCASTER_HUB_URL', value: '', mono: true },
+    ],
+  },
+  {
+    key: 'discord', name: 'Discord', tier: 'P2 · 社群公告', env: 'DISCORD_ENABLED', enabled: false,
+    fields: [
+      { label: 'Bot Token', env: 'DISCORD_BOT_TOKEN', value: '', mono: true, password: true, placeholder: '未设置' },
+    ],
+  },
+  {
+    key: 'reddit', name: 'Reddit', tier: 'P2 · 社区讨论', env: 'REDDIT_ENABLED', enabled: false,
+    fields: [
+      { label: 'OAuth 凭据', env: 'REDDIT_CLIENT_ID', value: '', mono: true, password: true, placeholder: '未设置' },
+    ],
+  },
+  {
+    key: 'medium', name: 'Medium', tier: 'P2 · 免费 RSS', env: 'MEDIUM_ENABLED', enabled: false,
+    fields: [
+      { label: '超时（秒）', env: 'MEDIUM_TIMEOUT', value: '20' },
+    ],
+  },
+  {
+    key: 'mirror', name: 'Mirror', tier: 'P2 · Arweave', env: 'MIRROR_ENABLED', enabled: false,
+    fields: [
+      { label: '超时（秒）', env: 'MIRROR_TIMEOUT', value: '20' },
     ],
   },
 ];
@@ -309,7 +371,7 @@ export default function SettingsPage() {
 
   const runtimeSources = runtimeConfig?.sources ?? {};
   const sources = SOURCES.map((s) => {
-    const rt = runtimeSources[s.name.toLowerCase().replace(/[^a-z]/g, '')] || {};
+    const rt = runtimeSources[s.key] || {};
     return {
       ...s,
       enabled: rt.enabled ?? s.enabled,

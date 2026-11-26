@@ -10,10 +10,11 @@ from app.main import create_app
 
 @pytest.fixture(autouse=True)
 def clean_feedback_tables():
-    """每次测试前清理 feedback/events 表。"""
+    """每次测试前清理 feedback/events/收益台账表。"""
     with get_connection() as conn:
         conn.execute("DELETE FROM feedback")
         conn.execute("DELETE FROM events")
+        conn.execute("DELETE FROM roi_outcomes")
         conn.commit()
     yield
 
@@ -203,6 +204,104 @@ class TestFeedbackEndpoints:
             assert row["stage"] == "ended"
             assert row["veto"] == "already_launched"
             assert "已完成空投" in row["reason"]
+
+
+def _seed_project(project_id: str) -> None:
+    """插入一个最小项目行 —— 收益台账只接受真实存在的项目。"""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO projects (id, name, score, label, stage)
+            VALUES (?, ?, 70, 'WATCH', 'testnet')
+            """,
+            (project_id, project_id),
+        )
+        conn.commit()
+
+
+def _ledger_rows(project_id: str) -> list:
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT event, source, amount_usd FROM roi_outcomes WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+
+
+class TestOutcomeLedgerBackfill:
+    """一键结果回填必须同时落收益台账（source='manual'）。
+
+    只写 feedback 的话台账永远是 0 条，校准学到的只有主观四档，
+    学不到「最后到底有没有领到钱」（ACTION_LOOP_DESIGN §4.3）。
+    """
+
+    def test_batch_writes_manual_ledger_row(self, client, feedback_enabled):
+        _seed_project("test-p-ledger")
+        res = client.post(
+            "/api/v1/feedback/batch",
+            json={"items": [{"project_id": "test-p-ledger", "outcome": "airdropped"}]},
+        )
+        assert res.status_code == 200
+        assert res.json()["data"]["roi_outcomes_written"] == 1
+
+        rows = _ledger_rows("test-p-ledger")
+        assert len(rows) == 1
+        assert rows[0]["event"] == "airdrop_received"
+        assert rows[0]["source"] == "manual"
+        # 一键回填没有金额输入，不能凭空填 0 —— 留 NULL 等用户补录
+        assert rows[0]["amount_usd"] is None
+
+    def test_repeat_same_result_does_not_duplicate(self, client, feedback_enabled):
+        _seed_project("test-p-ledger-dup")
+        body = {"items": [{"project_id": "test-p-ledger-dup", "outcome": "not_airdropped"}]}
+        first = client.post("/api/v1/feedback/batch", json=body)
+        second = client.post("/api/v1/feedback/batch", json=body)
+
+        assert first.json()["data"]["roi_outcomes_written"] == 1
+        assert second.json()["data"]["roi_outcomes_written"] == 0
+        assert len(_ledger_rows("test-p-ledger-dup")) == 1
+
+    def test_changing_result_updates_existing_row(self, client, feedback_enabled):
+        _seed_project("test-p-ledger-flip")
+        client.post(
+            "/api/v1/feedback/batch",
+            json={"items": [{"project_id": "test-p-ledger-flip", "outcome": "airdropped"}]},
+        )
+        res = client.post(
+            "/api/v1/feedback/batch",
+            json={"items": [{"project_id": "test-p-ledger-flip", "outcome": "not_airdropped"}]},
+        )
+        assert res.json()["data"]["roi_outcomes_written"] == 1
+
+        rows = _ledger_rows("test-p-ledger-flip")
+        assert len(rows) == 1
+        assert rows[0]["event"] == "airdrop_missed"
+
+    def test_dumped_writes_no_ledger_row(self, client, feedback_enabled):
+        """dumped 只说明项目失败，不代表空投产出 —— 不写台账。"""
+        _seed_project("test-p-ledger-dumped")
+        res = client.post(
+            "/api/v1/feedback/batch",
+            json={"items": [{"project_id": "test-p-ledger-dumped", "outcome": "dumped"}]},
+        )
+        assert res.json()["data"]["roi_outcomes_written"] == 0
+        assert _ledger_rows("test-p-ledger-dumped") == []
+
+    def test_single_feedback_also_writes_ledger(self, client, feedback_enabled):
+        _seed_project("test-p-ledger-single")
+        res = client.post(
+            "/api/v1/feedback",
+            json={"project_id": "test-p-ledger-single", "signal": "correct_outcome", "outcome": "airdropped"},
+        )
+        assert res.status_code == 200
+        assert [r["event"] for r in _ledger_rows("test-p-ledger-single")] == ["airdrop_received"]
+
+    def test_unknown_project_writes_no_orphan_ledger_row(self, client, feedback_enabled):
+        """单条端点不校验项目存在性，台账必须自己挡住孤儿行。"""
+        client.post(
+            "/api/v1/feedback",
+            json={"project_id": "test-p-missing", "signal": "correct_outcome", "outcome": "airdropped"},
+        )
+        assert _ledger_rows("test-p-missing") == []
 
 
 class TestEventsEndpoints:

@@ -155,9 +155,8 @@ class TelegramChannelCollector(DataCollector):
                 url = f"https://t.me/s/{channel}"
                 try:
                     assert_url_allowed(url)
-                    async with self.rate_limiter:
-                        response = await client.get(url)
-                        response.raise_for_status()
+                    response = await self.request_with_retry("GET", url, client=client)
+                    response.raise_for_status()
 
                     parser = TelegramWebParser(channel)
                     parser.feed(response.text)

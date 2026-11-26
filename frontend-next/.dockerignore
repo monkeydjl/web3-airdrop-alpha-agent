@@ -1,0 +1,19 @@
+# 构建上下文瘦身 + 防污染：`COPY . .` 之前先把不该进镜像的东西挡掉。
+#
+# node_modules 必须挡：builder 阶段先 `COPY --from=deps` 拿到 Linux 原生
+# 依赖（esbuild/rollup 的二进制是平台相关的），再 `COPY . .`——若宿主机的
+# node_modules（Windows/macOS 二进制）混进上下文，会把正确的依赖整目录
+# 覆盖掉，构建在 Linux 容器里随机崩。
+#
+# .env* 必须挡：密钥不进镜像层（推了 registry 就是永久泄露）。
+node_modules
+.next
+out
+.git
+.gitignore
+.env
+.env.*
+*.log
+coverage
+.eslintcache
+.DS_Store

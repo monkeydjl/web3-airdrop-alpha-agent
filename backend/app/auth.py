@@ -99,6 +99,8 @@ ADMIN_ONLY_PREFIXES = (
     # 全库运维与批量任务维护中心：DefiLlama 免费融资全库同步、全库存活率与跑道审计降级。
     # 属于全库写操作与数据清洗动作，仅限管理员。
     "/api/v1/ops",
+    # LLM 供应商配置状态、脱敏密钥前后缀、私有代理 base_url 与当日花费账本诊断，仅限管理员。
+    "/api/v1/llm",
 )
 
 
@@ -135,6 +137,20 @@ ADMIN_ONLY_METHOD_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
     (
         frozenset({"POST", "PATCH", "PUT", "DELETE"}),
         re.compile(r"^/api/v1/projects/[^/]+/unhide(?:/|$)"),
+    ),
+    # 项目身份别名是全局身份数据：改错会让所有项目解析到错误的 project_id，
+    # 波及历史评分、反馈与参与记录。读接口保持开放，写接口仅管理员。
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/project-identity(?:/|$)"),
+    ),
+    # Bot 测试发送（2026-11-13）：目标 URL 来自请求体，曾是全仓唯一绕过出站
+    # 域名白名单的出口（白名单已在 bot_notifier 内强制，这里补角色锁挡住
+    # "用任意 webhook 地址做消息中继"的滥用面）。/bot/command 只读渲染，
+    # 保持匿名可用（登记见 tests/test_admin_only_rules.py::ANON_WRITABLE）。
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/bot/test-send(?:/|$)"),
     ),
 )
 
@@ -202,9 +218,30 @@ VIEWER_FORBIDDEN_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
         frozenset({"DELETE"}),
         re.compile(r"^/api/v1/user-profile(?:/|$)"),
     ),
+)
+
+# 全局共享状态写操作（无 user_id 行级隔离，仅允许 admin 与 analyst 执行；
+# viewer 与 anonymous 一律拦截，消除 anonymous 权限高于注册 viewer 的权限倒挂）。
+GLOBAL_UNSCOPED_WRITE_RULES: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = (
     (
         frozenset({"POST"}),
         re.compile(r"^/api/v1/projects/[^/]+/opportunity/(?:evaluate|evidence)(?:/|$)"),
+    ),
+    (
+        frozenset({"POST"}),
+        re.compile(r"^/api/v1/projects/[^/]+/evaluate(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/gas/alerts/rules(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/pnl/records(?:/|$)"),
+    ),
+    (
+        frozenset({"POST", "PATCH", "PUT", "DELETE"}),
+        re.compile(r"^/api/v1/team-studio/(?:assign-task|operator)(?:/|$)"),
     ),
 )
 
@@ -214,9 +251,10 @@ def check_role_permission(role: str, method: str, path: str) -> tuple[bool, str]
 
     角色权限矩阵 (ADR-008 §2 & ROADMAP §25.2):
     - admin: 全部权限
-    - analyst: 查看项目、提交反馈、事后标注、re-score、管理个人资源
+    - analyst: 查看项目、提交反馈、事后标注、re-score、管理个人资源与项目投研重评
     - viewer: 只读 Dashboard（不可触发 run/re-score、不可提交反馈与修改数据）
-    - anonymous: 查看项目、提交反馈/events（V2），不可触发 run/re-score，不可访问 admin 端点
+    - anonymous: 查看项目、提交个人作用域写操作（feedback/events/watchlist/interactions 等），
+      不可访问 admin 端点，亦不可修改未分用户的全局共享表
 
     Returns:
         (allowed: bool, reason: str)
@@ -243,14 +281,19 @@ def check_role_permission(role: str, method: str, path: str) -> tuple[bool, str]
     if role == ROLE_VIEWER:
         if requires_admin(method, path):
             return False, "Admin access required for this endpoint"
-        if any(method in methods and pattern.match(path) for methods, pattern in VIEWER_FORBIDDEN_RULES):
+        if any(
+            method in methods and pattern.match(path)
+            for methods, pattern in (*VIEWER_FORBIDDEN_RULES, *GLOBAL_UNSCOPED_WRITE_RULES)
+        ):
             return False, f"Role '{ROLE_VIEWER}' is not authorized to perform {method} on {path}"
         return True, ""
 
-    # 5. anonymous 角色：不可访问 admin 端点
+    # 5. anonymous 角色：不可访问 admin 端点，亦不可修改未分用户的全局共享表
     if role == ROLE_ANONYMOUS:
         if requires_admin(method, path):
             return False, "Admin access required for this endpoint"
+        if any(method in methods and pattern.match(path) for methods, pattern in GLOBAL_UNSCOPED_WRITE_RULES):
+            return False, f"Role '{ROLE_ANONYMOUS}' is not authorized to perform {method} on {path}"
         return True, ""
 
     # 未知角色默认拒绝
@@ -270,14 +313,19 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证明文密码与 bcrypt 哈希是否匹配。"""
+    encoded = plain_password.encode("utf-8")
+    if len(encoded) > 72:
+        return False
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        return bcrypt.checkpw(encoded, hashed_password.encode("utf-8"))
     except Exception:
         return False
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
-    """密码强度检查（ROADMAP §25.3.3）：≥8 字符，含大小写字母 + 数字。"""
+    """密码强度检查（ROADMAP §25.3.3）：8–72 UTF-8 字节，含大小写字母 + 数字。"""
+    if len(password.encode("utf-8")) > 72:
+        return False, "密码长度不能超过 72 字节"
     if len(password) < 8:
         return False, "密码长度必须至少为 8 个字符"
     if not re.search(r"[A-Z]", password):
@@ -383,11 +431,12 @@ def issue_anonymous_token(
     return token
 
 
-def verify_token(token: str) -> dict[str, Any] | None:
+def verify_token(token: str, *, allow_expired: bool = False) -> dict[str, Any] | None:
     """校验匿名 HMAC token 并返回 payload（V2，向后兼容）。
 
     Args:
         token: token 字符串
+        allow_expired: 仅用于匿名会话续期时校验服务端签名并提取原 user_id，默认 False
 
     Returns:
         payload 字典（成功）或 None（失败/过期）
@@ -422,10 +471,28 @@ def verify_token(token: str) -> dict[str, Any] | None:
 
     # 检查过期
     exp = payload.get("exp")
-    if not isinstance(exp, int) or exp < int(time.time()):
+    if not isinstance(exp, int):
+        return None
+    if not allow_expired and exp < int(time.time()):
         return None
 
     return payload
+
+
+_ANON_USER_ID_RE = re.compile(r"^anon-[0-9a-f]{12}$")
+
+
+def extract_renewable_anonymous_user_id(previous_token: str | None) -> str | None:
+    """从旧匿名 token 中安全提取可续期的 user_id（必须通过服务端 HMAC 验签，防伪造他人 ID）。"""
+    if not previous_token:
+        return None
+    payload = verify_token(previous_token.strip(), allow_expired=True)
+    if not payload or payload.get("role") != ROLE_ANONYMOUS:
+        return None
+    uid = payload.get("user_id")
+    if isinstance(uid, str) and _ANON_USER_ID_RE.match(uid):
+        return uid
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -433,7 +500,21 @@ def verify_token(token: str) -> dict[str, Any] | None:
 # ═══════════════════════════════════════════════════════════════
 
 
-_BLACKLISTED_JTIS: set[str] = set()
+# 吊销缓存：jti → exp(epoch)。此前是 set（只进不出）：长生命周期进程无界
+# 增长。缓存的职责区间只是 token 未过期的那段时间 —— 过期即无人引用，
+# 按过期时间淘汰（达到阈值时批量清理一次，摊薄成本）。
+_BLACKLISTED_JTIS: dict[str, float] = {}
+_BLACKLIST_PRUNE_THRESHOLD = 1024
+
+
+def _blacklist_cache_add(jti: str, exp_epoch: float) -> None:
+    """记录一条吊销缓存（带过期时间）；达到阈值时淘汰已过期条目。"""
+    _BLACKLISTED_JTIS[jti] = exp_epoch
+    if len(_BLACKLISTED_JTIS) >= _BLACKLIST_PRUNE_THRESHOLD:
+        now = time.time()
+        for cached_jti, cached_exp in list(_BLACKLISTED_JTIS.items()):
+            if cached_exp < now:
+                del _BLACKLISTED_JTIS[cached_jti]
 
 
 def issue_access_token(
@@ -509,9 +590,13 @@ def blacklist_token_jti(
     conn: Any | None = None,
 ) -> None:
     """将 JTI 记入吊销黑名单（内存缓存 + 持久化表）。"""
-    _BLACKLISTED_JTIS.add(jti)
     if expires_at is None:
         expires_at = datetime.fromtimestamp(time.time() + 7 * 86400, tz=UTC)
+    try:
+        exp_epoch = expires_at.timestamp()
+    except (OSError, OverflowError, ValueError):  # pragma: no cover - 极端时间值
+        exp_epoch = time.time() + 7 * 86400
+    _blacklist_cache_add(jti, exp_epoch)
 
     from app.db import DbConnection
     from app.repositories.user import BlacklistedJtiRepository
@@ -551,9 +636,14 @@ def is_jti_blacklisted(jti: str, conn: Any | None = None) -> bool:
             with connection_scope() as c:
                 res = _do_check(c)
         if res:
-            _BLACKLISTED_JTIS.add(jti)
+            # DB 命中但拿不到记录的 expires_at：缓存 1 天后重新问库，
+            # 避免把吊销缓存变成又一个只进不出集合。
+            _blacklist_cache_add(jti, time.time() + 86400)
         return res
-    except Exception:
+    except Exception as exc:
+        # fail-open 是**显式取舍**：DB 瞬断期间放行吊销检查，避免全站登录不可用；
+        # 但绝不能静默 —— error 级告警让这次失效可见（2026-11-13 安全审查）。
+        logger.error("auth.jti_check_failed", jti=jti, error=str(exc))
         return False
 
 
@@ -810,6 +900,48 @@ def get_current_user(request: Request) -> dict[str, Any]:
         "auth_method": auth_method or "unknown",
         "jwt_jti": jwt_jti,
     }
+
+
+def can_mutate_global_project(current_user: dict[str, Any]) -> bool:
+    """判断当前调用方是否允许附带修改全局 `projects` 主表（label / stage / veto / meta）。
+
+    - 鉴权开启（`settings.api_key` 非空）或请求显式携带受限凭证（`anonymous` / `viewer`）时：
+      仅 `admin` 与 `analyst` 允许联动更新全局 `projects` 表；匿名访客与只读用户的写操作
+      仅落入其个人作用域表（feedback / interactions / roi_outcomes）。
+    - 本地 MVP 免鉴权模式（`settings.api_key` 为空且未携带任何受限 token，`auth_method == "none"`）：
+      保留单人本机工作流的联动行为。
+    """
+    if current_user.get("role") in (ROLE_ADMIN, ROLE_ANALYST):
+        return True
+    return not (settings.api_key or "").strip() and current_user.get("auth_method") == "none"
+
+
+def resolve_scoped_user_id(
+    current_user: dict[str, Any],
+    requested_user_id: str | None,
+    *,
+    default_user: str = "default",
+    admin_default_to_self: bool = True,
+) -> str:
+    """解析带 `?user_id=` 可选参数的端点实际生效的 `user_id`（防跨用户 IDOR）。
+
+    - 管理员（`role == "admin"`）或本地 MVP 免鉴权模式（`settings.api_key` 为空且无受限 token）：
+      允许通过 `requested_user_id` 显式指定目标用户；未指定时返回管理员自身 ID 或 `default_user`。
+    - 已认证的非管理员（`analyst` / `viewer` / 签名 `anonymous` token）：
+      忽略外部传入的 `?user_id=`，强制绑定为 token 内的 `current_user["user_id"]`。
+    """
+    role = current_user.get("role")
+    uid = str(current_user.get("user_id") or "anonymous").strip()
+    is_mvp_auth_off = not (settings.api_key or "").strip() and current_user.get("auth_method") == "none"
+    if role == ROLE_ADMIN or is_mvp_auth_off:
+        if requested_user_id and requested_user_id.strip():
+            return requested_user_id.strip()
+        if role == ROLE_ADMIN and admin_default_to_self and uid not in ("anonymous", "admin"):
+            return uid
+        return default_user
+    if uid and uid != "anonymous":
+        return uid
+    return default_user
 
 
 def require_role(*allowed_roles: str) -> Callable[[Request], str]:

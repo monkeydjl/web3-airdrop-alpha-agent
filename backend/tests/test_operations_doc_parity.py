@@ -710,11 +710,16 @@ class TestClaimsOfAbsenceAreStillTrue:
 
 
 class TestDeadTableListIsComplete:
-    """§12.14 列的 7 张死表 —— 这一栏此前只写了 `metrics` 一张。
+    """§12.14 列的死表 —— 这一栏此前只写了 `metrics` 一张。
 
-    2026-08-25 在线上库上逐表实测才发现是 7 张。
-    **只钉一张的门禁会让另外 6 张继续隐形** —— 而其中 `audit_logs`
+    2026-08-25 在线上库上逐表实测才发现是一批。
+    **只钉一张的门禁会让其余的表继续隐形** —— 而其中 `audit_logs`
     是审计日志，会被直接算进合规评估。
+
+    `dedup_keys` 已在 2026-11-09 接上身份别名解析（`app/identity.py` 写
+    `source` / `confidence` / `notes`），`audit_logs` 已在 2026-11-26 接上管理员
+    写操作安全审计（`app/services/audit_log.py` + `GET /api/v1/ops/audit-logs`），
+    两者均不再属于死表，也不再参与死表核对（改为正向断言 `audit_logs` 确实在链上）。
 
     三个方向都要守：
       · 死表里出现了生产写入方 → 文档过期（好事，但必须同步）
@@ -722,13 +727,12 @@ class TestDeadTableListIsComplete:
       · 隔离实现改成用那张表 → 它就不再是死表
     """
 
-    # 判据：0 行 + 除 repositories/ 外无写入方（2026-08-25 线上库实测）
+    # 判据：0 行 + 除 repositories/ 外无写入方（2026-08-25 线上库实测；
+    # dedup_keys 于 2026-11-09 移出，audit_logs 于 2026-11-26 移出，见类文档）
     _DEAD_TABLES = (
         "metrics",
-        "audit_logs",
         "llm_eval_changelog",
         "narratives",
-        "dedup_keys",
         "prompt_versions",
         "quarantine",
     )
@@ -817,6 +821,14 @@ class TestDeadTableListIsComplete:
         assert "INSERT INTO quarantine" not in source, (
             "隔离实现开始写 `quarantine` 表了 —— 那它就不再是死表，请更新 §12.14。"
         )
+
+    def test_audit_logs_is_wired_to_production_middleware_and_query_endpoint(self):
+        """`audit_logs` 已从死表移出，必须持续挂在请求链路与查询端点上。"""
+        main_src = (REPO_ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+        service_src = (REPO_ROOT / "backend" / "app" / "services" / "audit_log.py").read_text(encoding="utf-8")
+        assert "safe_record_admin_audit" in main_src, "`main.py` 不再写入管理员审计日志，请同步 §12.14。"
+        assert "AuditLogRepository" in service_src, "`audit_log.py` 不再使用 AuditLogRepository，请核对实现。"
+        assert "/api/v1/ops/audit-logs" in _openapi_paths(), "OpenAPI 里找不到 `/api/v1/ops/audit-logs`。"
 
 
 class TestMigrationCountIsCurrent:

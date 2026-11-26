@@ -69,10 +69,11 @@ class RawProject:
     # 状态未知；None = 旧调用方未提供，按 not no_token_yet 兼容。只有确认已发币才触发
     # already_launched 否决、入库门隔离与默认列表隐藏。
     token_launch_confirmed: bool | None = None
-    # 严格积分证据（2026-10-08）：只认「points program / points + airdrop·rewards」
-    # 这类明确措辞或可信源显式字段。has_points_program 的宽松推断（restaking /
-    # incentive / vaults 也算）仍用于 airdrop_signal 子分；已发币项目的后续空投
-    # 路径只看这个字段。None = 旧调用方未提供，回退 has_points_program。
+    # 严格积分证据（2026-10-08，2026-11-09 统一口径）：只认字段级标注或
+    # 「points program / points + airdrop·rewards」这类明确措辞。通用词（restaking /
+    # incentive / vaults…）在任何一层都只是弱佐证，不再置真 `has_points_program`。
+    # 下游统一走 app.utils.points，不再各写一份判断。None = 旧调用方未提供，
+    # 回退已归一化的 has_points_program。
     explicit_points_program: bool | None = None
 
     # v1.2 extended signals (docs / social / repo health / airdrop clarity)
@@ -190,7 +191,6 @@ class AgentContext:
 
     # Concurrency control (V2)
     max_concurrent_projects: int = 10
-    llm_semaphore_size: int = 5
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -198,7 +198,6 @@ class AgentContext:
             "enable_llm": self.enable_llm,
             "llm_model": self.llm_model,
             "max_concurrent_projects": self.max_concurrent_projects,
-            "llm_semaphore_size": self.llm_semaphore_size,
         }
 
 
@@ -304,6 +303,13 @@ class BaseAgent(ABC):
 
     async def llm_enhance(self, state: PipelineState, _prompt: str) -> str | None:
         """Optional LLM enhancement.
+
+        ⚠ **staged（未接线）**：当前 orchestrator 不调用本方法——`enable_llm`
+        管道存在（API 参数 → AgentContext）但止步于 context 赋值，没有任何
+        agent 在 run() 里调用它。接线 = 在各 agent 的 run() 尾部追加增强语义
+        （需要产品决策：每个 agent 的 LLM 输出去哪里）。删除 = 删本方法 +
+        预算门测试族改挂 llm_chat 直调。当前状态：fail-closed 语义已测试
+        （test_agent_budget_refusal + test_prompt_version），接线即生效。
 
         Args:
             state: Current pipeline state

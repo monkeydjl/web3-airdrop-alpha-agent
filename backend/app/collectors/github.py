@@ -107,6 +107,11 @@ class GitHubCollector(DataCollector):
 
     注意：GitHub Search API 对未认证请求限流严格（10 req/min），
     建议配置 GITHUB_TOKEN 以提升配额（30 req/min）。
+    无 token 不带 Authorization 头，按未认证方式运行（不是跳过）。
+
+    搜索失败按 GITHUB_RETRY 做指数退避重试，只重试可恢复的失败
+    （网络错误 / 429 / 5xx）；403 属权限或硬限流，重试只会放大配额压力。
+    每次请求单独受 GITHUB_TIMEOUT 约束，每次重试也都先过本地令牌桶。
     """
 
     STARS_THRESHOLD = 20
@@ -143,18 +148,11 @@ class GitHubCollector(DataCollector):
                 total_repos=len(repos),
             )
 
-            kept = 0
-            skipped = 0
-            for repo in repos:
-                if not self._is_relevant_repo(repo):
-                    skipped += 1
-                    continue
-                discovery = self._build_discovery(repo)
-                if discovery is None:
-                    skipped += 1
-                    continue
-                result.items.append(discovery)
-                kept += 1
+            relevant = [repo for repo in repos if self._is_relevant_repo(repo)]
+            # 单条脏数据只丢该条（基类容错，2026-11-13）：此前一条畸形行抛异常
+            # 会让整轮 status=error，已转好的条目全部丢弃。
+            kept, _failed = self._build_items(relevant, result)
+            skipped = len(repos) - kept
             self.logger.info(
                 "github.filtered",
                 kept=kept,
@@ -174,7 +172,7 @@ class GitHubCollector(DataCollector):
         return result
 
     async def _search_repositories(self) -> list[dict[str, Any]]:
-        """搜索 GitHub 仓库。
+        """搜索 GitHub 仓库；失败重试由基类按 GITHUB_RETRY 统一处理。
 
         查询关注：近期更新的、与空投/测试网水龙头/积分相关的仓库。
         """
@@ -194,10 +192,9 @@ class GitHubCollector(DataCollector):
         if settings.github_token:
             headers["Authorization"] = f"Bearer {settings.github_token}"
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url, params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, dict):
             raise ValueError(f"Unexpected GitHub response type: {type(data)}")
@@ -477,22 +474,23 @@ class GitHubCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 GitHub API 可用性。"""
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                headers = {"Accept": "application/vnd.github+json"}
-                if settings.github_token:
-                    headers["Authorization"] = f"Bearer {settings.github_token}"
-                response = await client.get(
-                    f"{self.base_url}/rate_limit",
-                    headers=headers,
-                )
-                response.raise_for_status()
-                data = response.json()
-                remaining = data.get("resources", {}).get("search", {}).get("remaining", 0)
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "search_remaining": remaining,
-                }
+            headers = {"Accept": "application/vnd.github+json"}
+            if settings.github_token:
+                headers["Authorization"] = f"Bearer {settings.github_token}"
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/rate_limit",
+                timeout=10,
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+            remaining = data.get("resources", {}).get("search", {}).get("remaining", 0)
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "search_remaining": remaining,
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,

@@ -470,8 +470,8 @@ jobs:
   golden:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
       - run: pip install -r backend/requirements.txt
       - run: pytest tests/golden/ -v --junitxml=reports/golden.xml

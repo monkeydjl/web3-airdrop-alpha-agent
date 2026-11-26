@@ -7,7 +7,6 @@ reads Settings. Reuses ``observation_from_snapshot`` for reconstruction.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Final
 
 import structlog
@@ -23,7 +22,10 @@ from app.opportunity.economic_models import (
     build_evidence_id,
 )
 from app.opportunity.economic_repository import EconomicSnapshotRepository
-from app.opportunity.economic_writer import observation_from_snapshot
+from app.opportunity.economic_writer import (
+    _ECONOMIC_SNAPSHOT_TTL,
+    observation_from_snapshot,
+)
 from app.opportunity.models import EvidenceRecord
 from app.opportunity.repository import (
     EconomicEvidenceContentConflict,
@@ -32,7 +34,7 @@ from app.opportunity.repository import (
 
 logger = structlog.get_logger(__name__)
 
-_TTL = timedelta(hours=48)
+_TTL = _ECONOMIC_SNAPSHOT_TTL  # 单一出处：economic_writer（写侧权威）
 
 # Closed factor keys per provider (whitelist only; values already canonical).
 _PROVIDER_FACTOR_WHITELIST: Final[dict[str, frozenset[str]]] = {
@@ -279,7 +281,20 @@ def replay_economic_snapshots_for_project(
                     error_type=type(exc).__name__,
                 )
                 continue
-            part = emitter.emit(observation, enabled=True)
+            try:
+                part = emitter.emit(observation, enabled=True)
+            except Exception as exc:
+                # 单条 observation 的 emit 失败（HttpUrl 解析失败等）只丢该条，
+                # 不中断整批 replay（2026-11-19 深审 P3-6；replay 是幂等批处理，
+                # 一条坏数据断批会让重放永远推进不完整）。
+                logger.warning(
+                    "opportunity_economic.replay_emit_failed",
+                    project_id=project_id,
+                    snapshot_id=snapshot.snapshot_id,
+                    error=str(exc)[:200],
+                    error_type=type(exc).__name__,
+                )
+                continue
             total = EconomicEvidenceSummary(
                 emitted=total.emitted + part.emitted,
                 duplicates=total.duplicates + part.duplicates,

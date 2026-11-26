@@ -21,13 +21,22 @@ def get_comparison(
     """横向比对选定项目的 8 维数据、雷达图对齐与差异化决策偏好."""
     project_ids = [i.strip() for i in ids.split(",") if i.strip()]
     if not project_ids:
-        raise HTTPException(status_code=400, detail="Must provide at least one project id")
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_ERROR", "message": "Must provide at least one project id"},
+        )
 
     try:
         data = compare_projects(project_ids)
         return data
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": str(e)},
+        ) from e
     except Exception as e:
         logger.error("api.projects.compare_failed", ids=ids, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Comparison failed: {e}") from e
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": "Comparison failed"},
+        ) from e

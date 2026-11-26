@@ -65,8 +65,11 @@ class UserRepository:
 
     def count_users(self) -> int:
         """获取总用户数（用于判断首个注册用户自举为 admin）。"""
+        from app.db import scalar
+
         row = self.conn.execute("SELECT COUNT(*) FROM users").fetchone()
-        return int(row[0]) if row and row[0] is not None else 0
+        val = scalar(row, 0)
+        return int(val) if val is not None else 0
 
     def update_last_login(self, user_id: str, last_login_at: datetime | None = None) -> None:
         """更新最后登录时间。"""
@@ -163,6 +166,15 @@ class SessionRepository:
         self.conn.commit()
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
+    def revoke_by_token_hash_for_user(self, refresh_token_hash: str, user_id: str) -> bool:
+        """根据 Refresh Token 哈希撤销指定用户名下的会话（防跨用户会话吊销）。"""
+        cursor = self.conn.execute(
+            "UPDATE sessions SET revoked = 1 WHERE refresh_token_hash = ? AND user_id = ?",
+            (refresh_token_hash, user_id),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount and cursor.rowcount > 0)
+
     def revoke_all_user_sessions(self, user_id: str) -> int:
         """撤销某用户的所有会话（全设备登出）。"""
         cursor = self.conn.execute(
@@ -190,11 +202,12 @@ class BlacklistedJtiRepository:
         self.conn = conn
 
     def blacklist_jti(self, jti: str, expires_at: datetime) -> None:
-        """将 JWT ID 记入黑名单。"""
+        """将 JWT ID 记入黑名单（双后端兼容 UPSERT，避免 PG 上 INSERT OR REPLACE 语法错误）。"""
         self.conn.execute(
             """
-            INSERT OR REPLACE INTO blacklisted_jti (jti, expires_at)
+            INSERT INTO blacklisted_jti (jti, expires_at)
             VALUES (?, ?)
+            ON CONFLICT (jti) DO UPDATE SET expires_at = EXCLUDED.expires_at
             """,
             (jti, expires_at),
         )

@@ -96,6 +96,12 @@ class TestCollectionsEndpoints:
         assert "operator_enabled" in sample
         assert "config_ready" in sample
         assert "is_enabled" in sample
+        assert "scorecard" in sample
+        scorecard = sample["scorecard"]
+        assert scorecard["total_raw"] == 0
+        assert scorecard["verdict"] == "idle"
+        assert "avg_discovery_score" in scorecard
+        assert "recommendation" in scorecard
 
     def test_patch_collection_source_toggle(self, client: TestClient) -> None:
         """运营商开关写入 data_sources.enabled，并阻止 trigger。"""
@@ -185,7 +191,8 @@ class TestRunAutoPath:
                 "name": "MarkMe",
                 "slug": "mark-me",
                 "tvl": 5_000_000,
-                "change_7d": 0.25,
+                # DefiLlama HTTP `/protocols` returns percentage points (25.0 = +25%)
+                "change_7d": 25.0,
                 "category": "L2",
                 "chains": ["Ethereum"],
                 "url": "https://markme.example.com",
@@ -212,7 +219,8 @@ class TestRunAutoPath:
                 "name": "AutoRun",
                 "slug": "auto-run",
                 "tvl": 8_000_000,
-                "change_7d": 0.3,
+                # DefiLlama HTTP `/protocols` returns percentage points (30.0 = +30%)
+                "change_7d": 30.0,
                 "category": "DeFi",
                 "chains": ["Ethereum", "Base"],
                 "url": "https://autorun.example.com",
@@ -358,10 +366,14 @@ class TestManualTriggerEconomicIntegration:
             def close(self) -> None:
                 close_calls["n"] += 1
 
-            def execute(self, *a, **k):
-                from unittest.mock import MagicMock
+            def execute(self, *a: object, **k: object) -> object:
+                # 路由的 operator 门禁会经 connection_scope 读 data_sources；
+                # 缺行语义 = 启用（见 _operator_enabled）。
+                class _Cursor:
+                    def fetchone(self) -> None:
+                        return None
 
-                return MagicMock()
+                return _Cursor()
 
             def commit(self) -> None:
                 return None
@@ -440,7 +452,8 @@ class TestManualTriggerEconomicIntegration:
         response = client.post("/api/v1/collections/defillama/trigger")
         assert response.status_code == 200
         assert collector.collect_calls == 1
-        assert close_calls["n"] == 1
+        # 门禁 + 持久化两个作用域，各自恰好关闭一次（2026-11-14 起）
+        assert close_calls["n"] == 2
         assert any(c is conn for _, c in seen_conns)
         assert process_calls
         assert process_calls[0]["run_id"] == "manual:550e8400-e29b-41d4-a716-446655440000"
@@ -457,6 +470,15 @@ class TestManualTriggerEconomicIntegration:
         class TrackingConn:
             def close(self) -> None:
                 close_calls["n"] += 1
+
+            def execute(self, *a: object, **k: object) -> object:
+                # 路由的 operator 门禁会经 connection_scope 读 data_sources；
+                # 缺行语义 = 启用（见 _operator_enabled）。
+                class _Cursor:
+                    def fetchone(self) -> None:
+                        return None
+
+                return _Cursor()
 
         class FailingRepo:
             def __init__(self, c=None) -> None:
@@ -483,7 +505,9 @@ class TestManualTriggerEconomicIntegration:
             client.post("/api/v1/collections/defillama/trigger")
 
         process_mock.assert_not_called()
-        assert close_calls["n"] == 1
+        # 2026-11-14：门禁（operator enabled 检查）+ 持久化各开一个作用域，
+        # 每个连接恰好关闭一次（无泄漏）—— 总数从 1 变 2。
+        assert close_calls["n"] == 2
         assert collector.collect_calls == 1
 
     def test_flags_all_false_baseline_response_and_zero_writer(self, client: TestClient, monkeypatch) -> None:
@@ -507,6 +531,15 @@ class TestManualTriggerEconomicIntegration:
         class TrackingConn:
             def close(self) -> None:
                 close_calls["n"] += 1
+
+            def execute(self, *a: object, **k: object) -> object:
+                # 路由的 operator 门禁会经 connection_scope 读 data_sources；
+                # 缺行语义 = 启用（见 _operator_enabled）。
+                class _Cursor:
+                    def fetchone(self) -> None:
+                        return None
+
+                return _Cursor()
 
         class Repo:
             def __init__(self, c=None) -> None:
@@ -580,7 +613,8 @@ class TestManualTriggerEconomicIntegration:
         assert body["data"]["items_collected"] == 1
         assert "auto_run" in body["data"]
         assert collector.collect_calls == 1
-        assert close_calls["n"] == 1
+        # 门禁 + 持久化两个作用域，各自恰好关闭一次（2026-11-14 起）
+        assert close_calls["n"] == 2
         # gate off → no writer/emitter
         writer_process.assert_not_called()
         emitter_emit.assert_not_called()
@@ -621,6 +655,15 @@ class TestManualTriggerEconomicIntegration:
         class TrackingConn:
             def close(self) -> None:
                 close_calls["n"] += 1
+
+            def execute(self, *a: object, **k: object) -> object:
+                # 路由的 operator 门禁会经 connection_scope 读 data_sources；
+                # 缺行语义 = 启用（见 _operator_enabled）。
+                class _Cursor:
+                    def fetchone(self) -> None:
+                        return None
+
+                return _Cursor()
 
         class Repo:
             def __init__(self, c=None) -> None:
@@ -743,7 +786,8 @@ class TestManualTriggerEconomicIntegration:
         assert dump == baseline
         # analysis not suppressed
         assert analysis_calls["n"] == 1
-        assert close_calls["n"] == 1
+        # 门禁 + 持久化两个作用域，各自恰好关闭一次（2026-11-14 起）
+        assert close_calls["n"] == 2
         assert collector.collect_calls == 1
 
         if fail_stage == "process":
@@ -754,3 +798,72 @@ class TestManualTriggerEconomicIntegration:
             assert mock_writer is not None and mock_emitter is not None
             mock_writer.process.assert_called_once()
             assert mock_emitter.emit.call_count == 2
+
+
+class TestConnectionOwnership:
+    """路由层不得碰仓储私有连接管理，采集期间不得持有库连接。"""
+
+    def test_routers_do_not_touch_repo_private_connection(self) -> None:
+        """`_get_conn()`/`_should_close()` 是仓储内部契约（CONVENTIONS §13.3）——
+        路由一律走 connection_scope（2026-11-13 审查 P2-11）。"""
+        import re
+        from pathlib import Path
+
+        routers = Path(__file__).resolve().parents[2] / "app" / "routers" / "v1"
+        offenders: list[str] = []
+        for path in sorted(routers.glob("*.py")):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if re.search(r"\._get_conn\(\)|\._should_close\(\)", line):
+                    offenders.append(f"{path.name}:{lineno}")
+        assert not offenders, f"路由直接访问仓储私有连接管理：{offenders}。一律改走 connection_scope。"
+
+    def test_connection_not_held_during_collect(self, client: TestClient, monkeypatch) -> None:
+        """collect（30s+ 网络 I/O）期间不得持有库连接。"""
+        import contextlib
+
+        import app.routers.v1.collections as coll_mod
+        from app.db import get_connection
+
+        events: list[str] = []
+
+        @contextlib.contextmanager
+        def recording_scope(*args: object, **kwargs: object):
+            # 每次作用域开一条**新**连接（与真实 connection_scope 同语义）——
+            # 门禁与持久化是两个独立连接，不能共享同一底层 sqlite 连接对象。
+            events.append("conn-open")
+            conn = get_connection()
+            try:
+                yield conn
+            finally:
+                events.append("conn-close")
+                conn.close()
+
+        collector = _FakeCollector("defillama")
+        original_collect = collector.collect  # 未打补丁的绑定方法
+
+        async def spy_collect():
+            events.append("collect")
+            return await original_collect()
+
+        monkeypatch.setattr(collector, "collect", spy_collect)
+        monkeypatch.setattr(coll_mod, "_build_registry", lambda: _FakeRegistry({"defillama": collector}))
+        monkeypatch.setattr(coll_mod, "connection_scope", recording_scope)
+        monkeypatch.setattr(settings, "collection_auto_run_enabled", False)
+        monkeypatch.setattr(settings, "opportunity_economic_snapshot_enabled", False)
+
+        response = client.post("/api/v1/collections/defillama/trigger")
+        assert response.status_code == 200, response.text
+
+        assert "collect" in events and "conn-open" in events, f"事件缺失：{events}"
+        # collect 不得落在任何一个 open...close 窗口内（门禁/持久化各有窗口，
+        # collect 必须发生在两个窗口之间）
+        inside = 0
+        for e in events:
+            if e == "conn-open":
+                inside += 1
+            elif e == "conn-close":
+                inside -= 1
+            else:  # collect
+                assert inside == 0, f"collect 在连接持有期间执行：{events}"
+        assert inside == 0, f"连接未配对关闭：{events}"
+        assert events[-1] == "conn-close"

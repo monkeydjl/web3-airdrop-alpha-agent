@@ -113,7 +113,10 @@ def unskip_project(req: Request, project_id: str = Path(...), user_id: str | Non
                     status_code=404,
                     detail={"code": "NOT_SKIPPED", "message": "Project is not skipped"},
                 )
-            conn.execute("DELETE FROM project_skips WHERE id = ?", (row[0],))
+            from app.db import scalar
+
+            skip_id = scalar(row, None)
+            conn.execute("DELETE FROM project_skips WHERE id = ?", (skip_id,))
             conn.commit()
 
         logger.info("projects.skip_removed", project_id=project_id, user_id=uid)

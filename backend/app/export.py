@@ -15,6 +15,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 logger = structlog.get_logger(__name__)
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value: Any) -> Any:
+    """防止 CSV/Excel 公式注入：外部采集文本以公式触发字符开头时前置单引号。"""
+    if isinstance(value, str) and value and value[0] in _FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
 
 def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
     """导出项目列表到 Excel 格式.
@@ -29,16 +38,16 @@ def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
     data = []
     for project in projects:
         row = {
-            "ID": project.get("id", ""),
-            "项目名称": project.get("name", ""),
-            "URL": project.get("url", ""),
-            "赛道": project.get("sector", ""),
-            "阶段": project.get("stage", ""),
+            "ID": _safe_cell(project.get("id", "")),
+            "项目名称": _safe_cell(project.get("name", "")),
+            "URL": _safe_cell(project.get("url", "")),
+            "赛道": _safe_cell(project.get("sector", "")),
+            "阶段": _safe_cell(project.get("stage", "")),
             "评分": project.get("score", 0),
-            "标签": project.get("label", ""),
+            "标签": _safe_cell(project.get("label", "")),
             "置信度": project.get("confidence", 0.0),
-            "创建时间": project.get("created_at", ""),
-            "更新时间": project.get("updated_at", ""),
+            "创建时间": _safe_cell(project.get("created_at", "")),
+            "更新时间": _safe_cell(project.get("updated_at", "")),
         }
         data.append(row)
 
@@ -52,6 +61,10 @@ def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
 
         # 获取工作表
         worksheet = writer.sheets["Projects"]
+
+        # 标签列位置从 DataFrame 列名推导 —— 原 magic 索引 row[6] 在列序调整时
+        # 会让着色错行（2026-11-13 审查 P3-5）。空列表时 DataFrame 无列，跳过着色。
+        label_col = df.columns.get_loc("标签") if len(df.columns) else None
 
         # 设置样式
         # 标题行样式
@@ -86,7 +99,9 @@ def export_projects_to_excel(projects: list[dict[str, Any]]) -> bytes:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
 
             # 根据标签设置颜色
-            label = row[6].value  # G列是标签
+            if label_col is None:
+                continue
+            label = row[label_col].value
             if label == "FARM":
                 fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             elif label == "WATCH":
@@ -123,16 +138,16 @@ def export_projects_to_csv(projects: list[dict[str, Any]]) -> str:
     # 写入数据
     for project in projects:
         row = [
-            project.get("id", ""),
-            project.get("name", ""),
-            project.get("url", ""),
-            project.get("sector", ""),
-            project.get("stage", ""),
+            _safe_cell(project.get("id", "")),
+            _safe_cell(project.get("name", "")),
+            _safe_cell(project.get("url", "")),
+            _safe_cell(project.get("sector", "")),
+            _safe_cell(project.get("stage", "")),
             project.get("score", 0),
-            project.get("label", ""),
+            _safe_cell(project.get("label", "")),
             project.get("confidence", 0.0),
-            project.get("created_at", ""),
-            project.get("updated_at", ""),
+            _safe_cell(project.get("created_at", "")),
+            _safe_cell(project.get("updated_at", "")),
         ]
         writer.writerow(row)
 
@@ -155,13 +170,13 @@ def export_project_detail_to_excel(project: dict[str, Any]) -> bytes:
         basic_data = {
             "字段": ["ID", "项目名称", "URL", "赛道", "阶段", "评分", "标签", "置信度"],
             "值": [
-                project.get("id", ""),
-                project.get("name", ""),
-                project.get("url", ""),
-                project.get("sector", ""),
-                project.get("stage", ""),
+                _safe_cell(project.get("id", "")),
+                _safe_cell(project.get("name", "")),
+                _safe_cell(project.get("url", "")),
+                _safe_cell(project.get("sector", "")),
+                _safe_cell(project.get("stage", "")),
                 project.get("score", 0),
-                project.get("label", ""),
+                _safe_cell(project.get("label", "")),
                 project.get("confidence", 0.0),
             ],
         }
@@ -170,7 +185,7 @@ def export_project_detail_to_excel(project: dict[str, Any]) -> bytes:
 
         # Sheet 2: 评分原因
         if project.get("reason"):
-            reason_data = {"原因": project["reason"]}
+            reason_data = {"原因": [_safe_cell(r) for r in project["reason"]]}
             df_reason = pd.DataFrame(reason_data)
             df_reason.to_excel(writer, sheet_name="评分原因", index=False)
 
@@ -180,10 +195,10 @@ def export_project_detail_to_excel(project: dict[str, Any]) -> bytes:
             narrative_data = {
                 "字段": ["赛道", "阶段", "热度分数", "时机"],
                 "值": [
-                    narrative.get("sector", ""),
-                    narrative.get("stage", ""),
+                    _safe_cell(narrative.get("sector", "")),
+                    _safe_cell(narrative.get("stage", "")),
                     narrative.get("heat_score", 0),
-                    narrative.get("timing", ""),
+                    _safe_cell(narrative.get("timing", "")),
                 ],
             }
             df_narrative = pd.DataFrame(narrative_data)
@@ -196,8 +211,8 @@ def export_project_detail_to_excel(project: dict[str, Any]) -> bytes:
                 "字段": ["团队分数", "团队类型", "团队标签"],
                 "值": [
                     team.get("team_score", 0),
-                    team.get("team_type", ""),
-                    ", ".join(team.get("team_flags", [])),
+                    _safe_cell(team.get("team_type", "")),
+                    _safe_cell(", ".join(team.get("team_flags", []))),
                 ],
             }
             df_team = pd.DataFrame(team_data)
@@ -210,8 +225,8 @@ def export_project_detail_to_excel(project: dict[str, Any]) -> bytes:
                 "字段": ["代币风险", "解锁压力", "风险标签"],
                 "值": [
                     risk.get("token_risk", 0),
-                    risk.get("unlock_pressure", ""),
-                    ", ".join(risk.get("risk_flags", [])),
+                    _safe_cell(risk.get("unlock_pressure", "")),
+                    _safe_cell(", ".join(risk.get("risk_flags", []))),
                 ],
             }
             df_risk = pd.DataFrame(risk_data)

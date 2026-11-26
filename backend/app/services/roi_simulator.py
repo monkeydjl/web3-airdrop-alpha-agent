@@ -14,6 +14,7 @@ from typing import Any
 from app.db import connection_scope, dict_from_row
 from app.repository import ProjectRepository
 from app.services.project_signals import signals_view
+from app.utils.data_quality import mark_simulated
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,10 @@ def simulate_project_roi(
 
     # Extract funding and TVL
     meta = p.get("meta") or {}
-    funding_val = p.get("funding_total")
+    # 键契约（2026-11-19 深审 P1）：canonical 信号键是 funding_total_usd /
+    # tvl_usd（structured_signals + defillama 写入侧）。旧键 "funding_total" /
+    # "tvl" 不存在于任何写入路径，导致 FDV 公式的 TVL 项恒为 0。
+    funding_val = p.get("funding_total_usd")
     if funding_val is None:
         funding_val = meta.get("funding", {}).get("total_raised")
     funding_usd = float(funding_val or 0.0)
@@ -71,7 +75,7 @@ def simulate_project_roi(
         # Fallback baseline funding estimation based on score & stage
         funding_usd = 15_000_000.0 if score >= 75 else 5_000_000.0
 
-    tvl_usd = float(p.get("tvl") or 0.0)
+    tvl_usd = float(p.get("tvl_usd") or p.get("tvl") or 0.0)
 
     # Valuation (FDV) projection
     fdv_base = max(funding_usd * 8.0, tvl_usd * 1.5, 40_000_000.0)
@@ -133,7 +137,47 @@ def simulate_project_roi(
         hourly_return_base_usd=hourly_return,
         efficiency_rating=rating,
     )
-    return {"ok": True, "data": sim.to_dict()}
+    return mark_simulated(
+        {"ok": True, "data": sim.to_dict()},
+        note="单项目 ROI 推演基于启发式倍数模型，非收益承诺",
+    )
+
+
+_RISK_PROFILES: dict[str, dict[str, float]] = {
+    "conservative": {
+        "restaking_budget_share": 0.70,
+        "restaking_hours_share": 0.30,
+        "restaking_multiple": 2.0,
+        "testnet_budget_share": 0.60,
+        "testnet_hours_share": 0.50,
+        "testnet_multiple": 6.0,
+        "faucet_reward": 100.0,
+        "conservative_factor": 0.55,
+        "optimistic_factor": 1.8,
+    },
+    "balanced": {
+        "restaking_budget_share": 0.55,
+        "restaking_hours_share": 0.25,
+        "restaking_multiple": 2.2,
+        "testnet_budget_share": 0.70,
+        "testnet_hours_share": 0.60,
+        "testnet_multiple": 8.5,
+        "faucet_reward": 120.0,
+        "conservative_factor": 0.45,
+        "optimistic_factor": 2.2,
+    },
+    "aggressive": {
+        "restaking_budget_share": 0.30,
+        "restaking_hours_share": 0.15,
+        "restaking_multiple": 2.6,
+        "testnet_budget_share": 0.85,
+        "testnet_hours_share": 0.70,
+        "testnet_multiple": 12.0,
+        "faucet_reward": 150.0,
+        "conservative_factor": 0.30,
+        "optimistic_factor": 3.0,
+    },
+}
 
 
 def simulate_portfolio_allocation(
@@ -171,8 +215,11 @@ def simulate_portfolio_allocation(
 
     budget = max(20.0, float(total_budget_usd))
     hours = max(1.0, float(weekly_hours))
+    normalized_appetite = risk_appetite if risk_appetite in _RISK_PROFILES else "balanced"
+    profile = _RISK_PROFILES[normalized_appetite]
 
     allocations: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
 
     # Category buckets:
     # 1. Restaking / Yield Principal (captures large capital)
@@ -194,11 +241,13 @@ def simulate_portfolio_allocation(
     remaining_budget = budget
     remaining_hours = hours
 
-    # 1. Allocate to top Restaking project if budget > $50
+    # 1. Allocate to top Restaking project if budget >= $50
     if budget >= 50.0 and restaking_projects:
         p_res = restaking_projects[0]
-        res_budget = round(budget * 0.55, 1)
-        res_hours = round(hours * 0.25, 1)
+        used_ids.add(str(p_res["id"]))
+        res_budget = round(budget * profile["restaking_budget_share"], 1)
+        res_hours = round(hours * profile["restaking_hours_share"], 1)
+        res_mult = profile["restaking_multiple"]
         remaining_budget -= res_budget
         remaining_hours -= res_hours
         allocations.append(
@@ -209,18 +258,20 @@ def simulate_portfolio_allocation(
                 "role": "核心本金沉淀 (质押/金库生息)",
                 "allocated_budget_usd": res_budget,
                 "allocated_hours_weekly": res_hours,
-                "expected_multiple": 2.2,
-                "expected_reward_usd": round(res_budget * 2.2, 1),
+                "expected_multiple": res_mult,
+                "expected_reward_usd": round(res_budget * res_mult, 1),
                 "priority": "HIGH",
             }
         )
 
-    # 2. Allocate Gas budget to top 2 Testnets
-    testnet_candidates = (testnet_projects + other_projects)[:2]
+    # 2. Allocate Gas budget to top 2 Testnets (deduplicated via used_ids)
+    testnet_candidates = [p for p in (testnet_projects + other_projects) if str(p["id"]) not in used_ids][:2]
     if testnet_candidates:
-        per_gas = round(remaining_budget * 0.70 / len(testnet_candidates), 1) if len(testnet_candidates) > 0 else 0
-        per_hrs = round(remaining_hours * 0.60 / len(testnet_candidates), 1) if len(testnet_candidates) > 0 else 0
+        per_gas = round(remaining_budget * profile["testnet_budget_share"] / len(testnet_candidates), 1)
+        per_hrs = round(remaining_hours * profile["testnet_hours_share"] / len(testnet_candidates), 1)
+        t_mult = profile["testnet_multiple"]
         for p_t in testnet_candidates:
+            used_ids.add(str(p_t["id"]))
             allocations.append(
                 {
                     "project_id": p_t["id"],
@@ -229,17 +280,18 @@ def simulate_portfolio_allocation(
                     "role": "高弹性测试网 (Gas 交互与合约部署)",
                     "allocated_budget_usd": per_gas,
                     "allocated_hours_weekly": per_hrs,
-                    "expected_multiple": 8.5,
-                    "expected_reward_usd": round(max(15.0, per_gas * 8.5 + 180.0), 1),
+                    "expected_multiple": t_mult,
+                    "expected_reward_usd": round(max(15.0, per_gas * t_mult + 180.0), 1),
                     "priority": "HIGH",
                 }
             )
             remaining_budget -= per_gas
             remaining_hours -= per_hrs
 
-    # 3. Allocate remaining to zero-cost faucet/community tasks
-    faucet_candidates = (other_projects + testnet_projects)[len(testnet_candidates) : len(testnet_candidates) + 2]
+    # 3. Allocate remaining to zero-cost faucet/community tasks (strictly excluding used_ids)
+    faucet_candidates = [p for p in (other_projects + testnet_projects) if str(p["id"]) not in used_ids][:2]
     for p_f in faucet_candidates:
+        used_ids.add(str(p_f["id"]))
         f_hrs = round(max(0.5, remaining_hours / max(1, len(faucet_candidates))), 1)
         allocations.append(
             {
@@ -250,7 +302,7 @@ def simulate_portfolio_allocation(
                 "allocated_budget_usd": 0.0,
                 "allocated_hours_weekly": f_hrs,
                 "expected_multiple": 20.0,
-                "expected_reward_usd": 120.0,
+                "expected_reward_usd": profile["faucet_reward"],
                 "priority": "MEDIUM",
             }
         )
@@ -259,22 +311,25 @@ def simulate_portfolio_allocation(
     portfolio_roi = round(total_expected_return / max(1.0, budget), 2)
     hourly_yield = round(total_expected_return / max(1.0, hours * 4.0), 2)  # monthly basis
 
-    return {
-        "ok": True,
-        "data": {
-            "total_budget_usd": budget,
-            "weekly_hours": hours,
-            "risk_appetite": risk_appetite,
-            "allocations": allocations,
-            "total_expected_return_usd": round(total_expected_return, 1),
-            "conservative_return_usd": round(total_expected_return * 0.45, 1),
-            "optimistic_return_usd": round(total_expected_return * 2.2, 1),
-            "portfolio_roi_multiple": portfolio_roi,
-            "monthly_hourly_yield_usd": hourly_yield,
-            "summary_advice": (
-                f"将 ${budget} 资金与每周 {hours} 小时集中在 {len(allocations)} 个精选组合，"
-                f"在保持 0 成本防女巫隔离前提下，预估基准总产出约 ${round(total_expected_return, 0)} "
-                f"(投入产出倍数 ~{portfolio_roi}x)。"
-            ),
+    return mark_simulated(
+        {
+            "ok": True,
+            "data": {
+                "total_budget_usd": budget,
+                "weekly_hours": hours,
+                "risk_appetite": normalized_appetite,
+                "allocations": allocations,
+                "total_expected_return_usd": round(total_expected_return, 1),
+                "conservative_return_usd": round(total_expected_return * profile["conservative_factor"], 1),
+                "optimistic_return_usd": round(total_expected_return * profile["optimistic_factor"], 1),
+                "portfolio_roi_multiple": portfolio_roi,
+                "monthly_hourly_yield_usd": hourly_yield,
+                "summary_advice": (
+                    f"将 ${budget} 资金与每周 {hours} 小时按「{normalized_appetite}」档位集中在 {len(allocations)} 个精选组合，"
+                    f"在保持 0 成本防女巫隔离前提下，预估基准总产出约 ${round(total_expected_return, 0)} "
+                    f"(投入产出倍数 ~{portfolio_roi}x)。"
+                ),
+            },
         },
-    }
+        note="组合 ROI 分配模拟基于启发式倍数模型，非真实历史收益或收益承诺",
+    )

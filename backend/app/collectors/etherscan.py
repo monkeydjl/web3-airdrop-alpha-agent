@@ -63,6 +63,9 @@ class EtherscanCollector(DataCollector):
     # Keep on-chain-only discoveries below default analysis threshold (0.3)
     MAX_DISCOVERY_SCORE = 0.28
     MIN_UNIQUE_RATIO = 0.05  # unique recipients / events
+    # getLogs 单请求最多返回 offset 条（超出静默截断）；page 翻页封顶防异常态烧配额
+    OFFSET_PER_PAGE = 1000
+    MAX_LOG_PAGES = 3
 
     def __init__(self) -> None:
         super().__init__(source_id="etherscan", source_name="Etherscan")
@@ -105,9 +108,8 @@ class EtherscanCollector(DataCollector):
                 count=len(candidates),
             )
 
-            for contract in candidates:
-                discovery = self._build_discovery(contract)
-                result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(candidates, result)
 
             result.status = "success" if result.items else "partial"
 
@@ -135,10 +137,9 @@ class EtherscanCollector(DataCollector):
     async def _fetch_latest_block(self) -> int:
         """获取最新区块号。"""
         url = f"{self.base_url}?chainid=1&module=proxy&action=eth_blockNumber&apikey={self.api_key}"
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url)
+        response.raise_for_status()
+        data = response.json()
 
         result = data.get("result")
         if isinstance(result, str) and result.startswith("0x"):
@@ -146,26 +147,38 @@ class EtherscanCollector(DataCollector):
         raise ValueError(f"Unexpected blockNumber response: {data}")
 
     async def _fetch_transfer_logs(self, from_block: int, to_block: int) -> list[dict[str, Any]]:
-        """获取指定区块范围内的 ERC20 Transfer 日志。"""
-        url = (
-            f"{self.base_url}?chainid=1&module=logs&action=getLogs"
-            f"&fromBlock={from_block}&toBlock={to_block}"
-            f"&topic0={TRANSFER_TOPIC0}"
-            f"&apikey={self.api_key}"
-        )
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
+        """获取指定区块范围内的 ERC20 Transfer 日志（page/offset 翻页到不满页）。
 
-        status = data.get("status")
-        message = data.get("message", "")
-        if status == "0" and "No logs found" not in message and "No records found" not in message:
-            # Etherscan returns status=0 for both errors and empty results.
-            # Treat messages containing "No records" / "No logs" as empty.
-            raise ValueError(f"Etherscan API error: {message}")
+        Etherscan getLogs 单请求最多返回 `offset` 条 —— 超出部分**静默截断**，
+        活跃区块范围下聚合出的合约活动会被系统性低估（2026-11-13 审查 P2-6）。
+        页数封顶 `MAX_LOG_PAGES` 防 API 异常态下烧穿配额。
+        """
+        logs: list[dict[str, Any]] = []
+        async with self.http_client(timeout=self.timeout) as client:
+            for page in range(1, self.MAX_LOG_PAGES + 1):
+                url = (
+                    f"{self.base_url}?chainid=1&module=logs&action=getLogs"
+                    f"&fromBlock={from_block}&toBlock={to_block}"
+                    f"&topic0={TRANSFER_TOPIC0}"
+                    f"&page={page}&offset={self.OFFSET_PER_PAGE}"
+                    f"&apikey={self.api_key}"
+                )
+                response = await self.request_with_retry("GET", url, client=client)
+                response.raise_for_status()
+                data = response.json()
 
-        return data.get("result", []) or []
+                status = data.get("status")
+                message = data.get("message", "")
+                if status == "0" and "No logs found" not in message and "No records found" not in message:
+                    # Etherscan returns status=0 for both errors and empty results.
+                    # Treat messages containing "No records" / "No logs" as empty.
+                    raise ValueError(f"Etherscan API error: {message}")
+
+                page_items = data.get("result", []) or []
+                logs.extend(page_items)
+                if len(page_items) < self.OFFSET_PER_PAGE:
+                    break
+        return logs
 
     def _aggregate_contract_activity(self, logs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """按合约地址聚合 Transfer 事件。"""
@@ -273,9 +286,12 @@ class EtherscanCollector(DataCollector):
         )
 
     def _contract_name(self, address: str) -> str:
-        """从地址生成可读名称（占位，真实场景可调用 etherscan contract/getsourcecode）。"""
-        short = address[:10]
-        return f"Contract {short}"
+        """从地址生成可读名称（占位，真实场景可调用 etherscan contract/getsourcecode）。
+
+        用**完整地址**而非前 10 位：名称参与 dedup_key，前缀截断会让
+        前 10 位相同的两个合约共享去重键、静默合并（2026-11-14 审查 P3-14）。
+        """
+        return f"Contract {address}"
 
     def _calculate_discovery_score(self, contract: dict[str, Any]) -> float:
         """基于活跃度计算 discovery_score（上限压在分析阈值之下）。"""

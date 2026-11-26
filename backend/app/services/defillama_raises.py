@@ -18,7 +18,9 @@ from typing import Any
 import httpx
 import structlog
 
+from app.collectors.base import safe_collector_client
 from app.services.funding import compute_funding_quality
+from app.utils.domain_allowlist import assert_url_allowed
 from app.utils.normalize import normalize_name
 
 logger = structlog.get_logger(__name__)
@@ -178,13 +180,10 @@ async def fetch_protocol_funding(
     if not slug:
         return None
     url = f"{DEFILLAMA_BASE_URL}/protocol/{slug}"
-    own_client = False
-    if client is None:
-        client = httpx.AsyncClient(timeout=timeout)
-        own_client = True
+    assert_url_allowed(url)
 
-    try:
-        resp = await client.get(url)
+    async def _do_fetch(active_client: httpx.AsyncClient) -> dict[str, Any] | None:
+        resp = await active_client.get(url)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -199,12 +198,15 @@ async def fetch_protocol_funding(
         parsed["twitter"] = data.get("twitter")
         parsed["github"] = data.get("github")
         return parsed
+
+    try:
+        if client is not None:
+            return await _do_fetch(client)
+        async with safe_collector_client(timeout=timeout) as owned_client:
+            return await _do_fetch(owned_client)
     except Exception as exc:
         logger.warning("defillama.fetch_protocol_funding_failed", slug=slug, error=str(exc))
         return None
-    finally:
-        if own_client:
-            await client.aclose()
 
 
 async def fetch_all_protocols(
@@ -213,21 +215,21 @@ async def fetch_all_protocols(
 ) -> list[dict[str, Any]]:
     """Fetch the full protocols list from DefiLlama to build index."""
     url = f"{DEFILLAMA_BASE_URL}/protocols"
-    own_client = False
-    if client is None:
-        client = httpx.AsyncClient(timeout=timeout)
-        own_client = True
+    assert_url_allowed(url)
 
-    try:
-        resp = await client.get(url)
+    async def _do_fetch(active_client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        resp = await active_client.get(url)
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, list):
             return data
         return []
+
+    try:
+        if client is not None:
+            return await _do_fetch(client)
+        async with safe_collector_client(timeout=timeout) as owned_client:
+            return await _do_fetch(owned_client)
     except Exception as exc:
         logger.warning("defillama.fetch_all_protocols_failed", error=str(exc))
         return []
-    finally:
-        if own_client:
-            await client.aclose()

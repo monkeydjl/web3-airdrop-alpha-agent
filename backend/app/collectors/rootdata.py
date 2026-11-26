@@ -46,6 +46,7 @@ class RootDataCollector(DataCollector):
         super().__init__(source_id="rootdata", source_name="RootData")
         self.base_url = getattr(settings, "rootdata_base_url", "https://api.rootdata.com").rstrip("/")
         self.timeout = getattr(settings, "rootdata_timeout", 30)
+        self.retry = getattr(settings, "rootdata_retry", 3)
         self.api_key = getattr(settings, "rootdata_api_key", "") or ""
         self.rate_limiter = TokenBucketRateLimiter("rootdata")
         self.logger = logger.bind(source_id=self.source_id)
@@ -113,14 +114,13 @@ class RootDataCollector(DataCollector):
             "Content-Type": "application/json",
             "apikey": self.api_key,
         }
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code == 401 or resp.status_code == 403:
-                raise RuntimeError(f"RootData auth failed HTTP {resp.status_code}")
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.request_with_retry("POST", url, json=payload, headers=headers)
+        if resp.status_code == 401 or resp.status_code == 403:
+            raise RuntimeError(f"RootData auth failed HTTP {resp.status_code}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
 
     async def _search(self, query: str) -> list[dict[str, Any]]:
         """POST /open/ser_inv — search project/VC/people."""
@@ -190,13 +190,14 @@ class RootDataCollector(DataCollector):
             return None
 
         pid = item.get("project_id") or item.get("id") or name
-        sector = normalize_sector(
-            str(item.get("one_liner") or item.get("tag") or item.get("tags") or "DeFi")
-            if not isinstance(item.get("tags"), list)
-            else (item.get("tags") or ["DeFi"])[0]
-        )
-        if isinstance(item.get("tags"), list) and item["tags"]:
-            sector = normalize_sector(str(item["tags"][0]))
+        tags = item.get("tags")
+        if isinstance(tags, list) and tags:
+            raw_sector = str(tags[0])
+        else:
+            raw_sector = str(
+                item.get("tag") or item.get("category") or (tags if isinstance(tags, str) else "") or "DeFi"
+            )
+        sector = normalize_sector(raw_sector)
 
         funding = extract_funding_from_raw(item)
         recent = bool(funding.get("funding_quality", 0) > 0.2) or bool(
@@ -228,7 +229,7 @@ class RootDataCollector(DataCollector):
             "no_token_yet": no_token,
             "has_twitter": bool(item.get("twitter") or item.get("X") or item.get("x")),
             "has_github": bool(item.get("github") or item.get("Github")),
-            "has_docs": bool(item.get("gitbook") or item.get("docs") or item.get("website")),
+            "has_docs": bool(item.get("gitbook") or item.get("docs")),
             "url": item.get("website") or item.get("url") or item.get("rootdata_url"),
             "description": item.get("description") or item.get("one_liner") or item.get("brief"),
             **{k: funding[k] for k in funding},

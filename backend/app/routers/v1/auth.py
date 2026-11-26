@@ -9,6 +9,7 @@ Reference:
 
 from __future__ import annotations
 
+import hmac
 import re
 import time
 import uuid
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field
 from app.auth import (
     blacklist_token_jti,
     decode_and_verify_jwt,
+    extract_renewable_anonymous_user_id,
     get_current_user,
     hash_password,
     hash_refresh_token,
@@ -52,9 +54,49 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+def _first_user_role(bootstrap_token: str | None) -> str | None:
+    """首位注册用户的角色判定（防抢注，2026-11-13 审查 H-2）。
+
+    `/auth/register` 在 PUBLIC_PREFIXES 上 —— 此前"首位注册即 admin"等于
+    公网新部署时攻击者抢注即得永久管理员。规则：
+
+    - 配置了 `REGISTRATION_BOOTSTRAP_TOKEN` → 必须携带正确 token 才得 admin
+      （常量时间比较；配置即生效，不分环境）；
+    - 生产环境未配置 → 降级 viewer 并告警（运维应配置 token 后再注册首位账号）；
+    - 开发/测试未配置 → 保持原自举行为（admin），DX 不变。
+
+    Returns:
+        "admin" / "viewer"；None 表示校验失败（调用方拒绝创建用户，
+        自举名额不被消费）。
+    """
+    expected = settings.registration_bootstrap_token.strip()
+    if expected:
+        provided = (bootstrap_token or "").strip()
+        if not hmac.compare_digest(provided, expected):
+            return None
+        return "admin"
+    if settings.is_production:
+        logger.warning(
+            "auth.first_user_bootstrap_degraded",
+            hint="Set REGISTRATION_BOOTSTRAP_TOKEN and register with it to create the admin",
+        )
+        return "viewer"
+    return "admin"
+
+
 # ═══════════════════════════════════════════════════════════════
 # Request / Response Models
 # ═══════════════════════════════════════════════════════════════
+
+
+class AnonymousTokenRequest(BaseModel):
+    """匿名 token 签发/续期请求（可选携带旧签名 token 以续用同一 anon-<id>）。"""
+
+    previous_token: str | None = Field(
+        default=None,
+        max_length=1024,
+        description="上次由服务端签发的匿名 token（过期后验签通过可原样续用 user_id，防止个人数据断链）",
+    )
 
 
 class AnonymousTokenResponse(BaseModel):
@@ -90,16 +132,21 @@ class AuthTokenResponse(BaseModel):
 class RegisterRequest(BaseModel):
     """用户注册请求。"""
 
-    email: str = Field(..., description="用户邮箱")
-    password: str = Field(..., description="密码（长度≥8，包含大小写字母+数字）")
-    display_name: str | None = Field(default=None, description="显示名称（可选）")
+    email: str = Field(..., max_length=256, description="用户邮箱")
+    password: str = Field(..., max_length=1024, description="密码（长度≥8且≤72字节，包含大小写字母+数字）")
+    display_name: str | None = Field(default=None, max_length=128, description="显示名称（可选）")
+    bootstrap_token: str | None = Field(
+        default=None,
+        max_length=512,
+        description="首位 admin 自举令牌（仅当服务端配置了 REGISTRATION_BOOTSTRAP_TOKEN 时需要）",
+    )
 
 
 class LoginRequest(BaseModel):
     """用户登录请求。"""
 
-    email: str = Field(..., description="用户邮箱")
-    password: str = Field(..., description="密码")
+    email: str = Field(..., max_length=256, description="用户邮箱")
+    password: str = Field(..., max_length=1024, description="密码")
 
 
 class RefreshTokenRequest(BaseModel):
@@ -130,11 +177,12 @@ class MessageResponse(BaseModel):
     "/auth/anonymous",
     response_model=AnonymousTokenResponse,
     summary="签发匿名 token",
-    description="签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证。",
+    description="签发一个匿名 Bearer token，用于访问受保护 API 端点。无需认证；携带已过期的合法签名 token 时续用原 user_id。",
 )
-def issue_anonymous() -> AnonymousTokenResponse:
-    """签发匿名 token（V2 兼容）。"""
-    token = issue_anonymous_token()
+def issue_anonymous(body: AnonymousTokenRequest | None = None) -> AnonymousTokenResponse:
+    """签发或续期匿名 token（V2 兼容）。"""
+    preserved_uid = extract_renewable_anonymous_user_id(body.previous_token if body else None)
+    token = issue_anonymous_token(user_id=preserved_uid)
 
     payload = verify_token(token)
     actual_user_id = payload["user_id"] if payload else "anonymous"
@@ -159,10 +207,17 @@ def issue_anonymous() -> AnonymousTokenResponse:
     "/auth/register",
     response_model=AuthTokenResponse,
     summary="用户注册",
-    description="创建新用户账户并返回 JWT Access Token 与 Refresh Token。首位注册用户自举为 admin，后续用户为 viewer。",
+    description=(
+        "创建新用户账户并返回 JWT Access Token 与 Refresh Token。首位用户默认自举为 admin；"
+        "生产环境或配置了 REGISTRATION_BOOTSTRAP_TOKEN 的部署需要携带正确的 bootstrap_token "
+        "才能获得 admin（防公网抢注，2026-11-13）。ALLOW_REGISTRATION=false 时关闭注册。"
+    ),
 )
 def register(body: RegisterRequest) -> Any:
     """用户注册端点。"""
+    if not settings.allow_registration:
+        return _error(403, "REGISTRATION_DISABLED", "Registration is disabled on this deployment")
+
     email = body.email.strip()
     if not _EMAIL_PATTERN.match(email):
         return _error(400, "INVALID_EMAIL", "Invalid email address format")
@@ -177,7 +232,13 @@ def register(body: RegisterRequest) -> Any:
             return _error(400, "EMAIL_ALREADY_REGISTERED", "Email is already registered")
 
         user_count = user_repo.count_users()
-        role = "admin" if user_count == 0 else "viewer"
+        if user_count == 0:
+            role = _first_user_role(body.bootstrap_token)
+            if role is None:
+                # fail-closed：token 不对就不建用户，自举名额不被消费
+                return _error(403, "BOOTSTRAP_TOKEN_REQUIRED", "Bootstrap token missing or incorrect")
+        else:
+            role = "viewer"
 
         user_id = f"usr_{uuid.uuid4().hex[:12]}"
         password_hash = hash_password(body.password)
@@ -225,6 +286,31 @@ def register(body: RegisterRequest) -> Any:
     )
 
 
+def _mask_email(email: str) -> str:
+    """日志用邮箱脱敏：保留前两字符与域名，其余以 *** 代替（PII 不落日志管道）。"""
+    local, _, domain = email.partition("@")
+    if not domain:
+        return "***"
+    prefix = local[:2] if local else ""
+    return f"{prefix}***@{domain}"
+
+
+_dummy_hash_cache: str | None = None
+
+
+def _dummy_password_hash() -> str:
+    """惰性生成一次哑 bcrypt 哈希，供"未知邮箱"的登录路径做**时序均衡**。
+
+    未知邮箱直接 return 会跳过 bcrypt（约 200ms 级差异）——响应时间差可被
+    用于枚举已注册邮箱（2026-11-13 审查 L-2）。两条失败路径都必须走一次
+    验证，结果一律丢弃。
+    """
+    global _dummy_hash_cache
+    if _dummy_hash_cache is None:
+        _dummy_hash_cache = hash_password("timing-equalization-dummy-" + uuid.uuid4().hex)
+    return _dummy_hash_cache
+
+
 @router.post(
     "/auth/login",
     response_model=AuthTokenResponse,
@@ -239,11 +325,14 @@ def login(body: LoginRequest) -> Any:
         user = user_repo.get_by_email(email)
 
         if not user or not user.get("is_active"):
-            logger.warning("auth.login_failed", email=email, reason="not_found_or_inactive")
+            # 时序均衡（2026-11-13 审查 L-2）：未命中也走一次 bcrypt，让
+            # "邮箱不存在"与"密码错误"的响应时间同型，邮箱枚举失去时钟。
+            verify_password(body.password, _dummy_password_hash())
+            logger.warning("auth.login_failed", email=_mask_email(email), reason="not_found_or_inactive")
             return _error(401, "INVALID_CREDENTIALS", "Invalid email or password")
 
         if not verify_password(body.password, str(user["password_hash"])):
-            logger.warning("auth.login_failed", email=email, reason="bad_password")
+            logger.warning("auth.login_failed", email=_mask_email(email), reason="bad_password")
             return _error(401, "INVALID_CREDENTIALS", "Invalid email or password")
 
         user_repo.update_last_login(user["id"])
@@ -310,6 +399,18 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
             return _error(401, "USER_INACTIVE", "User account is inactive or deleted")
 
         access_token, _access_jti, expires_in = issue_access_token(user["id"], user["role"])
+        refresh_token, _refresh_jti, refresh_expires_in = issue_refresh_token(user["id"])
+
+        # 轮换（2026-11-13 审查 L-3）：旧 session 即刻吊销、新 refresh 换新
+        # session —— 被偷走的旧 token 在受害者下一次刷新时即失效，而不是
+        # 继续有效 7 天。客户端按标准流程保存响应里的新 refresh token。
+        session_repo.revoke_session(str(session["id"]))
+        session_repo.create_session(
+            session_id=f"ses_{uuid.uuid4().hex[:12]}",
+            user_id=user["id"],
+            refresh_token_hash=hash_refresh_token(refresh_token),
+            expires_at=datetime.fromtimestamp(time.time() + refresh_expires_in, tz=UTC),
+        )
 
     logger.info("auth.token_refreshed", user_id=user["id"])
 
@@ -324,7 +425,7 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
 
     return AuthTokenResponse(
         access_token=access_token,
-        refresh_token=body.refresh_token,
+        refresh_token=refresh_token,
         token_type="Bearer",  # noqa: S106
         expires_in=expires_in,
         user=user_resp,
@@ -340,9 +441,10 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
 def logout(request: Request, body: LogoutRequest | None = None) -> Any:
     """登出当前会话端点。"""
     current_user = get_current_user(request)
-    user_id = current_user.get("user_id")
+    user_id = str(current_user.get("user_id") or "")
+    role = current_user.get("role")
 
-    if not user_id or user_id == "anonymous":
+    if not user_id or user_id == "anonymous" or role == "anonymous" or user_id.startswith("anon-"):
         return _error(401, "UNAUTHORIZED", "Authentication required to logout")
 
     jwt_jti = current_user.get("jwt_jti")
@@ -352,7 +454,7 @@ def logout(request: Request, body: LogoutRequest | None = None) -> Any:
     if body and body.refresh_token:
         with connection_scope() as conn:
             session_repo = SessionRepository(conn)
-            session_repo.revoke_by_token_hash(hash_refresh_token(body.refresh_token))
+            session_repo.revoke_by_token_hash_for_user(hash_refresh_token(body.refresh_token), user_id)
 
     logger.info("auth.user_logged_out", user_id=user_id)
     return MessageResponse(ok=True, data={"message": "Logged out successfully"})
@@ -367,9 +469,10 @@ def logout(request: Request, body: LogoutRequest | None = None) -> Any:
 def logout_all(request: Request) -> Any:
     """全设备登出端点。"""
     current_user = get_current_user(request)
-    user_id = current_user.get("user_id")
+    user_id = str(current_user.get("user_id") or "")
+    role = current_user.get("role")
 
-    if not user_id or user_id == "anonymous":
+    if not user_id or user_id == "anonymous" or role == "anonymous" or user_id.startswith("anon-"):
         return _error(401, "UNAUTHORIZED", "Authentication required")
 
     jwt_jti = current_user.get("jwt_jti")

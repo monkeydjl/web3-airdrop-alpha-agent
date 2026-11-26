@@ -128,6 +128,32 @@ export interface InsightsData {
   }[];
 }
 
+/** 采集源评分卡：全部来自真实 raw_projects / data_sources。 */
+export type SourceVerdict =
+  | "healthy"
+  | "noisy"
+  | "low_signal"
+  | "stale"
+  | "failing"
+  | "idle"
+  | "no_data";
+
+export interface SourceScorecard {
+  total_raw: number;
+  analyzed: number;
+  pending: number;
+  quarantined: number;
+  high_signal: number;
+  avg_discovery_score: number | null;
+  analysis_rate: number;
+  quarantine_rate: number;
+  last_discovered_at: string | null;
+  last_sync: string | null;
+  freshness_hours: number | null;
+  verdict: SourceVerdict;
+  recommendation: string;
+}
+
 /**
  * 后端 /collections/sources 的真实返回形状。
  *
@@ -142,6 +168,7 @@ export interface CollectionSourceApi {
   is_enabled?: boolean;
   config_ready?: boolean;
   operator_enabled?: boolean;
+  scorecard?: SourceScorecard | null;
   status?: {
     enabled?: boolean;
     sync_status?: string | null;
@@ -164,6 +191,8 @@ export interface CollectionSource {
   sync_status?: string | null;
   /** 今日 API 调用次数（后端真实统计，可能缺省） */
   apiCallsToday?: number | null;
+  /** 采集源评分卡（后端按 raw_projects 实时聚合） */
+  scorecard?: SourceScorecard | null;
 }
 
 /** 把后端形状摊平成 UI 形状。 */
@@ -191,6 +220,7 @@ export function normalizeCollectionSource(raw: CollectionSourceApi): CollectionS
     last_sync: raw.status?.last_sync ?? null,
     sync_status: raw.status?.sync_status ?? null,
     apiCallsToday: raw.status?.api_calls_today ?? null,
+    scorecard: raw.scorecard ?? null,
   };
 }
 

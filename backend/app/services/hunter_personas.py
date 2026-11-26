@@ -224,8 +224,11 @@ def calculate_persona_score(
     # 1. 零成本测试网党
     if persona_enum == HunterPersonaId.ZERO_COST:
         has_testnet = bool(signals.get("has_testnet") or stage == "testnet")
+        # faucet_url / has_faucet 在采集链路从未写入（深审 P1-4）——保留
+        # 读取会让 ZERO_COST 的水龙头加成永远不触发，先改从 signals 的
+        # canonical 键取 TVL，水龙头信号待采集侧真正透传后再启用。
         has_faucet = bool(signals.get("faucet_url") or signals.get("has_faucet"))
-        tvl = float(signals.get("tvl") or 0)
+        tvl = float(signals.get("tvl_usd") or signals.get("tvl") or 0)
 
         if has_testnet:
             bonus += 8.0
@@ -240,8 +243,8 @@ def calculate_persona_score(
     # 2. 巨鲸质押生息党
     elif persona_enum == HunterPersonaId.WHALE_RESTAKING:
         funding_tier = str(funding.get("funding_tier") or "").lower()
-        funding_usd = float(funding.get("funding_total_usd") or 0)
-        tvl = float(signals.get("tvl") or 0)
+        funding_usd = float(funding.get("funding_total_usd") or funding.get("total_raised") or 0)
+        tvl = float(signals.get("tvl_usd") or signals.get("tvl") or 0)
         risk_score = sub_scores.get("risk", 70.0)
 
         is_tier1 = "tier-1" in funding_tier or "tier1" in funding_tier or "tier 1" in funding_tier
@@ -269,10 +272,12 @@ def calculate_persona_score(
 
     final_score = round(min(100.0, max(0.0, weighted_score + bonus)))
 
-    # 根据重算后的分数推导标签
-    if final_score >= 65:
+    # 根据重算后的分数推导标签（阈值与 scorer.LABEL_THRESHOLDS 同源）
+    from app.agents.scorer import LABEL_THRESHOLDS
+
+    if final_score >= LABEL_THRESHOLDS[0][0]:
         final_label = "FARM"
-    elif final_score >= 50:
+    elif final_score >= LABEL_THRESHOLDS[1][0]:
         final_label = "WATCH"
     else:
         final_label = "IGNORE"

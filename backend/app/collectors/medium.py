@@ -85,9 +85,8 @@ class MediumCollector(DataCollector):
             for tag in self.tags:
                 url = f"https://medium.com/feed/tag/{tag}"
                 try:
-                    async with self.rate_limiter:
-                        response = await client.get(url)
-                        response.raise_for_status()
+                    response = await self.request_with_retry("GET", url, client=client)
+                    response.raise_for_status()
                     items.extend(self._parse_rss(response.text, tag))
                     succeeded += 1
                 except Exception as e:
@@ -173,9 +172,12 @@ class MediumCollector(DataCollector):
         if not self.is_enabled():
             return {"source_id": self.source_id, "status": "disabled"}
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(f"https://medium.com/feed/tag/{self.tags[0]}")
-                response.raise_for_status()
+            response = await self.request_with_retry(
+                "GET",
+                f"https://medium.com/feed/tag/{self.tags[0]}",
+                timeout=10,
+            )
+            response.raise_for_status()
             return {"source_id": self.source_id, "status": "healthy"}
         except Exception as e:
             return {"source_id": self.source_id, "status": "unhealthy", "error": str(e)}

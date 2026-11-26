@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge } from '@/components/SimulatedDataBadge';
 
 interface PlaybookStep {
   step_no: number;
@@ -108,7 +109,10 @@ export default function PlaybookStudioModal({
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🧩</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">自动化任务执行脚本沙箱与 Playbook 编排器</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>自动化任务执行脚本沙箱与 Playbook 编排器</span>
+                <SimulatedDataBadge note="本地模板渲染与 Gas 预演，执行前请自行核验合约地址" />
+              </h3>
               <p className="text-xs text-ink-muted">
                 可视化流水线步骤编排、端到端 Gas 预演，内嵌防女巫随机延迟 (Jitter) 的 Python Web3.py 脚本生成
               </p>

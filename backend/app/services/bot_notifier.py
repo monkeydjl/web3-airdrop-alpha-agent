@@ -10,8 +10,22 @@ import httpx
 import structlog
 
 from app.db import connection_scope, dict_from_row
+from app.utils.domain_allowlist import assert_url_allowed
 
 logger = structlog.get_logger(__name__)
+
+
+def _redact_error(error: Exception, *secrets: str) -> str:
+    """把异常文本里出现的凭据替换为 `<redacted>`。
+
+    httpx 的异常消息会渲染完整 URL —— Telegram bot_token 与 Discord webhook
+    的 secret 都在 path 里，`str(e)` 直接进日志等于把凭据写进日志管道。
+    """
+    text = str(error)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    return text
 
 
 def handle_bot_command(command: str) -> dict[str, Any]:
@@ -125,6 +139,12 @@ def send_discord_webhook(webhook_url: str, title: str, description: str, color: 
     if not webhook_url or not webhook_url.startswith("http"):
         return False
 
+    # SSRF 防护（SECURITY §10.2）：这个 URL 来自请求体 —— 本函数曾是全仓唯一
+    # 绕过出站域名白名单的出口（匿名 token 可让后端向内网地址 POST 任意内容，
+    # 响应的 ok/status 还构成 1-bit 内网探活 oracle）。与 fetcher / 采集器 /
+    # LLM 客户端同一口径：fail-closed，表外域名在发出任何请求前拒绝。
+    assert_url_allowed(webhook_url)
+
     payload = {
         "embeds": [
             {
@@ -141,7 +161,7 @@ def send_discord_webhook(webhook_url: str, title: str, description: str, color: 
             resp = client.post(webhook_url, json=payload)
             return resp.status_code in (200, 204)
     except Exception as e:
-        logger.warning("bot_notifier.discord_failed", error=str(e))
+        logger.warning("bot_notifier.discord_failed", error=_redact_error(e, webhook_url))
         return False
 
 
@@ -151,6 +171,9 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    # host 固定在白名单（api.telegram.org）；这条断言是纵深防御 —— 若未来
+    # URL 构造变化（如支持自定义代理），fail-closed 语义不能丢。
+    assert_url_allowed(url)
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -163,5 +186,5 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str) -> bool:
             resp = client.post(url, json=payload)
             return resp.status_code == 200
     except Exception as e:
-        logger.warning("bot_notifier.telegram_failed", error=str(e))
+        logger.warning("bot_notifier.telegram_failed", error=_redact_error(e, bot_token))
         return False

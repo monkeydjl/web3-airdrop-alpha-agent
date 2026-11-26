@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import { useEffect, useState } from 'react';
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 
 interface WhaleBenchmark {
   airdrop_id: string;
@@ -58,14 +59,18 @@ export default function WhaleMirrorModal({
 
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
-    apiFetchEnvelope<{ data: { benchmarks: WhaleBenchmark[] } }>('/whale-mirror/benchmarks')
+    apiFetchEnvelope<{ data: { benchmarks: WhaleBenchmark[] }; data_quality?: DataQualityMeta }>(
+      '/whale-mirror/benchmarks',
+    )
       .then((res) => {
         if (res?.data?.benchmarks) {
           setBenchmarks(res.data.benchmarks);
         }
+        if (res?.data_quality) setDataQuality(res.data_quality);
       })
       .catch((err) => console.error('Failed to load whale benchmarks', err));
 
@@ -115,7 +120,10 @@ export default function WhaleMirrorModal({
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🧠</span>
             <div>
-              <h3 className="text-lg font-bold text-ink">顶级空投巨鲸链上轨迹镜像与快照反推仪</h3>
+              <h3 className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>顶级空投巨鲸链上轨迹镜像与快照反推仪</span>
+                <SimulatedDataBadge dataQuality={dataQuality} note="基于历史基准模型的启发式对比分析" />
+              </h3>
               <p className="text-xs text-ink-muted">
                 逆向复盘 Arbitrum / LayerZero / ZKsync 战神胜者模型，对标生成新项目满档作业
               </p>

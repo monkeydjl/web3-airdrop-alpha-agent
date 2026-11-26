@@ -4,6 +4,82 @@
 > **① CI 口径差排查与修复**、**② 测试提速 + xdist 并行**、
 > **③ 存量文档漂移（parity 守卫）修绿**（✅ 已完成，14 失败清零）、
 > **④ 测试数据库守卫体系**（静态守卫双规则 + 空库酸测 + 豁免纪律）。
+>
+> **2026-10-30 增量**：见下一节「10 月下旬收尾」；下方 9 月内容保持不变。
+>
+> **2026-11-20 工程审计三阶段（Phase 1–3）增量**：已完成全部 P0（6 项 + ADR-015 单调性）、P1（10 项）与 P2（6 组）修复，详见 `CHANGELOG.md`「2026-11-20」条目。
+>
+> **2026-11-26 全栈审核与 P1–P3 全量收口增量**：已完成导入确定性主键解析、前端 JWT 401 单飞自动续期与 `AdminAuthModal` 注册 Tab、项目详情/列表多用户状态隔离、注册/AI 端点独立限流与 `ai-brief` 强制刷新权限锁、`vitals.py` 建连层公网 IP 钉死、异步路由同步 DB 卸载、全路由 AST 级错误信封守卫、双套 `docker-compose` / Nginx / `pyproject.toml` 对齐、`.workbuddy` 索引清理、管理员写操作安全审计日志激活（`audit_logs` + `GET /api/v1/ops/audit-logs`）以及防夹私有 RPC 真实链上毫秒级 `eth_blockNumber` 测速升级；同时已由 Owner 拍板确认「主评分管线保持 100% 确定性规则计算，LLM 专用于项目简报与追问，保留已测试的 `BaseAgent.llm_enhance` 预留钩子」。最新实测基线：后端 **4295 passed / 26 skipped / 0 failed**（`ruff` / `mypy` 230 文件 0 错 / 5 腿卫生守卫全绿），前端 `tsc` / `eslint` / **131 passed（45 suites）** / `next build` 全绿。
+>
+> **2026-11 审查收尾增量**：见「11 月审查修复（8 commit）」一节。
+
+## 11 月审查修复（8 commit，分支 fix/review-sweep-2026-11）
+
+全量审查驱动的八批修复，分支上 8 个语义化 commit，每批全量零失败。
+最终口径：**4212 passed / 26 skipped（-n 8 约 3.2 分钟，覆盖率 89.1%）**。
+未推送；三件遗留均为需 owner 输入的决策项（见末尾）。
+
+- **P0/数据完整性**：8 处 `cursor.lastrowid`（psycopg3 已删除该属性）改走
+  `insert_returning_id`——PG 后端启用即崩；`raw_projects` 补
+  `UNIQUE(source_id, dedup_key)`（启动时存量去重、优先保留 processed 行）
+  + 写路径 `ON CONFLICT`；`project_signals` 加 `external_id` 幂等键
+  （tweet_id/post_id/message_id）+ 唯一索引 + 存量回填去重——热度统计
+  灌水与 captured_at 刷新两个问题同源同修。
+- **安全**：`/bot/test-send` 出站白名单旁路（全仓唯一裸 httpx 出口）补
+  白名单强制 + 管理员方法锁；注册自举 admin 防抢注（`ALLOW_REGISTRATION`
+  / `REGISTRATION_BOOTSTRAP_TOKEN`，生产无 token 时首位用户降级 viewer）；
+  api_key 快速路径权威判定（未知 key_id 不再触发全表 bcrypt 扫描）；
+  JTI 吊销缓存带过期淘汰 + fail-open 改 error 告警；公开端点不再回显
+  内部 webhook URL；错误信封 10 处字符串 detail → 语义化 code（静态守卫）。
+- **异步/HA**：`main.on_collection` 与排空路径同步 DB 调用移入
+  `to_thread`（500 条队列冻结全站 HTTP 2.8s+ 的实测根因）；调度器
+  `_is_shutting_down` 在 start() 复位（HA 降级→提升→再降级时第二次
+  shutdown 不再生效的缺陷）；`log_requests` 接住路由未处理异常——
+  实测 BaseHTTPMiddleware.call_next 原样上抛，5xx 此前完全隐形于
+  指标/日志/免责声明头。
+- **业务口径**：校准搜索只吃 live 桶（此前 baseline/搜索混入 backtest，
+  与门禁口径自相矛盾）；竞争度基线统一（重算路径 `global_sector_counts`
+  改规范键折叠 + scorer 理由同口径）；`list_projects` 信号一致性改批量
+  （N+1：page_size 500 即 500 查询）；`SIGNAL_KEYWORDS` 收敛单一真相源。
+- **采集器**：twitter/etherscan/farcaster 分页（此前第一页即全部）；
+  per-item 容错下沉基类（单条脏数据不再拖垮整轮）；重试加抖动；
+  噪声匹配词边界（Curvegrid/OndoXyz 误杀修复）；**galxe 迁移到
+  `campaigns` schema**——旧 `campaignList` 查询已从生产 schema 下线，
+  实测 GRAPHQL_VALIDATION_FAILED，**源在产线静默死亡**（生产端点内省
+  确认新查询与 Relay 分页语义后才实现）。
+- **性能**：SQLite 连接池（每连接 64MB PRAGMA cache 不再每请求重付；
+  APP_ENV=test 整体关闭——tmp_path/删库重建竞态隔离在测试外）；
+  `llm_providers` 指纹缓存（每条日志 240 次 environ 查找消除；
+  空库酸测抓到 reset 钩子没同步清缓存，已修）。
+- **收口守卫**（全部"显式登记"风格）：response_model 覆盖率（173 操作
+  全覆盖，5 个文件/文本下载端点豁免登记）、错误信封、路由连接所有权、
+  proxy.ts 与后端鉴权表 parity（前端测试）。
+- **对账**：deploy.sh prod 指向真正的 prod compose（此前部署开发栈）；
+  Makefile 假目标清理；pyproject 依赖对齐 requirements（fastapi 0.115
+  vs 0.141 双真相源）；pre-commit/CI 工具版本对齐；README 徽章更新。
+- **死代码清理**：legacy 双调度器、DAG orchestrator、collect_from_registry、
+  `_drop_zombies`、虚构 `llm_semaphore_size`（日志事件面 455→429）。
+
+**遗留与已决事项记录**：① `llm_enhance` 已于 2026-11-26 由 Owner 决策锁定——主评分管线保持 100% 确定性规则计算，LLM 仅用于 `ai-brief` 与 `ai-chat`，保留 `BaseAgent.llm_enhance` 预留扩展钩子与现有预算/版本单测，文档与 `.env.example` 已对齐；② 宽列过滤下推与 galxe 之外的分页维持已知限制记录；③ 工作区待按需提交与推送。
+
+## 10 月下旬收尾（2026-10-30）
+
+- **采集源评分卡**：新增 `app/services/source_scorecard.py`，`GET /api/v1/collections/sources`
+  每行带 `scorecard`（产量 / 分析率 / 隔离率 / 均分 / 新鲜度 / verdict），运维台展示徽标与
+  处置建议，补上「只能看开关」的盲区。
+- **校准口径修正**：`extract_samples` 按 `p.source` / `f.user_id` 分桶，`historical_backfill`
+  归 `backtest`；`check_gate` 只数 `live`。此前 50 条历史样本被误算进 live（门禁虚高到
+  53/200），修正后真实进度 **live 3 / FARM 2 / backtest 50**。
+- **`/feedback/calibration/status`**：新增 `gate`（真实门禁、差多少、按来源分布）与
+  `roi_ledger`（台账事件与来源分桶），旧字段保留兼容；`/review` 改为双进度条 + 台账说明。
+- **一键回填接台账**：`POST /feedback` 与 `/feedback/batch` 在同一事务写
+  `roi_outcomes(source='manual')`；到账记 `airdrop_received`、未领记 `airdrop_missed`，
+  `dumped` 不写，`(user, project)` 幂等，项目不存在时不写孤儿行。
+- **回溯脚本**：新增 `--roi-only` 幂等补录台账（50 条 `backtest`、`amount_usd` 留 NULL）；
+  `INSERT OR REPLACE` 改为 `WHERE NOT EXISTS`（`feedback` 无唯一键时会重复灌入），启动时清理重复行。
+- **验证**：后端 4054 passed / 25 skipped（覆盖率 88.70%）；`ruff check` / `ruff format --check`
+  全绿（顺带还清 8 个文件的格式欠账）；前端 typecheck / lint / 123 tests 全绿；文档 parity 169 passed。
+- **状态**：改动未提交 git。
 
 ## 项目当前状态
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetchEnvelope } from '@/lib/api';
+import { SimulatedDataBadge, type DataQualityMeta } from '@/components/SimulatedDataBadge';
 import { useCallback, useEffect, useState } from 'react';
 import { Calculator, TrendingUp, Clock, DollarSign, Sparkles, PieChart, ArrowUpRight } from 'lucide-react';
 import Link from 'next/link';
@@ -38,11 +39,17 @@ export function RoiSimulatorPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [dataQuality, setDataQuality] = useState<DataQualityMeta | null>(null);
+
   const runSimulation = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetchEnvelope<{ ok: boolean; data: PortfolioSimulationData }>(
+      const res = await apiFetchEnvelope<{
+        ok: boolean;
+        data: PortfolioSimulationData;
+        data_quality?: DataQualityMeta;
+      }>(
         '/roi/simulate/portfolio',
         {
           method: 'POST',
@@ -55,6 +62,9 @@ export function RoiSimulatorPanel() {
       );
       if (res.data) {
         setData(res.data);
+      }
+      if (res.data_quality) {
+        setDataQuality(res.data_quality);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '测算失败');
@@ -75,11 +85,12 @@ export function RoiSimulatorPanel() {
             <Calculator className="h-4 w-4" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-ink flex items-center gap-2 flex-wrap">
               <span>空投投前 ROI 收益预测与资本分配模拟器</span>
               <span className="badge bg-brand-500/15 text-brand-600 dark:text-brand-400 border border-brand-500/30 text-[10px]">
                 投前量化测算
               </span>
+              <SimulatedDataBadge dataQuality={dataQuality} note="启发式倍数推演，非历史收益或收益承诺" />
             </h2>
             <p className="text-xs text-ink-muted">
               基于真实估值、TVL、空投池分配与背包算法，测算资金与时间投入的最优项目组合。

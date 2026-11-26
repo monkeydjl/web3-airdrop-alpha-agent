@@ -24,12 +24,96 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# signal_data 里承载稳定外部 ID 的键（与 app/db.py 的回填键序一致）。
+# twitter → tweet_id、telegram → post_id、discord 消息级 → message_id。
+_SIGNAL_EXTERNAL_ID_KEYS = ("tweet_id", "post_id", "message_id")
+
+# 触发已处理 raw_projects 重新入队分析的实质信号字段（忽略 TVL/赞数等高频波动项）
+_MATERIAL_REQUEUE_KEYS = (
+    "stage",
+    "sector",
+    "url",
+    "has_testnet",
+    "has_points_program",
+    "explicit_points_program",
+    "no_token_yet",
+    "token_launch_confirmed",
+    "explicit_no_airdrop",
+    "explicit_airdrop_mention",
+    "recent_funding",
+    "funding_total_usd",
+    "total_funding",
+    "funding",
+    "has_task_portal",
+    "points_season_count",
+    "tge_clarity",
+)
+_REQUEUE_SCORE_THRESHOLD = 0.3
+
+
+def _material_signature(raw_data: dict[str, Any]) -> str:
+    """抽取决定评分/资格的实质字段指纹，用于判断重采集是否需要重置 processed=0。"""
+    subset = {k: raw_data.get(k) for k in _MATERIAL_REQUEUE_KEYS if raw_data.get(k) is not None}
+    return json.dumps(subset, sort_keys=True, default=str, ensure_ascii=False)
+
+
+def _should_requeue_existing(
+    old_raw_json: str | None,
+    new_raw_data: dict[str, Any],
+    old_score: float | None,
+    new_score: float,
+    quarantined: int | None,
+) -> bool:
+    """当既有非隔离记录发生实质信号变更或新跨过发现阈值时，返回 True 触发重新分析。"""
+    if quarantined:
+        return False
+    prev_score = float(old_score or 0.0)
+    if prev_score < _REQUEUE_SCORE_THRESHOLD <= float(new_score):
+        return True
+    try:
+        old_dict = json.loads(old_raw_json) if old_raw_json else {}
+        if not isinstance(old_dict, dict):
+            old_dict = {}
+    except (ValueError, TypeError):
+        old_dict = {}
+    return _material_signature(old_dict) != _material_signature(new_raw_data)
+
+
+def _resolve_project_id(conn: DbConnection, discovery: RawDiscovery, resolver: Any | None = None) -> str:
+    """通过统一 ProjectIdentityResolver 解析稳定 project_id，失败时回落 discovery.project_id。"""
+    try:
+        active_resolver = resolver
+        if active_resolver is None:
+            from app.identity import ProjectIdentityResolver
+
+            active_resolver = ProjectIdentityResolver(conn)
+        resolved = active_resolver.resolve(discovery.name, discovery.sector)
+        if resolved and resolved.project_id:
+            return str(resolved.project_id)
+    except Exception as exc:
+        logger.debug("collector.persistence.identity_resolve_fallback", name=discovery.name, error=str(exc))
+    return discovery.project_id
+
+
+def _signal_external_id(signal_data: dict[str, Any]) -> str | None:
+    """从 signal_data 抽取稳定外部 ID；没有则 None（该行不参与幂等去重）。"""
+    for key in _SIGNAL_EXTERNAL_ID_KEYS:
+        value = signal_data.get(key)
+        if value:
+            return str(value)
+    return None
+
 
 class CollectionRepository:
     """采集数据持久化仓库。"""
 
     def __init__(self, conn: DbConnection | None = None) -> None:
         self._conn = conn
+
+    @property
+    def conn(self) -> DbConnection | None:
+        """已注入的共享连接；None 表示每次操作自建并自行关闭。"""
+        return self._conn
 
     def _get_conn(self) -> DbConnection:
         return self._conn if self._conn else get_connection()
@@ -48,7 +132,7 @@ class CollectionRepository:
                 ON CONFLICT(source_id) DO UPDATE SET
                     source_type = excluded.source_type,
                     source_name = excluded.source_name,
-                    updated_at = datetime('now')
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (source_id, source_type, source_name),
             )
@@ -78,7 +162,9 @@ class CollectionRepository:
                     result.items_new,
                     result.items_duplicate,
                     result.status,
-                    result.error_message,
+                    # 脱敏是持久层的统一职责（2026-11-13）：采集器只管 str(e)，
+                    # 任何走到这里的 error_message 都要过 redact（与批量路径同一契约）。
+                    redact(result.error_message) if result.error_message else None,
                 ),
             )
             conn.commit()
@@ -94,10 +180,15 @@ class CollectionRepository:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                "SELECT raw_id FROM raw_projects WHERE source_id = ? AND dedup_key = ?",
+                """
+                SELECT raw_id, raw_data, discovery_score, processed, quarantined, project_id
+                FROM raw_projects
+                WHERE source_id = ? AND dedup_key = ?
+                """,
                 (discovery.source_id, discovery.dedup_key),
             )
             existing = cursor.fetchone()
+            resolved_pid = _resolve_project_id(conn, discovery)
 
             raw_data = discovery.raw_data.copy()
             raw_data["name"] = discovery.name
@@ -107,32 +198,68 @@ class CollectionRepository:
             raw_data["discovery_score"] = discovery.discovery_score
 
             if existing:
-                # 更新已有记录（心跳 + 分数变化）
-                conn.execute(
-                    """
-                    UPDATE raw_projects
-                    SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?
-                    WHERE source_id = ? AND dedup_key = ?
-                    """,
-                    (
-                        json.dumps(raw_data, default=str),
-                        discovery.discovery_score,
-                        discovery.discovered_at.isoformat(),
-                        discovery.project_id,
-                        discovery.source_id,
-                        discovery.dedup_key,
-                    ),
+                ex = dict_from_row(existing)
+                requeue = bool(ex.get("processed")) and _should_requeue_existing(
+                    ex.get("raw_data"),
+                    raw_data,
+                    ex.get("discovery_score"),
+                    discovery.discovery_score,
+                    ex.get("quarantined"),
                 )
+                target_pid = resolved_pid or ex.get("project_id") or discovery.project_id
+                if requeue:
+                    conn.execute(
+                        """
+                        UPDATE raw_projects
+                        SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?,
+                            processed = 0, processed_at = NULL
+                        WHERE source_id = ? AND dedup_key = ?
+                        """,
+                        (
+                            json.dumps(raw_data, default=str),
+                            discovery.discovery_score,
+                            discovery.discovered_at.isoformat(),
+                            target_pid,
+                            discovery.source_id,
+                            discovery.dedup_key,
+                        ),
+                    )
+                else:
+                    # 更新已有记录（心跳 + 分数变化）
+                    conn.execute(
+                        """
+                        UPDATE raw_projects
+                        SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?
+                        WHERE source_id = ? AND dedup_key = ?
+                        """,
+                        (
+                            json.dumps(raw_data, default=str),
+                            discovery.discovery_score,
+                            discovery.discovered_at.isoformat(),
+                            target_pid,
+                            discovery.source_id,
+                            discovery.dedup_key,
+                        ),
+                    )
                 conn.commit()
                 return False
 
             raw_id = uuid.uuid4().hex
+            # ON CONFLICT 兜底（2026-11-13）：上面的 SELECT 是防重的主判据，
+            # 但跨连接并发（定时采集与手动触发同源并发）时两个 SELECT 都可能
+            # 落空 —— 唯一索引 ux_raw_projects_source_dedup 会拒绝第二个
+            # INSERT，这里把竞态从 IntegrityError 降级为合并更新。
             conn.execute(
                 """
                 INSERT INTO raw_projects (
                     raw_id, source_id, dedup_key, raw_data, discovered_at,
                     processed, discovery_score, project_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, dedup_key) DO UPDATE SET
+                    raw_data = excluded.raw_data,
+                    discovery_score = excluded.discovery_score,
+                    discovered_at = excluded.discovered_at,
+                    project_id = COALESCE(NULLIF(excluded.project_id, ''), raw_projects.project_id)
                 """,
                 (
                     raw_id,
@@ -142,10 +269,12 @@ class CollectionRepository:
                     discovery.discovered_at.isoformat(),
                     0,
                     discovery.discovery_score,
-                    discovery.project_id,
+                    resolved_pid,
                 ),
             )
             conn.commit()
+            # 返回值语义（"是否新记录"）按 SELECT 判定，竞态合并时可能滞后
+            # 一拍 —— 调用方只把它当 best-effort 日志计数用。
             return True
         finally:
             if self._should_close():
@@ -163,8 +292,9 @@ class CollectionRepository:
                     """
                     INSERT INTO project_signals (
                         signal_id, project_id, dedup_key, signal_type,
-                        signal_source, signal_data, signal_strength, captured_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        signal_source, signal_data, signal_strength, captured_at, external_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(dedup_key, signal_type, signal_source, external_id) DO NOTHING
                     """,
                     (
                         uuid.uuid4().hex,
@@ -175,6 +305,7 @@ class CollectionRepository:
                         json.dumps(signal.signal_data, default=str),
                         signal.signal_strength,
                         signal.captured_at.isoformat(),
+                        _signal_external_id(signal.signal_data),
                     ),
                 )
             conn.commit()
@@ -351,7 +482,7 @@ class CollectionRepository:
                 conn.close()
 
     @staticmethod
-    def _existing_dedup_keys(conn: Any, items: list[RawDiscovery]) -> set[tuple[str, str]]:
+    def _existing_dedup_keys(conn: Any, items: list[RawDiscovery]) -> dict[tuple[str, str], dict[str, Any]]:
         """一次性查出这些 discovery 中已存在于 raw_projects 的 (source_id, dedup_key)。
 
         按 source_id 分组并对 dedup_key 分块（避开 SQLite 变量数上限），把
@@ -361,7 +492,7 @@ class CollectionRepository:
         for item in items:
             by_source.setdefault(item.source_id, set()).add(item.dedup_key)
 
-        found: set[tuple[str, str]] = set()
+        found: dict[tuple[str, str], dict[str, Any]] = {}
         chunk_size = 400
         for source_id, keys in by_source.items():
             key_list = list(keys)
@@ -369,10 +500,14 @@ class CollectionRepository:
                 chunk = key_list[start : start + chunk_size]
                 placeholders = ",".join("?" * len(chunk))
                 # 占位符数量由分块长度决定，取值全部参数化
-                sql = f"SELECT dedup_key FROM raw_projects WHERE source_id = ? AND dedup_key IN ({placeholders})"  # noqa: S608
+                sql = (
+                    "SELECT dedup_key, raw_data, discovery_score, processed, quarantined, project_id "  # noqa: S608
+                    f"FROM raw_projects WHERE source_id = ? AND dedup_key IN ({placeholders})"
+                )
                 rows = conn.execute(sql, (source_id, *chunk)).fetchall()
                 for row in rows:
-                    found.add((source_id, dict_from_row(row)["dedup_key"]))
+                    d = dict_from_row(row)
+                    found[(source_id, str(d["dedup_key"]))] = d
         return found
 
     def persist_collection_result(
@@ -397,7 +532,7 @@ class CollectionRepository:
                 ON CONFLICT(source_id) DO UPDATE SET
                     source_type = excluded.source_type,
                     source_name = excluded.source_name,
-                    updated_at = datetime('now')
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (result.source_id, source_type, source_name or result.source_id),
             )
@@ -405,7 +540,13 @@ class CollectionRepository:
             # 2. 批量写入原始发现及其信号
             # 一次性查出本批次已存在的 (source_id, dedup_key)，替代此前"每条一次 SELECT"
             # 的 N+1 模式（一次 DefiLlama 采集 = 100+ 次往返）。
-            existing_keys = self._existing_dedup_keys(conn, result.items)
+            existing_rows = self._existing_dedup_keys(conn, result.items)
+            try:
+                from app.identity import ProjectIdentityResolver
+
+                resolver: Any | None = ProjectIdentityResolver(conn)
+            except Exception:
+                resolver = None
 
             items_new = 0
             items_duplicate = 0
@@ -413,7 +554,8 @@ class CollectionRepository:
                 key = (discovery.source_id, discovery.dedup_key)
                 # 批内同 dedup_key 的后续条目也算重复（旧实现依赖同事务内 SELECT
                 # 才能看到，这里显式记账，语义一致且不再需要额外查询）。
-                existing = key in existing_keys
+                existing_meta = existing_rows.get(key)
+                resolved_pid = _resolve_project_id(conn, discovery, resolver=resolver)
 
                 raw_data = discovery.raw_data.copy()
                 raw_data["name"] = discovery.name
@@ -421,43 +563,90 @@ class CollectionRepository:
                 raw_data["sector"] = discovery.sector
                 raw_data["stage"] = discovery.stage
                 raw_data["discovery_score"] = discovery.discovery_score
+                raw_json = json.dumps(raw_data, default=str)
 
-                if existing:
-                    conn.execute(
-                        """
-                        UPDATE raw_projects
-                        SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?
-                        WHERE source_id = ? AND dedup_key = ?
-                        """,
-                        (
-                            json.dumps(raw_data, default=str),
-                            discovery.discovery_score,
-                            discovery.discovered_at.isoformat(),
-                            discovery.project_id,
-                            discovery.source_id,
-                            discovery.dedup_key,
-                        ),
+                if existing_meta is not None:
+                    requeue = bool(existing_meta.get("processed")) and _should_requeue_existing(
+                        existing_meta.get("raw_data"),
+                        raw_data,
+                        existing_meta.get("discovery_score"),
+                        discovery.discovery_score,
+                        existing_meta.get("quarantined"),
                     )
+                    target_pid = resolved_pid or existing_meta.get("project_id") or discovery.project_id
+                    if requeue:
+                        conn.execute(
+                            """
+                            UPDATE raw_projects
+                            SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?,
+                                processed = 0, processed_at = NULL
+                            WHERE source_id = ? AND dedup_key = ?
+                            """,
+                            (
+                                raw_json,
+                                discovery.discovery_score,
+                                discovery.discovered_at.isoformat(),
+                                target_pid,
+                                discovery.source_id,
+                                discovery.dedup_key,
+                            ),
+                        )
+                        existing_meta["processed"] = 0
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE raw_projects
+                            SET raw_data = ?, discovery_score = ?, discovered_at = ?, project_id = ?
+                            WHERE source_id = ? AND dedup_key = ?
+                            """,
+                            (
+                                raw_json,
+                                discovery.discovery_score,
+                                discovery.discovered_at.isoformat(),
+                                target_pid,
+                                discovery.source_id,
+                                discovery.dedup_key,
+                            ),
+                        )
+                    existing_meta["raw_data"] = raw_json
+                    existing_meta["discovery_score"] = discovery.discovery_score
+                    existing_meta["project_id"] = target_pid
                     items_duplicate += 1
                 else:
-                    existing_keys.add(key)
+                    existing_rows[key] = {
+                        "dedup_key": discovery.dedup_key,
+                        "raw_data": raw_json,
+                        "discovery_score": discovery.discovery_score,
+                        "processed": 0,
+                        "quarantined": 0,
+                        "project_id": resolved_pid,
+                    }
                     raw_id = uuid.uuid4().hex
+                    # ON CONFLICT 兜底（2026-11-13）：本事务内的 existing_rows
+                    # 预检挡住单连接重复，跨连接并发由唯一索引
+                    # ux_raw_projects_source_dedup 兜住 —— 竞态合并而非报错。
+                    # raw_id 不在 DO UPDATE 集合里：保住原行的主键身份。
                     conn.execute(
                         """
                         INSERT INTO raw_projects (
                             raw_id, source_id, dedup_key, raw_data, discovered_at,
                             processed, discovery_score, project_id
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, dedup_key) DO UPDATE SET
+                            raw_data = excluded.raw_data,
+                            discovery_score = excluded.discovery_score,
+                            discovered_at = excluded.discovered_at,
+                            project_id = COALESCE(NULLIF(excluded.project_id, ''), raw_projects.project_id)
                         """,
                         (
                             raw_id,
                             discovery.source_id,
                             discovery.dedup_key,
-                            json.dumps(raw_data, default=str),
+                            raw_json,
                             discovery.discovered_at.isoformat(),
                             0,
                             discovery.discovery_score,
-                            discovery.project_id,
+                            resolved_pid,
                         ),
                     )
                     items_new += 1
@@ -465,22 +654,30 @@ class CollectionRepository:
                 # 写入信号
                 if discovery.raw_signals:
                     for signal in discovery.raw_signals:
+                        # 幂等键（2026-11-13）：带稳定外部 ID 的信号同一 identity
+                        # 只落一行（ux_project_signals_identity），否则 twitter_keyword
+                        # 每 15 分钟一轮的重叠窗口会把同一推文反复计数、并把
+                        # captured_at 刷成"永远新鲜"。无外部 ID 的信号 NULL 不冲突，
+                        # 照旧逐条追加。
+                        external_id = _signal_external_id(signal.signal_data)
                         conn.execute(
                             """
                             INSERT INTO project_signals (
                                 signal_id, project_id, dedup_key, signal_type,
-                                signal_source, signal_data, signal_strength, captured_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                signal_source, signal_data, signal_strength, captured_at, external_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(dedup_key, signal_type, signal_source, external_id) DO NOTHING
                             """,
                             (
                                 uuid.uuid4().hex,
-                                discovery.project_id,
+                                resolved_pid,
                                 discovery.dedup_key,
                                 signal.signal_type,
                                 signal.signal_source,
                                 json.dumps(signal.signal_data, default=str),
                                 signal.signal_strength,
                                 signal.captured_at.isoformat(),
+                                external_id,
                             ),
                         )
 
@@ -513,7 +710,7 @@ class CollectionRepository:
             conn.execute(
                 """
                 UPDATE data_sources
-                SET sync_status = ?, last_sync = datetime('now'), updated_at = datetime('now')
+                SET sync_status = ?, last_sync = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                 WHERE source_id = ?
                 """,
                 (result.status, result.source_id),

@@ -1,4 +1,7 @@
-# 上线审核报告
+# 上线审核报告（历史归档）
+
+> **⚠️ 历史归档提示（2026-11-20）**：本报告为 `2026-08-20` 的早期审核记录，其中部分旧容器名（如 `airdrop-alpha-backend`）与旧命令（`docker compose --profile postgres`）均已过时。
+> 最新生产部署必须以 [`README.md`](README.md)、[`docker-compose.prod.yml`](docker-compose.prod.yml)（容器 `airdrop-web` + `airdrop-frontend` + `airdrop-nginx`）与 [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_CHECKLIST.md) 为准。
 
 > 审核日期：2026-08-20（替换 2026-07-26 版本）
 > 审核依据：`docs/GO_LIVE_CHECKLIST.md` P0/P1 项 + `docs/SECURITY.md`

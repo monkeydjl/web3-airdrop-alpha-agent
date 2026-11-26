@@ -51,6 +51,11 @@
 | `outcome` | `airdropped` / `not_airdropped` / `pumped` / `dumped` | 事后事实（延迟标注） |
 | `note` | 自由文本 | 审计，不直接进目标函数 |
 
+`outcome` 不只留在 `feedback`：一次结果标记会同步写一笔 `roi_outcomes`
+（`source='manual'`）—— `airdropped → airdrop_received`、`not_airdropped → airdrop_missed`。
+`dumped` **不写台账**：项目失败不等于空投产出，它的监督信号仍由 `feedback.outcome` 承担。
+台账是「实际回报」的唯一结构化来源（`ACTION_LOOP_DESIGN.md §4.3`）。
+
 ### 3.2 样本计入规则
 
 | 条件 | 是否计入校准样本 |
@@ -58,15 +63,21 @@
 | `wrong_label` + 有效 `correct_label` | ✅ 强监督 |
 | `outcome` 非空 | ✅ 结果监督 |
 | 仅 `useful` / `useless` | 🟡 弱信号（权重 0.3，或仅用于分层分析） |
-| 同一 user+project 7 日内重复 | 只保留最新一条 |
+| 同一 project 多条反馈 | 只保留最新一条（`extract_samples` 按项目去重） |
+| `source = backtest`（`historical_backfill` 写入） | ❌ 不进 live 门禁，见下方分桶规则 |
 | 匿名刷量（若未来有 user_id） | 需速率限制后再计 |
+
+**来源分桶（live / backtest）**：`historical_backfill` 写入的反馈与
+`roi_outcomes.source='backtest'` 归入 `backtest` 桶；`app/calibration.py::check_gate`
+**只统计 `live` 桶**。回测样本的价值是验证模型、提前跑通流程，不能拿来凑门禁——
+`tests/test_calibration.py` 有回归用例钉住「灌满 backtest 样本门禁仍不通过」。
 
 ### 3.3 首次校准门槛
 
 | 门槛 | 值 | 说明 |
 |------|-----|------|
-| 最小有效样本 | **≥ 200** | ADR-006；`wrong_label`+`outcome` 合计优先 |
-| 其中 FARM 相关 | 建议 ≥ 30 | 避免全 IGNORE 偏置 |
+| 最小有效样本 | **≥ 200** | ADR-006；`wrong_label`+`outcome` 合计优先，**只数 live 桶** |
+| 其中 FARM 相关 | 建议 ≥ 30 | 避免全 IGNORE 偏置，同样只数 live 桶 |
 | 时间窗 | 建议最近 90 天 | 叙事周期漂移 |
 
 未达标：**禁止**切换默认 `weight_version`；可离线实验但不合并主配置。
@@ -135,7 +146,7 @@ veto 表达「现在还有没有能参与的路径」。把否决拿去拟合，
 ### 4.3 离线流程
 
 ```
-1. 导出 feedback + 对应 projects 快照（含子分，便于重加权）
+1. 导出 feedback 与 roi_outcomes + 对应 projects 快照（含子分，便于重加权；两种来源都按 source 分桶）
 2. 固定 Agent 子分，仅重算加权总分与 label（快路径）
 3. 网格/随机搜索最大化 J
 4. 对候选权重跑 Golden 全量

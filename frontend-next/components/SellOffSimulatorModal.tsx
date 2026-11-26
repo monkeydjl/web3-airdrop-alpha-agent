@@ -4,6 +4,7 @@ import { Modal } from '@/components/Modal';
 
 import React, { useState, useEffect } from "react";
 import { apiFetchEnvelope } from "@/lib/api";
+import { SimulatedDataBadge, type DataQualityMeta } from "@/components/SimulatedDataBadge";
 
 type SellOffPersona = "conservative" | "balanced" | "aggressive" | "farmer_whale";
 
@@ -67,7 +68,7 @@ export default function SellOffSimulatorModal({
       if (isNaN(amt) || amt <= 0) throw new Error("请输入有效的代币数量");
       if (isNaN(prc) || prc <= 0) throw new Error("请输入有效的代币预估单价");
 
-      const json = await apiFetchEnvelope<SimulationResult>('/sell-off/simulate', {
+      const json = await apiFetchEnvelope<SimulationResult & { data_quality?: DataQualityMeta }>('/sell-off/simulate', {
         method: "POST",
         body: JSON.stringify({
           token_amount: amt,
@@ -102,7 +103,13 @@ export default function SellOffSimulatorModal({
           <div className="flex items-center gap-3">
             <span className="text-2xl">💰</span>
             <div>
-              <h3 className="text-lg font-bold text-slate-100">空投领取代币出局与止盈模拟器</h3>
+              <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                <span>空投领取代币出局与止盈模拟器</span>
+                <SimulatedDataBadge
+                  dataQuality={(result as (SimulationResult & { data_quality?: DataQualityMeta }) | null)?.data_quality}
+                  note="基于历史抛压曲线模型的公式推演，不构成交易建议"
+                />
+              </h3>
               <p className="text-xs text-slate-400">
                 对比「开盘秒砸」、「分批 DCA」、「保本底仓」与「生态质押」4 大出局方案预期收益
               </p>

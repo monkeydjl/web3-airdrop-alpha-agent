@@ -298,7 +298,12 @@ class TestComposeInvocationIsConsistent:
         offenders = [
             ln.strip()
             for ln in _code_lines("scripts/deploy.sh")
-            if "docker-compose" in ln and "command -v" not in ln and 'COMPOSE="docker-compose"' not in ln
+            if "docker-compose" in ln
+            and "command -v" not in ln
+            and 'COMPOSE="docker-compose"' not in ln
+            # compose **文件名**引用（-f docker-compose.prod.yml）不是对
+            # v1 二进制的调用 —— 守卫的靶子是"绕过 $COMPOSE 直接执行"。
+            and not re.search(r"docker-compose[\w.-]*\.ya?ml", ln)
         ]
         assert not offenders, f"deploy.sh 仍直接调用 docker-compose：{offenders}"
 
@@ -1119,7 +1124,12 @@ class TestDeployPreflightBehavior:
     """
 
     _VALID_PROD_ENV = (
-        "APP_ENV=production\nAPI_KEY=" + "a" * 40 + "\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        "APP_ENV=production\nAPI_KEY="
+        + "a" * 40
+        + "\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        + "BACKEND_API_KEY="
+        + "a" * 40
+        + "\nPOSTGRES_PASSWORD=strong-pg-pass\nGRAFANA_PASSWORD=strong-graf-pass\n"
     )
 
     def _deploy_sandbox(self, tmp_path: Path, env_text: str | None = None) -> str:
@@ -1154,14 +1164,19 @@ class TestDeployPreflightBehavior:
 
     @staticmethod
     def _compose_actions(sandbox: Path) -> list[str]:
-        """返回真实 compose 动作（down/build/up）行；`compose version` 探测不算。"""
+        """返回真实 compose 动作（down/build/up）行；`compose version` 探测不算。
+
+        2026-11-22 起 prod 走 `-f docker-compose.prod.yml`，动作动词前可以
+        夹带旗标——不能再锚定 `compose ` 之后的第一个词（曾把三条真实动作
+        行全部漏掉，测试反咬脚本）。判据：行以 compose 开头 **且** 行内
+        出现独立成词的 down/build/up（空白定界，不认子串）。
+        """
         log = sandbox / "docker_calls.log"
         if not log.exists():
             return []
+        action = re.compile(r"(^|\s)(down|build|up)(\s|$)")
         return [
-            ln
-            for ln in log.read_text(encoding="utf-8").splitlines()
-            if re.match(r"compose (down|build|up|--profile)", ln)
+            ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.startswith("compose") and action.search(ln)
         ]
 
     def test_prod_without_env_stops_after_creating_the_template(self, tmp_path: Path) -> None:
@@ -1192,8 +1207,12 @@ class TestDeployPreflightBehavior:
         assert self._compose_actions(tmp_path) == [], "预检失败后 compose 零真实动作。"
 
     def test_prod_short_api_key_fails_even_when_rest_is_valid(self, tmp_path: Path) -> None:
-        """长度门是独立的：API_KEY 8 字符挂、其余三项不得误报。"""
-        env = "APP_ENV=production\nAPI_KEY=shortkey8\nAUTH_TOKEN_SECRET=abc\nCORS_ORIGINS=https://api.example.com\n"
+        """长度门是独立的：API_KEY 8 字符挂、其余项不得误报。"""
+        env = (
+            "APP_ENV=production\nAPI_KEY=shortkey8\nAUTH_TOKEN_SECRET=abc\n"
+            "CORS_ORIGINS=https://api.example.com\nBACKEND_API_KEY=shortkey8\n"
+            "POSTGRES_PASSWORD=strong-pg-pass\nGRAFANA_PASSWORD=strong-graf-pass\n"
+        )
         bin_dir = self._deploy_sandbox(tmp_path, env)
         proc = self._run_deploy(tmp_path, bin_dir, "prod")
         assert proc.returncode == 1, proc.stdout[-800:]
@@ -1214,6 +1233,16 @@ class TestDeployPreflightBehavior:
     def test_prod_with_valid_config_runs_the_full_flow(self, tmp_path: Path) -> None:
         """有效配置：预检通过 → 全流程跑完；真实 compose 动作此时才允许出现。"""
         bin_dir = self._deploy_sandbox(tmp_path, self._VALID_PROD_ENV)
+        # prod 健康检查走 docker inspect（2026-11-16 改动）——mock 需要返回 "healthy"
+        # compose ps（容器退出检查）需要返回 "airdrop-web"
+        prod_docker_shim = (
+            "#!/bin/bash\n"
+            'echo "$*" >> "$PWD/docker_calls.log"\n'
+            'if echo "$*" | grep -q "inspect"; then echo "healthy"; exit 0; fi\n'
+            'if echo "$*" | grep -q "compose ps\\|ps --status"; then echo "airdrop-web"; exit 0; fi\n'
+            "exit 0\n"
+        )
+        _write_shims(tmp_path, {"docker": prod_docker_shim})
         proc = self._run_deploy(tmp_path, bin_dir, "prod")
         assert proc.returncode == 0, proc.stdout[-800:]
         assert "生产配置预检通过" in proc.stdout, proc.stdout[-600:]

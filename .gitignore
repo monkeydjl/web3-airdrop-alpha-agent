@@ -96,6 +96,8 @@ Desktop.ini
 *.sqlite
 *.sqlite3
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.sqlite
 data/*.sqlite3
 # 洁净度快照（conftest 会话结束时生成，机器可 diff 的默认库足迹基线）
@@ -201,3 +203,12 @@ junit-*.xml
 *.md.partial
 docs/_utf8_worklist.json
 .freebuff/
+
+# Trae IDE 本地工作区目录（个人配置与缓存，不入库）
+.trae/
+
+# 本地 Agent / 编辑器辅助目录与截图（不入库）
+.workbuddy/
+.claude/
+.workbench/
+.screenshots/

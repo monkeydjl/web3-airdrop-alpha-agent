@@ -34,6 +34,7 @@ Redis，那是 V2 的事。
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -52,13 +53,30 @@ EXEMPT_PREFIXES = ("/health", "/metrics")
 def _expensive_limits() -> tuple[tuple[str, int, int], ...]:
     """昂贵端点的额外限制：(路径前缀, 次数, 窗口秒)。
 
-    SECURITY.md §10.4 写的是"`/run` 每小时 1 次"，其给出的理由是"防 LLM 配额
-    耗尽攻击"。照字面实现会把手动触发一次分析也锁死一小时，而在 LLM 关闭时
-    这条限制并不针对任何真实风险。因此按其**理由**分档：LLM 开启时严格到
-    每小时 1 次，关闭时放宽到每小时 10 次——仍能挡住刷接口，不妨碍正常运维。
+    SECURITY.md §10.4 写的是"`/run` 每小时 1 次"，按 LLM 开关分档：
+    LLM 开启时严格到每小时 1 次，关闭时放宽到每小时 10 次。
     """
     per_hour = 1 if settings.is_llm_enabled else 10
     return (("/api/v1/run", per_hour, 3600),)
+
+
+def _auth_limits() -> tuple[tuple[str, int, int], ...]:
+    """认证端点防爆破与 CPU 放大限制：(路径前缀, 次数, 窗口秒)。
+
+    与通用 50,000 键池隔离，避免洪泛淘汰登录爆破与 bcrypt 注册计数。
+    """
+    return (
+        ("/api/v1/auth/login", 20, 300),
+        ("/api/v1/auth/register", 10, 300),
+    )
+
+
+_LLM_ENDPOINT_RE = re.compile(r"^/api/v1/projects/[^/]+/ai-(?:brief|chat)(?:/|$)")
+
+
+def _llm_pattern_limits() -> tuple[tuple[str, re.Pattern[str], int, int], ...]:
+    """按正则匹配的 LLM 生成/追问写端点配额：(桶名, 路径正则, 次数, 窗口秒)。"""
+    return (("llm_project_ai", _LLM_ENDPOINT_RE, 30, 3600),)
 
 
 class _SlidingWindow:
@@ -100,6 +118,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._windows = _SlidingWindow()
+        # 独立昂贵/认证限流窗口：避免通用 50,000 键池被刷满时误淘汰 /run 1 小时冷却与 /auth/login 爆破记录
+        self._expensive_windows = _SlidingWindow()
         self._last_prune = 0.0
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -116,9 +136,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.monotonic()
         if now - self._last_prune > 60:
             self._last_prune = now
-            # 清理窗口取最长的实际配额窗口即可，无需再乘 2
-            longest = max(float(settings.rate_limit_window), *(float(w) for _, _, w in _expensive_limits()))
-            self._windows.prune(now, longest)
+            self._windows.prune(now, float(max(1, settings.rate_limit_window)))
+            longest_expensive = max(
+                *(float(w) for _, _, w in (*_expensive_limits(), *_auth_limits())),
+                *(float(w) for _, _, _, w in _llm_pattern_limits()),
+            )
+            self._expensive_windows.prune(now, longest_expensive)
 
         client_ip = _client_ip(request)
 
@@ -133,11 +156,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if retry is not None:
             return _too_many(retry)
 
-        for prefix, limit, window in _expensive_limits():
+        for prefix, limit, window in (*_expensive_limits(), *_auth_limits()):
             if path == prefix or path.startswith(prefix + "/"):
-                retry = self._windows.check(f"{client_ip}:{prefix}", limit, float(window), now)
+                retry = self._expensive_windows.check(f"{client_ip}:{prefix}", limit, float(window), now)
                 if retry is not None:
                     return _too_many(retry)
+
+        if request.method == "POST":
+            for bucket_name, pattern, limit, window in _llm_pattern_limits():
+                if pattern.match(path):
+                    retry = self._expensive_windows.check(f"{client_ip}:{bucket_name}", limit, float(window), now)
+                    if retry is not None:
+                        return _too_many(retry)
         return await call_next(request)
 
 

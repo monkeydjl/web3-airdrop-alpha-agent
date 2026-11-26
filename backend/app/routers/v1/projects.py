@@ -12,14 +12,15 @@ Reference:
 
 import json
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.team import score_to_risk_level
-from app.auth import ROLE_ADMIN, get_current_user
+from app.auth import get_current_user
+from app.db import connection_scope
 from app.openapi import ERROR_RESPONSE_EXAMPLES, PROJECTS_LIST_RESPONSE_EXAMPLE
 from app.repository import ProjectRepository
 from app.services.project_signals import funding_public_view, parse_meta, signals_of
@@ -28,6 +29,7 @@ from app.services.user_scope import DEFAULT_USER
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["projects"])
+_NO_REQUEST: Request = cast(Request, None)
 
 _REASONS_ZH_MAP: dict[str, str] = {
     # Positive reasons
@@ -75,6 +77,7 @@ _REASONS_ZH_MAP: dict[str, str] = {
     "token already launched with no verified follow-on airdrop path": "已发币且无可验证的后续空投路径",
     "team or official source explicitly disclaimed airdrop / token incentives": "团队或官方已明确否认空投/代币激励",
     "no verified testnet, points program, task portal, or explicit airdrop mention": "暂无可验证的测试网、积分体系、任务门户或官方空投声明",
+    "no verified participation path; monitor for a testnet, points, or task portal": "暂无已核实的交互路径，建议关注后续测试网、积分或任务入口",
     # Viability & Runway gate reasons
     "low_runway_risk": "存活率与跑道预警（极低存活率）",
     "low runway risk": "存活率与跑道预警（极低存活率）",
@@ -265,7 +268,7 @@ def list_projects(
         None,
         description="按资格否决筛选（no_participation_path=缺参与路径、already_launched=已发币）",
     ),
-    user_id: str | None = Query(None, description="用户 ID（匿名时走 default）"),
+    user_id: str | None = Query(None, max_length=64, description="用户 ID（仅管理员可指定，匿名时走 default）"),
     curated: bool = Query(False, description="仅返回满足精选门槛的项目（评分/置信度/近90天活动/参与路径）"),
     zero_cost_only: bool = Query(False, description="仅返回零资金成本/纯测试网项目（保本优先）"),
     personalized: bool = Query(False, description="是否启用基于用户偏好的个性化加权排序（V3 Memory，Roadmap §25.5.3）"),
@@ -291,14 +294,10 @@ def list_projects(
     Returns:
         ProjectsResponse 包含项目列表
     """
+    from app.auth import resolve_scoped_user_id
+
     current_user = get_current_user(req)
-    if current_user["role"] == ROLE_ADMIN:
-        uid = user_id or (current_user["user_id"] if current_user["user_id"] != "anonymous" else DEFAULT_USER)
-    elif current_user["user_id"] != "anonymous":
-        uid = user_id or current_user["user_id"]
-    else:
-        uid = user_id or DEFAULT_USER
-    effective_user_id = uid.strip()
+    effective_user_id = resolve_scoped_user_id(current_user, user_id, default_user=DEFAULT_USER)
 
     logger.info(
         "api.projects.list",
@@ -362,6 +361,7 @@ def list_projects(
                     "veto": p.get("veto"),
                     "hidden_reason": p.get("hidden_reason"),
                     "skipped": bool(p.get("skipped", False)),
+                    "watchlisted": bool(p.get("watchlisted", False)),
                     "signal_consensus": p.get("signal_consensus"),
                     "persona_applied": p.get("persona_applied") or (persona or "balanced"),
                     "persona_score": p.get("persona_score") if p.get("persona_score") is not None else p.get("score"),
@@ -458,7 +458,7 @@ def get_projects_digest(
     except Exception as e:
         logger.error("api.projects.digest_failed", error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha digest: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to generate alpha digest"}
         ) from e
 
 
@@ -483,6 +483,12 @@ def get_projects_digest(
 )
 def get_project(
     project_id: str = Path(..., description="项目 ID"),
+    req: Request = _NO_REQUEST,
+    user_id: str | None = Query(
+        None,
+        max_length=64,
+        description="用户 ID（仅管理员可指定，匿名时走当前访客或 default）",
+    ),
 ) -> dict[str, Any]:
     """获取单个项目详情.
 
@@ -495,15 +501,33 @@ def get_project(
     Raises:
         HTTPException: 项目不存在
     """
+    from app.auth import resolve_scoped_user_id
+
+    requested_uid = user_id if isinstance(user_id, str) else None
+    maybe_req: Any = req
+    if isinstance(maybe_req, Request):
+        effective_user_id = resolve_scoped_user_id(
+            get_current_user(maybe_req),
+            requested_uid,
+            default_user=DEFAULT_USER,
+        )
+    else:
+        effective_user_id = requested_uid or DEFAULT_USER
+
     logger.info(
         "api.projects.get",
         project_id=project_id,
+        user_id=effective_user_id,
     )
 
     # Query from database
     try:
         repo = ProjectRepository()
-        project = repo.get_by_id(project_id)
+        project = (
+            repo.get_by_id(project_id)
+            if effective_user_id == DEFAULT_USER
+            else repo.get_by_id(project_id, user_id=effective_user_id)
+        )
 
         if not project:
             raise HTTPException(
@@ -608,7 +632,7 @@ async def evaluate_project(
     except Exception as e:
         logger.error("api.projects.evaluate_failed", project_id=project_id, error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to evaluate project: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to evaluate project"}
         ) from e
 
 
@@ -645,7 +669,7 @@ def get_project_dossier(
     except Exception as e:
         logger.error("api.projects.dossier_failed", project_id=project_id, error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha dossier: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to generate alpha dossier"}
         ) from e
 
 
@@ -757,12 +781,8 @@ def get_project_signals_consensus(
             )
         from app.services.signal_correlation import correlate_signals_for_project
 
-        conn = repo._get_conn()
-        try:
+        with connection_scope() as conn:
             consensus = correlate_signals_for_project(conn, project_id, window_days=window_days)
-        finally:
-            if repo._should_close():
-                conn.close()
         return {
             "ok": True,
             "data": consensus,

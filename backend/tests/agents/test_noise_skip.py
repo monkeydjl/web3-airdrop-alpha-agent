@@ -346,10 +346,10 @@ class TestExplicitPointsProgram:
         flags = CollectorAgent._infer_airdrop_flags("rootdata", {"name": "X", "description": description})
         assert flags["explicit_points_program"] is expected
 
-    def test_loose_text_still_feeds_has_points_program(self):
-        """宽松字段保留给 airdrop_signal 子分，评分口径不变。"""
+    def test_loose_text_does_not_set_has_points_program(self):
+        """通用词只是弱佐证（2026-11-09）：不再单独把 has_points_program 置真。"""
         flags = CollectorAgent._infer_airdrop_flags("rootdata", {"name": "X", "description": "restaking vaults"})
-        assert flags["has_points_program"] is True
+        assert flags["has_points_program"] is False
         assert flags["explicit_points_program"] is False
 
     def test_defillama_loose_raw_flag_is_not_trusted(self):

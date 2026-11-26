@@ -8,6 +8,8 @@
  * 2. `/projects` 等页面将来也要导出，逻辑不该各写一遍。
  */
 
+import { getClientAuthHeaders } from './api.ts';
+
 /** 后端 /export/* 与 /import/* 的挂载前缀，与 lib/api.ts 的 API_BASE 保持一致 */
 export const API_PREFIX = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
 
@@ -52,12 +54,10 @@ export function errorMessageFromBody(text: string, status: number, fallbackActio
   const generic = `${fallbackAction}失败（HTTP ${status}）`;
 
   // 鉴权失败要单独说人话。这两组端点在后端的 ADMIN_ONLY_PREFIXES 里
-  // （`/api/v1/export`、`/api/v1/import`），密钥由 Next 服务端的 proxy.ts 从
-  // BACKEND_API_KEY / API_KEY 注入。没配时后端返回的是英文
-  // "Missing API key or token"（实测），直接透给用户，他既看不懂、
-  // 也不知道该去哪配。
+  // （`/api/v1/export`、`/api/v1/import`），proxy.ts 对管理前缀不自动代签，
+  // 需由客户端出示 API Key 或管理员登录凭据。
   if (status === 401) {
-    return `${fallbackAction}需要管理员密钥：请在前端服务端设置 BACKEND_API_KEY（与后端 API_KEY 一致）后重启`;
+    return `${fallbackAction}需要管理员凭据：请点击左侧导航栏「管理员鉴权」输入 API Key 或登录管理员账号`;
   }
   if (status === 403) {
     return `${fallbackAction}被拒绝：当前身份不是管理员，该接口仅管理员可用`;
@@ -92,7 +92,9 @@ export function errorMessageFromBody(text: string, status: number, fallbackActio
  * `errorMessageFromBody`，保证后端那句话不会被吞掉。
  */
 export async function downloadFile(path: string, fallbackName: string): Promise<string> {
-  const res = await fetch(`${API_PREFIX}${path}`, { headers: { Accept: '*/*' } });
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    headers: { Accept: '*/*', ...getClientAuthHeaders() },
+  });
 
   if (!res.ok) {
     throw new Error(errorMessageFromBody(await res.text(), res.status, '导出'));

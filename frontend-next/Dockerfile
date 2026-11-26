@@ -7,14 +7,14 @@
 # Stage 1: 安装依赖（含 devDependencies，构建需要 typescript/tailwind）
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY frontend-next/package.json frontend-next/package-lock.json* ./
+COPY package.json package-lock.json* ./
 RUN npm ci
 
 # Stage 2: 构建
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY frontend-next/ .
+COPY . .
 
 # `next.config.js` 的 rewrites 在 **build 时**读取 API_PROXY_TARGET 并写入产物，
 # 不是运行时才解析。生产 nginx 现在将 /api 交给 Next（这样 proxy.ts 才能注入
@@ -37,6 +37,17 @@ RUN npx next build --webpack
 # Stage 3: 生产运行
 FROM node:22-alpine AS runner
 WORKDIR /app
+
+# 运行时只执行 `node server.js`，npm 不会被调用。但 npm 随 node:22-alpine
+# 基础镜像分发，其 vendored 依赖链（brace-expansion、glob、minimatch 等）
+# 持续被扫描器点名（2026-11-22：10 个 HIGH；升级 npm 后又冒出 2 个 MEDIUM，
+# 修复版在上游、npm 未及 vendored —— 扫描门禁追着 npm 版本跑，永无宁日）。
+# 直接把 npm 从运行时镜像里删掉：这一类漏洞件不再进入最终镜像，门禁恢复
+# 稳定；构建期的 deps/builder 阶段不受影响。apk upgrade 同步把系统包
+# （musl/zlib 等）升到当前 alpine 仓库的修复版，避免本地缓存的基础镜像
+# 层过时携带已修复 CVE。
+RUN apk upgrade --no-cache \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

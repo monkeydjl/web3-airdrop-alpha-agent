@@ -17,7 +17,7 @@ from typing import Any
 import structlog
 
 from app.collectors.base import CollectorResult, DataCollector, RawDiscovery, RawSignal
-from app.collectors.noise import is_listed_brand_subproduct, is_noise_protocol
+from app.collectors.noise import is_facet_word_continuation, is_listed_brand_subproduct, is_noise_protocol
 from app.collectors.rate_limiter import TokenBucketRateLimiter
 from app.config import settings
 from app.services.defillama_raises import fetch_protocol_funding
@@ -85,14 +85,14 @@ class DefiLlamaCollector(DataCollector):
                 for protocol in candidates[:15]:
                     slug = protocol.get("slug")
                     if slug:
+                        await self.rate_limiter.acquire()
                         funding_info = await fetch_protocol_funding(slug, client=client)
                         if funding_info and funding_info.get("has_funding"):
                             protocol["funding"] = funding_info
                             protocol["recent_funding"] = True
 
-            for protocol in candidates:
-                discovery = self._build_discovery(protocol)
-                result.items.append(discovery)
+            # 单条脏数据只丢该条（基类容错，2026-11-13）
+            self._build_items(candidates, result)
 
             result.status = "success" if result.items else "partial"
 
@@ -110,15 +110,24 @@ class DefiLlamaCollector(DataCollector):
         """拉取 DefiLlama /protocols 全量协议列表。"""
         url = f"{self.base_url}/protocols"
 
-        async with self.rate_limiter, self.http_client(timeout=self.timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
+        response = await self.request_with_retry("GET", url)
+        response.raise_for_status()
+        data = response.json()
 
         if not isinstance(data, list):
             raise ValueError(f"Unexpected DefiLlama response type: {type(data)}")
 
-        return data
+        # DefiLlama HTTP `/protocols` 返回的 change_7d 单位是百分数（如 15.4 表示 +15.4%），
+        # 在采集 HTTP 边界统一折算为 ratio（0.154），对齐下游 change_7d_unit="ratio" 契约与
+        # _calculate_discovery_score（0.5 = +50% 满分）。
+        normalized: list[dict[str, Any]] = []
+        for item in data:
+            if isinstance(item, dict) and item.get("change_7d") is not None:
+                c7 = item.get("change_7d")
+                if isinstance(c7, (int, float)) and not isinstance(c7, bool):
+                    item = {**item, "change_7d": round(float(c7) / 100.0, 8)}
+            normalized.append(item)
+        return normalized
 
     def _filter_candidates(self, protocols: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """过滤出高价值未发币协议（排除 CEX/蓝筹噪声与已发币品牌的子条目）。"""
@@ -171,24 +180,14 @@ class DefiLlamaCollector(DataCollector):
         return candidates
 
     def _is_zombie(self, protocol: dict[str, Any]) -> bool:
-        """判定一个项目是不是已基本死亡（属于战内 没有下文）。
+        """判定一个 DefiLlama 协议是不是占位/僵尸条目。
 
-        所谓僵尸项目 = 完成需求双一动一线。当 DefiLlama 的数据里该项目的
-        官网网址字段为完备占位（prefixes dir that conspires against复数
-        “ defillama.com/protocol/... ”）或者 apa 链接 —— 数据面上告诉我们
-        我们从没听说过真正的官网域名；项目就是个废墟，不再覆盖着找线索。
+        DefiLlama 对没有真实官网的项目会填 `defillama.com/protocol/<slug>`
+        这类**站内占位链接**，或干脆留空 —— 两种情况都说明"我们没听说过
+        它的独立域名"，项目没有可验证的落地页，不作为独立发现条目输出。
         """
         url = str(protocol.get("url") or "")
         return not url or "defillama.com" in url
-
-    async def _drop_zombies(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """调用示意同一方法 _filter_candidates 可用，方便测试。这里调用无关
-        纯通了，先看有没有 GitHub 再决定推没推。"""
-        zombie = [c for c in candidates if self._is_zombie(c)]
-        alive = [c for c in candidates if not self._is_zombie(c)]
-        if zombie:
-            self.logger.info("defillama.zombie_skipped", count=len(zombie))
-        return alive
 
     def _is_facet_of_listed(
         self,
@@ -214,7 +213,9 @@ class DefiLlamaCollector(DataCollector):
                 return True
         if name:
             for listed in listed_names:
-                if len(listed) >= 3 and name.startswith(listed):
+                # 词边界（2026-11-14 审查 P2-9）：裸前缀会误杀共享前缀的独立
+                # 品牌（"Ondo" → "OndoXyz"）—— 余下部分必须是分词边界。
+                if len(listed) >= 3 and name.startswith(listed) and is_facet_word_continuation(name, listed):
                     return True
         # 3. 品牌首词兜底（静态注册表）：父链接为 null、名字与母条目互不为
         #    前缀时（实测：Plume Vaults vs Plume Mainnet，PLUME 早已 TGE），
@@ -307,29 +308,11 @@ class DefiLlamaCollector(DataCollector):
             "has_github": bool(protocol.get("github")),
             "no_token_yet": no_token,
             "has_testnet": has_testnet,
-            "has_points_program": (
-                True
-                if (
-                    any(
-                        kw in str(protocol.get("description") or "").lower()
-                        for kw in (
-                            "points",
-                            "staking",
-                            "stakers",
-                            "restaking",
-                            "vault",
-                            "incentive",
-                            "rewards",
-                            "deposit",
-                        )
-                    )
-                    or any(
-                        cat in str(protocol.get("category") or "").lower()
-                        for cat in ("restaking", "liquid staking", "yield", "leveraged farming", "basis")
-                    )
-                )
-                else None
-            ),
+            # 积分计划不再由采集器用关键词拼（2026-11-09 统一口径）。staking /
+            # vault / restaking / incentive 这类通用词只是弱佐证，不能单独把
+            # has_points_program 置真，判定统一交给 _infer_airdrop_flags 的
+            # 字段级证据 + 明确积分措辞（见 app/utils/points.py）。
+            "has_points_program": None,
             "recent_funding": bool(protocol.get("funding") or protocol.get("recent_funding")),
             "funding": protocol.get("funding"),
         }
@@ -441,14 +424,17 @@ class DefiLlamaCollector(DataCollector):
     async def health_check(self) -> dict[str, Any]:
         """检查 DefiLlama API 可用性。"""
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(f"{self.base_url}/protocols")
-                response.raise_for_status()
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "protocols_count": len(response.json()) if isinstance(response.json(), list) else 0,
-                }
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/protocols",
+                timeout=10,
+            )
+            response.raise_for_status()
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "protocols_count": len(response.json()) if isinstance(response.json(), list) else 0,
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,

@@ -47,6 +47,7 @@ class CryptoRankCollector(DataCollector):
         super().__init__(source_id="cryptorank", source_name="CryptoRank")
         self.base_url = settings.cryptorank_base_url.rstrip("/")
         self.timeout = getattr(settings, "cryptorank_timeout", 30)
+        self.retry = settings.cryptorank_retry
         self.api_key = settings.cryptorank_api_key
         self.rate_limiter = TokenBucketRateLimiter("cryptorank")
         self.logger = logger.bind(source_id=self.source_id)
@@ -114,8 +115,10 @@ class CryptoRankCollector(DataCollector):
                     "limit": self.PAGE_SIZE,
                     "offset": offset,
                 }
-                async with self.rate_limiter:
-                    response = await client.get(url, params=params, headers=headers)
+                # 用外层 client（2026-11-13 审查 P2-8）：内层曾再开一个
+                # `async with self.http_client(...)` 同名遮蔽，TCP/TLS 连接
+                # 每页重建，外层"循环外创建以复用连接"的注释形同虚设。
+                response = await self.request_with_retry("GET", url, client=client, params=params, headers=headers)
                 response.raise_for_status()
                 payload = response.json()
                 if not isinstance(payload, dict):
@@ -292,19 +295,20 @@ class CryptoRankCollector(DataCollector):
 
     async def health_check(self) -> dict[str, Any]:
         try:
-            async with self.rate_limiter, self.http_client(timeout=10) as client:
-                response = await client.get(
-                    f"{self.base_url}/currencies",
-                    params={"api_key": self.api_key, "limit": 1, "offset": 0},
-                )
-                response.raise_for_status()
-                data = response.json()
-                count = len(data.get("data") or []) if isinstance(data, dict) else 0
-                return {
-                    "source_id": self.source_id,
-                    "status": "healthy",
-                    "sample_count": count,
-                }
+            response = await self.request_with_retry(
+                "GET",
+                f"{self.base_url}/currencies",
+                timeout=10,
+                params={"api_key": self.api_key, "limit": 1, "offset": 0},
+            )
+            response.raise_for_status()
+            data = response.json()
+            count = len(data.get("data") or []) if isinstance(data, dict) else 0
+            return {
+                "source_id": self.source_id,
+                "status": "healthy",
+                "sample_count": count,
+            }
         except Exception as e:
             return {
                 "source_id": self.source_id,

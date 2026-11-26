@@ -48,6 +48,8 @@ const ADMIN_PREFIXES = [
   '/api/v1/scheduler',
   '/api/v1/notify',
   '/api/v1/watched-wallets',
+  '/api/v1/ops',
+  '/api/v1/llm',
 ];
 
 /**
@@ -69,6 +71,16 @@ const ADMIN_METHOD_RULES: { methods: string[]; test: (p: string) => boolean }[] 
     // /api/v1/projects/{id}/unhide —— 撤销 launch_review 隐藏，管理员动作
     test: (p) => /^\/api\/v1\/projects\/[^/]+\/unhide(\/|$)/.test(p),
   },
+  {
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    // /api/v1/project-identity —— 全局身份数据，写操作仅管理员
+    test: (p) => p === '/api/v1/project-identity' || p.startsWith('/api/v1/project-identity/'),
+  },
+  {
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    // /api/v1/bot/test-send —— 出站发送动作，目标 URL 来自请求体（2026-11-13）
+    test: (p) => p === '/api/v1/bot/test-send',
+  },
 ];
 
 function requiresAdmin(method: string, path: string): boolean {
@@ -78,60 +90,58 @@ function requiresAdmin(method: string, path: string): boolean {
 }
 
 /**
- * 匿名 token 的服务端缓存。
+ * 每浏览器独立 HttpOnly Cookie 承载匿名 token（消除多访客共用单一模块内存 token
+ * 导致的串号，以及 72h 过期 / 容器重启后重新生成 anon-<uuid> 导致的个人数据丢失）。
  *
- * 每个请求都去换一次 token 会让后端多承受一倍 QPS，而 token 有效期是 3 天
- * （后端 `expires_in` 259200 秒）。这里按 `expires_in` 缓存并留 5 分钟余量，
- * 避免在临界点用一个刚过期的 token。
- *
- * 模块级变量在 Next.js 的每个服务端实例里各存一份——这是可接受的：
- * 多实例只是各自多换一次 token，没有正确性问题（token 是无状态签名的）。
+ * - Cookie 本身设 365 天持久化保存 token 字符串；
+ * - 每次代理检查 token 内载荷的 `exp`（预留 5 分钟余量），未过期直接复用（零额外后端请求）；
+ * - 若 token 临近过期或已过期，将其作为 `previous_token` 发往后端 `/api/v1/auth/anonymous`：
+ *   后端校验 HMAC 签名通过后原样续用同一 `anon-<12hex>`，重新签发新有效期并回写 Cookie。
  */
-let cachedAnonToken: { token: string; expiresAt: number } | null = null;
-let inflight: Promise<string | null> | null = null;
-
+const ANON_COOKIE_NAME = 'airdrop_anon_token';
+const ANON_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 const ANON_TOKEN_SAFETY_MARGIN_MS = 5 * 60 * 1000;
 
-async function getAnonymousToken(requestOrigin: string): Promise<string | null> {
-  const now = Date.now();
-  if (cachedAnonToken && cachedAnonToken.expiresAt > now) {
-    return cachedAnonToken.token;
+function isAnonTokenFresh(token: string): boolean {
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0) return false;
+  try {
+    const b64 = token.slice(0, dotIdx).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const json = JSON.parse(atob(padded)) as { exp?: unknown; role?: unknown };
+    if (typeof json.exp !== 'number') return false;
+    return json.exp * 1000 - ANON_TOKEN_SAFETY_MARGIN_MS > Date.now();
+  } catch {
+    return false;
   }
-  // 并发去重：首屏往往同时发多个请求，没有这一步会同时打出去 N 个换 token 请求
-  if (inflight) return inflight;
+}
 
-  inflight = (async () => {
-    try {
-      // ⚠️ 不能用 request.nextUrl.origin：它来自浏览器的 Host（也就是公网域名）。
-      // 在容器里 fetch 自己的公网域名会走 DNS → 外网/负载均衡 → nginx → Next，
-      // 依赖公网回环和 TLS，任一环节不支持就 catch 并退化为裸请求 → 全站 401。
-      //
-      // `API_PROXY_TARGET` 是同一台 Next 服务用来 rewrite /api 的后端内网地址
-      // （生产 compose: http://web:8002）。直连它既少一圈网络也不把凭据换取
-      // 绑死在公网 DNS 上；开发未配置时才回退 requestOrigin，保留 npm run dev。
-      const backendOrigin = (process.env.API_PROXY_TARGET || requestOrigin).replace(/\/$/, '');
-      const res = await fetch(`${backendOrigin}/api/v1/auth/anonymous`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-      });
-      if (!res.ok) return null;
-      const body = (await res.json()) as { access_token?: string; expires_in?: number };
-      const token = body.access_token;
-      if (!token) return null;
-      const ttlMs = Math.max(0, (body.expires_in ?? 0) * 1000 - ANON_TOKEN_SAFETY_MARGIN_MS);
-      cachedAnonToken = { token, expiresAt: Date.now() + ttlMs };
-      return token;
-    } catch {
-      // 换不到 token 不能让页面直接崩：放行让请求裸奔到后端拿 401，
-      // 前端各页面对失败请求已有降级处理。把 502 变成 401 更好定位问题。
-      return null;
-    } finally {
-      inflight = null;
-    }
-  })();
+async function mintOrRenewAnonymousToken(
+  requestOrigin: string,
+  previousToken?: string,
+): Promise<string | null> {
+  try {
+    const backendOrigin = (process.env.API_PROXY_TARGET || requestOrigin).replace(/\/$/, '');
+    const res = await fetch(`${backendOrigin}/api/v1/auth/anonymous`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(previousToken ? { previous_token: previousToken } : {}),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { access_token?: string };
+    return body.access_token || null;
+  } catch {
+    return null;
+  }
+}
 
-  return inflight;
+function isHttpsRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  if (forwardedProto) {
+    return forwardedProto.split(',')[0]?.trim().toLowerCase() === 'https';
+  }
+  return request.nextUrl.protocol === 'https:';
 }
 
 export async function proxy(request: NextRequest) {
@@ -164,13 +174,35 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = await getAnonymousToken(request.nextUrl.origin);
+  const existingCookie = request.cookies.get(ANON_COOKIE_NAME)?.value;
+  let token: string | null = null;
+  let shouldSetCookie = false;
+
+  if (existingCookie && isAnonTokenFresh(existingCookie)) {
+    token = existingCookie;
+  } else {
+    token = await mintOrRenewAnonymousToken(request.nextUrl.origin, existingCookie);
+    shouldSetCookie = Boolean(token);
+  }
+
   const requestHeaders = new Headers(request.headers);
   if (token) {
     requestHeaders.set('Authorization', `Bearer ${token}`);
   }
 
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  if (shouldSetCookie && token) {
+    response.cookies.set({
+      name: ANON_COOKIE_NAME,
+      value: token,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: isHttpsRequest(request),
+      path: '/',
+      maxAge: ANON_COOKIE_MAX_AGE_SECONDS,
+    });
+  }
+  return response;
 }
 
 export const config = {

@@ -9,6 +9,7 @@
 参考：CONVENTIONS.md §12 配置管理
 """
 
+import os
 from math import isfinite
 from pathlib import Path
 from typing import Any, Self
@@ -109,8 +110,15 @@ def _reset_llm_config_warnings_for_tests() -> None:
     去重是进程级的，所以在同一个 pytest 进程里第二个用例不会再看到同一条
     告警 —— 断言"配置不完整时会告警"的用例会因为**前一个用例已经发过**
     而失败。一个结论取决于执行顺序的断言不是断言。
+
+    2026-11-14：同时重置 llm_providers 的指纹缓存 —— 告警去重只管"发不发"，
+    缓存管"解析不解析"；同一指纹在前一个用例已经解析过的话，本用例会缓存
+    命中而跳过解析，告警随之 0 次（空库酸测实测抓到）。
     """
     _llm_config_warned.clear()
+    global _LLM_PROVIDER_CACHE, _LLM_PROVIDER_FINGERPRINT
+    _LLM_PROVIDER_CACHE = None
+    _LLM_PROVIDER_FINGERPRINT = None
 
 
 # 解析嵌套深度。**必须是计数器而不是布尔**。
@@ -125,6 +133,23 @@ def _reset_llm_config_warnings_for_tests() -> None:
 # 告警都发不出去 —— 告警静默正是这次要修的问题本身。按深度判断则
 # 「最外层发、内层静默」。
 _llm_parse_depth = 0
+
+# ── llm_providers 指纹缓存（2026-11-14 审查 P2-6）─────────────────
+# 本属性每条日志都会被访问（redact._known_secrets 收集密钥值），此前每次
+# 现读 os.environ（最多约 240 个 LLM 相关键）并重新解析。指纹 = 相关前缀
+# 的 environ 项 + 单接口三字段（settings 属性是测试/运维的合法改点）——
+# 两者都不变时返回缓存副本。 environ 键名来自常量前缀，取值不进日志。
+_LLM_FINGERPRINT_ENV_PREFIXES = ("OPENAI_", "LLM_")
+_LLM_FINGERPRINT_FIELDS = ("llm_model", "openai_api_key", "openai_base_url")
+_LLM_PROVIDER_CACHE: list[dict[str, Any]] | None = None
+_LLM_PROVIDER_FINGERPRINT: tuple[Any, ...] | None = None
+
+
+def _llm_provider_fingerprint(settings_obj: "Settings") -> tuple[Any, ...]:
+    """相关输入的廉价指纹（一次 environ 遍历 + 三个属性读，远轻于完整解析）。"""
+    env_items = tuple((k, v) for k, v in os.environ.items() if k.startswith(_LLM_FINGERPRINT_ENV_PREFIXES))
+    fields = tuple(getattr(settings_obj, name) for name in _LLM_FINGERPRINT_FIELDS)
+    return (env_items, fields)
 
 
 def _llm_config_warn_logger(fingerprint: str) -> Any | None:
@@ -300,6 +325,13 @@ class Settings(BaseSettings):
     # 同步路由在线程池并发执行，SQLite 写锁需要等待窗口而非立即报错
     sqlite_busy_timeout_seconds: float = 10.0
 
+    # ── 项目身份别名 ──────────────────────────────
+    # 可选 JSON 别名文件路径（空 = 不同步）。启动时把其中的条目按 manual 别名写入，
+    # 手工别名优先级最高，可覆盖回填/自动推断结果。
+    # 格式：{"aliases":[{"dedup_key":"foo::DeFi","project_id":"..."}]}
+    # 也支持 {"name":"Foo","sector":"DeFi","project_id":"..."}。
+    project_alias_file: str = ""
+
     # ── API 鉴权 ──────────────────────────────────
     api_key: str = ""  # 空 = 无鉴权（MVP 模式）
     # V2 匿名 token（ADR-008）：HMAC-SHA256 签名的 Bearer token
@@ -312,6 +344,15 @@ class Settings(BaseSettings):
     jwt_secret: str = ""  # 空 = 回退至 auth_token_secret，再空 = 随机生成
     jwt_access_token_expire_minutes: int = 15  # access token 有效期（分钟）
     jwt_refresh_token_expire_days: int = 7  # refresh token 有效期（天）
+    # 注册防护（2026-11-13）：/auth/register 在 PUBLIC_PREFIXES，公网部署时
+    # "首位注册用户自举为 admin" 等于攻击者抢注即得管理员。
+    # - ALLOW_REGISTRATION=false 直接关闭注册（封闭部署用）；
+    # - REGISTRATION_BOOTSTRAP_TOKEN 配置后，首位 admin 的授予要求请求体携带
+    #   该 token（fail-closed：不对就不建用户，自举名额不被消费）；
+    # - 生产环境两者都没配时，首位注册用户降级为 viewer（开发/测试不变，
+    #   运维用 bootstrap token 路径创建 admin）。
+    allow_registration: bool = True
+    registration_bootstrap_token: str = ""  # 空 = 未启用 bootstrap 校验
 
     # ── LLM 配置 (ADR-001, ADR-012 分级使用) ─────
     openai_api_key: str = ""
@@ -337,7 +378,6 @@ class Settings(BaseSettings):
     # 如果这里返回 0，那么"换一个价格表里没有的模型名"就等于关掉预算 ——
     # 一个能被随手绕过的预算不是预算。
     llm_fallback_price_per_1m_usd: float = 10.0
-    llm_semaphore_size: int = 5
     # v2.0 分级使用：仅 discovery_score ≥ 此阈值的项目启用 LLM（ADR-012）
     llm_discovery_score_threshold: float = 0.7
 
@@ -389,6 +429,10 @@ class Settings(BaseSettings):
     # （08:00–10:30）之后，用的是当天最新的原始行。
     launch_review_scheduler_enabled: bool = True
     launch_review_cron: str = "0 12 * * *"
+
+    # 每日 Alpha 投研周报合辑定时快照
+    alpha_digest_scheduler_enabled: bool = True
+    alpha_digest_cron: str = "0 8 * * *"
 
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
@@ -445,6 +489,7 @@ class Settings(BaseSettings):
     analysis_run_limit: int = 100
     defillama_cron: str = "0 8 * * *"
     github_cron: str = "30 8 * * *"
+    github_curated_cron: str = "30 3 * * *"
     coingecko_cron: str = "0 9 * * *"
     cryptorank_cron: str = "15 9 * * *"
     twitter_kol_cron: str = "0 * * * *"
@@ -466,12 +511,15 @@ class Settings(BaseSettings):
     discord_notify_webhook_url: str = ""
 
     # ── 外部数据源 (ADR-012) ─────────────────────
+    # 各源 *_retry 是「重试次数」（总尝试 = 1 + n），统一由
+    # DataCollector.request_with_retry 执行：只重试网络错误 / 429 / 5xx，
+    # 其余 4xx 不重试，尊重 Retry-After，指数退避单次最长 60s。
     # DefiLlama（P0，免费）
     defillama_enabled: bool = True
     defillama_base_url: str = "https://api.llama.fi"
     defillama_timeout: int = 30
     defillama_retry: int = 3
-    # GitHub（P0，免费）
+    # GitHub（P0，免费；token 可选，不配则走未认证搜索）
     github_enabled: bool = True
     github_token: str = ""
     github_api_base_url: str = "https://api.github.com"
@@ -671,13 +719,25 @@ class Settings(BaseSettings):
         ⚠️ 这个 property 会在**每条日志记录**上被访问（`redact._known_secrets()`
         读它来收集要脱敏的密钥值），所以从这里写日志天然会成环。
         深度计数让「最外层发告警、内层静默」—— 实测不加会 `RecursionError`。
+
+        2026-11-14：加**指纹缓存** —— 每条日志访问一次 × 每次现读约 240 个
+        environ 键 + 重新解析的成本被遗漏了。相关输入（`OPENAI_`/`LLM_` 前缀
+        environ + 单接口三字段）不变时返回缓存副本；任一变化立即失效。
+        深度计数保留：缓存失效的冷路径仍可能发 warning。
         """
-        global _llm_parse_depth
+        global _llm_parse_depth, _LLM_PROVIDER_CACHE, _LLM_PROVIDER_FINGERPRINT
+        fingerprint = _llm_provider_fingerprint(self)
+        if fingerprint == _LLM_PROVIDER_FINGERPRINT and _LLM_PROVIDER_CACHE is not None:
+            return [dict(p, models=list(p.get("models") or [])) for p in _LLM_PROVIDER_CACHE]
+
         _llm_parse_depth += 1
         try:
-            return self._resolve_llm_providers()
+            resolved = self._resolve_llm_providers()
         finally:
             _llm_parse_depth -= 1
+        _LLM_PROVIDER_CACHE = resolved
+        _LLM_PROVIDER_FINGERPRINT = fingerprint
+        return [dict(p, models=list(p.get("models") or [])) for p in resolved]
 
     def _resolve_llm_providers(self) -> list[dict[str, Any]]:
         """`llm_providers` 的实际解析逻辑（守卫已由调用方持有）。"""
@@ -836,6 +896,8 @@ class Settings(BaseSettings):
             # 就是真实生效值 —— 不留"配置说开着、实际关着"的落差。
             self.seed_on_startup = False
             self.seed_fallback_enabled = False
+            # 生产环境强制关闭 debug 模式（防止 Swagger/详细堆栈与热重载相关调试路径误开）
+            self.debug = False
 
             errors: list[str] = []
             # 按解析后的列表判断：原先只比较整串是否等于 "*"，于是 "*,*" 或
@@ -857,11 +919,27 @@ class Settings(BaseSettings):
             if self.host == "0.0.0.0" and not api_key:
                 errors.append("生产环境绑定 0.0.0.0 时必须设置 API_KEY")
 
-            # P1-3：生产环境 AUTH_TOKEN_SECRET 必须设置（匿名 token 才稳定）
-            if not self.auth_token_secret:
+            # P1-3 / P2-1：生产环境 AUTH_TOKEN_SECRET 必须设置且达到安全强度（>=32 字符、非弱占位符）
+            auth_secret = (self.auth_token_secret or "").strip()
+            if not auth_secret:
                 errors.append(
                     "生产环境必须设置 AUTH_TOKEN_SECRET（匿名 token 每次重启后失效；"
                     "建议用 secrets.token_urlsafe(48) 生成固定值）"
+                )
+            elif auth_secret.lower() in _WEAK_DB_PASSWORDS or len(auth_secret) < MIN_PRODUCTION_API_KEY_LENGTH:
+                errors.append(
+                    f"生产环境 AUTH_TOKEN_SECRET 长度必须 >= {MIN_PRODUCTION_API_KEY_LENGTH} 且不得为弱占位符"
+                    f"（当前 {len(auth_secret)}）"
+                )
+
+            # 若显式配置了 JWT_SECRET，同样必须满足长度与非弱口令要求
+            jwt_secret = (self.jwt_secret or "").strip()
+            if jwt_secret and (
+                jwt_secret.lower() in _WEAK_DB_PASSWORDS or len(jwt_secret) < MIN_PRODUCTION_API_KEY_LENGTH
+            ):
+                errors.append(
+                    f"生产环境 JWT_SECRET 长度必须 >= {MIN_PRODUCTION_API_KEY_LENGTH} 且不得为弱占位符"
+                    f"（当前 {len(jwt_secret)}）"
                 )
 
             # cors_origins 的默认值是 localhost（见字段定义）。生产忘配就会把真实

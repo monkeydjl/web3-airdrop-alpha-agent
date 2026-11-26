@@ -67,16 +67,16 @@
 > DB 后端、全部阈值与 cron、LLM provider 清单，对匿名角色开放等于免费送侦察。
 > 真值见 `backend/app/auth.py` 的 `PUBLIC_PREFIXES` / `ADMIN_ONLY_PREFIXES`。
 
-### 2.1 写操作的鉴权分布（实测，2026-10-08 随恢复显示端点更新）
+### 2.1 写操作的鉴权分布（实测，2026-11-13 随 bot/test-send 收紧更新）
 
-全仓共 **85 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
+全仓共 **89 个**写端点（POST/PUT/PATCH/DELETE），当前分布：
 
 <!-- write-auth-split:begin -->
 | 归属 | 数量 |
 | --- | --- |
-| 管理员专用 | 14 |
+| 管理员专用 | 19 |
 | 无鉴权（公开） | 5 |
-| 匿名 token 可调 | 66 |
+| 匿名 token 可调 | 65 |
 <!-- write-auth-split:end -->
 
 管理员专用的 11 个：`/run`、`/import/projects`、`/quarantine`、
@@ -87,7 +87,12 @@
 以及 2026-09-02 领取监控的三个写端点 ——
 `POST /watched-wallets`、`PATCH /watched-wallets/{id}`、
 `DELETE /watched-wallets/{id}`（该前缀连 `GET` 一起锁，见 §41），
-以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表）。
+以及 2026-10-08 的 `POST /projects/{project_id}/unhide`（恢复显示改的是全局默认列表），
+以及 2026-11-09 项目身份别名的三个写端点 + 回填（`POST /project-identity/aliases`、
+`DELETE /project-identity/aliases/{alias_id}`、`POST /project-identity/aliases/backfill`，
+别名是全局身份数据，见 §54-§58），
+以及 2026-11-13 的 `POST /bot/test-send`（出站发送动作，目标 URL 来自请求体，
+2026-11-13 前登记为匿名可写——与事实不符，服务端并不要求预配置）。
 
 公开的 5 个：`POST /auth/anonymous`（匿名入口本身）、
 `POST /webhook/alchemy`（第三方回调，靠签名而非 token 保护）、
@@ -178,7 +183,7 @@
 | POST | `/api/v1/feedback/batch` | v1 | V2（已实现） | 批量提交反馈（单次上限 50 条） |
 | GET | `/api/v1/feedback/{project_id}` | v1 | V2（已实现） | 查询某项目的反馈汇总（**按项目**，无不带参数的列表端点） |
 | GET | `/api/v1/feedback/pending-review` | v1 | V2（已实现） | 待复盘队列 |
-| GET | `/api/v1/calibration/status` | v1 | V2（已实现） | 校准状态（样本量 / 是否达到 200 门槛） |
+| GET | `/api/v1/calibration/status` | v1 | V2（已实现） | 校准状态（真实门禁 live 样本 / FARM 样本，详见 §10.3） |
 | GET | `/api/v1/action-queue` | v1 | V2（已实现） | 今日行动队列 |
 | GET / POST | `/api/v1/interactions` | v1 | V2（已实现） | 参与记录列表 / 新建 |
 | GET | `/api/v1/interactions/summary` | v1 | V2（已实现） | 参与记录聚合（成本/收益/命中率） |
@@ -251,6 +256,7 @@
 | GET | `/api/v1/projects/digest` | v1 | 投研周报增强（2026-09-21） | 生成每日/每周 Alpha 投研周报合辑 |
 | POST | `/api/v1/ops/sync-funding` | v1 | 运维增强（2026-09-21） | 批量同步全库 DefiLlama 免费融资数据（管理员专用） |
 | POST | `/api/v1/ops/audit-viability` | v1 | 运维增强（2026-09-21） | 全库存活率与跑道硬检验批量审计（管理员专用） |
+| GET | `/api/v1/ops/audit-logs` | v1 | 安全审计（2026-11-26） | 查询管理员写操作安全审计日志（已脱敏，管理员专用） |
 | GET | `/api/v1/onchain/chains` | v1 | 零成本增强（2026-09-21） | 支持的免 Key 公共 RPC 链列表 |
 | POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
 | GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |
@@ -311,6 +317,11 @@
 | GET | `/api/v1/watched-wallets/{wallet_id}/activity` | v1 | 扩展功能（2026-09-22） | 监控钱包动态（实网查询） |
 | GET | `/api/v1/whale-mirror/benchmarks` | v1 | 扩展功能（2026-09-22） | 跟单基准列表（标注 simulated） |
 | POST | `/api/v1/whale-mirror/compare` | v1 | 扩展功能（2026-09-22） | 跟单对比分析（标注 simulated） |
+| GET | `/api/v1/project-identity/aliases` | v1 | V3（已实现，2026-11-09） | 项目身份别名列表（§54） |
+| POST | `/api/v1/project-identity/aliases` | v1 | V3（已实现，2026-11-09） | 新增/覆盖手工别名（管理员） |
+| DELETE | `/api/v1/project-identity/aliases/{alias_id}` | v1 | V3（已实现，2026-11-09） | 删除别名（管理员） |
+| POST | `/api/v1/project-identity/resolve` | v1 | V3（已实现，2026-11-09） | 调试：查看名称/赛道解析到哪个 project_id |
+| POST | `/api/v1/project-identity/aliases/backfill` | v1 | V3（已实现，2026-11-09） | 存量 projects 行回填 backfill 别名（默认 dry-run，管理员） |
 | GET | `/version` | — | MVP（已实现） | 版本与环境元信息（**无 `/api` 前缀**） |
 | GET | `/health` | — | MVP（已实现） | 健康检查（基础设施 API） |
 | GET | `/metrics` | — | MVP（已实现） | Prometheus 指标 |
@@ -805,11 +816,12 @@ curl -X POST http://localhost:8002/api/v1/run \
 **错误**：`422` 非法 signal/outcome 枚举或超长 note（FastAPI 校验，
 **不是 400** —— 原文写错）；`404` 项目不存在。
 
-> 反馈是权重校准的唯一输入。校准门槛为 **200 条样本**
-> （`app/services/feedback.py` 的 `min_samples`），未达门槛时
-> `/calibration/status` 会明确回「样本不足」而不是给一个不可信的调整建议。
-> 实测当前 `feedback` 表 **0 条** —— 复盘页显示的进度条是真实的 0/200，
-> 不是加载失败。
+> 权重校准有两类输入：`feedback` 提供主观四档与结果监督，`roi_outcomes` 提供真实产出
+> （`airdrop_received` → 正样本、`airdrop_missed` → 负样本）。校准门禁为
+> **≥200 条 live 样本且其中 ≥30 条 FARM 相关**，`backtest`（历史回测）样本不计入；
+> 未达门槛时 `/calibration/status` 会明确回「样本不足」而不是给一个不可信的调整建议。
+> 实测（2026-10-30）：live 3 / FARM 2、backtest 50 —— 复盘页进度条是真实值，不是加载失败。
+
 ---
 
 ## 10. GET /api/v1/feedback/{project_id}
@@ -854,6 +866,31 @@ curl -X POST http://localhost:8002/api/v1/run \
 
 批量提交反馈，单次上限 **50** 条（前端 `BATCH_LIMIT` 由
 `test_frontend_enum_parity.py` 钉住与后端一致）。
+
+同一批结果同时写入收益台账 `roi_outcomes`（`source='manual'`）：
+`outcome=airdropped` → `airdrop_received`，`not_airdropped` → `airdrop_missed`；
+`dumped` 只是项目失败，不代表空投产出，**不写台账**。同一 `(user, project)`
+只保留一条人工空投产出行（重复标记同一结果不新增，改了结果则更新该行）。
+响应里的 `roi_outcomes_written` 是本批实际写入/更新的台账行数。
+
+### 10.3 GET /api/v1/calibration/status
+
+权重校准状态。**反馈条数不等于有效样本数**：`total_feedback` 是 feedback 表行数，
+`gate` 才走校准引擎的真实提取口径（同项目去重、要求项目 `sub_scores` 八维齐全）。
+
+| 字段 | 说明 |
+| --- | --- |
+| `gate.live_samples` | 计入 live 桶的有效样本（权威门禁计数） |
+| `gate.farm_samples` | 其中真实标签为 FARM 的样本（门槛 30） |
+| `gate.min_live_samples` / `gate.min_farm_samples` | 200 / 30，阈值由 WEIGHT_CALIBRATION §3.3 规定，接口不修改 |
+| `gate.samples_needed` / `gate.farm_samples_needed` | 还差多少条才达门禁 |
+| `gate.total_by_source` | `live` / `backtest` 分桶计数；回测样本**不计入**门禁 |
+| `roi_ledger.event_counts` | 收益台账各事件条数（`airdrop_received` / `airdrop_missed` 等） |
+| `roi_ledger.manual_signal_samples` | 人工录入（live）的到账/未领样本数 |
+| `roi_ledger.signal_samples_by_source` | 按 `live` / `backtest` 分桶的正负样本数；历史回溯补录记为 backtest |
+
+旧字段 `calibration_ready` / `samples_needed` 仍按反馈条数计算，保持历史接口契约；
+判断「能否启动校准」应以 `gate.passed` 为准。
 
 ---
 
@@ -1149,9 +1186,9 @@ curl -X POST http://localhost:8002/api/v1/run \
 > 前端 `discoveries/page.tsx` 正是消费这个端点（由
 > `test_frontend_enum_parity.py::TestNoHardcodedSourceList` 钉住）。
 
-查询所有数据源的当前状态与最近同步信息。实测返回 **10 个源**：
-`coingecko` / `cryptorank` / `defillama` / `etherscan` / `galxe` /
-`github` / `layer3` / `rootdata` / `twitter_keyword` / `twitter_kol`。
+查询所有数据源的当前状态、最近同步信息与采集源评分卡。返回注册表中的全部源（当前 17 个），
+包括 `defillama` / `github` / `github_curated` / `coingecko` / `medium` / `mirror` /
+`telegram` / `farcaster` 以及需要凭据的付费源。
 
 **响应 200**（实测形状）
 
@@ -1172,6 +1209,21 @@ curl -X POST http://localhost:8002/api/v1/run \
           "sync_status": "success",
           "last_sync": "2026-08-15 14:51:17",
           "api_calls_today": 0
+        },
+        "scorecard": {
+          "total_raw": 236,
+          "analyzed": 236,
+          "pending": 0,
+          "quarantined": 0,
+          "high_signal": 210,
+          "avg_discovery_score": 0.76,
+          "analysis_rate": 1.0,
+          "quarantine_rate": 0.0,
+          "last_discovered_at": "2026-08-15 14:48:02",
+          "last_sync": "2026-08-15 14:51:17",
+          "freshness_hours": 1.2,
+          "verdict": "healthy",
+          "recommendation": "产出稳定，可保持当前调度"
         }
       }
     ]
@@ -1187,6 +1239,8 @@ curl -X POST http://localhost:8002/api/v1/run \
 | `config_ready` | 该源所需的配置（如 API key）是否齐备 |
 | `operator_enabled` | 运维是否手动开启（`PATCH /collections/{source_id}` 改这个） |
 | `is_enabled` | 两者都成立才为 `true`，即**实际会不会跑** |
+
+`scorecard` 由 `raw_projects` 与 `data_sources` 实时聚合，不含估算：`total_raw` / `analyzed` / `pending` / `quarantined` / `high_signal` 为计数，`avg_discovery_score` 为平均发现分，`analysis_rate` / `quarantine_rate` 为比率，`freshness_hours` 为距上次同步的小时数；`verdict` 取值 `healthy` / `noisy` / `low_signal` / `stale` / `failing` / `idle` / `no_data`，`recommendation` 为对应处理建议。
 
 ---
 
@@ -3146,3 +3200,122 @@ label="IGNORE"** —— 那是模型的结论，跳过是用户的决定，要�
 当 HA 未启用 (`ha_enabled=false`) 时，所有实例均独立运行调度器，`is_leader` 默认为 `true`，`status` 为 `"standalone"`。
 
 回归测试：`backend/tests/test_leader_election.py`、`backend/tests/api/test_ha_endpoints.py`。
+
+## 54. GET /api/v1/project-identity/aliases
+
+列出项目身份别名（来自 `dedup_keys.source IS NOT NULL` 的行）。`source` 为 NULL 的
+历史行不参与解析，也不会出现在这里。
+
+**查询参数**：`project_id`（可选）、`source`（可选：`manual` / `backfill` / `auto`）、
+`limit`（默认 500，最大 5000）。
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "aliases": [
+      {
+        "id": 12,
+        "dedup_key": "uniswap::DEX",
+        "project_id": "0b0f7a4e-...",
+        "name_raw": "uniswap",
+        "sector_raw": "DEX",
+        "source": "backfill",
+        "confidence": 0.9,
+        "notes": "backfill: 既有 projects 行"
+      }
+    ],
+    "total": 1
+  },
+  "error": null
+}
+```
+
+## 55. POST /api/v1/project-identity/aliases
+
+新增或覆盖一条**手工**别名（`source=manual`，优先级最高，可覆盖回填/自动推断）。
+别名键格式 `name::Sector`；`name::*` 是名称级别名，仅手工可配置，表示该名称下所有
+赛道都归到同一项目。管理员专属（匿名 token 返回 403）。
+
+**请求体**:
+
+```json
+{ "dedup_key": "uniswap protocol::de-fi", "project_id": "0b0f7a4e-...", "notes": "官方改名" }
+```
+
+`dedup_key` 会先归一化（`normalize_name` / `normalize_sector`），因此
+`uniswap protocol::de-fi` 与 `Uniswap::DeFi` 等价。
+
+**响应 200**: `{"ok": true, "data": {"applied": true, "alias_key": "uniswap::DeFi", ...}}`
+
+**错误**：400 别名键非法 / 名称级键非手工来源；409 写入被更高优先级别名保护。
+
+## 56. DELETE /api/v1/project-identity/aliases/{alias_id}
+
+删除一条别名。只写 `dedup_keys`，不改动任何项目数据（`projects` / `project_history`
+原样保留，未命中别名后自动回落旧 uuid5）。管理员专属。
+
+**响应 200**: `{"ok": true, "data": {"alias_id": 12, "deleted": true}}`；别名不存在返回 404。
+
+## 57. POST /api/v1/project-identity/resolve
+
+调试端点：查看某个名称 + 赛道最终解析到哪个 `project_id`，以及命中的层级。
+
+**请求体**: `{"name": "Uniswap Protocol", "sector": "defi"}`
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "project_id": "0b0f7a4e-...",
+    "name_key": "uniswap",
+    "sector_key": "DeFi",
+    "alias_key": "uniswap::DeFi",
+    "source": "manual",
+    "confidence": 1.0,
+    "matched": "manual_exact",
+    "is_legacy": false
+  }
+}
+```
+
+`matched` 取值：`manual_exact` / `manual_name` / `backfill_exact` / `auto_exact` /
+`auto_name` / `legacy`。`legacy` 表示没有别名命中，走的是与改造前完全一致的
+`uuid5("name::sector")`。
+
+## 58. POST /api/v1/project-identity/aliases/backfill
+
+把既有 `projects` 行的 `(name, sector)` 钉成 `backfill` 别名。**默认 dry-run**
+（`apply=false` 只出报告），`apply=true` 才写库。管理员专属。
+
+冲突只报告、绝不自动合并：
+`alias_points_elsewhere`（别名已指向别的 project_id）、
+`multiple_projects_share_key`（多个 projects 行共享同一别名键，存量重复）。
+
+**请求体**: `{"apply": false, "limit": 1000}`
+
+**响应 200**:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "apply": false,
+    "scanned": 702,
+    "already_pinned": 0,
+    "candidate_count": 699,
+    "conflict_count": 3,
+    "applied": 0,
+    "candidates": [{ "dedup_key": "aave::Lending", "project_id": "...", "name": "Aave", "sector": "Lending" }],
+    "conflicts": [{ "dedup_key": "nexus::L1", "reason": "multiple_projects_share_key", "project_ids": ["...", "..."] }],
+    "source": "backfill"
+  }
+}
+```
+
+命令行等价入口：`cd backend && python scripts/backfill_project_aliases.py`（dry-run）、
+`--apply`（写库）、`--json`（完整报告）。

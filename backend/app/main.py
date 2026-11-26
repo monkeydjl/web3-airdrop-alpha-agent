@@ -12,8 +12,12 @@ Web3 Airdrop Alpha Agent System 主应用入口。
 - API_SPEC.md 完整 API 契约
 """
 
+import asyncio
+import contextlib
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 
 import structlog
@@ -44,6 +48,32 @@ setup_tracing()
 logger = structlog.get_logger(__name__)
 
 
+def _warn_github_missing_token() -> None:
+    """GITHUB_ENABLED=true 但无 token 时的启动告警。
+
+    GitHub 采集器在无 token 时**不会**被 is_enabled() 挡掉，而是以未认证方式
+    继续运行；这里只提示配额更低、信号可能不完整，不能写成「本源不会运行」。
+    """
+    if not settings.github_enabled or settings.github_token:
+        return
+    logger.warning(
+        "app.collector_disabled_missing_credential",
+        source="github",
+        reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索仍会以未认证方式运行，受服务端配额限制（未认证 10 次/分钟）",
+        impact="execution 维度（权重 0.13）的 GitHub 活跃度信号可能不完整；可重试失败按 GITHUB_RETRY 退避重试",
+    )
+
+
+def _current_db_init_fingerprint() -> tuple[str, str]:
+    """生成当前默认数据库目标指纹，用于避免 create_app() 与 lifespan 对同一库重复跑两遍 init_db()。"""
+    if settings.db_backend == "postgres":
+        return ("postgres", str(settings.database_url or ""))
+    raw_path = str(settings.db_path or "")
+    if raw_path == ":memory:":
+        return ("sqlite", ":memory:")
+    return ("sqlite", str(Path(raw_path).resolve()))
+
+
 def create_app(
     db_override: DbConnection | None = None,
     leader_elector: Any | None = None,
@@ -72,19 +102,21 @@ def create_app(
             collection_scheduler_enabled=settings.collection_scheduler_enabled,
         )
 
-        # 采集源"开了但缺 key"必须显式告警：这类源的 is_enabled() 返回 False，
-        # 于是整源静默不跑。GitHub 尤其致命——execution 维度占 13% 权重，缺了
-        # 会让所有项目的开发活跃度恒为空，而运维看不到任何异常。
-        if settings.github_enabled and not settings.github_token:
-            logger.warning(
-                "app.collector_disabled_missing_credential",
-                source="github",
-                reason="GITHUB_ENABLED=true 但 GITHUB_TOKEN 为空；GitHub 搜索需要 token，本源不会运行",
-                impact="execution 维度（权重 0.13）的 GitHub 活跃度信号将始终缺失",
-            )
+        # 采集源"开了但缺 key"要显式告警，避免运维误以为链路正常。
+        # 注意 GitHub 是例外：无 token 时 is_enabled() 仍为 True，采集器会以
+        # 未认证方式继续运行，只是配额更低、信号可能不完整——文案必须如实描述。
+        _warn_github_missing_token()
 
         if db_override is None:
-            init_db()
+            fp = _current_db_init_fingerprint()
+            already_ready = (
+                getattr(application.state, "_init_db_fingerprint", None) == fp
+                and fp[1] != ":memory:"
+                and (fp[0] != "sqlite" or (Path(fp[1]).is_file() and Path(fp[1]).stat().st_size > 0))
+            )
+            if not already_ready:
+                init_db()
+                application.state._init_db_fingerprint = fp
 
         # Connection ownership: borrowed override never closed; else app-owned once.
         # 所有权契约的权威定义在 app.db.connection_scope（消费者统一走它）；此处是
@@ -100,6 +132,26 @@ def create_app(
             app_owns_conn = True
 
         try:
+            # 手工别名文件同步（可选）：手册配置的别名可信度最高，必须覆盖
+            # 回填/自动推断结果。失败只告警 —— 别名文件写错不应让服务起不来。
+            if settings.project_alias_file:
+                try:
+                    from app.identity import load_manual_aliases_file
+
+                    alias_stats = load_manual_aliases_file(settings.project_alias_file, conn=app_conn)
+                    logger.info(
+                        "app.project_alias_file_synced",
+                        path=settings.project_alias_file,
+                        **alias_stats,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "app.project_alias_file_failed",
+                        path=settings.project_alias_file,
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+
             if settings.app_env != "testing":
                 # 与 API 路由共用同一批采集器实例，令牌桶限流才不会被逐请求重置
                 registry = get_default_registry()
@@ -125,13 +177,63 @@ def create_app(
                         error=str(exc)[:200],
                     )
 
+                persist_lock = threading.Lock()
+
                 async def on_collection(source_id: str, result: CollectorResult) -> None:
+                    def _persist_and_economic() -> None:
+                        # 多个采集源可同时在线程池触发回调，app_conn 为单一连接实例，
+                        # 必须串行化访问以防止跨线程事务混写与 psycopg3 游标并发错误。
+                        with persist_lock:
+                            try:
+                                repo.persist_collection_result(
+                                    result,
+                                    source_type="api",
+                                    source_name=source_id,
+                                )
+                            except Exception:
+                                if hasattr(app_conn, "rollback"):
+                                    with contextlib.suppress(Exception):
+                                        app_conn.rollback()
+                                raise
+
+                            # Economic path after successful persist only; failures must not
+                            # propagate（与 collections.trigger 的 _persist_and_economic 同一口径）。
+                            if economic_writer is not None and economic_emitter is not None:
+                                try:
+                                    from app.opportunity.economic_integration import (
+                                        daily_run_id,
+                                        process_persisted_collection,
+                                    )
+
+                                    # CollectorResult.finished_at is optional on the type;
+                                    # production collectors set it. Fall back to UTC now so
+                                    # daily_run_id never receives None (contract requires datetime).
+                                    finished = result.finished_at
+                                    if finished is None:
+                                        from datetime import UTC, datetime
+
+                                        finished = datetime.now(UTC)
+                                    process_persisted_collection(
+                                        result,
+                                        run_id=daily_run_id(result.source_id, finished),
+                                        writer=economic_writer,
+                                        emitter=economic_emitter,
+                                        settings_obj=settings,
+                                    )
+                                except Exception as exc:
+                                    if hasattr(app_conn, "rollback"):
+                                        with contextlib.suppress(Exception):
+                                            app_conn.rollback()
+                                    logger.warning(
+                                        "app.collection_economic_failed",
+                                        source_id=source_id,
+                                        error_type=type(exc).__name__,
+                                        error=str(exc)[:200],
+                                    )
+
+                    # P1-4: 同步 DB 写移出主事件循环（与 routers/v1/collections.py 同一修复）。
                     try:
-                        repo.persist_collection_result(
-                            result,
-                            source_type="api",
-                            source_name=source_id,
-                        )
+                        await asyncio.to_thread(_persist_and_economic)
                     except Exception as exc:
                         logger.error(
                             "app.collection_persist_failed",
@@ -143,36 +245,6 @@ def create_app(
                         # analysis is not reached for this callback (same hard-fail as
                         # pre-Task-7 uncaught persist errors).
                         raise
-
-                    if economic_writer is not None and economic_emitter is not None:
-                        try:
-                            from app.opportunity.economic_integration import (
-                                daily_run_id,
-                                process_persisted_collection,
-                            )
-
-                            # CollectorResult.finished_at is optional on the type;
-                            # production collectors set it. Fall back to UTC now so
-                            # daily_run_id never receives None (contract requires datetime).
-                            finished = result.finished_at
-                            if finished is None:
-                                from datetime import UTC, datetime
-
-                                finished = datetime.now(UTC)
-                            process_persisted_collection(
-                                result,
-                                run_id=daily_run_id(result.source_id, finished),
-                                writer=economic_writer,
-                                emitter=economic_emitter,
-                                settings_obj=settings,
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "app.collection_economic_failed",
-                                source_id=source_id,
-                                error_type=type(exc).__name__,
-                                error=str(exc)[:200],
-                            )
 
                     if settings.collection_auto_run_enabled and result.status in (
                         "success",
@@ -281,6 +353,9 @@ def create_app(
                         error_type=type(exc).__name__,
                         error=str(exc)[:200],
                     )
+            from app.db import close_pg_pools
+
+            close_pg_pools()
 
     app = FastAPI(
         title="Web3 Airdrop Alpha Agent System",
@@ -331,6 +406,7 @@ def create_app(
             "name": "MIT",
         },
     )
+    app.state.db_override = db_override if hasattr(db_override, "execute") else None
 
     # ── 中间件 ──────────────────────────────────
     # 注意：Starlette 后注册的中间件在最外层。
@@ -357,7 +433,34 @@ def create_app(
         from app.metrics import HTTP_DURATION, HTTP_REQUESTS
 
         start = time.time()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # 实测（2026-11-14）：BaseHTTPMiddleware.call_next 会把路由内未处理
+            # 异常**原样上抛** —— @app.exception_handler(Exception) 挂在
+            # ServerErrorMiddleware（最外层），晚于本中间件。若不在此接住：
+            # 5xx 不计入 HTTP_REQUESTS、无耗时样本、无免责声明头、无请求日志
+            # —— 最需要被观测的故障在观测体系里完全隐形。
+            duration = (time.time() - start) * 1000
+            HTTP_REQUESTS.labels(method=request.method, status_class="5xx").inc()
+            HTTP_DURATION.observe(duration / 1000.0)
+            logger.error(
+                "api.request.failed",
+                method=request.method,
+                path=request.url.path,
+                duration_ms=round(duration, 2),
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=500,
+                headers={
+                    "X-Disclaimer": "Not investment advice. For informational purposes only.",
+                },
+                content={
+                    "ok": False,
+                    "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"},
+                },
+            )
         duration = (time.time() - start) * 1000
 
         # SECURITY.md §7.5：所有响应携带免责声明头
@@ -368,6 +471,44 @@ def create_app(
         HTTP_REQUESTS.labels(method=request.method, status_class=status_class).inc()
         # HTTP 请求耗时 histogram（§9）：duration 是毫秒，指标单位是秒
         HTTP_DURATION.observe(duration / 1000.0)
+
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and 200 <= response.status_code < 400:
+            from app.auth import requires_admin
+
+            if requires_admin(request.method, request.url.path):
+                from app.rate_limit import _client_ip
+                from app.services.audit_log import safe_record_admin_audit
+
+                default_actor = "mvp-local" if not (settings.api_key or "").strip() else "admin"
+                audit_user = str(getattr(request.state, "user_id", None) or default_actor)
+                audit_role = str(getattr(request.state, "user_role", None) or default_actor)
+                audit_method = str(getattr(request.state, "auth_method", None) or "none")
+                audit_detail: dict[str, Any] = {
+                    "status_code": response.status_code,
+                    "role": audit_role,
+                    "auth_method": audit_method,
+                }
+                if request.url.query:
+                    audit_detail["query"] = str(request.url.query)[:200]
+                audit_action = f"{request.method} {request.url.path}"
+                audit_ip = _client_ip(request)
+                override_conn = getattr(app.state, "db_override", None)
+                if override_conn is not None:
+                    safe_record_admin_audit(
+                        action=audit_action,
+                        user=audit_user,
+                        detail=audit_detail,
+                        ip=audit_ip,
+                        conn=override_conn,
+                    )
+                elif db_override is None:
+                    await asyncio.to_thread(
+                        safe_record_admin_audit,
+                        action=audit_action,
+                        user=audit_user,
+                        detail=audit_detail,
+                        ip=audit_ip,
+                    )
 
         logger.info(
             "api.request.completed",
@@ -397,7 +538,8 @@ def create_app(
 
     # ── 初始化数据库 ────────────────────────────
     if db_override is None:
-        init_db()  # 幂等建表; lifespan 启动时再次确认迁移完整
+        init_db()  # 幂等建表; lifespan 启动时按目标指纹跳过同库重复执行
+        app.state._init_db_fingerprint = _current_db_init_fingerprint()
 
     # ── 全局异常处理 ────────────────────────────
     @app.exception_handler(HTTPException)
@@ -420,6 +562,12 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
         """统一请求校验异常格式。"""
+        # 只回显字段路径 / 类型 / 消息 —— pydantic 的 errors() 还带 `input`
+        # （原样回显用户输入）与 `ctx`/`url`（内部实现细节），全部剥除
+        # （2026-11-13 审查 L-5）。
+        details = [
+            {"loc": list(err.get("loc", [])), "type": err.get("type"), "msg": err.get("msg")} for err in exc.errors()
+        ]
         return JSONResponse(
             status_code=422,
             content=jsonable_encoder(
@@ -428,7 +576,7 @@ def create_app(
                     "error": {
                         "code": "VALIDATION_ERROR",
                         "message": "Request validation failed",
-                        "details": exc.errors(),
+                        "details": details,
                     },
                 }
             ),
@@ -578,6 +726,7 @@ def create_app(
         playbook,
         pnl,
         points,
+        project_identity,
         projects,
         public_config,
         quarantine,
@@ -670,6 +819,7 @@ def create_app(
     app.include_router(playbook.router, prefix="/api/v1", tags=["v1"])
     app.include_router(team_studio.router, prefix="/api/v1", tags=["v1"])
     app.include_router(identity.router, prefix="/api/v1", tags=["v1"])
+    app.include_router(project_identity.router, prefix="/api/v1", tags=["v1"])
     app.include_router(whale_mirror.router, prefix="/api/v1", tags=["v1"])
     app.include_router(impermanent_loss.router, prefix="/api/v1", tags=["v1"])
     app.include_router(paymaster.router, prefix="/api/v1", tags=["v1"])

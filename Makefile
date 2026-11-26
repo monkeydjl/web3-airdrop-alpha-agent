@@ -5,7 +5,7 @@
 # 查看所有可用任务：make help
 # ──────────────────────────────────────────────
 
-.PHONY: help setup dev test test-all test-llm lint format typecheck clean docker-build docker-run
+.PHONY: help setup dev test test-llm test-golden test-cov test-fast lint format typecheck clean docker-build docker-run
 
 # ── 默认目标 ──────────────────────────────────
 .DEFAULT_GOAL := help
@@ -17,7 +17,7 @@ PYTEST := pytest
 RUFF := ruff
 MYPY := mypy
 DOCKER := docker
-COMPOSE := docker-compose
+COMPOSE := docker compose
 
 # ── 帮助 ──────────────────────────────────────
 help: ## 显示所有可用任务
@@ -28,8 +28,10 @@ help: ## 显示所有可用任务
 	@echo ""
 
 # ── 环境设置 ──────────────────────────────────
+# 依赖的唯一真相源是 backend/requirements*.txt（CI 与 Docker 同源）；
+# 根 pyproject 的 dependencies 已知漂移，不要用 `pip install -e .` 装依赖。
 setup: ## 初始化开发环境（安装依赖 + pre-commit）
-	$(PIP) install -e ".[dev]"
+	$(PIP) install -r backend/requirements.txt -r backend/requirements-dev.txt
 	pre-commit install
 	@echo "✅ 开发环境初始化完成"
 
@@ -38,14 +40,14 @@ setup-venv: ## 创建虚拟环境
 	@echo "✅ 虚拟环境已创建，请执行：source .venv/bin/activate"
 
 # ── 开发 ──────────────────────────────────────
-dev: ## 启动开发服务器（热重载）
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
+dev: ## 启动开发服务器（热重载，绑定本机回环）
+	cd backend && uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
 
 dev-debug: ## 启动开发服务器（调试模式）
-	LOG_LEVEL=DEBUG $(PYTHON) -m app.main
+	cd backend && LOG_LEVEL=DEBUG $(PYTHON) -m app.main
 
 seed: ## 导入种子数据
-	$(PYTHON) scripts/seed.py
+	cd backend && PYTHONPATH=. $(PYTHON) scripts/seed.py
 
 rescore: ## 用当前评分规则重算全部 projects
 	cd backend && PYTHONPATH=. $(PYTHON) scripts/rescore_all.py
@@ -72,32 +74,26 @@ quarantine-list: ## 列出隔离 raw_projects
 	cd backend && PYTHONPATH=. $(PYTHON) scripts/quarantine_cli.py list
 
 # ── 测试 ──────────────────────────────────────
+# ⚠️ 2026-11-13 对账：test-unit/contract/api 曾引用未注册的 pytest marker
+# （--strict-markers 下直接报错），test-all 曾引用不存在的 tests/unit、
+# tests/contracts、tests/e2e 目录 —— 全部是"从未兑现的地图"，已删除。
+# 现存真实分层：全量（test）、golden 回归（tests/golden）、覆盖率（test-cov）、
+# 并行快速（test-fast）。要加分层先注册 marker（backend/pyproject.toml）。
 test: ## 运行全部测试
-	$(PYTEST)
+	cd backend && $(PYTEST)
 
-test-all: ## 运行完整测试套件（unit + contract + golden + api + e2e）
-	$(PYTEST) tests/unit tests/contracts tests/golden tests/api tests/e2e -v
-
-test-llm: ## 运行 LLM 评估（需 OPENAI_API_KEY，详见 evaluation/llm/template_validation.py）
+# 仅模板校验模式可用；默认评估模式的样本路径指向 backend/tests/golden（已知断裂）。
+test-llm: ## 运行 LLM 模板校验（详见 evaluation/llm/template_validation.py）
 	$(PYTHON) evaluation/llm/template_validation.py --validate-templates-only
 
-test-unit: ## 运行单元测试
-	$(PYTEST) -m unit -v
-
-test-contract: ## 运行契约测试
-	$(PYTEST) -m contract -v
-
 test-golden: ## 运行 golden 回归测试
-	$(PYTEST) -m golden -v
-
-test-api: ## 运行 API 测试
-	$(PYTEST) -m api -v
+	cd backend && $(PYTEST) tests/golden -v
 
 test-cov: ## 运行测试并生成覆盖率报告
-	$(PYTEST) --cov=app --cov-report=html --cov-report=term-missing
+	cd backend && $(PYTEST) --cov=app --cov-report=html --cov-report=term-missing
 
-test-fast: ## 快速测试（并行）
-	$(PYTEST) -x -n auto
+test-fast: ## 快速测试（并行，遇错即停）
+	cd backend && $(PYTEST) -x -n auto
 
 # ── 代码质量 ──────────────────────────────────
 lint: ## 运行 linter
@@ -112,11 +108,12 @@ format: ## 格式化代码
 format-check: ## 检查格式（不修改）
 	$(RUFF) format --check .
 
-typecheck: ## 类型检查
-	$(MYPY) backend/app
+typecheck: ## 类型检查（CI 同口径：只查 backend/app）
+	cd backend && $(MYPY) app
 
-typecheck-all: ## 类型检查（含测试）
-	$(MYPY) backend tests
+# ⚠️ 与 CI 口径不同：CI 不查 tests/，这里的存量错误不在门禁内（见 HANDOFF）。
+typecheck-all: ## 类型检查（含测试，非 CI 口径）
+	cd backend && $(MYPY) app tests
 
 # ── 安全 ──────────────────────────────────────
 security-audit: ## 安全审计（依赖 + 代码）
@@ -130,8 +127,8 @@ secret-scan: ## 密钥扫描
 docker-build: ## 构建 Docker 镜像
 	$(DOCKER) build -f docker/Dockerfile -t web3-airdrop-alpha:latest .
 
-docker-run: ## 运行 Docker 容器
-	$(DOCKER) run -p 8000:8000 --env-file .env web3-airdrop-alpha:latest
+docker-run: ## 运行 Docker 容器（后端实际监听 8002）
+	$(DOCKER) run -p 8002:8002 --env-file .env web3-airdrop-alpha:latest
 
 docker-up: ## 启动完整服务（docker-compose）
 	$(COMPOSE) -f docker-compose.prod.yml up -d
@@ -144,13 +141,13 @@ docker-logs: ## 查看日志
 
 # ── 数据库 ────────────────────────────────────
 db-init: ## 初始化数据库
-	$(PYTHON) -c "from app.db import init_db; init_db()"
+	cd backend && $(PYTHON) -c "from app.db import init_db; init_db()"
 
 db-migrate: ## 运行数据库迁移（V2+）
-	alembic upgrade head
+	cd backend && $(PYTHON) -m alembic upgrade head
 
 db-rollback: ## 回滚最后一次迁移
-	alembic downgrade -1
+	cd backend && $(PYTHON) -m alembic downgrade -1
 
 # ── 清理 ──────────────────────────────────────
 clean: ## 清理临时文件

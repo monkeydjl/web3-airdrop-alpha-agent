@@ -308,6 +308,8 @@
 | `arweave.net` | Mirror（经 Arweave GraphQL 公开读） | P2 | ✅ `collectors/mirror.py` |
 | `raw.githubusercontent.com` | GitHub Curated 测试网清单 | V2 | ✅ `collectors/github_curated.py` |
 | `api.telegram.org` | Telegram Bot API（决策推送 sendMessage） | F1 | ✅ `notify/senders.py`（经 `fetcher.post` 出站校验） |
+| `api.gopluslabs.io` | GoPlus Security 公开授权/地址风控 API | V3 | ✅ `services/security_sentinel.py`（经 `safe_collector_client` 出站校验） |
+| `li.quest` | LI.FI 公开跨链桥实时报价 API | V3 | ✅ `services/bridge_optimizer.py`（经 `safe_collector_client` 出站校验） |
 | `api.openai.com` | LLM 增强（默认 endpoint） | V1+ | ✅ `config.py:86` |
 | `api.deepseek.com` | LLM 多接口失效转移示例 | V1+ | ⚠️ 仅出现在 `config.py` 注释；实际由 `LLM_BASEURL_{i}` 运行时决定，**无法静态穷举** |
 | ~~`dashboard.alchemy.com`~~ | Alchemy webhook | — | ❌ **代码里 0 处**，无此集成 |

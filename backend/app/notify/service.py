@@ -98,6 +98,18 @@ async def dispatch_pending(*, limit: int | None = None) -> dict[str, int]:
 
     sent = failed = 0
     for row in rows:
+        # 原子认领（2026-11-19 深审 P2-1）：pending → sending 的条件 UPDATE。
+        # 此前裸 SELECT 后直接发送，cron digest 与 pipeline 钩子并发时同一行
+        # 会被双重发送；认领失败的行（已被别的入口抢走）跳过。
+        row_id = int(row["id"])
+        with connection_scope() as claim_conn:
+            claimed = claim_conn.execute(
+                "UPDATE notify_log SET status = 'sending' WHERE id = ? AND status = 'pending'",
+                (row_id,),
+            ).rowcount
+            claim_conn.commit()
+        if not claimed:
+            continue
         try:
             await sender.send(str(row["title"]), str(row["body"]))
         except Exception as exc:

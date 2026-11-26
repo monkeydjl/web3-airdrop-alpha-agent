@@ -164,6 +164,13 @@ docker compose --profile production up -d
 `AUTH_TOKEN_SECRET` / `CORS_ORIGINS`，任一不合格立刻 `exit 1` 并说明要填什么。
 这四项都会让 `app/config.py` 拒绝启动，提前查比等 60 秒超时快。
 
+> ⚠️ **2026-11-16 行为修正**：此前 `deploy.sh prod` 的 build/up 全部打在
+> **开发用** `docker-compose.yml` 上（默认 SQLite、无 PG/前端/监控栈）——
+> 用过 2026-11-16 之前版本部署的"生产"环境，实际跑的是开发栈。
+> 现已按环境显式选择 compose 文件与服务名（prod → `web` /
+> `airdrop-web`），健康检查改读 compose 定义的容器 healthcheck
+> （后端只 `expose` 不发布端口，宿主侧探测不存在）；dev 路径行为不变。
+
 **脚本不会替你生成密钥。** 密钥和域名的正确值只有部署者知道；
 自动塞一个进去会让一个配错的生产环境**看起来部署成功了**。
 

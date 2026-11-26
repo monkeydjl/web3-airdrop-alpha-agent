@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 
 from app.auth import verify_password
-from app.db import DbConnection, dict_from_row
+from app.db import DbConnection, dict_from_row, scalar
 
 logger = structlog.get_logger(__name__)
 
@@ -108,37 +108,34 @@ class ApiKeyRepository:
         """根据明文 raw_key 验证并查找有效未撤销的 API Key 记录。
 
         优先通过 ak_{key_id_hex}_{secret} 格式在 O(1) 内检索主键行，避免全表扫描。
+
+        安全语义（2026-11-13）：`ak_` 格式**解析成功后快速路径即权威判定** ——
+        key_hash 是按整个 raw key 算的，未命中 / 已吊销 / 已过期 / 密文不匹配时，
+        全表扫描不可能"救回"结果，只会把每个请求变成 N 次逐行 bcrypt（格式合法
+        但不存在的 key 就能持续吃满 CPU，放大 DoS）。全表扫描只保留给历史格式的
+        兼容查找。
         """
         raw = raw_key.strip()
         now = datetime.now(UTC)
 
-        # 1. 优先尝试解析 ak_{key_id_hex}_{secret}
+        # 1. ak_{key_id_hex}_{secret}：主键检索，命中与否都到此为止（含畸形 ak_ 前缀）
         if raw.startswith("ak_"):
             parts = raw.split("_", 2)
-            if len(parts) == 3 and len(parts[1]) == 16:
-                key_id = f"key_{parts[1]}"
-                record = self.get_by_id(key_id)
-                if record and not record.get("is_revoked"):
-                    expires_at = record.get("expires_at")
-                    if expires_at:
-                        # 处理字符串或 datetime
-                        if isinstance(expires_at, str):
-                            try:
-                                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                            except Exception:
-                                exp_dt = None
-                        elif isinstance(expires_at, datetime):
-                            exp_dt = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
-                        else:
-                            exp_dt = None
+            if len(parts) != 3 or len(parts[1]) != 16:
+                return None
+            record = self.get_by_id(f"key_{parts[1]}")
+            if (
+                not record
+                or record.get("is_revoked")
+                or self._expired(record.get("expires_at"), now)
+                or not self._is_user_active(record.get("user_id"))
+            ):
+                return None
+            if verify_password(raw, str(record["key_hash"])):
+                return record
+            return None
 
-                        if exp_dt and exp_dt < now:
-                            return None
-
-                    if verify_password(raw, str(record["key_hash"])):
-                        return record
-
-        # 2. 回退：扫描当前所有未撤销的 API Key 并校验 bcrypt
+        # 2. 历史格式兼容：扫描当前所有未撤销的 API Key 并校验 bcrypt
         rows = self.conn.execute(
             "SELECT * FROM api_keys WHERE is_revoked = 0",
         ).fetchall()
@@ -146,22 +143,37 @@ class ApiKeyRepository:
             record = dict_from_row(r)
             if not record:
                 continue
-            expires_at = record.get("expires_at")
-            if expires_at:
-                if isinstance(expires_at, str):
-                    try:
-                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                    except Exception:
-                        exp_dt = None
-                elif isinstance(expires_at, datetime):
-                    exp_dt = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
-                else:
-                    exp_dt = None
-
-                if exp_dt and exp_dt < now:
-                    continue
-
+            if self._expired(record.get("expires_at"), now) or not self._is_user_active(record.get("user_id")):
+                continue
             if verify_password(raw, str(record["key_hash"])):
                 return record
 
         return None
+
+    def _is_user_active(self, user_id: Any) -> bool:
+        """检查 API Key 所属用户是否仍存在且处于活跃状态（is_active != 0）。"""
+        if not user_id:
+            return False
+        row = self.conn.execute("SELECT is_active FROM users WHERE id = ?", (str(user_id),)).fetchone()
+        if not row:
+            return False
+        return bool(scalar(row, 0))
+
+    @staticmethod
+    def _expired(expires_at: Any, now: datetime) -> bool:
+        """expires_at 是否已过（容忍 str / datetime / None 三种存态）。
+
+        解析失败按未过期处理 —— 与历史行为一致：坏数据不该把有效 key 锁死。
+        """
+        if not expires_at:
+            return False
+        if isinstance(expires_at, str):
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            except Exception:
+                return False
+        elif isinstance(expires_at, datetime):
+            exp_dt = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+        else:
+            return False
+        return bool(exp_dt and exp_dt < now)
