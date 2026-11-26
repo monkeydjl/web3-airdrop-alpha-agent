@@ -43,6 +43,7 @@ import socket
 from datetime import UTC, datetime
 from typing import Any
 
+import httpcore
 import httpx
 import structlog
 
@@ -104,27 +105,100 @@ def _is_safe_public_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
     return True
 
 
-async def _reject_non_public_target(request: httpx.Request) -> None:
-    """httpx request hook：每一跳（含 30x 重定向）发出前校验目标解析到公网地址。
-
-    vitals 探的是项目官网，URL 来自外部采集数据，无法套用静态域名白名单；
-    这里改为按**解析后的 IP**拦截，防止 `http://169.254.169.254/`、
-    `http://localhost:8002/`、NAT64 或「公网地址 302 跳内网」这类 SSRF。
-    DNS 解析失败时按 fail-closed 拒绝，避免代理/底层解析器绕过校验。
-    """
-    host = request.url.host
+async def _resolve_safe_public_ips(host: str, port: int | None = None) -> list[str]:
+    """解析目标主机名并校验全部记录均为公网 IP，返回去重后的公网 IP 字面量列表。"""
     if not host:
         raise BlockedTargetError("<empty host>")
+    clean_host = host.strip("[]")
     try:
-        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+        literal = ipaddress.ip_address(clean_host.split("%", 1)[0])
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if not _is_safe_public_ip(literal):
+            raise BlockedTargetError(host)
+        return [str(literal)]
+
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(clean_host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise BlockedTargetError(f"{host} (dns_failed)") from exc
     if not infos:
         raise BlockedTargetError(f"{host} (no_dns_records)")
+
+    resolved_ips: list[str] = []
     for info in infos:
-        addr = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        raw_ip = str(info[4][0]).split("%", 1)[0]
+        addr = ipaddress.ip_address(raw_ip)
         if not _is_safe_public_ip(addr):
             raise BlockedTargetError(host)
+        if raw_ip not in resolved_ips:
+            resolved_ips.append(raw_ip)
+    return resolved_ips
+
+
+class _PinnedPublicIPBackend(httpcore.AsyncNetworkBackend):
+    """在 TCP 建连瞬间执行单次 DNS 解析并直连已校验公网 IP，闭合 DNS 重绑定 TOCTOU 窗口。"""
+
+    def __init__(self, inner: httpcore.AsyncNetworkBackend) -> None:
+        self._inner = inner
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        safe_ips = await _resolve_safe_public_ips(host, port)
+        last_err: Exception | None = None
+        for ip in safe_ips:
+            try:
+                return await self._inner.connect_tcp(
+                    ip,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except Exception as exc:
+                last_err = exc
+        if last_err is not None:
+            raise last_err
+        raise BlockedTargetError(host)
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        del path, timeout, socket_options
+        raise BlockedTargetError("unix_socket_disallowed")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def _build_pinned_transport() -> httpx.AsyncHTTPTransport:
+    transport = httpx.AsyncHTTPTransport(trust_env=False)
+    pool = getattr(transport, "_pool", None)
+    inner = getattr(pool, "_network_backend", None)
+    if pool is not None and inner is not None:
+        pool._network_backend = _PinnedPublicIPBackend(inner)
+    return transport
+
+
+async def _reject_non_public_target(request: httpx.Request) -> None:
+    """httpx request hook：每一跳（含 30x 重定向）发出前校验目标解析到公网地址。
+
+    vitals 探的是项目官网，URL 来自外部采集数据，无法套用静态域名白名单；
+    这里与底层 `_PinnedPublicIPBackend` 双保险按**解析后的 IP**拦截，防止
+    `http://169.254.169.254/`、`http://localhost:8002/`、NAT64、DNS 重绑定
+    或「公网地址 302 跳内网」这类 SSRF。
+    """
+    await _resolve_safe_public_ips(request.url.host or "", request.url.port)
 
 
 async def probe_site(url: str) -> tuple[str, int | None]:
@@ -135,6 +209,7 @@ async def probe_site(url: str) -> tuple[str, int | None]:
         timeout=timeout,
         headers=_UA,
         trust_env=False,
+        transport=_build_pinned_transport(),
         event_hooks={"request": [_reject_non_public_target]},
     ) as client:
         try:

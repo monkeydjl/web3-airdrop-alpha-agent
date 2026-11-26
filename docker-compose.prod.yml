@@ -96,8 +96,6 @@ services:
       - API_KEY=${API_KEY:?请在 .env 里设置 API_KEY（至少 32 字符随机字符串）}
       # LLM 可选，留空时规则引擎仍完整可用；用 :- 防止 warning。
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - CRON_HOUR=8
-      - CRON_MINUTE=0
       # 后端日志落盘（相对 /app/backend 工作目录），promtail 采集宿主 ./logs
       - LOG_FILE=${LOG_FILE:-logs/backend.log}
       # OpenTelemetry 链路追踪（配合 observability profile 的 otel-collector + jaeger）
@@ -154,7 +152,7 @@ services:
 
   # Prometheus 监控
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.53.3
     container_name: airdrop-prometheus
     logging: *default-logging
     # 宿主机 19090 → 容器 9090。绑回环（2026-11-14 审查 L-7）：Prometheus
@@ -175,7 +173,7 @@ services:
 
   # Alertmanager 告警通知（Telegram）
   alertmanager:
-    image: prom/alertmanager:latest
+    image: prom/alertmanager:v0.27.0
     container_name: airdrop-alertmanager
     logging: *default-logging
     # 宿主机 19093 → 容器 9093
@@ -197,9 +195,9 @@ services:
     networks:
       - monitoring
 
-  # Grafana 面板
+  # Grafana 面板（固定 11.x LTS 版本，防止 :latest 跨大版本升级破坏经典预置面板）
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.2.2
     container_name: airdrop-grafana
     logging: *default-logging
     # 宿主机 13000 → 容器 3000
@@ -247,7 +245,7 @@ services:
     volumes:
       - ./docker/loki/promtail-config.yml:/etc/promtail/config.yml:ro
       - ./logs:/var/log/app:ro
-      - ./docker/nginx/logs:/var/log/nginx:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
     networks:

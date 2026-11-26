@@ -25,6 +25,7 @@ const FILES = [
   './lib/modalShell.test.ts',
   './lib/modalFocus.test.ts',
   './lib/apiEnvelope.test.ts',
+  './lib/authRefresh.test.ts',
   './lib/proxyParity.test.ts',
 ];
 

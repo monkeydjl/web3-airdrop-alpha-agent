@@ -34,6 +34,7 @@ Redis，那是 V2 的事。
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -60,11 +61,22 @@ def _expensive_limits() -> tuple[tuple[str, int, int], ...]:
 
 
 def _auth_limits() -> tuple[tuple[str, int, int], ...]:
-    """认证端点防爆破限制：(路径前缀, 次数, 窗口秒)。
+    """认证端点防爆破与 CPU 放大限制：(路径前缀, 次数, 窗口秒)。
 
-    与通用 50,000 键池隔离，避免洪泛淘汰登录爆破计数。
+    与通用 50,000 键池隔离，避免洪泛淘汰登录爆破与 bcrypt 注册计数。
     """
-    return (("/api/v1/auth/login", 20, 300),)
+    return (
+        ("/api/v1/auth/login", 20, 300),
+        ("/api/v1/auth/register", 10, 300),
+    )
+
+
+_LLM_ENDPOINT_RE = re.compile(r"^/api/v1/projects/[^/]+/ai-(?:brief|chat)(?:/|$)")
+
+
+def _llm_pattern_limits() -> tuple[tuple[str, re.Pattern[str], int, int], ...]:
+    """按正则匹配的 LLM 生成/追问写端点配额：(桶名, 路径正则, 次数, 窗口秒)。"""
+    return (("llm_project_ai", _LLM_ENDPOINT_RE, 30, 3600),)
 
 
 class _SlidingWindow:
@@ -125,7 +137,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if now - self._last_prune > 60:
             self._last_prune = now
             self._windows.prune(now, float(max(1, settings.rate_limit_window)))
-            longest_expensive = max(float(w) for _, _, w in (*_expensive_limits(), *_auth_limits()))
+            longest_expensive = max(
+                *(float(w) for _, _, w in (*_expensive_limits(), *_auth_limits())),
+                *(float(w) for _, _, _, w in _llm_pattern_limits()),
+            )
             self._expensive_windows.prune(now, longest_expensive)
 
         client_ip = _client_ip(request)
@@ -146,6 +161,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 retry = self._expensive_windows.check(f"{client_ip}:{prefix}", limit, float(window), now)
                 if retry is not None:
                     return _too_many(retry)
+
+        if request.method == "POST":
+            for bucket_name, pattern, limit, window in _llm_pattern_limits():
+                if pattern.match(path):
+                    retry = self._expensive_windows.check(f"{client_ip}:{bucket_name}", limit, float(window), now)
+                    if retry is not None:
+                        return _too_many(retry)
         return await call_next(request)
 
 

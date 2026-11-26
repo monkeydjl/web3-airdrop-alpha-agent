@@ -510,11 +510,13 @@ async def llm_chat(
     # 起点每次调用推进一格，遍历顺序是从该起点开始的**旋转序列**。
     # 全部组合仍会被试到，failover 深度不随请求序号变化。
     canonical = _build_combinations(providers)
+    start_index = await _next_start_index(len(canonical))
+    combinations = _rotate(canonical, start_index)
 
     # ── 日预算闸门（含并发在途预扣）─────────────────────────────
     # 放在故障转移循环之外：预算是"今天还能不能花钱"，与试哪个接口无关。
-    # 放在循环里会让一次超预算的调用把每个组合都试一遍再各自拒绝。
-    reserve_model = canonical[0][1] if canonical else "unknown"
+    # 预扣金额按本轮轮询实际选中的首试模型估算，避免轮换到高价模型时预留不足。
+    reserve_model = combinations[0][1] if combinations else "unknown"
     reserve_usd = _estimate_reservation_usd(model=reserve_model, messages=messages, max_tokens=tokens)
 
     def _check_budget_sync() -> budget_mod.BudgetDecision:
@@ -542,8 +544,6 @@ async def llm_chat(
         )
 
     try:
-        start_index = await _next_start_index(len(canonical))
-        combinations = _rotate(canonical, start_index)
         attempts: list[LLMAttempt] = []
         if combinations:
             first_provider, first_model = combinations[0]

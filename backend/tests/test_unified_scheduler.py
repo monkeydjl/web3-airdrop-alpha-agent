@@ -193,6 +193,7 @@ async def test_start_disabled_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(settings, "notify_enabled", False)
     monkeypatch.setattr(settings, "vitals_scheduler_enabled", False)
     monkeypatch.setattr(settings, "launch_review_scheduler_enabled", False)
+    monkeypatch.setattr(settings, "alpha_digest_scheduler_enabled", False)
 
     sched = UnifiedScheduler(registry)
     sched.start()

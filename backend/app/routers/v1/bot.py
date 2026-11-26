@@ -69,6 +69,12 @@ def test_send_message(req: TestSendRequest) -> dict[str, Any]:
             return {"ok": ok, "channel": "telegram", "status": "sent" if ok else "failed"}
 
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported channel: {req.channel}")
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": f"Unsupported channel: {req.channel}"},
+            )
     except DomainNotAllowedError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "DOMAIN_NOT_ALLOWED", "message": str(exc)},
+        ) from exc

@@ -430,6 +430,10 @@ class Settings(BaseSettings):
     launch_review_scheduler_enabled: bool = True
     launch_review_cron: str = "0 12 * * *"
 
+    # 每日 Alpha 投研周报合辑定时快照
+    alpha_digest_scheduler_enabled: bool = True
+    alpha_digest_cron: str = "0 8 * * *"
+
     # ── 评分权重 v1.2 (Σ=1.0) ───────────────────
     weight_airdrop_signal: float = 0.18
     weight_narrative_timing: float = 0.15
@@ -485,6 +489,7 @@ class Settings(BaseSettings):
     analysis_run_limit: int = 100
     defillama_cron: str = "0 8 * * *"
     github_cron: str = "30 8 * * *"
+    github_curated_cron: str = "30 3 * * *"
     coingecko_cron: str = "0 9 * * *"
     cryptorank_cron: str = "15 9 * * *"
     twitter_kol_cron: str = "0 * * * *"

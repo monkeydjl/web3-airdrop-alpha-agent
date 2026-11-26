@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 import structlog
@@ -72,8 +73,10 @@ async def project_ai_chat(
             detail={"code": "INVALID_MESSAGES", "message": error},
         )
 
-    repo = ProjectRepository()
-    project = repo.get_by_id(project_id)
+    def _load_project() -> dict[str, Any] | None:
+        return ProjectRepository().get_by_id(project_id)
+
+    project = await asyncio.to_thread(_load_project)
     if not project:
         raise HTTPException(
             status_code=404,

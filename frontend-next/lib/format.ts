@@ -321,6 +321,7 @@ const REASONS_ZH_MAP: Record<string, string> = {
   'token already launched with no verified follow-on airdrop path': '已发币且无可验证的后续空投路径',
   'team or official source explicitly disclaimed airdrop / token incentives': '团队或官方已明确否认空投/代币激励',
   'no verified testnet, points program, task portal, or explicit airdrop mention': '暂无可验证的测试网、积分体系、任务门户或官方空投声明',
+  'no verified participation path; monitor for a testnet, points, or task portal': '暂无已核实的交互路径，建议关注后续测试网、积分或任务入口',
 
   // Viability and Runway gate reasons
   'low_runway_risk': '存活跑道风险：融资过小或缺乏知名机构支持',

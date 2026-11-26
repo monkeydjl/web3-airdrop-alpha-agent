@@ -41,5 +41,8 @@ def get_single_project_unlock(
     """查询指定项目的专属代币解锁模型与应对策略."""
     detail = get_project_unlock_details(project_id)
     if not detail:
-        raise HTTPException(status_code=404, detail=f"未找到项目 '{project_id}' 的代币解锁数据模型")
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": f"未找到项目 '{project_id}' 的代币解锁数据模型"},
+        )
     return mark_simulated({"ok": True, "data": detail}, note=_UNLOCK_NOTE)

@@ -140,7 +140,7 @@ class ScorerAgent(BaseAgent):
                 confidence=confidence,
                 reason=reasons,
                 sub_scores=subscores,
-                weight_version=WEIGHT_VERSION,
+                weight_version=settings.weight_version,
                 veto=eligibility.veto,
             )
 
@@ -470,7 +470,8 @@ class ScorerAgent(BaseAgent):
 
     def _calculate_total_score(self, subscores: dict[str, float]) -> int:
         """Calculate weighted total score."""
-        total = sum(subscores[key] * WEIGHTS[key] for key in WEIGHTS)
+        weights = _load_weights()
+        total = sum(subscores[key] * weights[key] for key in weights)
 
         # Round using banker's rounding (Python default)
         return round(self._clamp(total, 0, 100))

@@ -74,7 +74,6 @@ def collector():
     return CollectorAgent()
 
 
-@pytest.mark.asyncio
 class TestCollectFromRepository:
     def test_repository_loads_unprocessed_projects(self, collector):
         conn = sqlite3.connect(":memory:")

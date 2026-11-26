@@ -12,7 +12,7 @@ Reference:
 
 import json
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -29,6 +29,7 @@ from app.services.user_scope import DEFAULT_USER
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["projects"])
+_NO_REQUEST: Request = cast(Request, None)
 
 _REASONS_ZH_MAP: dict[str, str] = {
     # Positive reasons
@@ -76,6 +77,7 @@ _REASONS_ZH_MAP: dict[str, str] = {
     "token already launched with no verified follow-on airdrop path": "已发币且无可验证的后续空投路径",
     "team or official source explicitly disclaimed airdrop / token incentives": "团队或官方已明确否认空投/代币激励",
     "no verified testnet, points program, task portal, or explicit airdrop mention": "暂无可验证的测试网、积分体系、任务门户或官方空投声明",
+    "no verified participation path; monitor for a testnet, points, or task portal": "暂无已核实的交互路径，建议关注后续测试网、积分或任务入口",
     # Viability & Runway gate reasons
     "low_runway_risk": "存活率与跑道预警（极低存活率）",
     "low runway risk": "存活率与跑道预警（极低存活率）",
@@ -359,6 +361,7 @@ def list_projects(
                     "veto": p.get("veto"),
                     "hidden_reason": p.get("hidden_reason"),
                     "skipped": bool(p.get("skipped", False)),
+                    "watchlisted": bool(p.get("watchlisted", False)),
                     "signal_consensus": p.get("signal_consensus"),
                     "persona_applied": p.get("persona_applied") or (persona or "balanced"),
                     "persona_score": p.get("persona_score") if p.get("persona_score") is not None else p.get("score"),
@@ -455,7 +458,7 @@ def get_projects_digest(
     except Exception as e:
         logger.error("api.projects.digest_failed", error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"code": "INTERNAL_ERROR", "message": f"Failed to generate alpha digest: {e}"}
+            status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Failed to generate alpha digest"}
         ) from e
 
 
@@ -480,6 +483,12 @@ def get_projects_digest(
 )
 def get_project(
     project_id: str = Path(..., description="项目 ID"),
+    req: Request = _NO_REQUEST,
+    user_id: str | None = Query(
+        None,
+        max_length=64,
+        description="用户 ID（仅管理员可指定，匿名时走当前访客或 default）",
+    ),
 ) -> dict[str, Any]:
     """获取单个项目详情.
 
@@ -492,15 +501,33 @@ def get_project(
     Raises:
         HTTPException: 项目不存在
     """
+    from app.auth import resolve_scoped_user_id
+
+    requested_uid = user_id if isinstance(user_id, str) else None
+    maybe_req: Any = req
+    if isinstance(maybe_req, Request):
+        effective_user_id = resolve_scoped_user_id(
+            get_current_user(maybe_req),
+            requested_uid,
+            default_user=DEFAULT_USER,
+        )
+    else:
+        effective_user_id = requested_uid or DEFAULT_USER
+
     logger.info(
         "api.projects.get",
         project_id=project_id,
+        user_id=effective_user_id,
     )
 
     # Query from database
     try:
         repo = ProjectRepository()
-        project = repo.get_by_id(project_id)
+        project = (
+            repo.get_by_id(project_id)
+            if effective_user_id == DEFAULT_USER
+            else repo.get_by_id(project_id, user_id=effective_user_id)
+        )
 
         if not project:
             raise HTTPException(

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -21,14 +21,46 @@ from app.main import create_app
 ROUTERS = Path(__file__).resolve().parents[2] / "app" / "routers" / "v1"
 
 
+def _extract_detail_expr(call: ast.Call) -> ast.expr | None:
+    for kw in call.keywords:
+        if kw.arg == "detail":
+            return kw.value
+    if len(call.args) >= 2:
+        return call.args[1]
+    return None
+
+
 def test_no_string_detail_in_routers() -> None:
     offenders: list[str] = []
     for path in sorted(ROUTERS.glob("*.py")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if re.search(r'HTTPException\([^)]*detail="', line) or re.search(r'detail="[^"]*"\)', line):
-                offenders.append(f"{path.name}:{lineno}")
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            is_http_exc = (isinstance(func, ast.Name) and func.id == "HTTPException") or (
+                isinstance(func, ast.Attribute) and func.attr == "HTTPException"
+            )
+            if not is_http_exc:
+                continue
+            detail = _extract_detail_expr(node)
+            if detail is None:
+                offenders.append(f"{path.name}:{node.lineno} (missing detail)")
+                continue
+            if isinstance(detail, ast.Constant) and isinstance(detail.value, str):
+                offenders.append(f"{path.name}:{node.lineno} (string literal detail)")
+            elif isinstance(detail, ast.JoinedStr):
+                offenders.append(f"{path.name}:{node.lineno} (f-string detail)")
+            elif isinstance(detail, ast.BinOp):
+                offenders.append(f"{path.name}:{node.lineno} (formatted string detail)")
+            elif isinstance(detail, ast.Call) and isinstance(detail.func, ast.Name) and detail.func.id == "str":
+                offenders.append(f"{path.name}:{node.lineno} (str(...) detail)")
+            elif isinstance(detail, ast.Dict):
+                keys = {k.value for k in detail.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+                if "code" not in keys:
+                    offenders.append(f"{path.name}:{node.lineno} (dict detail missing 'code')")
     assert not offenders, (
-        f"这些 HTTPException 用了字符串 detail（错误码降级为 HTTP_ERROR）：{offenders}。\n"
+        f"这些 HTTPException 未使用带语义化 code 的结构化 detail（错误码会降级为 HTTP_ERROR）：{offenders}。\n"
         '一律改成 detail={"code": "<语义化码>", "message": "..."}。'
     )
 

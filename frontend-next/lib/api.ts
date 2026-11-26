@@ -146,9 +146,102 @@ export function clearStoredCredentials(emit = true): void {
   if (emit) notifyAuthChanged();
 }
 
-async function request(path: string, init?: RequestInit): Promise<ApiResponse<unknown> & Record<string, unknown>> {
+let refreshInFlight: Promise<'refreshed' | 'cleared' | 'failed'> | null = null;
+
+function isAuthBootstrapPath(path: string): boolean {
+  return (
+    path.startsWith('/auth/login') ||
+    path.startsWith('/auth/register') ||
+    path.startsWith('/auth/refresh') ||
+    path.startsWith('/auth/anonymous')
+  );
+}
+
+/**
+ * 单飞刷新 JWT Access Token。
+ * - 成功返回 'refreshed' 并原位更新存储中的 access_token 与轮换后的 refresh_token；
+ * - 若 refresh_token 缺失或服务端明确拒绝（401/403），清除本地过期凭据并返回 'cleared'，
+ *   让后续请求通过服务端 proxy.ts 平滑回退到匿名令牌，避免整站锁死在 401；
+ * - 网络瞬断等非鉴权错误返回 'failed'，保留本地凭据不误删。
+ */
+export async function tryRefreshAccessToken(): Promise<'refreshed' | 'cleared' | 'failed'> {
+  if (typeof window === 'undefined') return 'failed';
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async (): Promise<'refreshed' | 'cleared' | 'failed'> => {
+    const refreshToken = getStoredRefreshToken();
+    if (!refreshToken) {
+      if (readStorageItem('auth_token')) {
+        clearStoredCredentials(true);
+        return 'cleared';
+      }
+      return 'failed';
+    }
+
+    const remember = Boolean(
+      (() => {
+        try {
+          return (
+            window.localStorage?.getItem('refresh_token') ||
+            window.localStorage?.getItem('auth_token')
+          );
+        } catch {
+          return false;
+        }
+      })(),
+    );
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as {
+          access_token?: string;
+          refresh_token?: string;
+          user?: { email?: string; role?: string };
+        };
+        if (data.access_token) {
+          saveJwtSession(
+            data.access_token,
+            data.refresh_token ?? refreshToken,
+            data.user?.email || readStorageItem('auth_email') || '',
+            data.user?.role || readStorageItem('auth_role') || '',
+            remember,
+          );
+          return 'refreshed';
+        }
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        clearStoredCredentials(true);
+        return 'cleared';
+      }
+      return 'failed';
+    } catch {
+      return 'failed';
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+}
+
+async function request(
+  path: string,
+  init?: RequestInit,
+  isRetry = false,
+): Promise<ApiResponse<unknown> & Record<string, unknown>> {
   const url = `${API_BASE}${path}`;
   let res: Response;
+  const usedJwtAuth = !readStorageItem('api_key') && Boolean(readStorageItem('auth_token'));
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...getClientAuthHeaders(),
@@ -179,6 +272,13 @@ async function request(path: string, init?: RequestInit): Promise<ApiResponse<un
     // 保留原始错误，避免把 CORS/TLS/拦截器等问题都误报成"后端没启动"。
     // 文案对生产用户保持环境中立（2026-11-13 审查：此前硬编码"8002 / 127.0.0.1"）。
     throw new Error(`无法连接 API（${url}）。请确认后端服务是否在线。`, { cause });
+  }
+
+  if (res.status === 401 && !isRetry && usedJwtAuth && !isAuthBootstrapPath(path)) {
+    const refreshOutcome = await tryRefreshAccessToken();
+    if (refreshOutcome === 'refreshed' || refreshOutcome === 'cleared') {
+      return request(path, init, true);
+    }
   }
 
   const text = await res.text();

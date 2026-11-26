@@ -78,9 +78,15 @@ def create_alias(req: AliasCreateRequest) -> dict[str, Any]:
             notes=req.notes,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_ERROR", "message": str(exc)},
+        ) from exc
     if not result.get("applied"):
-        raise HTTPException(status_code=409, detail=f"别名写入被拒绝：{result.get('reason')}")
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CONFLICT", "message": f"别名写入被拒绝：{result.get('reason')}"},
+        )
     return {"ok": True, "data": result, "error": None}
 
 

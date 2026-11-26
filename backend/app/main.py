@@ -17,6 +17,7 @@ import contextlib
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 
 import structlog
@@ -63,6 +64,16 @@ def _warn_github_missing_token() -> None:
     )
 
 
+def _current_db_init_fingerprint() -> tuple[str, str]:
+    """生成当前默认数据库目标指纹，用于避免 create_app() 与 lifespan 对同一库重复跑两遍 init_db()。"""
+    if settings.db_backend == "postgres":
+        return ("postgres", str(settings.database_url or ""))
+    raw_path = str(settings.db_path or "")
+    if raw_path == ":memory:":
+        return ("sqlite", ":memory:")
+    return ("sqlite", str(Path(raw_path).resolve()))
+
+
 def create_app(
     db_override: DbConnection | None = None,
     leader_elector: Any | None = None,
@@ -97,7 +108,15 @@ def create_app(
         _warn_github_missing_token()
 
         if db_override is None:
-            init_db()
+            fp = _current_db_init_fingerprint()
+            already_ready = (
+                getattr(application.state, "_init_db_fingerprint", None) == fp
+                and fp[1] != ":memory:"
+                and (fp[0] != "sqlite" or (Path(fp[1]).is_file() and Path(fp[1]).stat().st_size > 0))
+            )
+            if not already_ready:
+                init_db()
+                application.state._init_db_fingerprint = fp
 
         # Connection ownership: borrowed override never closed; else app-owned once.
         # 所有权契约的权威定义在 app.db.connection_scope（消费者统一走它）；此处是
@@ -480,7 +499,8 @@ def create_app(
 
     # ── 初始化数据库 ────────────────────────────
     if db_override is None:
-        init_db()  # 幂等建表; lifespan 启动时再次确认迁移完整
+        init_db()  # 幂等建表; lifespan 启动时按目标指纹跳过同库重复执行
+        app.state._init_db_fingerprint = _current_db_init_fingerprint()
 
     # ── 全局异常处理 ────────────────────────────
     @app.exception_handler(HTTPException)

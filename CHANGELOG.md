@@ -8,6 +8,21 @@
 
 ## [Unreleased]
 
+### Fixed — 全栈工程审计全量收口（2026-11-26：P1 / P2 / P3 清零）
+
+- **P1 数据完整性、鉴权续期与配额防刷**：
+  - `routers/v1/export_import.py`：批量导入接入 `ProjectIdentityResolver` 解析确定性/别名主键，消除 `import-001`..`import-100` 固定序号二次导入覆写历史项目与串接子表台账的缺陷。
+  - `frontend-next/lib/api.ts` & `components/AdminAuthModal.tsx`：新增 `tryRefreshAccessToken()` 单飞 401 自动续期（轮换双 Token 并重试一次；`refresh_token` 失效时自动清空死凭据平滑回退匿名态，防止整站 401 锁死），并在 `AdminAuthModal` 增加「注册账号」Tab（支持可选 `bootstrap_token` 自举首位管理员）。
+  - `repository.py` & `routers/v1/projects.py`：`get_by_id` 与详情路由接入当前用户作用域（`resolve_scoped_user_id`），隔离 `skipped` 与 `watchlisted` 状态；列表路由补齐 `watchlisted` 序列化输出。
+  - `rate_limit.py` & `routers/v1/ai_brief.py`：为 `/api/v1/auth/register` 与 `POST /api/v1/projects/{id}/ai-(brief|chat)` 补齐独立滑动窗口配额；限制 `anonymous` / `viewer` 角色调用 `ai-brief` 的 `force=true` 覆写全局简报缓存。
+- **P2 安全边界、异步卫生、AST 错误信封门禁与配置编排**：
+  - `services/vitals.py`：新增 `_PinnedPublicIPBackend` 在 `httpcore` TCP 建连层单次解析并绑定公网 IP，闭合 DNS 重绑定（TOCTOU）窗口；`routers/v1/auth.py` & `repositories/user.py` 拦截 `anon-*` 令牌登出并按归属用户限定 `refresh_token` 会话吊销。
+  - `routers/v1/{webhook,ai_brief,ai_chat}.py` & `main.py`：剥离异步路由中的同步 DB I/O 至 `asyncio.to_thread`，并按数据库目标指纹消除同库启动时的重复 `init_db()`。
+  - `tests/api/test_error_detail_envelope.py`：升级为全路由 AST 静态守卫（覆盖 63 个路由模块），清零 `projects.py`、`comparison.py`、`bot.py`、`export_import.py`、`opportunity.py`、`project_identity.py`、`unlocks.py` 中全部非结构化/缺码 `detail` 及 500 内部异常原文回显。
+  - `agents/scorer.py`、`llm/client.py` & 前后端理由字典：支持运行时动态读取评分权重与版本、按本轮轮询首试模型估算 LLM 预扣成本、补齐 `VETO_NO_PARTICIPATION_PATH` 中文映射，并在文档与 `.env.example` 明确评分管线 100% 确定性规则计算口径。
+  - 依赖与编排：统一双份 `pyproject.toml` 与 `Start.bat` 依赖声明；修复 `docker/nginx/nginx-http.conf` 子块安全响应头继承与 `/_next/static/` 缓存范围；修正 `docker-compose.prod.yml`（锁定监控镜像版本、接入 Docker Socket 供 Promtail 采集 Nginx 日志、移除废弃 `CRON_HOUR`/`CRON_MINUTE`）与 `docker-compose.yml`；在 `config.py` / `scheduler.py` / `.env.example` 正式声明 `GITHUB_CURATED_CRON`、`ALPHA_DIGEST_SCHEDULER_ENABLED`、`ALPHA_DIGEST_CRON`。
+- **P3 仓库卫生与测试基线**：从 Git 索引移除 `.workbuddy/` 本地目录、消除 `test_collector_registry.py` 异步标记告警、同步 `README.md` 与 `docs/OBSERVABILITY.md` 统计。最新全栈基线：后端 **4285 passed / 26 skipped / 0 failed**，前端 **131 passed（45 suites）** + `next build` 全绿。
+
 ### Fixed — 工程审计三阶段全量收口（2026-11-20，Phase 1–3：P0 / P1 / P2 清零）
 
 - **Phase 1（P0 上线阻断清零 + ADR-015 单调性）**：修复 PostgreSQL `0002` 迁移与 `db.py` `%` 转义/全仓 `dict_row` 兼容/`migrate_sqlite_to_pg.py` 迁移脚本；重构 `proxy.ts` 为每访客独立 `HttpOnly` Cookie 匿名 Token 并新增导航栏管理员密钥登录弹窗；锁死匿名写接口对全局表的越权副作用；修复 `opportunity/evidence.py` 解包、`launch_review.py` 时序覆盖、`main.py` 共享连接串行锁与 `eligibility.py` 的 `FARM / WATCH → IGNORE` 单调否决。

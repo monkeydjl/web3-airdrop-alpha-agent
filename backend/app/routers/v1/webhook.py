@@ -11,6 +11,7 @@ Reference:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -286,7 +287,7 @@ async def receive_alchemy_webhook(
     # payload 可能只满足其中一个（自有地址收到代币时 address 多半在 noise
     # denylist 里、discovery 会被跳过），把它们串成一条链会让先失败的那个
     # 把后面的一起吃掉。
-    claim_matched = _process_claim_watch(payload)
+    claim_matched = await asyncio.to_thread(_process_claim_watch, payload)
 
     try:
         discovery = _build_discovery(payload)
@@ -313,12 +314,15 @@ async def receive_alchemy_webhook(
         result.started_at = datetime.now(UTC)
         result.finished_at = datetime.now(UTC)
 
-        repo = CollectionRepository()
-        repo.persist_collection_result(
-            result,
-            source_type="webhook",
-            source_name="Alchemy Webhook",
-        )
+        def _persist_discovery() -> None:
+            repo = CollectionRepository()
+            repo.persist_collection_result(
+                result,
+                source_type="webhook",
+                source_name="Alchemy Webhook",
+            )
+
+        await asyncio.to_thread(_persist_discovery)
 
         # 地址只记前 10 位。这里的 address 多数是别人的合约（discovery 的
         # 语义），但**自有地址收到代币时也会走到这条日志** —— 一旦命中就等于

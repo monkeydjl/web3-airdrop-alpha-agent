@@ -62,10 +62,9 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 ### 2.2 事件命名
 
-实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **431 个不同事件名**、
-**87 个命名空间**（2026-11-20：新增 `opportunity_economic.replay_emit_failed`
-与 `collector.persistence.identity_resolve_fallback`）；
-段数分布：2 段 340 个、3 段 83 个、4 段 5 个、1 段 2 个。
+实际命名是 **`<namespace>.<verb>`**，全小写点分。全仓共 **432 个不同事件名**、
+**87 个命名空间**（2026-11-26：新增 `unified_scheduler.alpha_digest_disabled`）；
+段数分布：2 段 341 个、3 段 83 个、4 段 5 个、1 段 2 个。
 
 > **这几个数字有门禁保护**（2026-09-02 修正：此处原写"没有门禁保护"，实测
 > 不对 —— `test_observability_doc_parity.py::test_documented_event_counts_match_reality`
@@ -80,7 +79,7 @@ structlog 的 processor 链固定注入三个字段，其余字段由调用点�
 
 | 命名空间 | 事件数 | 例 |
 | --- | --- | --- |
-| `unified_scheduler` | 40 | `unified_scheduler.started` |
+| `unified_scheduler` | 41 | `unified_scheduler.started` |
 | `api` | 22 | `api.request.completed`、`api.run.failed` |
 | `llm` | 21 | `llm.budget.exceeded` |
 | `collector` | 20 | `collector.noise_quarantined` |

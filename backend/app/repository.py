@@ -607,33 +607,39 @@ class ProjectRepository:
             if self._should_close():
                 conn.close()
 
-    def get_by_id(self, project_id: str) -> dict[str, Any] | None:
+    def get_by_id(self, project_id: str, user_id: str | None = None) -> dict[str, Any] | None:
         """根据 ID 查询项目。
 
         Args:
             project_id: 项目 ID
+            user_id: 可选用户 ID（缺省按 DEFAULT_USER 口径计算 skipped 与 watchlisted）
 
         Returns:
-            项目字典，不存在返回 None。字段里带 `skipped`（默认用户「不参与」标记，
-            由 project_skips 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
+            项目字典，不存在返回 None。字段里带 `skipped` 与 `watchlisted`（按当前用户作用域
+            由 project_skips / watchlist 左联得出；前端详情页用它把按钮渲染成选中/未选中）。
         """
-        # 与 list_projects 同一个 skipped 口径：LEFT JOIN project_skips，
-        # 按 default 用户（或未标注归属的 NULL 行）—— 单用户 MVP 的归属规则。
+        effective_user = user_id or DEFAULT_USER
+        ps_scope = (
+            "AND (ps.user_id = ? OR ps.user_id IS NULL)" if effective_user == DEFAULT_USER else "AND ps.user_id = ?"
+        )
+        wl_scope = (
+            "AND (wl.user_id = ? OR wl.user_id IS NULL)" if effective_user == DEFAULT_USER else "AND wl.user_id = ?"
+        )
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT p.*,
                        CASE WHEN ps.id IS NULL THEN 0 ELSE 1 END AS skipped,
                        CASE WHEN wl.id IS NULL THEN 0 ELSE 1 END AS watchlisted
                 FROM projects p
                 LEFT JOIN project_skips ps
-                  ON ps.project_id = p.id AND (ps.user_id = ? OR ps.user_id IS NULL)
+                  ON ps.project_id = p.id {ps_scope}
                 LEFT JOIN watchlist wl
-                  ON wl.project_id = p.id AND (wl.user_id = ? OR wl.user_id IS NULL)
+                  ON wl.project_id = p.id {wl_scope}
                 WHERE p.id = ?
                 """,
-                (DEFAULT_USER, DEFAULT_USER, project_id),
+                (effective_user, effective_user, project_id),
             )
             row = cursor.fetchone()
             if not row:

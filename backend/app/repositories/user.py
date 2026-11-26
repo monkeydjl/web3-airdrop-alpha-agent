@@ -166,6 +166,15 @@ class SessionRepository:
         self.conn.commit()
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
+    def revoke_by_token_hash_for_user(self, refresh_token_hash: str, user_id: str) -> bool:
+        """根据 Refresh Token 哈希撤销指定用户名下的会话（防跨用户会话吊销）。"""
+        cursor = self.conn.execute(
+            "UPDATE sessions SET revoked = 1 WHERE refresh_token_hash = ? AND user_id = ?",
+            (refresh_token_hash, user_id),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount and cursor.rowcount > 0)
+
     def revoke_all_user_sessions(self, user_id: str) -> int:
         """撤销某用户的所有会话（全设备登出）。"""
         cursor = self.conn.execute(

@@ -124,7 +124,10 @@ def add_evidence(
     try:
         stored = opportunity_repository.add_evidence(record)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_ERROR", "message": str(exc)},
+        ) from exc
     return {"ok": True, "data": stored.model_dump(mode="json")}
 
 

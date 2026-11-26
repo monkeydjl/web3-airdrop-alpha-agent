@@ -13,10 +13,10 @@ services:
     ports:
       - "${API_PORT:-8002}:8002"
     volumes:
-      # 持久化数据库
-      - ./data:/app/data
+      # 持久化数据库（对齐 Dockerfile WORKDIR /app/backend）
+      - ./data:/app/backend/data
       # 持久化日志
-      - ./logs:/app/logs
+      - ./logs:/app/backend/logs
     # 镜像里没有 .env（.dockerignore 排除），所以必须由 compose 把它读进来。
     # 只靠下面的 environment: 白名单是不够的——漏一个生产必需项（历史上先漏
     # API_KEY、后漏 AUTH_TOKEN_SECRET）容器就直接 CrashLoop。env_file 兜住全部
@@ -32,7 +32,7 @@ services:
       - PORT=8002
 
       # 数据库配置
-      - DB_PATH=/app/data/app.db
+      - DB_PATH=/app/backend/data/app.db
       # PostgreSQL 切换（A2, ADR-004）：
       #   DB_BACKEND=postgres → 从 POSTGRES_* 自动组装 DATABASE_URL
       #   或直接设 DATABASE_URL=postgresql://… 覆盖分项配置
@@ -48,10 +48,10 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - POSTGRES_DB=${POSTGRES_DB:-airdrop}
 
-      # LLM 配置（可选）
+      # LLM 配置（可选，仅作用于 AI 简报与交互追问）
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
-      - LLM_ENABLED=${LLM_ENABLED:-false}
+      - ENABLE_LLM_ENHANCEMENT=${ENABLE_LLM_ENHANCEMENT:-false}
 
       # API 配置
       # API_KEY 必须透传：APP_ENV 默认 production，而 config.py 的生产自检要求
@@ -59,7 +59,6 @@ services:
       # 在 .env 里正确设置了 API_KEY 也传不进容器，容器必然起不来。
       - API_KEY=${API_KEY}
       - MAX_CONCURRENT_PROJECTS=${MAX_CONCURRENT_PROJECTS:-10}
-      - LLM_SEMAPHORE_SIZE=${LLM_SEMAPHORE_SIZE:-5}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 30s
@@ -142,9 +141,5 @@ networks:
     driver: bridge
 
 volumes:
-  data:
-    driver: local
-  logs:
-    driver: local
   airdrop_pg_data:
     driver: local

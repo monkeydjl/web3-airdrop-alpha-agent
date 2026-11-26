@@ -30,7 +30,13 @@ def get_comparison(
         data = compare_projects(project_ids)
         return data
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": str(e)},
+        ) from e
     except Exception as e:
         logger.error("api.projects.compare_failed", ids=ids, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Comparison failed: {e}") from e
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": "Comparison failed"},
+        ) from e

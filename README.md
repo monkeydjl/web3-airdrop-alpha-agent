@@ -2,7 +2,7 @@
 
 从自动发现、结构化评分到「今天做什么」的 Web3 空投 Alpha 终端。
 
-[![Tests](https://img.shields.io/badge/tests-4272%20passed-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-4285%20passed-brightgreen)](backend/tests/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.4-000000)](https://nextjs.org/)
@@ -276,7 +276,7 @@ curl -X POST http://localhost:8002/api/v1/collections/defillama/trigger
 └──────────────────────────┬─────────────────────────────┘
                            │ /api 经 Next 服务端代理，分档注入凭据
 ┌──────────────────────────▼─────────────────────────────┐
-│ FastAPI 后端（62 个路由模块）                            │
+│ FastAPI 后端（63 个路由模块）                            │
 │                                                        │
 │  UnifiedScheduler（APScheduler）                        │
 │    ├─ collect_{source}  17 源 cron                      │
@@ -291,7 +291,7 @@ curl -X POST http://localhost:8002/api/v1/collections/defillama/trigger
 └──────────────────────────┬─────────────────────────────┘
                            │
 ┌──────────────────────────▼─────────────────────────────┐
-│ SQLite（WAL）/ PostgreSQL + Alembic（14 个迁移）         │
+│ SQLite（WAL）/ PostgreSQL + Alembic（16 个迁移）         │
 │ projects / raw_projects / project_signals / history     │
 │ participation / roi / notify / watched_wallets / token  │
 └────────────────────────────────────────────────────────┘
@@ -346,7 +346,7 @@ Web3-Airdrop-Alpha-Agent-System/
 │   │   ├── metrics.py       # Prometheus 指标
 │   │   └── main.py          # FastAPI 入口
 │   ├── alembic/             # 16 个数据库迁移
-│   ├── tests/               # 后端测试套件（4272 条用例）
+│   ├── tests/               # 后端测试套件（4285 条用例）
 │   ├── scripts/             # 校准、种子、双跑对比等脚本
 │   └── requirements*.txt
 ├── frontend-next/
@@ -382,7 +382,7 @@ Web3-Airdrop-Alpha-Agent-System/
 | `DB_BACKEND` | `sqlite` | `sqlite` 或 `postgres` |
 | `POSTGRES_PASSWORD` | 空 | PostgreSQL 密码（至少 16 字符） |
 | `GITHUB_TOKEN` | 空 | 提升 GitHub API 配额；不设仍可受限速保护运行 |
-| `OPENAI_API_KEY` | 空 | LLM 增强（默认关闭，规则引擎完整可用） |
+| `OPENAI_API_KEY` | 空 | 项目 AI 简报与交互追问使用的 LLM 密钥（主评分管线始终 100% 确定性规则计算） |
 | `LLM_DAILY_BUDGET_USD` | `1.0` | 日预算；`0` 或负数表示不限额 |
 | `DISCOVERY_SCORE_ANALYSIS_THRESHOLD` | `0.30` | 发现分达到该值才进入分析 |
 | `SCHEDULER_ENABLED` | `true` | 分析调度总开关 |
@@ -413,7 +413,7 @@ pytest tests/opportunity/
 pytest tests/golden/
 ```
 
-2026-11-20 本机全量结果：**4272 passed / 26 skipped**（-n 8 并行约 3 分钟，覆盖率 89.8%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
+2026-11-26 本机全量结果：**4285 passed / 26 skipped**（-n 8 并行约 2.6 分钟，覆盖率 ≥ 89.8%）。最新基线与覆盖率报告见 CI 与 [CHANGELOG.md](CHANGELOG.md)。
 
 代码质量门：
 

@@ -13,7 +13,7 @@ REM Check Python
 echo [1/6] Checking Python environment...
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python not found. Please install Python 3.10+
+    echo [ERROR] Python not found. Please install Python 3.11+
     echo Download: https://www.python.org/downloads/
     pause
     exit /b 1
@@ -46,7 +46,7 @@ pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
     echo [INFO] Trying alternative installation method...
-    pip install fastapi uvicorn[standard] pydantic pydantic-settings structlog apscheduler httpx prometheus-client pandas openpyxl python-multipart pytest pytest-asyncio pytest-cov
+    pip install fastapi uvicorn[standard] python-multipart anyio starlette pydantic pydantic-settings structlog apscheduler httpx defusedxml pandas openpyxl psycopg[binary] alembic bcrypt pyjwt prometheus-client pytest pytest-asyncio pytest-cov
     if errorlevel 1 (
         echo [ERROR] Dependency installation failed
         pause
@@ -80,7 +80,7 @@ echo.
 REM Check Node.js
 where node >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js not found. Please install Node.js 18+ to run the Next.js dashboard.
+    echo [ERROR] Node.js not found. Please install Node.js 20.9+ to run the Next.js dashboard.
     echo Download: https://nodejs.org/
     pause
     exit /b 1

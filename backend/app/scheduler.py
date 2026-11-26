@@ -83,6 +83,7 @@ class UnifiedScheduler:
             and not settings.notify_enabled
             and not settings.vitals_scheduler_enabled
             and not settings.launch_review_scheduler_enabled
+            and not settings.alpha_digest_scheduler_enabled
         ):
             self._logger.info("unified_scheduler.disabled")
             return
@@ -131,10 +132,10 @@ class UnifiedScheduler:
         cron_map = {
             "defillama": settings.defillama_cron,
             "github": settings.github_cron,
-            "github_curated": getattr(settings, "github_curated_cron", "30 3 * * *"),
+            "github_curated": settings.github_curated_cron,
             "coingecko": settings.coingecko_cron,
             "cryptorank": settings.cryptorank_cron,
-            "rootdata": getattr(settings, "rootdata_cron", "45 9 * * *"),
+            "rootdata": settings.rootdata_cron,
             "twitter_kol": settings.twitter_kol_cron,
             "twitter_keyword": settings.twitter_keyword_cron,
             "etherscan": settings.etherscan_cron,
@@ -550,7 +551,11 @@ class UnifiedScheduler:
 
     def _register_alpha_digest_job(self) -> None:
         """注册每日 Alpha 投研周报与动态速递定时任务。"""
-        cron = getattr(settings, "alpha_digest_cron", "0 8 * * *")
+        if not settings.alpha_digest_scheduler_enabled:
+            self._logger.info("unified_scheduler.alpha_digest_disabled")
+            return
+
+        cron = settings.alpha_digest_cron
         self.scheduler.add_job(
             self._run_alpha_digest_job,
             trigger=CronTrigger.from_crontab(cron, timezone=settings.timezone),

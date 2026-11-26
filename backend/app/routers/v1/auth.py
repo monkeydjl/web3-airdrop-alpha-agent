@@ -441,9 +441,10 @@ def refresh_token_endpoint(body: RefreshTokenRequest) -> Any:
 def logout(request: Request, body: LogoutRequest | None = None) -> Any:
     """登出当前会话端点。"""
     current_user = get_current_user(request)
-    user_id = current_user.get("user_id")
+    user_id = str(current_user.get("user_id") or "")
+    role = current_user.get("role")
 
-    if not user_id or user_id == "anonymous":
+    if not user_id or user_id == "anonymous" or role == "anonymous" or user_id.startswith("anon-"):
         return _error(401, "UNAUTHORIZED", "Authentication required to logout")
 
     jwt_jti = current_user.get("jwt_jti")
@@ -453,7 +454,7 @@ def logout(request: Request, body: LogoutRequest | None = None) -> Any:
     if body and body.refresh_token:
         with connection_scope() as conn:
             session_repo = SessionRepository(conn)
-            session_repo.revoke_by_token_hash(hash_refresh_token(body.refresh_token))
+            session_repo.revoke_by_token_hash_for_user(hash_refresh_token(body.refresh_token), user_id)
 
     logger.info("auth.user_logged_out", user_id=user_id)
     return MessageResponse(ok=True, data={"message": "Logged out successfully"})
@@ -468,9 +469,10 @@ def logout(request: Request, body: LogoutRequest | None = None) -> Any:
 def logout_all(request: Request) -> Any:
     """全设备登出端点。"""
     current_user = get_current_user(request)
-    user_id = current_user.get("user_id")
+    user_id = str(current_user.get("user_id") or "")
+    role = current_user.get("role")
 
-    if not user_id or user_id == "anonymous":
+    if not user_id or user_id == "anonymous" or role == "anonymous" or user_id.startswith("anon-"):
         return _error(401, "UNAUTHORIZED", "Authentication required")
 
     jwt_jti = current_user.get("jwt_jti")
