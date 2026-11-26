@@ -1458,7 +1458,7 @@ CI 跑 pytest 时加了：
 | 定时巡检 crontab | ❌ 无（依赖上面两个不存在的脚本） |
 | 日志采样 | ❌ 未实现 |
 | `X-Run-Id` 响应头 | ❌ 只有 `X-Disclaimer` |
-| **6 张死表**（不只 `metrics`） | ❌ `metrics`、`audit_logs`、`llm_eval_changelog`、`narratives`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14（`dedup_keys` 已在 2026-11-09 接上身份别名解析，不再算死表） |
+| **5 张死表**（不只 `metrics`） | ❌ `metrics`、`llm_eval_changelog`、`narratives`、`prompt_versions`、`quarantine` —— 都是「有 schema、有 repository、有单元测试、**0 行数据、除 repository 外 0 个写入方**」。逐表实测见 §12.14（`dedup_keys` 已在 2026-11-09 接上身份别名解析，`audit_logs` 已在 2026-11-26 接上管理员写操作审计，均不再算死表） |
 | OpenTelemetry 追踪 | ⚠️ 代码就绪，本地未装依赖 → `setup_tracing()` 返回 `False` |
 | 归档任务真实执行 | ✅ 已在跑（2026-10-01 实测：`archive_runs` 19 行全 success，首次 2026-09-04，每日 UTC 03:00 触发；当前待归档 0 行属真实「无事可做」，首次真实归档预计 2026-10-03 前后 —— §7.3） |
 | `evaluation/collection/` 采集质量周报 | ❌ 目录不存在（只有 `evaluation/llm/`） |
@@ -1789,7 +1789,7 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 
 ---
 
-### 12.14 死表不止 `metrics` 一张，是 6 张
+### 12.14 死表不止 `metrics` 一张，是 5 张
 
 此前 §11 只点了 `metrics`。2026-08-25 在**线上库**（`D:\app\data\app.db`，
 28 张表）上逐表实测行数 + 逐文件搜写入方，结果如下。
@@ -1801,7 +1801,6 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 | 表 | 行数 | 写入方 |
 |---|---|---|
 | `metrics` | 0 | 仅 repository |
-| `audit_logs` | 0 | 仅 repository |
 | `llm_eval_changelog` | 0 | 仅 repository |
 | `narratives` | 0 | 仅 repository |
 | `prompt_versions` | 0 | 仅 repository |
@@ -1810,6 +1809,11 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 > `dedup_keys` 已移出死表清单（2026-11-09）：身份别名解析把它作为别名表复用，
 > `backend/app/identity.py` 会写 `source` / `confidence` / `notes`，
 > 见任务一的 `/api/v1/project-identity/*` 与回填脚本。
+>
+> `audit_logs` 已移出死表清单（2026-11-26）：`backend/app/main.py` 请求中间件对所有命中
+> `requires_admin(method, path)` 的成功写操作（POST/PUT/PATCH/DELETE 且 2xx/3xx）自动经由
+> `backend/app/services/audit_log.py` 脱敏落库，支持通过管理员端点 `GET /api/v1/ops/audit-logs`
+> 按动作与操作者检索，并由归档任务按 365 天保留期定时清理。
 
 对照组（**不是**死表，用来证明这个判据不是恒真）：
 
@@ -1821,15 +1825,11 @@ localhost `CORS_ORIGINS`）拒绝启动，是因为它们**无法自动修正** 
 | `feedback` | 0 | `routers/v1/feedback.py` —— 同上 |
 | `notification_reads` | 0 | `routers/v1/notifications.py` —— 同上 |
 
-#### `audit_logs` 是这批里最需要注意的一张
+#### `audit_logs` 已于 2026-11-26 接上真实生产审计链路
 
-审计日志会被**直接算进合规与安全评估**。一张有 schema、有 repository、
-有单元测试的空审计表，比一张不存在的表更容易被当成"这个能力有"。
-和 SECURITY.md §6.3 那个"固定 digest"是同一类错：
-**声称存在的保护，比缺少保护更危险，因为它会被算进防护面。**
-
-（注：SECURITY.md §4.3 把审计日志列在「V3 前瞻」里，那是诚实的表述 ——
-它说的是"将来要做"，没有声称现在有。）
+审计日志会被**直接算进合规与安全评估**。此前它是「有 schema、有 repository、有单元测试但无生产写入方」
+的空表；2026-11-26 起已通过请求中间件统一接管全仓管理员写操作（无需逐路由手工埋点防漏），
+落库前经 `app.utils.redact.redact` 强制脱敏，并通过 `GET /api/v1/ops/audit-logs` 对管理员开放审计查询。
 
 #### `quarantine` 是一次差点搞错的诊断
 

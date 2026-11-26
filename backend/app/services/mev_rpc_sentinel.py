@@ -7,12 +7,25 @@
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from typing import Any
 
+import httpx
 import structlog
 
+from app.config import settings
+from app.services.vitals import (
+    BlockedTargetError,
+    _build_pinned_transport,
+    _is_safe_public_ip,
+    _reject_non_public_target,
+)
+from app.utils.redact import redact
+
 logger = structlog.get_logger(__name__)
+
+_RPC_PROBE_TIMEOUT_SECONDS = 3.5
 
 # 主流经过实战验证的防 MEV 私有 RPC 节点库
 PRESET_MEV_RPC_NODES: list[dict[str, Any]] = [
@@ -148,6 +161,39 @@ PRESET_MEV_RPC_NODES: list[dict[str, Any]] = [
 _MEV_NODE_MAP: dict[str, dict[str, Any]] = {n["id"]: n for n in PRESET_MEV_RPC_NODES}
 
 
+def _live_queries_enabled(allow_live: bool | None) -> bool:
+    if allow_live is not None:
+        return allow_live
+    return settings.app_env.lower() not in {"test", "testing"}
+
+
+def _validate_custom_rpc_url(raw_url: str) -> str:
+    """校验用户提交的自定义 RPC URL（强制 https:// 且拒绝回环/内网/云元数据地址）。"""
+    candidate = raw_url.strip()
+    if not candidate:
+        raise BlockedTargetError("<empty custom_url>")
+    try:
+        parsed = httpx.URL(candidate)
+    except Exception as exc:
+        raise BlockedTargetError(f"invalid_url:{candidate[:80]}") from exc
+
+    if parsed.scheme.lower() != "https":
+        raise BlockedTargetError("non_https_scheme")
+
+    host = (parsed.host or "").strip("[]").lower()
+    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        raise BlockedTargetError(host or "<empty host>")
+
+    try:
+        literal = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        literal = None
+    if literal is not None and not _is_safe_public_ip(literal):
+        raise BlockedTargetError(host)
+
+    return str(parsed)
+
+
 def list_mev_rpc_nodes(chain_id: int | None = None) -> list[dict[str, Any]]:
     """获取所有受支持的防 MEV 私有 RPC 节点信息."""
     if chain_id is not None:
@@ -156,10 +202,12 @@ def list_mev_rpc_nodes(chain_id: int | None = None) -> list[dict[str, Any]]:
 
 
 def benchmark_rpc_node(node_id: str | None = None, custom_url: str | None = None) -> dict[str, Any]:
-    """探测指定或自定义 RPC 节点的延迟与防护等级 (O(1) 预索引检索)."""
-    selected: dict[str, Any] | None = _MEV_NODE_MAP.get(node_id) if node_id else None
-
-    if not selected:
+    """生成指定或自定义 RPC 节点的静态防护画像与预设估值延迟（离线兜底/基线计算）."""
+    preset = _MEV_NODE_MAP.get(node_id) if node_id else None
+    selected: dict[str, Any]
+    if preset is not None:
+        selected = dict(preset)
+    else:
         url = custom_url or "https://rpc.mevblocker.io"
         selected = {
             "id": "custom_node",
@@ -187,10 +235,8 @@ def benchmark_rpc_node(node_id: str | None = None, custom_url: str | None = None
             },
         }
 
-    # 模拟真实连通性测试 (通常在 30-90ms 之间波动)
     simulated_latency = selected.get("latency_ms", 60)
 
-    # 评定综合等级
     if selected.get("anti_sandwich") and selected.get("mev_refund"):
         rating = "A+"
         grade_desc = "顶级防护 (防夹 + 90%利润现金回退)"
@@ -214,3 +260,75 @@ def benchmark_rpc_node(node_id: str | None = None, custom_url: str | None = None
             "高价值 NFT 抢购与铸造",
         ],
     }
+
+
+async def benchmark_rpc_node_live(
+    node_id: str | None = None,
+    custom_url: str | None = None,
+    *,
+    allow_live: bool | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """对目标 RPC 节点发起真实 JSON-RPC (`eth_blockNumber`) 毫秒级往返测速。
+
+    安全保证：
+    - 自定义 URL 强制 `https://` 且走 `_PinnedPublicIPBackend` + `_reject_non_public_target`
+      双层公网 IP 绑定校验，阻断内网探测与 DNS 重绑定。
+    - 离线/测试环境（`APP_ENV in ("test", "testing")` 且未显式指定 `allow_live=True`）或远端超时时，
+      返回 `(baseline, False)` 由路由层诚实标注 `simulated`。
+    """
+    normalized_custom: str | None = None
+    if custom_url is not None and custom_url.strip():
+        normalized_custom = _validate_custom_rpc_url(custom_url)
+
+    baseline = benchmark_rpc_node(node_id=node_id, custom_url=normalized_custom)
+    if not _live_queries_enabled(allow_live):
+        return baseline, False
+
+    probe_url = str(baseline["node_info"]["rpc_url"])
+    rpc_body = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(_RPC_PROBE_TIMEOUT_SECONDS),
+            headers={"Content-Type": "application/json", "User-Agent": "airdrop-alpha/1.0 rpc-benchmark"},
+            trust_env=False,
+            transport=_build_pinned_transport(),
+            event_hooks={"request": [_reject_non_public_target]},
+        ) as client:
+            t0 = time.perf_counter()
+            resp = await client.post(probe_url, json=rpc_body)
+            elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+
+        if resp.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                f"RPC upstream returned {resp.status_code}",
+                request=resp.request,
+                response=resp,
+            )
+
+        payload = resp.json()
+        if not isinstance(payload, dict) or ("result" not in payload and "error" not in payload):
+            raise ValueError("Invalid JSON-RPC response envelope")
+
+        live_node_info = {**baseline["node_info"], "latency_ms": elapsed_ms}
+        live_result: dict[str, Any] = {
+            **baseline,
+            "node_info": live_node_info,
+            "latency_ms": elapsed_ms,
+            "tested_at": int(time.time()),
+        }
+        raw_block = payload.get("result")
+        if isinstance(raw_block, str) and raw_block.startswith("0x"):
+            live_result["latest_block"] = int(raw_block, 16)
+        return live_result, True
+    except BlockedTargetError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "mev_rpc.benchmark_live_failed",
+            node_id=node_id or "custom_node",
+            error_type=type(exc).__name__,
+            error=redact(str(exc))[:200],
+        )
+        return baseline, False

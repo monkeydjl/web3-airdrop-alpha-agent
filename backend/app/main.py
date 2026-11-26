@@ -406,6 +406,7 @@ def create_app(
             "name": "MIT",
         },
     )
+    app.state.db_override = db_override if hasattr(db_override, "execute") else None
 
     # ── 中间件 ──────────────────────────────────
     # 注意：Starlette 后注册的中间件在最外层。
@@ -470,6 +471,44 @@ def create_app(
         HTTP_REQUESTS.labels(method=request.method, status_class=status_class).inc()
         # HTTP 请求耗时 histogram（§9）：duration 是毫秒，指标单位是秒
         HTTP_DURATION.observe(duration / 1000.0)
+
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and 200 <= response.status_code < 400:
+            from app.auth import requires_admin
+
+            if requires_admin(request.method, request.url.path):
+                from app.rate_limit import _client_ip
+                from app.services.audit_log import safe_record_admin_audit
+
+                default_actor = "mvp-local" if not (settings.api_key or "").strip() else "admin"
+                audit_user = str(getattr(request.state, "user_id", None) or default_actor)
+                audit_role = str(getattr(request.state, "user_role", None) or default_actor)
+                audit_method = str(getattr(request.state, "auth_method", None) or "none")
+                audit_detail: dict[str, Any] = {
+                    "status_code": response.status_code,
+                    "role": audit_role,
+                    "auth_method": audit_method,
+                }
+                if request.url.query:
+                    audit_detail["query"] = str(request.url.query)[:200]
+                audit_action = f"{request.method} {request.url.path}"
+                audit_ip = _client_ip(request)
+                override_conn = getattr(app.state, "db_override", None)
+                if override_conn is not None:
+                    safe_record_admin_audit(
+                        action=audit_action,
+                        user=audit_user,
+                        detail=audit_detail,
+                        ip=audit_ip,
+                        conn=override_conn,
+                    )
+                elif db_override is None:
+                    await asyncio.to_thread(
+                        safe_record_admin_audit,
+                        action=audit_action,
+                        user=audit_user,
+                        detail=audit_detail,
+                        ip=audit_ip,
+                    )
 
         logger.info(
             "api.request.completed",

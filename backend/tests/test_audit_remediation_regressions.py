@@ -311,3 +311,60 @@ class TestVitalsPinningAndScorerDynamicConfig:
         zh = _reason_to_zh(raw)
         assert zh != raw
         assert "交互路径" in zh
+
+
+class TestAdminAuditLogPipeline:
+    """管理员写操作安全审计链路（audit_logs 生产写入、脱敏与 GET /api/v1/ops/audit-logs）。"""
+
+    def test_admin_mutation_records_redacted_audit_log_and_blocks_anonymous_query(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db_file = tmp_path / "audit_pipeline.db"
+        monkeypatch.setattr(settings, "db_path", str(db_file))
+        monkeypatch.setattr(settings, "api_key", "super-secret-admin-key-999")
+        init_db()
+
+        app = create_app()
+        with TestClient(app) as client:
+            r_anon_issue = client.post("/api/v1/auth/anonymous")
+            assert r_anon_issue.status_code == 200
+            anon_token = r_anon_issue.json()["access_token"]
+
+            # 1. 匿名用户不可访问 /api/v1/ops/audit-logs，且被拒写操作不产生成功审计记录
+            r_anon_get = client.get(
+                "/api/v1/ops/audit-logs",
+                headers={"Authorization": f"Bearer {anon_token}"},
+            )
+            assert r_anon_get.status_code == 403
+
+            r_anon_mut = client.post(
+                "/api/v1/ops/audit-viability",
+                json={"apply_changes": False},
+                headers={"Authorization": f"Bearer {anon_token}"},
+            )
+            assert r_anon_mut.status_code == 403
+
+            # 2. 管理员执行写操作自动落库，且 query 参数中的敏感凭据被强制脱敏
+            r_admin_mut = client.post(
+                "/api/v1/ops/audit-viability?api_key=super-secret-admin-key-999",
+                json={"apply_changes": False},
+                headers={"X-API-Key": "super-secret-admin-key-999"},
+            )
+            assert r_admin_mut.status_code == 200
+
+            r_logs = client.get(
+                "/api/v1/ops/audit-logs",
+                params={"action": "POST /api/v1/ops/audit-viability", "limit": 10},
+                headers={"X-API-Key": "super-secret-admin-key-999"},
+            )
+            assert r_logs.status_code == 200
+            body = r_logs.json()
+            assert body["ok"] is True
+            assert body["data"]["total"] == 1
+            entry = body["data"]["items"][0]
+            assert entry["action"] == "POST /api/v1/ops/audit-viability"
+            assert entry["user"] == "admin"
+            assert "super-secret-admin-key-999" not in (entry["detail"] or "")
+            assert "***" in (entry["detail"] or "")

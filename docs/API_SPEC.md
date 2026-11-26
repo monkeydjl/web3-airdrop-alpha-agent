@@ -256,6 +256,7 @@
 | GET | `/api/v1/projects/digest` | v1 | 投研周报增强（2026-09-21） | 生成每日/每周 Alpha 投研周报合辑 |
 | POST | `/api/v1/ops/sync-funding` | v1 | 运维增强（2026-09-21） | 批量同步全库 DefiLlama 免费融资数据（管理员专用） |
 | POST | `/api/v1/ops/audit-viability` | v1 | 运维增强（2026-09-21） | 全库存活率与跑道硬检验批量审计（管理员专用） |
+| GET | `/api/v1/ops/audit-logs` | v1 | 安全审计（2026-11-26） | 查询管理员写操作安全审计日志（已脱敏，管理员专用） |
 | GET | `/api/v1/onchain/chains` | v1 | 零成本增强（2026-09-21） | 支持的免 Key 公共 RPC 链列表 |
 | POST | `/api/v1/onchain/verify` | v1 | 零成本增强（2026-09-21） | 免 Key 公共 RPC 探测合约存活性 |
 | GET | `/api/v1/faucets` | v1 | 零成本增强（2026-09-21） | 测试网水龙头列表与 24h 冷却状态 |

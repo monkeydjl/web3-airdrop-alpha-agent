@@ -21,7 +21,10 @@
   - `tests/api/test_error_detail_envelope.py`：升级为全路由 AST 静态守卫（覆盖 63 个路由模块），清零 `projects.py`、`comparison.py`、`bot.py`、`export_import.py`、`opportunity.py`、`project_identity.py`、`unlocks.py` 中全部非结构化/缺码 `detail` 及 500 内部异常原文回显。
   - `agents/scorer.py`、`llm/client.py` & 前后端理由字典：支持运行时动态读取评分权重与版本、按本轮轮询首试模型估算 LLM 预扣成本、补齐 `VETO_NO_PARTICIPATION_PATH` 中文映射，并在文档与 `.env.example` 明确评分管线 100% 确定性规则计算口径。
   - 依赖与编排：统一双份 `pyproject.toml` 与 `Start.bat` 依赖声明；修复 `docker/nginx/nginx-http.conf` 子块安全响应头继承与 `/_next/static/` 缓存范围；修正 `docker-compose.prod.yml`（锁定监控镜像版本、接入 Docker Socket 供 Promtail 采集 Nginx 日志、移除废弃 `CRON_HOUR`/`CRON_MINUTE`）与 `docker-compose.yml`；在 `config.py` / `scheduler.py` / `.env.example` 正式声明 `GITHUB_CURATED_CRON`、`ALPHA_DIGEST_SCHEDULER_ENABLED`、`ALPHA_DIGEST_CRON`。
-- **P3 仓库卫生与测试基线**：从 Git 索引移除 `.workbuddy/` 本地目录、消除 `test_collector_registry.py` 异步标记告警、同步 `README.md` 与 `docs/OBSERVABILITY.md` 统计。最新全栈基线：后端 **4285 passed / 26 skipped / 0 failed**，前端 **131 passed（45 suites）** + `next build` 全绿。
+- **安全审计表激活与实时 RPC 测速升级**：
+  - `services/audit_log.py`、`main.py` & `routers/v1/ops.py`：激活 `audit_logs` 表生产写入链路（请求中间件对全部命中 `requires_admin` 的成功写操作自动异步脱敏落库），新增管理员查询端点 `GET /api/v1/ops/audit-logs`，并同步移出 `docs/OPERATIONS.md` §11 / §12.14 死表清单。
+  - `services/mev_rpc_sentinel.py` & `routers/v1/mev_rpc.py`：新增 `benchmark_rpc_node_live()`，通过公网 IP 钉死传输层发起真实 JSON-RPC `eth_blockNumber` 毫秒级往返测速与最新区块高度解析（拦截非 `https://` 与内网/云元数据 SSRF 自定义节点，实测连通标 `real`，离线/超时诚实回退 `simulated`）。
+- **P3 仓库卫生与测试基线**：从 Git 索引移除 `.workbuddy/` 本地目录、消除 `test_collector_registry.py` 异步标记告警、同步 `README.md`、`docs/API_SPEC.md`、`docs/OPERATIONS.md` 与 `docs/OBSERVABILITY.md` 统计。最新全栈基线：后端 **4295 passed / 26 skipped / 0 failed**，前端 **131 passed（45 suites）** + `next build` 全绿。
 
 ### Fixed — 工程审计三阶段全量收口（2026-11-20，Phase 1–3：P0 / P1 / P2 清零）
 
